@@ -15,6 +15,7 @@ class Settings:
     engine_host: str
     engine_port: int
     allow_scene_fallback: bool
+    refinement_mode: str = "legacy"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,4 +32,5 @@ class Settings:
             engine_host=os.getenv("HEXA_ENGINE_HOST", "127.0.0.1"),
             engine_port=int(os.getenv("HEXA_ENGINE_PORT", "8765")),
             allow_scene_fallback=os.getenv("HEXA_ALLOW_SCENE_FALLBACK", "0") == "1",
+            refinement_mode=os.getenv("HEXA_REFINEMENT_MODE", "legacy").strip().lower(),
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -13,6 +14,9 @@ from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
+from app.refinement2 import Pass2RefinementService
+from app.refinement2.semantic import FlorenceSemanticBackend
+from app.refinement2.segmenter import SAM2MaskBackend
 from app.recovery.manager import RecoveryManager
 from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
@@ -40,6 +44,23 @@ class StoryEnginePipeline:
         self.vision = VisionService()
         self.cutout = CutoutService(allow_scene_fallback=self.settings.allow_scene_fallback)
         self.refinement = RefinementService()
+        florence_raw = os.getenv("HEXA_FLORENCE_MODEL")
+        sam_raw = os.getenv("HEXA_SAM2_CHECKPOINT")
+        self.refinement_vnext = Pass2RefinementService(
+            semantic_backend=(
+                FlorenceSemanticBackend(Path(florence_raw).expanduser().resolve())
+                if florence_raw
+                else None
+            ),
+            mask_backend=(
+                SAM2MaskBackend(
+                    Path(sam_raw).expanduser().resolve(),
+                    config=os.getenv("HEXA_SAM2_CONFIG") or None,
+                )
+                if sam_raw
+                else None
+            ),
+        )
         self.story = StoryPlanner()
         self.composition = CompositionPlanner()
         self.motion = MotionPlanner()
@@ -85,7 +106,7 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.refinement, 0.38, "Checking isolated secondary visuals")
-        assets = self.refinement.refine(assets, workspace)
+        assets = self._apply_refinement(package, assets, workspace)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
@@ -143,6 +164,22 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path
+
+    def _apply_refinement(self, package, assets, workspace: Path):
+        mode = self.settings.refinement_mode
+        if mode in {"off", "pass1", "disabled"}:
+            return assets
+        if mode in {"vnext", "pass2_vnext", "hybrid"}:
+            unit_types = {
+                scene.id: [str(unit.get("type") or "") for unit in scene.units]
+                for scene in package.scenes
+            }
+            return self.refinement_vnext.refine(
+                assets,
+                workspace,
+                scene_unit_types=unit_types,
+            )
+        return self.refinement.refine(assets, workspace)
 
     def _recover_plan(
         self,
@@ -215,7 +252,7 @@ class StoryEnginePipeline:
         if start <= 0:
             assets = self.cutout.extract(package, detections, workspace)
         if start <= 1:
-            assets = self.refinement.refine(assets, workspace)
+            assets = self._apply_refinement(package, assets, workspace)
         if start <= 2:
             story = self.story.plan(package, transcript, assets)
         if start <= 3:
