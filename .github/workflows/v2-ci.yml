@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - bayer
+      - majd
   pull_request:
 
 jobs:
