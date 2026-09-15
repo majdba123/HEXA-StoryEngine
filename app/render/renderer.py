@@ -5,18 +5,18 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from app.models import RenderPlan
+from app.models import MotionCue, RenderPlan, StoryBeat
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 
 
 class FFmpegRenderer:
     """Parallel beat-segment renderer with deterministic concat.
 
-    Strict object extraction increases the number of independent layers. Rendering one
-    giant sequential overlay graph makes that cost roughly multiply by full-video
-    duration. V2 renders short beat-owned segments independently, in bounded parallel,
-    then stream-concats identical H.264 segments. This also establishes the right
-    boundary for future per-beat cache/recovery.
+    Beat segments are encoded independently for bounded render cost and recovery. A beat
+    boundary must still behave like one continuous authored timeline, so every segment
+    after the first carries the previous beat's settled composition underneath the new
+    beat until the incoming visual becomes visible. This renderer-only handoff prevents
+    white flashes without changing Story, Composition, Motion, or source-relative layout.
     """
 
     def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
@@ -36,7 +36,7 @@ class FFmpegRenderer:
 
         total_frames = max(1, round(plan.duration * plan.fps))
         first_frame = self._time_to_frame(story[0].start, plan.fps, total_frames)
-        jobs: list[tuple[int, object, float, int, Path]] = []
+        jobs: list[tuple[int, StoryBeat, StoryBeat | None, float, int, Path]] = []
         if first_frame > 0:
             prelude = segment_root / "0000-prelude.mp4"
             self._render_color_segment(
@@ -56,7 +56,8 @@ class FFmpegRenderer:
             frame_count = end_frame - start_frame
             segment_start = start_frame / plan.fps
             target = segment_root / f"{index:04d}-{beat.id}.mp4"
-            jobs.append((index, beat, segment_start, frame_count, target))
+            previous_beat = story[index - 2] if index > 1 else None
+            jobs.append((index, beat, previous_beat, segment_start, frame_count, target))
             start_frame = end_frame
 
         worker_env = os.getenv("HEXA_RENDER_WORKERS")
@@ -75,6 +76,7 @@ class FFmpegRenderer:
                     self._render_beat_segment,
                     plan,
                     beat,
+                    previous_beat,
                     segment_start,
                     frame_count,
                     target,
@@ -82,7 +84,7 @@ class FFmpegRenderer:
                     composition,
                     motion,
                 ): target
-                for _, beat, segment_start, frame_count, target in jobs
+                for _, beat, previous_beat, segment_start, frame_count, target in jobs
             }
             for future in as_completed(futures):
                 try:
@@ -99,20 +101,21 @@ class FFmpegRenderer:
         prelude = segment_root / "0000-prelude.mp4"
         if prelude.exists():
             segments.append(prelude)
-        segments.extend(target for _, _, _, _, target in jobs)
+        segments.extend(target for _, _, _, _, _, target in jobs)
         self._concat_segments(segments, output)
         return output
 
     def _render_beat_segment(
         self,
         plan: RenderPlan,
-        beat,
+        beat: StoryBeat,
+        previous_beat: StoryBeat | None,
         segment_start: float,
         frame_count: int,
         target: Path,
         assets: dict,
         composition: dict,
-        motion: dict,
+        motion: dict[tuple[str, str], MotionCue],
     ) -> None:
         duration = frame_count / plan.fps
         layout = composition.get(beat.id)
@@ -120,41 +123,80 @@ class FFmpegRenderer:
             self._render_color_segment(plan, duration, target, frame_count=frame_count)
             return
 
-        command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
         ordered_items = sorted(layout.items, key=lambda row: row.z)
-        for item in ordered_items:
+        previous_layout = composition.get(previous_beat.id) if previous_beat else None
+        outgoing_items = (
+            sorted(previous_layout.items, key=lambda row: row.z)
+            if previous_layout and previous_layout.items
+            else []
+        )
+
+        command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
+        for item in [*outgoing_items, *ordered_items]:
             asset = assets.get(item.asset_id)
             if asset is None or not asset.image_path.exists():
                 raise StageFailedError(
                     "render plan references missing asset",
                     details={"asset_id": item.asset_id, "beat_id": beat.id},
                 )
-            command.extend(["-i", str(asset.image_path)])
+            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
 
         filters: list[str] = [
-            f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:d={duration:.6f},format=rgba[base0]"
+            f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:d={duration:.6f},"
+            "format=rgba[base0]"
         ]
-        previous = "base0"
+        composite_label = "base0"
+
+        handoff_start, handoff_fade = self._incoming_handoff_window(
+            beat=beat,
+            ordered_items=ordered_items,
+            segment_start=segment_start,
+            duration=duration,
+            motion=motion,
+        )
+        if outgoing_items:
+            fade_duration = min(
+                handoff_fade,
+                max(1.0 / plan.fps, duration - handoff_start),
+            )
+            for input_index, item in enumerate(outgoing_items):
+                box_w, box_h, target_x, target_y = self._geometry(plan, item)
+                source_label = f"outgoing{input_index}"
+                filters.append(
+                    f"[{input_index}:v]format=rgba,"
+                    f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
+                    f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},"
+                    "setpts=PTS-STARTPTS,"
+                    f"fade=t=out:st={handoff_start:.6f}:d={fade_duration:.6f}:alpha=1"
+                    f"[{source_label}]"
+                )
+                next_label = f"outmix{input_index}"
+                filters.append(
+                    f"[{composite_label}][{source_label}]overlay=x='{target_x}':y='{target_y}':"
+                    f"enable='between(t,0,{duration:.6f})':eof_action=pass:shortest=0"
+                    f"[{next_label}]"
+                )
+                composite_label = next_label
+
+        input_offset = len(outgoing_items)
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
-            box_w = max(2, round(plan.width * item.width))
-            box_h = max(2, round(plan.height * item.height))
-            target_x = round(plan.width * (item.x - item.width / 2))
-            target_y = round(plan.height * (item.y - item.height / 2))
-            global_start = float(cue.start if cue else beat.start)
-            global_end = float(cue.end if cue else min(beat.end, beat.start + 0.32))
-            start = max(0.0, global_start - segment_start)
-            end = min(duration, max(start + 0.05, global_end - segment_start))
-            reveal_duration = max(0.05, end - start)
-            fade_duration = min(0.18, max(0.10, reveal_duration * 0.42))
+            box_w, box_h, target_x, target_y = self._geometry(plan, item)
+            start, end, fade_duration = self._cue_window(
+                beat=beat,
+                cue=cue,
+                segment_start=segment_start,
+                duration=duration,
+            )
+            input_index = input_offset + layer_index
             source_label = f"asset{layer_index}"
             filters.append(
-                f"[{layer_index}:v]format=rgba,"
+                f"[{input_index}:v]format=rgba,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
                 f"fade=t=in:st={start:.6f}:d={fade_duration:.6f}:alpha=1[{source_label}]"
             )
-            kind = getattr(cue, "kind", "reveal_in") if cue else "reveal_in"
+            kind = cue.kind if cue else "reveal_in"
             if kind == "handoff_in":
                 x_expr = self._entry_expression(target_x, start, end, offset=58)
                 y_expr = str(target_y)
@@ -169,13 +211,61 @@ class FFmpegRenderer:
                 y_expr = self._entry_expression(target_y, start, end, offset=30)
             next_label = f"mix{layer_index}"
             filters.append(
-                f"[{previous}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{start:.6f},{duration:.6f})':eof_action=pass:shortest=0[{next_label}]"
+                f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
+                f"enable='between(t,{start:.6f},{duration:.6f})':eof_action=pass:shortest=0"
+                f"[{next_label}]"
             )
-            previous = next_label
-        filters.append(f"[{previous}]format=yuv420p[vout]")
+            composite_label = next_label
+        filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
+
+    @classmethod
+    def _incoming_handoff_window(
+        cls,
+        *,
+        beat: StoryBeat,
+        ordered_items: list,
+        segment_start: float,
+        duration: float,
+        motion: dict[tuple[str, str], MotionCue],
+    ) -> tuple[float, float]:
+        windows: list[tuple[float, float]] = []
+        for item in ordered_items:
+            start, _, fade_duration = cls._cue_window(
+                beat=beat,
+                cue=motion.get((beat.id, item.asset_id)),
+                segment_start=segment_start,
+                duration=duration,
+            )
+            windows.append((start, fade_duration))
+        if not windows:
+            return 0.0, min(0.12, duration)
+        return min(windows, key=lambda row: row[0])
+
+    @staticmethod
+    def _cue_window(
+        *,
+        beat: StoryBeat,
+        cue: MotionCue | None,
+        segment_start: float,
+        duration: float,
+    ) -> tuple[float, float, float]:
+        global_start = float(cue.start if cue else beat.start)
+        global_end = float(cue.end if cue else min(beat.end, beat.start + 0.32))
+        start = max(0.0, global_start - segment_start)
+        end = min(duration, max(start + 0.05, global_end - segment_start))
+        reveal_duration = max(0.05, end - start)
+        fade_duration = min(0.18, max(0.10, reveal_duration * 0.42))
+        return start, end, fade_duration
+
+    @staticmethod
+    def _geometry(plan: RenderPlan, item) -> tuple[int, int, int, int]:
+        box_w = max(2, round(plan.width * item.width))
+        box_h = max(2, round(plan.height * item.height))
+        target_x = round(plan.width * (item.x - item.width / 2))
+        target_y = round(plan.height * (item.y - item.height / 2))
+        return box_w, box_h, target_x, target_y
 
     def _render_color_segment(
         self,
@@ -230,7 +320,10 @@ class FFmpegRenderer:
             raise StageFailedError("renderer produced no segments")
         concat_file = output.parent / f"{output.stem}-concat.txt"
         concat_file.write_text(
-            "".join(f"file '{str(path.resolve()).replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'\n" for path in segments),
+            "".join(
+                f"file '{str(path.resolve()).replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'\n"
+                for path in segments
+            ),
             encoding="utf-8",
         )
         command = [
@@ -284,7 +377,6 @@ class FFmpegRenderer:
             str(frame_count),
             str(target),
         ]
-
 
     @staticmethod
     def _time_to_frame(value: float, fps: int, total_frames: int) -> int:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,8 +19,9 @@ class DetectedIssue:
 
 
 class RecoveryDetector:
-    def __init__(self, ffprobe_bin: str = "ffprobe") -> None:
+    def __init__(self, ffprobe_bin: str = "ffprobe", ffmpeg_bin: str = "ffmpeg") -> None:
         self.ffprobe_bin = ffprobe_bin
+        self.ffmpeg_bin = ffmpeg_bin
 
     def inspect_plan(self, plan: RenderPlan) -> list[DetectedIssue]:
         issues: list[DetectedIssue] = []
@@ -152,7 +154,61 @@ class RecoveryDetector:
                     "source_drift": source_drift,
                 },
             ))
+
+        if has_video and video_duration > 0:
+            try:
+                white_flashes = self._white_flash_frames(video, video_duration)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                issues.append(DetectedIssue(
+                    "FINAL_VISUAL_QA_UNAVAILABLE",
+                    "Unable to scan final video for encoded white flashes",
+                    {"error": str(exc)},
+                ))
+            else:
+                if white_flashes:
+                    issues.append(DetectedIssue(
+                        "VISUAL_WHITE_FLASH",
+                        "Final video contains internal near-white handoff frames",
+                        {
+                            "count": len(white_flashes),
+                            "first_frames": white_flashes[:20],
+                        },
+                    ))
         return self._dedupe(issues)
+
+    def _white_flash_frames(self, video: Path, duration: float) -> list[dict[str, float | int]]:
+        """Detect internal encoded frames that are effectively pure white.
+
+        The renderer intentionally uses a white canvas, but an authored beat should still
+        carry visible foreground during an ordinary handoff. We downscale before the scan
+        to keep this final QA cheap, invert white to black, then use FFmpeg's blackframe
+        detector. Leading/trailing fade latitude is ignored; only internal flashes fail.
+        """
+        command = [
+            self.ffmpeg_bin,
+            "-hide_banner",
+            "-nostats",
+            "-loglevel",
+            "info",
+            "-i",
+            str(video),
+            "-an",
+            "-vf",
+            "scale=320:-2:flags=fast_bilinear,negate,blackframe=amount=99:threshold=24",
+            "-f",
+            "null",
+            "-",
+        ]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        pattern = re.compile(r"frame:(\d+).*?t:([0-9.]+)")
+        flashes: list[dict[str, float | int]] = []
+        guard = min(0.12, duration / 4.0)
+        for match in pattern.finditer(result.stderr or ""):
+            frame = int(match.group(1))
+            timestamp = float(match.group(2))
+            if guard < timestamp < duration - guard:
+                flashes.append({"frame": frame, "time": timestamp})
+        return flashes
 
     @staticmethod
     def _duration(stream: dict, probe: dict) -> float:

@@ -46,7 +46,7 @@ class StoryEnginePipeline:
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
         self.final = FinalExporter(self.settings.ffmpeg_bin)
-        self.detector = RecoveryDetector(self.settings.ffprobe_bin)
+        self.detector = RecoveryDetector(self.settings.ffprobe_bin, self.settings.ffmpeg_bin)
         self.recovery = RecoveryManager(Path.home() / ".hexa-storyengine" / "recovery")
 
     def generate(
