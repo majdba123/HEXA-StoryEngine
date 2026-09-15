@@ -69,7 +69,7 @@ class CutoutService:
         backend = self._get_sam_backend()
         assets: list[VisualAsset] = []
         counters: dict[str, int] = {}
-        component_cache: dict[Path, np.ndarray] = {}
+        component_cache: dict[Path, tuple[np.ndarray, np.ndarray]] = {}
         for detection in detections:
             if detection.bbox is None:
                 continue
@@ -80,6 +80,7 @@ class CutoutService:
 
             method = "component_mask"
             image = None
+            source_canvas_width = source_canvas_height = None
             if backend is not None:
                 try:
                     image = backend.cutout(detection.source_image, detection.bbox)
@@ -88,12 +89,15 @@ class CutoutService:
                     image = None
             if image is None:
                 if detection.seed_points:
-                    labels = component_cache.get(detection.source_image)
-                    if labels is None:
-                        labels = self._component_labels(detection.source_image)
-                        component_cache[detection.source_image] = labels
+                    cached = component_cache.get(detection.source_image)
+                    if cached is None:
+                        cached = self._component_data(detection.source_image)
+                        component_cache[detection.source_image] = cached
+                    source_rgb, labels = cached
+                    source_canvas_height, source_canvas_width = source_rgb.shape[:2]
                     image = self._component_cutout(
                         detection.source_image,
+                        source_rgb,
                         detection.bbox,
                         detection.seed_points,
                         labels,
@@ -103,12 +107,15 @@ class CutoutService:
                     method = "white_background"
             if image.width < 2 or image.height < 2:
                 continue
-            image.save(target, format="PNG", optimize=False, compress_level=3)
+            # Working cutouts are lossless either way; low PNG compression avoids
+            # spending most of extraction time compressing temporary files.
+            image.save(target, format="PNG", optimize=False, compress_level=1)
             source_area_ratio = getattr(detection, "area_ratio", 0.0) or None
             component_count = max(1, int(getattr(detection, "component_count", 1)))
             compound = bool(getattr(detection, "compound", False))
-            with Image.open(detection.source_image) as source_image:
-                source_canvas_width, source_canvas_height = source_image.size
+            if source_canvas_width is None or source_canvas_height is None:
+                with Image.open(detection.source_image) as source_image:
+                    source_canvas_width, source_canvas_height = source_image.size
             assets.append(VisualAsset(
                 id=asset_id,
                 scene_id=detection.scene_id,
@@ -128,17 +135,31 @@ class CutoutService:
         return assets
 
     @staticmethod
-    def _component_labels(source: Path) -> np.ndarray:
+    def _component_data(source: Path) -> tuple[np.ndarray, np.ndarray]:
+        """Load a source scene once and build its strict connectivity labels once.
+
+        A scene often yields many independent objects. Re-decoding the same 2K image
+        for every object is pure disk/CPU waste and was the dominant full-package
+        cutout bottleneck.
+        """
         bgr = cv2.imread(str(source), cv2.IMREAD_COLOR)
         if bgr is None:
             raise StageFailedError("unable to read cutout source", details={"path": str(source)})
         structural = build_structural_foreground(bgr)
         _, labels = cv2.connectedComponents(structural, connectivity=8)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        return rgb, labels
+
+    @staticmethod
+    def _component_labels(source: Path) -> np.ndarray:
+        # Kept as a narrow compatibility helper for tests/extensions.
+        _, labels = CutoutService._component_data(source)
         return labels
 
     @staticmethod
     def _component_cutout(
         source: Path,
+        source_rgb: np.ndarray,
         bbox: tuple[int, int, int, int],
         seed_points: tuple[tuple[int, int], ...],
         labels: np.ndarray,
@@ -150,13 +171,13 @@ class CutoutService:
         shoes and icon interiors while preventing an enclosing shape (for example a
         thought bubble) from swallowing another disconnected object inside it.
         """
-        image = Image.open(source).convert("RGB")
         x, y, width, height = bbox
+        source_height, source_width = source_rgb.shape[:2]
         x0 = max(0, x)
         y0 = max(0, y)
-        x1 = min(image.width, x + max(1, width))
-        y1 = min(image.height, y + max(1, height))
-        crop = image.crop((x0, y0, x1, y1))
+        x1 = min(source_width, x + max(1, width))
+        y1 = min(source_height, y + max(1, height))
+        crop_rgb = source_rgb[y0:y1, x0:x1]
 
         target_labels: set[int] = set()
         for sx, sy in seed_points:
@@ -183,19 +204,27 @@ class CutoutService:
         # object. A bubble containing a wallet therefore stays separate from the wallet,
         # while a character's white face remains part of the character matte.
         fillable = np.zeros_like(target, dtype=bool)
-        hole_count, hole_labels = cv2.connectedComponents(enclosed.astype(np.uint8), 8)
-        for hole_label in range(1, hole_count):
-            hole = hole_labels == hole_label
-            if not np.any(other_foreground & hole):
-                fillable |= hole
+        if np.any(enclosed):
+            if not np.any(other_foreground & enclosed):
+                # The common case (face/shoe/icon holes): no need for another
+                # connected-component pass over the crop.
+                fillable = enclosed
+            else:
+                hole_count, hole_labels = cv2.connectedComponents(enclosed.astype(np.uint8), 8)
+                for hole_label in range(1, hole_count):
+                    hole = hole_labels == hole_label
+                    if not np.any(other_foreground & hole):
+                        fillable |= hole
 
         silhouette = target | fillable
         alpha = silhouette.astype(np.uint8) * 255
         # Slight blur restores anti-aliased edges without growing the matte into a
         # neighboring disconnected island.
         alpha_image = Image.fromarray(alpha).filter(ImageFilter.GaussianBlur(radius=0.42))
-        rgba = crop.convert("RGBA")
-        rgba.putalpha(alpha_image)
+        rgba_array = np.empty((crop_rgb.shape[0], crop_rgb.shape[1], 4), dtype=np.uint8)
+        rgba_array[:, :, :3] = crop_rgb
+        rgba_array[:, :, 3] = np.asarray(alpha_image)
+        rgba = Image.fromarray(rgba_array, mode="RGBA")
         visible = rgba.getchannel("A").getbbox()
         if visible is None:
             return rgba

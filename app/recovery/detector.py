@@ -87,13 +87,16 @@ class RecoveryDetector:
             if beat is None:
                 continue
             strong = [cue for cue in cues if cue.kind != "context_in"]
-            if len(cues) >= 3:
-                starts = sorted(cue.start for cue in cues)
+            # Quiet context fades are intentionally allowed to overlap a primary
+            # entrance. MULTI_ELEMENT_POP is about competing *strong* attention
+            # events, not background context becoming visible.
+            if len(strong) >= 3:
+                starts = sorted(cue.start for cue in strong)
                 if starts[-1] - starts[0] < 0.08:
                     issues.append(DetectedIssue(
                         "MULTI_ELEMENT_POP",
-                        f"Too many simultaneous entrances: {beat_id}",
-                        {"beat_id": beat_id, "count": len(cues)},
+                        f"Too many simultaneous strong entrances: {beat_id}",
+                        {"beat_id": beat_id, "count": len(strong)},
                     ))
 
             beat_duration = max(0.05, beat.end - beat.start)

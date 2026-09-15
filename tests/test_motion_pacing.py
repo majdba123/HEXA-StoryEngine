@@ -39,3 +39,31 @@ def test_short_beat_does_not_machine_gun_many_objects() -> None:
     assert len(strong) <= 2
     assert context
     assert len(strong) + len(context) == 7
+
+
+def test_quiet_context_overlap_is_not_treated_as_multi_element_pop(tmp_path) -> None:
+    from app.models import RenderPlan, VisualAsset
+    from app.recovery.detector import RecoveryDetector
+
+    beat, composition = _beat(0.95, 7)
+    cues = MotionPlanner().plan([beat], [composition])
+    assets = []
+    for index in range(7):
+        path = tmp_path / f"a{index}.png"
+        path.write_bytes(b"asset")
+        assets.append(VisualAsset(
+            id=f"a{index}",
+            scene_id="scene-001",
+            role="object",
+            image_path=path,
+            extraction_method="test",
+        ))
+    plan = RenderPlan(
+        duration=2.0,
+        story=[beat],
+        composition=[composition],
+        motion=cues,
+        assets=assets,
+    )
+    codes = {issue.code for issue in RecoveryDetector().inspect_plan(plan)}
+    assert "MULTI_ELEMENT_POP" not in codes
