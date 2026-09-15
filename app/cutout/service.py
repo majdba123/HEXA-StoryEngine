@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections import deque
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageFilter
 
 from app.models import PackageModel, VisualAsset
 from app.shared.errors import StageFailedError
@@ -158,37 +159,63 @@ class CutoutService:
     ) -> Image.Image:
         image = Image.open(source).convert("RGB")
         x, y, width, height = bbox
-        x0 = max(0, x)
-        y0 = max(0, y)
-        x1 = min(image.width, x + max(1, width))
-        y1 = min(image.height, y + max(1, height))
+        context_margin = max(8, round(min(max(1, width), max(1, height)) * 0.06))
+        x0 = max(0, x - context_margin)
+        y0 = max(0, y - context_margin)
+        x1 = min(image.width, x + max(1, width) + context_margin)
+        y1 = min(image.height, y + max(1, height) + context_margin)
         crop = image.crop((x0, y0, x1, y1))
         rgb = np.asarray(crop)
+
+        # Only white pixels connected to the crop boundary are background. This
+        # preserves white details inside icons/characters while reliably removing
+        # the white HEXA scene canvas around the object.
         near_white = np.min(rgb, axis=2) >= 242
-        binary = Image.fromarray(np.where(near_white, 0, 255).astype(np.uint8), mode="L")
+        background = CutoutService._border_connected_background(near_white)
+        alpha = np.full(near_white.shape, 255, dtype=np.uint8)
+        alpha[background] = 0
+        alpha_image = Image.fromarray(alpha).filter(ImageFilter.GaussianBlur(radius=0.55))
 
-        step = max(1, min(binary.width, binary.height) // 24)
-        seeds: list[tuple[int, int]] = []
-        for px in range(0, binary.width, step):
-            seeds.extend([(px, 0), (px, binary.height - 1)])
-        for py in range(0, binary.height, step):
-            seeds.extend([(0, py), (binary.width - 1, py)])
-        for seed in seeds:
-            if binary.getpixel(seed) == 0:
-                ImageDraw.floodfill(binary, seed, 128, thresh=0)
-
-        marks = np.asarray(binary)
-        alpha = np.full(marks.shape, 255, dtype=np.uint8)
-        alpha[marks == 128] = 0
-        alpha_image = Image.fromarray(alpha, mode="L").filter(ImageFilter.GaussianBlur(radius=0.55))
         rgba = crop.convert("RGBA")
         rgba.putalpha(alpha_image)
         visible = rgba.getchannel("A").getbbox()
         if visible is None:
             return rgba
-        margin = 4
+
+        # Keep a transparent safety margin so later scaling/animation never grows a
+        # white fringe at the object boundary.
+        margin = 6
         left = max(0, visible[0] - margin)
         top = max(0, visible[1] - margin)
         right = min(rgba.width, visible[2] + margin)
         bottom = min(rgba.height, visible[3] + margin)
         return rgba.crop((left, top, right, bottom))
+
+    @staticmethod
+    def _border_connected_background(near_white: np.ndarray) -> np.ndarray:
+        height, width = near_white.shape
+        background = np.zeros((height, width), dtype=bool)
+        queue: deque[tuple[int, int]] = deque()
+
+        def seed(x: int, y: int) -> None:
+            if near_white[y, x] and not background[y, x]:
+                background[y, x] = True
+                queue.append((x, y))
+
+        for x in range(width):
+            seed(x, 0)
+            if height > 1:
+                seed(x, height - 1)
+        for y in range(height):
+            seed(0, y)
+            if width > 1:
+                seed(width - 1, y)
+
+        while queue:
+            x, y = queue.popleft()
+            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= nx < width and 0 <= ny < height:
+                    if near_white[ny, nx] and not background[ny, nx]:
+                        background[ny, nx] = True
+                        queue.append((nx, ny))
+        return background
