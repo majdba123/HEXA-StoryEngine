@@ -1,0 +1,58 @@
+name: Activate approved visual baseline
+
+on:
+  push:
+    branches:
+      - chatgpt/montage6-v2-bootstrap
+
+permissions:
+  contents: write
+
+jobs:
+  activate:
+    if: contains(github.event.head_commit.message, '[activate-approved-baseline]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify approved source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'bd5737dc9124d5d6e1f11784b0df89edd969aedcd46c43c18b915a47cc2a5fe1  docs/accepted-baselines/approved-20s-source.tar.gz' | sha256sum -c -
+      - name: Activate exact approved source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          tar -xzf docs/accepted-baselines/approved-20s-source.tar.gz -C "$tmp"
+          rm -rf app tests
+          cp -a "$tmp/app" ./app
+          cp -a "$tmp/tests" ./tests
+          cp "$tmp/pyproject.toml" ./pyproject.toml
+          cp "$tmp/HEXA.bat" ./HEXA.bat
+          cp "$tmp/README.md" ./README.md
+          rm -f .github/workflows/activate-approved-baseline.yml
+      - name: Test exact baseline
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+          python -m compileall -q app tests
+          ruff check app tests
+          pytest
+      - name: Commit approved baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m '[montage6] Activate approved visual baseline'
+          git push origin HEAD:chatgpt/montage6-v2-bootstrap
