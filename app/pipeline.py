@@ -12,6 +12,7 @@ from app.input import FinalPackageLoader
 from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner
 from app.recovery.detector import DetectedIssue, RecoveryDetector
+from app.refinement import RefinementService
 from app.recovery.manager import RecoveryManager
 from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
@@ -38,6 +39,7 @@ class StoryEnginePipeline:
         )
         self.vision = VisionService()
         self.cutout = CutoutService(allow_scene_fallback=self.settings.allow_scene_fallback)
+        self.refinement = RefinementService()
         self.story = StoryPlanner()
         self.composition = CompositionPlanner()
         self.motion = MotionPlanner()
@@ -80,6 +82,10 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.cutout, 0.32, "Extracting visual assets")
         assets = self.cutout.extract(package, detections, workspace)
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.refinement, 0.38, "Checking isolated secondary visuals")
+        assets = self.refinement.refine(assets, workspace)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
@@ -200,7 +206,7 @@ class StoryEnginePipeline:
         story = current.story
         composition = current.composition
         motion = current.motion
-        order = ["cutout", "story", "composition", "motion", "render"]
+        order = ["cutout", "refinement", "story", "composition", "motion", "render"]
         try:
             start = order.index(invalidate_from)
         except ValueError:
@@ -209,10 +215,12 @@ class StoryEnginePipeline:
         if start <= 0:
             assets = self.cutout.extract(package, detections, workspace)
         if start <= 1:
-            story = self.story.plan(package, transcript, assets)
+            assets = self.refinement.refine(assets, workspace)
         if start <= 2:
-            composition = self.composition.plan(story, assets)
+            story = self.story.plan(package, transcript, assets)
         if start <= 3:
+            composition = self.composition.plan(story, assets)
+        if start <= 4:
             motion = self.motion.plan(story, composition)
         plan, _ = self.render_planner.compile(
             transcript,
