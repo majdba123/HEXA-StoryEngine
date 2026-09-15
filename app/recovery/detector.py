@@ -44,7 +44,7 @@ class RecoveryDetector:
             layout = composition.get(beat.id)
             if layout and layout.items:
                 occupancy = min(1.0, sum(max(0.0, item.width) * max(0.0, item.height) for item in layout.items))
-                if occupancy < 0.18:
+                if occupancy < 0.24:
                     issues.append(DetectedIssue(
                         "LOW_SCREEN_OCCUPANCY",
                         f"Beat occupancy is too low: {beat.id}",
@@ -63,13 +63,30 @@ class RecoveryDetector:
         for cue in plan.motion:
             by_beat.setdefault(cue.beat_id, []).append(cue)
             beat = story_by_id.get(cue.beat_id)
-            if beat and cue.start < beat.start - 0.02:
+            if beat and cue.start < beat.start - 0.12:
                 issues.append(DetectedIssue(
                     "ELEMENT_APPEARS_TOO_EARLY",
                     f"Motion begins before narration: {cue.asset_id}",
                     {"beat_id": cue.beat_id, "asset_id": cue.asset_id},
                 ))
+            if beat and cue.asset_id in beat.primary_asset_ids:
+                beat_duration = max(0.05, beat.end - beat.start)
+                late_limit = min(0.42, max(0.18, beat_duration * 0.32))
+                if cue.start > beat.start + late_limit:
+                    issues.append(DetectedIssue(
+                        "ELEMENT_APPEARS_TOO_LATE",
+                        f"Motion begins too late for narration: {cue.asset_id}",
+                        {
+                            "beat_id": cue.beat_id,
+                            "asset_id": cue.asset_id,
+                            "delay": cue.start - beat.start,
+                        },
+                    ))
         for beat_id, cues in by_beat.items():
+            beat = story_by_id.get(beat_id)
+            if beat is None:
+                continue
+            strong = [cue for cue in cues if cue.kind != "context_in"]
             if len(cues) >= 3:
                 starts = sorted(cue.start for cue in cues)
                 if starts[-1] - starts[0] < 0.08:
@@ -78,6 +95,49 @@ class RecoveryDetector:
                         f"Too many simultaneous entrances: {beat_id}",
                         {"beat_id": beat_id, "count": len(cues)},
                     ))
+
+            beat_duration = max(0.05, beat.end - beat.start)
+            for cue in strong:
+                cue_duration = cue.end - cue.start
+                minimum = 0.22 if beat_duration < 0.75 else 0.34
+                if cue_duration + 1e-6 < minimum:
+                    issues.append(DetectedIssue(
+                        "MOTION_TOO_FAST",
+                        f"Entrance is too fast to read: {cue.asset_id}",
+                        {
+                            "beat_id": beat_id,
+                            "asset_id": cue.asset_id,
+                            "duration": cue_duration,
+                            "minimum": minimum,
+                        },
+                    ))
+
+            if beat_duration >= 0.90 and strong:
+                last_motion_end = max(cue.end for cue in strong)
+                required_hold = min(0.70, max(0.28, beat_duration * 0.22))
+                actual_hold = beat.end - last_motion_end
+                if actual_hold + 1e-6 < required_hold:
+                    issues.append(DetectedIssue(
+                        "INSUFFICIENT_VISUAL_HOLD",
+                        f"Beat ends before the composition can be read: {beat_id}",
+                        {
+                            "beat_id": beat_id,
+                            "hold": actual_hold,
+                            "required_hold": required_hold,
+                        },
+                    ))
+
+            max_strong = max(1, min(5, int(beat_duration / 0.42) + 1))
+            if len(strong) > max_strong:
+                issues.append(DetectedIssue(
+                    "MOTION_OVERLOAD",
+                    f"Too many strong motions for spoken beat: {beat_id}",
+                    {
+                        "beat_id": beat_id,
+                        "strong_count": len(strong),
+                        "maximum": max_strong,
+                    },
+                ))
         return self._dedupe(issues)
 
     def inspect_final(self, video: Path, audio: Path) -> list[DetectedIssue]:
