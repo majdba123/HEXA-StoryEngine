@@ -19,6 +19,7 @@ class Stage(StrEnum):
     transcription = "transcription"
     vision = "vision"
     cutout = "cutout"
+    refinement = "refinement"
     story = "story"
     composition = "composition"
     motion = "motion"
@@ -113,6 +114,8 @@ class StoryBeat(BaseModel):
     scene_id: str
     start: float
     end: float
+    audio_start: float | None = None
+    audio_end: float | None = None
     narration: str
     primary_asset_ids: list[str] = Field(default_factory=list)
     support_asset_ids: list[str] = Field(default_factory=list)
