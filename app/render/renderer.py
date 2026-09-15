@@ -54,7 +54,6 @@ class FFmpegRenderer:
                 end_frame = total_frames
             end_frame = max(start_frame + 1, min(total_frames, end_frame))
             frame_count = end_frame - start_frame
-            duration = frame_count / plan.fps
             segment_start = start_frame / plan.fps
             target = segment_root / f"{index:04d}-{beat.id}.mp4"
             jobs.append((index, beat, segment_start, frame_count, target))
