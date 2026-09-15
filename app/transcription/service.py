@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 from app.models import Transcript, TranscriptSegment, TranscriptWord
@@ -10,6 +11,7 @@ from app.shared.media import probe_duration
 
 _WORD_RE = re.compile(r"\S+")
 _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
+_STRONG_PUNCTUATION = frozenset(".!?؟؛;\n")
 
 
 class TranscriptionService:
@@ -78,7 +80,12 @@ class TranscriptionService:
 
         active_intervals = self._speech_intervals(audio, duration)
         token_weights = [self._spoken_weight(match.group()) for match in token_matches]
-        positions = self._allocate_over_intervals(active_intervals, token_weights)
+        positions = self._allocate_script_over_intervals(
+            script,
+            token_matches,
+            token_weights,
+            active_intervals,
+        )
         words: list[TranscriptWord] = []
         for match, (start, end) in zip(token_matches, positions):
             words.append(TranscriptWord(
@@ -121,13 +128,7 @@ class TranscriptionService:
         return Transcript(language=None, duration=duration, segments=segments, words=words)
 
     def _speech_intervals(self, audio: Path, duration: float) -> list[tuple[float, float]]:
-        """Return speech-active intervals from FFmpeg silence detection.
-
-        This is the deterministic fallback when forced alignment is unavailable. It
-        prevents script timing from being spread uniformly across leading/trailing
-        silence and long pauses, which is substantially more faithful than the old
-        duration-only interpolation.
-        """
+        """Return speech-active intervals from FFmpeg silence detection."""
         command = [
             "ffmpeg",
             "-hide_banner",
@@ -172,23 +173,157 @@ class TranscriptionService:
 
     @staticmethod
     def _spoken_weight(token: str) -> float:
-        # Character count approximates Arabic speech duration better than one-token-one-
-        # unit weighting while remaining deterministic and language agnostic.
         stripped = re.sub(r"[^\w\u0600-\u06FF]+", "", token, flags=re.UNICODE)
         return float(max(1, len(stripped)))
+
+    def _allocate_script_over_intervals(
+        self,
+        script: str,
+        token_matches: list[re.Match[str]],
+        weights: list[float],
+        intervals: list[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        """Align script timing to real narration pauses before interpolating words.
+
+        The previous fallback spread token weight over the complete active-audio axis.
+        It skipped silence, but punctuation could still drift several seconds away from
+        the pause actually spoken by the TTS voice. Here punctuation boundaries are
+        monotonically matched to measured silence gaps first. Word interpolation then
+        happens independently inside each anchored speech region.
+        """
+        if len(token_matches) <= 1 or len(intervals) <= 1:
+            return self._allocate_over_intervals(intervals, weights)
+
+        baseline = self._allocate_over_intervals(intervals, weights)
+        boundaries: list[tuple[int, float, bool]] = []
+        token_ends = [match.end() for match in token_matches]
+        for phrase in [m for m in _PHRASE_RE.finditer(script) if m.group().strip()][:-1]:
+            token_index = 0
+            while token_index < len(token_ends) and token_ends[token_index] <= phrase.end():
+                token_index += 1
+            if token_index <= 0 or token_index >= len(token_matches):
+                continue
+            punctuation = phrase.group().strip()[-1:]
+            strong = punctuation in _STRONG_PUNCTUATION
+            target = baseline[token_index - 1][1]
+            if not boundaries or boundaries[-1][0] != token_index:
+                boundaries.append((token_index, target, strong))
+
+        gaps = [
+            (intervals[index][1], intervals[index + 1][0])
+            for index in range(len(intervals) - 1)
+            if intervals[index + 1][0] - intervals[index][1] >= 0.16
+        ]
+        anchors = self._match_pause_anchors(boundaries, gaps)
+        if not anchors:
+            return baseline
+
+        output: list[tuple[float, float]] = []
+        token_cursor = 0
+        window_start = intervals[0][0]
+        for token_index, gap_start, gap_end in anchors:
+            if token_index <= token_cursor:
+                continue
+            clipped = self._clip_intervals(intervals, window_start, gap_start)
+            if not clipped:
+                clipped = [(window_start, max(window_start + 0.05, gap_start))]
+            output.extend(self._allocate_over_intervals(
+                clipped,
+                weights[token_cursor:token_index],
+            ))
+            token_cursor = token_index
+            window_start = gap_end
+
+        if token_cursor < len(weights):
+            final_end = intervals[-1][1]
+            clipped = self._clip_intervals(intervals, window_start, final_end)
+            if not clipped:
+                clipped = [(window_start, max(window_start + 0.05, final_end))]
+            output.extend(self._allocate_over_intervals(clipped, weights[token_cursor:]))
+
+        if len(output) != len(weights):
+            return baseline
+        return output
+
+    @staticmethod
+    def _match_pause_anchors(
+        boundaries: list[tuple[int, float, bool]],
+        gaps: list[tuple[float, float]],
+    ) -> list[tuple[int, float, float]]:
+        if not boundaries or not gaps:
+            return []
+
+        @lru_cache(maxsize=None)
+        def solve(i: int, j: int) -> tuple[float, tuple[tuple[int, int], ...]]:
+            if i >= len(boundaries):
+                return 0.0, ()
+            if j >= len(gaps):
+                remaining = sum(1.45 if boundaries[k][2] else 0.80 for k in range(i, len(boundaries)))
+                return remaining, ()
+
+            token_index, target, strong = boundaries[i]
+            gap_start, gap_end = gaps[j]
+            midpoint = (gap_start + gap_end) / 2.0
+            pause = gap_end - gap_start
+
+            skip_boundary_cost, skip_boundary_path = solve(i + 1, j)
+            skip_boundary_cost += 1.45 if strong else 0.80
+
+            skip_gap_cost, skip_gap_path = solve(i, j + 1)
+            skip_gap_cost += 0.08
+
+            best_cost = skip_boundary_cost
+            best_path = skip_boundary_path
+            if skip_gap_cost < best_cost:
+                best_cost = skip_gap_cost
+                best_path = skip_gap_path
+
+            error = abs(midpoint - target)
+            tolerance = 4.0 if strong else 2.2
+            if error <= tolerance:
+                match_cost, match_path = solve(i + 1, j + 1)
+                scale = 2.4 if strong else 1.9
+                pause_bonus = min(0.8, pause) * (0.28 if strong else 0.12)
+                match_cost += error / scale - pause_bonus
+                if match_cost < best_cost:
+                    best_cost = match_cost
+                    best_path = ((i, j),) + match_path
+            return best_cost, best_path
+
+        _, matched = solve(0, 0)
+        output: list[tuple[int, float, float]] = []
+        for boundary_index, gap_index in matched:
+            token_index, _, _ = boundaries[boundary_index]
+            gap_start, gap_end = gaps[gap_index]
+            output.append((token_index, gap_start, gap_end))
+        return output
+
+    @staticmethod
+    def _clip_intervals(
+        intervals: list[tuple[float, float]],
+        start: float,
+        end: float,
+    ) -> list[tuple[float, float]]:
+        output: list[tuple[float, float]] = []
+        for interval_start, interval_end in intervals:
+            clipped_start = max(start, interval_start)
+            clipped_end = min(end, interval_end)
+            if clipped_end - clipped_start >= 0.035:
+                output.append((clipped_start, clipped_end))
+        return output
 
     @staticmethod
     def _allocate_over_intervals(
         intervals: list[tuple[float, float]],
         weights: list[float],
     ) -> list[tuple[float, float]]:
+        if not weights:
+            return []
         total_active = sum(max(0.0, b - a) for a, b in intervals)
         if total_active <= 0:
             total_active = 0.1
         total_weight = max(1.0, sum(weights))
 
-        # Map a cumulative active-time coordinate into the real timeline, skipping
-        # silence gaps instead of stretching narration across them.
         def real_time(active_position: float) -> float:
             remaining = min(max(0.0, active_position), total_active)
             for start, end in intervals:
@@ -212,9 +347,6 @@ class TranscriptionService:
         script_tokens = list(_WORD_RE.finditer(script))
         if not script_tokens or not transcript.words:
             return transcript
-        # ASR text can differ in punctuation/orthography. Preserve ASR word times and
-        # map monotonically by token order; Final Package declares EXACT_MATCH, so this
-        # is a safe fallback until a phoneme-level forced aligner is available.
         count = min(len(script_tokens), len(transcript.words))
         words = list(transcript.words)
         for index in range(count):
