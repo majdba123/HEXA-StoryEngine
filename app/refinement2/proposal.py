@@ -45,26 +45,35 @@ class _Cluster:
 
 
 class CVProposalEngine:
-    """Find stable structural islands using profiles close to Pass 1.
+    """Find detached-object candidates without changing geometry.
 
-    Profiles are detection-only. They suppress neutral drop shadows somewhat more than
-    Pass 1, revealing real small gaps without touching output pixels.
+    Pass 2 must stay Pass-1-like: propose more *detached* islands, but never by
+    cutting through a visually fused cluster. The engine therefore only increases
+    *proposal recall*. Real acceptance remains fail-closed in the validator and
+    extractor.
     """
 
     _PROFILES = (
-        # Keep Pass-1-like structure, then add one slightly more sensitive probe for
-        # small visually detached islands that were previously missed.
+        # Baseline Pass-1-like probes.
         (20, 198, 3),
         (22, 192, 3),
         (26, 182, 5),
         (30, 172, 7),
+        # One slightly more sensitive probe to expose detached islands separated by
+        # a very small real gutter.
+        (16, 206, 3),
+    )
+    # Strict structural-contact profiles. These intentionally suppress weak neutral
+    # shadows/glows harder than the generic probes so detached figures/cards/badges
+    # can appear as independent hard-ink islands.
+    _HARD_PROFILES = (
+        (18, 212),
+        (16, 205),
     )
     _MIN_CONSENSUS = 2
-    # Slightly lower the floor to recover detached badges/coins/cards while still
-    # rejecting tiny noise. Hard detached validation still gates acceptance.
-    _MIN_AREA_SHARE = 0.014
+    _MIN_AREA_SHARE = 0.009
     _MAX_AREA_SHARE = 0.72
-    _MIN_DIM_SHARE = 0.04
+    _MIN_DIM_SHARE = 0.03
 
     def propose(self, rgba: np.ndarray) -> list[CandidateProposal]:
         h, w = rgba.shape[:2]
@@ -85,28 +94,35 @@ class CVProposalEngine:
             ).astype(np.uint8) * 255
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
             opened = cv2.morphologyEx(structural, cv2.MORPH_OPEN, kernel)
-            count, labels, stats, centers = cv2.connectedComponentsWithStats(opened, connectivity=8)
-            for label in range(1, count):
-                x, y, bw, bh, area = [int(v) for v in stats[label]]
-                if area <= 0:
-                    continue
-                area_share = area / total_visible
-                if not (self._MIN_AREA_SHARE <= area_share <= self._MAX_AREA_SHARE):
-                    continue
-                if bw / w < self._MIN_DIM_SHARE or bh / h < self._MIN_DIM_SHARE:
-                    continue
-                mask = labels == label
-                center = (float(centers[label][0]), float(centers[label][1]))
-                self._add_to_cluster(
-                    clusters,
-                    profile_index,
-                    mask,
-                    (x, y, bw, bh),
-                    center,
-                    area,
-                    diagonal,
-                )
+            self._collect_components(
+                opened=opened,
+                profile_index=profile_index,
+                clusters=clusters,
+                total_visible=total_visible,
+                width=w,
+                height=h,
+                diagonal=diagonal,
+            )
 
+        profile_offset = len(self._PROFILES)
+        for hard_index, (sat_min, dark_value_max) in enumerate(self._HARD_PROFILES):
+            hard_contact = (
+                (alpha >= 26)
+                & ((hsv[:, :, 1] >= sat_min) | (hsv[:, :, 2] <= dark_value_max))
+            ).astype(np.uint8) * 255
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            cleaned = cv2.morphologyEx(hard_contact, cv2.MORPH_OPEN, kernel)
+            self._collect_components(
+                opened=cleaned,
+                profile_index=profile_offset + hard_index,
+                clusters=clusters,
+                total_visible=total_visible,
+                width=w,
+                height=h,
+                diagonal=diagonal,
+            )
+
+        total_profiles = len(self._PROFILES) + len(self._HARD_PROFILES)
         accepted = [cluster for cluster in clusters if len(cluster.profiles) >= self._MIN_CONSENSUS]
         accepted.sort(key=lambda row: row.area, reverse=True)
         proposals: list[CandidateProposal] = []
@@ -116,11 +132,44 @@ class CVProposalEngine:
                 bbox=cluster.bbox,
                 center=cluster.center,
                 area_share=cluster.area / total_visible,
-                stability=len(cluster.profiles) / len(self._PROFILES),
+                stability=len(cluster.profiles) / total_profiles,
                 source=ProposalSource.cv,
                 core_mask=cluster.mask,
             ))
         return proposals
+
+    def _collect_components(
+        self,
+        *,
+        opened: np.ndarray,
+        profile_index: int,
+        clusters: list[_Cluster],
+        total_visible: int,
+        width: int,
+        height: int,
+        diagonal: float,
+    ) -> None:
+        count, labels, stats, centers = cv2.connectedComponentsWithStats(opened, connectivity=8)
+        for label in range(1, count):
+            x, y, bw, bh, area = [int(v) for v in stats[label]]
+            if area <= 0:
+                continue
+            area_share = area / total_visible
+            if not (self._MIN_AREA_SHARE <= area_share <= self._MAX_AREA_SHARE):
+                continue
+            if bw / width < self._MIN_DIM_SHARE or bh / height < self._MIN_DIM_SHARE:
+                continue
+            mask = labels == label
+            center = (float(centers[label][0]), float(centers[label][1]))
+            self._add_to_cluster(
+                clusters,
+                profile_index,
+                mask,
+                (x, y, bw, bh),
+                center,
+                area,
+                diagonal,
+            )
 
     @staticmethod
     def _bbox_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
@@ -148,7 +197,7 @@ class CVProposalEngine:
         for cluster in clusters:
             cx, cy = cluster.center
             distance = ((center[0] - cx) ** 2 + (center[1] - cy) ** 2) ** 0.5
-            if self._bbox_iou(bbox, cluster.bbox) >= 0.28 or distance <= diagonal * 0.055:
+            if self._bbox_iou(bbox, cluster.bbox) >= 0.24 or distance <= diagonal * 0.05:
                 cluster.members.append((profile_index, mask, bbox, center, area))
                 return
         clusters.append(_Cluster(members=[(profile_index, mask, bbox, center, area)]))

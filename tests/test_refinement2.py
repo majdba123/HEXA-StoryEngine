@@ -39,6 +39,49 @@ def _asset(path: Path, *, touching: bool = False) -> VisualAsset:
     )
 
 
+def _tight_gap_asset(path: Path) -> VisualAsset:
+    canvas = Image.new("RGBA", (420, 240), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle((30, 50, 230, 200), radius=18, fill=(20, 100, 220, 255), outline=(0, 30, 90, 255), width=5)
+    # Detached object with a very tight but real gap.
+    x0 = 236
+    draw.ellipse((x0 + 18, 40, x0 + 78, 100), fill=(20, 150, 80, 255), outline=(0, 60, 30, 255), width=4)
+    draw.rounded_rectangle((x0, 98, x0 + 100, 210), radius=18, fill=(30, 170, 90, 255), outline=(0, 60, 30, 255), width=4)
+    canvas.save(path)
+    return VisualAsset(
+        id="scene:asset-tight-gap",
+        scene_id="scene",
+        role="primary_visual",
+        image_path=path,
+        source_bbox=(100, 50, 420, 240),
+        confidence=0.9,
+        extraction_method="component_mask",
+        independent=True,
+        compound=True,
+        component_count=2,
+        source_area_ratio=0.5,
+        source_canvas_width=1000,
+        source_canvas_height=600,
+        can_animate_independently=True,
+    )
+
+
+def test_pass2_recovers_tight_real_gap_without_cutting_geometry(tmp_path: Path) -> None:
+    parent = _tight_gap_asset(tmp_path / "tight-gap.png")
+    result = Pass2RefinementService().refine([parent], tmp_path / "work-tight")
+    assert len(result) >= 2
+    original = np.asarray(Image.open(parent.image_path).convert("RGBA"))[:, :, 3]
+    main = np.asarray(Image.open(result[0].image_path).convert("RGBA"))[:, :, 3]
+    reconstructed = main.copy()
+    separated_pixels = 0
+    for secondary in result[1:]:
+        alpha = np.asarray(Image.open(secondary.image_path).convert("RGBA"))[:, :, 3]
+        reconstructed = np.maximum(reconstructed, alpha)
+        separated_pixels += int(np.count_nonzero(alpha))
+    assert separated_pixels > 0
+    assert np.array_equal(reconstructed, original)
+
+
 def test_pass2_preserves_geometry_and_exact_alpha(tmp_path: Path) -> None:
     parent = _asset(tmp_path / "parent.png", touching=False)
     result = Pass2RefinementService().refine([parent], tmp_path / "work")
