@@ -8,10 +8,14 @@ from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualA
 class StoryPlanner:
     """Build narration-locked visual beats from package intent.
 
-    Final Package scene/script spans decide *what* visual material belongs to a phrase;
-    word/phrase timings decide *when* it becomes active. The planner never distributes
-    narration uniformly by scene index.
+    ``audio_start/audio_end`` preserve the semantic narration timing. ``start/end`` own
+    the visual timeline and may begin slightly earlier so an entrance settles on the
+    narrated idea instead of reacting after the listener has already heard it.
     """
+
+    _DEFAULT_VISUAL_LEAD = 0.24
+    _MAX_VISUAL_LEAD = 0.30
+    _MIN_VISUAL_BEAT = 0.08
 
     def plan(
         self,
@@ -44,7 +48,7 @@ class StoryPlanner:
                 fallback_segment = None
                 if transcript.segments:
                     fallback_segment = transcript.segments[min(scene.order, len(transcript.segments) - 1)]
-                start, end, narration = self._timing_for_span(
+                audio_start, audio_end, narration = self._timing_for_span(
                     transcript,
                     package.script,
                     char_start,
@@ -52,11 +56,11 @@ class StoryPlanner:
                     scene.narration_hint,
                     fallback_segment,
                 )
-                if event_index > 0 and beats and start < beats[-1].end:
-                    # Multiple events inside the same package scene are allowed to
-                    # overlap only minimally; preserve event order deterministically.
-                    start = max(start, beats[-1].start + 0.05)
-                end = max(end, start + 0.12)
+                if event_index > 0 and beats:
+                    previous_audio_start = beats[-1].audio_start
+                    if previous_audio_start is not None and audio_start <= previous_audio_start:
+                        audio_start = previous_audio_start + 0.05
+                audio_end = max(audio_end, audio_start + 0.12)
 
                 selected = self._select_assets(scene_assets)
                 primary = selected[0].id if selected else None
@@ -67,8 +71,10 @@ class StoryPlanner:
                 beats.append(StoryBeat(
                     id=f"beat-{beat_number:03d}",
                     scene_id=scene.id,
-                    start=start,
-                    end=end,
+                    start=audio_start,
+                    end=audio_end,
+                    audio_start=audio_start,
+                    audio_end=audio_end,
                     narration=narration,
                     primary_asset_ids=[primary] if primary else [],
                     support_asset_ids=support,
@@ -80,16 +86,51 @@ class StoryPlanner:
                 if primary:
                     previous_primary = primary
 
-        # Guarantee monotonic, bounded ordering while retaining narration-locked
-        # timings. Scene spans from canonical script should already be monotonic.
-        beats.sort(key=lambda beat: (beat.start, beat.end, beat.id))
-        return beats
+        beats.sort(key=lambda beat: (
+            beat.audio_start if beat.audio_start is not None else beat.start,
+            beat.audio_end if beat.audio_end is not None else beat.end,
+            beat.id,
+        ))
+        return self._assign_visual_timeline(beats, transcript.duration)
+
+    def _assign_visual_timeline(self, beats: list[StoryBeat], duration: float) -> list[StoryBeat]:
+        if not beats:
+            return beats
+
+        starts: list[float] = []
+        previous_start = -self._MIN_VISUAL_BEAT
+        previous_audio_end = 0.0
+        for index, beat in enumerate(beats):
+            audio_start = beat.audio_start if beat.audio_start is not None else beat.start
+            gap_before = max(0.0, audio_start - previous_audio_end)
+            if index == 0:
+                lead = min(self._DEFAULT_VISUAL_LEAD, audio_start)
+            else:
+                lead = min(
+                    self._MAX_VISUAL_LEAD,
+                    max(0.18, min(self._DEFAULT_VISUAL_LEAD, gap_before * 0.80 + 0.14)),
+                )
+            proposed = max(0.0, audio_start - lead)
+            visual_start = max(proposed, previous_start + self._MIN_VISUAL_BEAT)
+            starts.append(min(visual_start, max(0.0, duration - self._MIN_VISUAL_BEAT)))
+            previous_start = starts[-1]
+            previous_audio_end = beat.audio_end if beat.audio_end is not None else beat.end
+
+        output: list[StoryBeat] = []
+        for index, beat in enumerate(beats):
+            start = starts[index]
+            if index + 1 < len(beats):
+                end = max(start + self._MIN_VISUAL_BEAT, starts[index + 1])
+            else:
+                end = max(start + self._MIN_VISUAL_BEAT, duration)
+            end = min(duration, end)
+            output.append(beat.model_copy(update={"start": start, "end": end}))
+        return output
 
     @staticmethod
     def _select_assets(scene_assets: list[VisualAsset]) -> list[VisualAsset]:
         if len(scene_assets) <= 6:
             return scene_assets
-        # Keep the dominant illustration plus the five largest independent cues.
         return scene_assets[:6]
 
     @staticmethod
@@ -150,9 +191,6 @@ class StoryPlanner:
                 narration = script[char_start:effective_end].strip() or (hint or "")
                 return start, max(start + 0.12, end), narration
 
-        # Backward-compatible package without canonical char spans: choose the
-        # transcript segment best matching the narration hint, otherwise one broad
-        # segment. This is intentionally secondary to canonical scene metadata.
         if hint:
             normalized = hint.strip()
             for segment in transcript.segments:
