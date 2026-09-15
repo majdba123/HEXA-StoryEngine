@@ -54,10 +54,6 @@ class FFmpegRenderer:
                         details={"asset_id": asset.id, "path": str(asset.image_path)},
                     )
                 command.extend([
-                    "-loop",
-                    "1",
-                    "-t",
-                    f"{plan.duration:.6f}",
                     "-i",
                     str(asset.image_path),
                 ])
@@ -82,6 +78,9 @@ class FFmpegRenderer:
             filters.append(
                 f"[{source_index}:v]format=rgba,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
+                f"loop=loop=-1:size=1:start=0,"
+                f"trim=duration={max(0.05, beat.end - beat.start):.6f},"
+                f"setpts=PTS-STARTPTS+{beat.start:.6f}/TB,"
                 f"fade=t=in:st={start:.6f}:d={reveal_duration:.6f}:alpha=1,"
                 f"fade=t=out:st={out_start:.6f}:d={out_duration:.6f}:alpha=1"
                 f"[{source_label}]"
@@ -118,7 +117,7 @@ class FFmpegRenderer:
             "-c:v",
             "libx264",
             "-preset",
-            "medium",
+            "veryfast",
             "-crf",
             "18",
             "-pix_fmt",

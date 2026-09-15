@@ -88,7 +88,7 @@ class CutoutService:
                 image = self._boxed_cutout(detection.source_image, detection.bbox)
             if image.width < 2 or image.height < 2:
                 continue
-            image.save(target, format="PNG", optimize=True)
+            image.save(target, format="PNG", optimize=False, compress_level=3)
             assets.append(VisualAsset(
                 id=asset_id,
                 scene_id=detection.scene_id,
@@ -193,29 +193,65 @@ class CutoutService:
 
     @staticmethod
     def _border_connected_background(near_white: np.ndarray) -> np.ndarray:
+        """Return border-connected white background without full-resolution Python flood fill.
+
+        Large Final Package scenes can contain millions of pixels. Flood-filling every
+        source pixel in Python is prohibitively slow, so connectivity is solved on an
+        adaptive coarse mask and then projected back onto the exact near-white mask.
+        Only pixels that are actually near-white can become transparent at full
+        resolution, which preserves colored edges and keeps the fallback deterministic.
+        """
         height, width = near_white.shape
-        background = np.zeros((height, width), dtype=bool)
+        if height == 0 or width == 0:
+            return np.zeros_like(near_white, dtype=bool)
+
+        target_cells = 80_000
+        block = max(1, int(np.ceil(np.sqrt((height * width) / target_cells))))
+        if block == 1:
+            low = near_white
+        else:
+            rows = (height + block - 1) // block
+            cols = (width + block - 1) // block
+            padded = np.zeros((rows * block, cols * block), dtype=np.float32)
+            padded[:height, :width] = near_white
+            coverage = padded.reshape(rows, block, cols, block).mean(axis=(1, 3))
+            low = coverage >= 0.70
+
+        low_h, low_w = low.shape
+        connected = np.zeros_like(low, dtype=bool)
         queue: deque[tuple[int, int]] = deque()
 
         def seed(x: int, y: int) -> None:
-            if near_white[y, x] and not background[y, x]:
-                background[y, x] = True
+            if low[y, x] and not connected[y, x]:
+                connected[y, x] = True
                 queue.append((x, y))
 
-        for x in range(width):
+        for x in range(low_w):
             seed(x, 0)
-            if height > 1:
-                seed(x, height - 1)
-        for y in range(height):
+            if low_h > 1:
+                seed(x, low_h - 1)
+        for y in range(low_h):
             seed(0, y)
-            if width > 1:
-                seed(width - 1, y)
+            if low_w > 1:
+                seed(low_w - 1, y)
 
         while queue:
             x, y = queue.popleft()
-            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-                if 0 <= nx < width and 0 <= ny < height:
-                    if near_white[ny, nx] and not background[ny, nx]:
-                        background[ny, nx] = True
-                        queue.append((nx, ny))
-        return background
+            if x > 0 and low[y, x - 1] and not connected[y, x - 1]:
+                connected[y, x - 1] = True
+                queue.append((x - 1, y))
+            if x + 1 < low_w and low[y, x + 1] and not connected[y, x + 1]:
+                connected[y, x + 1] = True
+                queue.append((x + 1, y))
+            if y > 0 and low[y - 1, x] and not connected[y - 1, x]:
+                connected[y - 1, x] = True
+                queue.append((x, y - 1))
+            if y + 1 < low_h and low[y + 1, x] and not connected[y + 1, x]:
+                connected[y + 1, x] = True
+                queue.append((x, y + 1))
+
+        if block == 1:
+            return connected
+
+        expanded = np.repeat(np.repeat(connected, block, axis=0), block, axis=1)[:height, :width]
+        return expanded & near_white
