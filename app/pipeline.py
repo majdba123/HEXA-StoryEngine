@@ -87,7 +87,7 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.composition, 0.53, "Composing frames")
-        composition = self.composition.plan(story)
+        composition = self.composition.plan(story, assets)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.62, "Planning element entrances and handoffs")
@@ -211,7 +211,7 @@ class StoryEnginePipeline:
         if start <= 1:
             story = self.story.plan(package, transcript, assets)
         if start <= 2:
-            composition = self.composition.plan(story)
+            composition = self.composition.plan(story, assets)
         if start <= 3:
             motion = self.motion.plan(story, composition)
         plan, _ = self.render_planner.compile(

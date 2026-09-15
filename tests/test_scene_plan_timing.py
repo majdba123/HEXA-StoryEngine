@@ -1,0 +1,47 @@
+from pathlib import Path
+
+from app.input.loader import FinalPackageLoader
+from app.models import Transcript, TranscriptWord, VisualAsset
+from app.story.planner import StoryPlanner
+
+
+def test_scene_plan_drives_scene_ids_and_narration_timing(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    (package / "scenes").mkdir(parents=True)
+    from PIL import Image
+    Image.new("RGB", (320, 180), "white").save(package / "scenes" / "SCENE_001.png")
+    Image.new("RGB", (320, 180), "white").save(package / "scenes" / "SCENE_002.png")
+    script = "alpha beta gamma delta"
+    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
+    (package / "manifest.json").write_text(
+        '{"project_id":"p","scene_plan":"scene_plan.json","canonical_script":"canonical_script.txt"}',
+        encoding="utf-8",
+    )
+    (package / "scene_plan.json").write_text(
+        '''{"project_id":"p","scenes":[
+          {"scene_id":"SCENE_001","order":1,"image":"scenes/SCENE_001.png","script_span":{"global_char_start":0,"global_char_end":9,"text":"alpha beta"},"visual_progression":[{"action":"EXPLAIN","trigger":{"global_char_start":0,"global_char_end":9},"targets":["U1"]}]},
+          {"scene_id":"SCENE_002","order":2,"image":"scenes/SCENE_002.png","script_span":{"global_char_start":11,"global_char_end":21,"text":"gamma delta"},"visual_progression":[{"action":"EXPLAIN","trigger":{"global_char_start":11,"global_char_end":21},"targets":["U2"]}]}
+        ]}''',
+        encoding="utf-8",
+    )
+    model = FinalPackageLoader().load(package, tmp_path / "work")
+    assert [scene.id for scene in model.scenes] == ["SCENE_001", "SCENE_002"]
+
+    words = [
+        TranscriptWord(start=0.20, end=0.55, text="alpha", char_start=0, char_end=5),
+        TranscriptWord(start=0.60, end=0.95, text="beta", char_start=6, char_end=10),
+        TranscriptWord(start=1.50, end=1.85, text="gamma", char_start=11, char_end=16),
+        TranscriptWord(start=1.90, end=2.25, text="delta", char_start=17, char_end=22),
+    ]
+    transcript = Transcript(language="en", duration=2.5, segments=[], words=words)
+    assets = [
+        VisualAsset(id="a1", scene_id="SCENE_001", role="primary", image_path=package / "scenes" / "SCENE_001.png", extraction_method="test", source_area_ratio=0.4),
+        VisualAsset(id="a2", scene_id="SCENE_002", role="primary", image_path=package / "scenes" / "SCENE_002.png", extraction_method="test", source_area_ratio=0.4),
+    ]
+    beats = StoryPlanner().plan(model, transcript, assets)
+    assert len(beats) == 2
+    assert beats[0].scene_id == "SCENE_001"
+    assert beats[0].start == 0.20
+    assert beats[0].end == 0.95
+    assert beats[1].start == 1.50
+    assert beats[1].end == 2.25

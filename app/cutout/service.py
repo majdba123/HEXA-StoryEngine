@@ -5,12 +5,13 @@ import shutil
 from collections import deque
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
 from app.models import PackageModel, VisualAsset
 from app.shared.errors import StageFailedError
-from app.vision.service import VisionObject
+from app.vision.service import VisionObject, build_structural_foreground
 
 _IMAGE_EXTENSIONS = {".png", ".webp", ".jpg", ".jpeg"}
 
@@ -68,6 +69,7 @@ class CutoutService:
         backend = self._get_sam_backend()
         assets: list[VisualAsset] = []
         counters: dict[str, int] = {}
+        component_cache: dict[Path, np.ndarray] = {}
         for detection in detections:
             if detection.bbox is None:
                 continue
@@ -76,7 +78,7 @@ class CutoutService:
             asset_id = f"{detection.scene_id}:asset-{number:02d}"
             target = output_dir / f"{detection.scene_id}-asset-{number:02d}.png"
 
-            method = "white_background"
+            method = "component_mask"
             image = None
             if backend is not None:
                 try:
@@ -85,10 +87,28 @@ class CutoutService:
                 except Exception:
                     image = None
             if image is None:
-                image = self._boxed_cutout(detection.source_image, detection.bbox)
+                if detection.seed_points:
+                    labels = component_cache.get(detection.source_image)
+                    if labels is None:
+                        labels = self._component_labels(detection.source_image)
+                        component_cache[detection.source_image] = labels
+                    image = self._component_cutout(
+                        detection.source_image,
+                        detection.bbox,
+                        detection.seed_points,
+                        labels,
+                    )
+                else:
+                    image = self._boxed_cutout(detection.source_image, detection.bbox)
+                    method = "white_background"
             if image.width < 2 or image.height < 2:
                 continue
             image.save(target, format="PNG", optimize=False, compress_level=3)
+            source_area_ratio = getattr(detection, "area_ratio", 0.0) or None
+            component_count = max(1, int(getattr(detection, "component_count", 1)))
+            compound = bool(getattr(detection, "compound", False))
+            with Image.open(detection.source_image) as source_image:
+                source_canvas_width, source_canvas_height = source_image.size
             assets.append(VisualAsset(
                 id=asset_id,
                 scene_id=detection.scene_id,
@@ -97,8 +117,74 @@ class CutoutService:
                 source_bbox=detection.bbox,
                 confidence=detection.confidence,
                 extraction_method=method,
+                independent=True,
+                compound=compound,
+                component_count=component_count,
+                source_area_ratio=source_area_ratio,
+                source_canvas_width=source_canvas_width,
+                source_canvas_height=source_canvas_height,
+                can_animate_independently=True,
             ))
         return assets
+
+    @staticmethod
+    def _component_labels(source: Path) -> np.ndarray:
+        bgr = cv2.imread(str(source), cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise StageFailedError("unable to read cutout source", details={"path": str(source)})
+        structural = build_structural_foreground(bgr)
+        _, labels = cv2.connectedComponents(structural, connectivity=8)
+        return labels
+
+    @staticmethod
+    def _component_cutout(
+        source: Path,
+        bbox: tuple[int, int, int, int],
+        seed_points: tuple[tuple[int, int], ...],
+        labels: np.ndarray,
+    ) -> Image.Image:
+        image = Image.open(source).convert("RGB")
+        x, y, width, height = bbox
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(image.width, x + max(1, width))
+        y1 = min(image.height, y + max(1, height))
+        crop = image.crop((x0, y0, x1, y1))
+
+        target_labels: set[int] = set()
+        for sx, sy in seed_points:
+            if 0 <= sy < labels.shape[0] and 0 <= sx < labels.shape[1]:
+                label = int(labels[sy, sx])
+                if label > 0:
+                    target_labels.add(label)
+        if not target_labels:
+            return CutoutService._boxed_cutout(source, bbox)
+
+        label_crop = labels[y0:y1, x0:x1]
+        barrier = np.isin(label_crop, list(target_labels))
+        # The target structural strokes divide enclosed white details from true
+        # outside background. Flood from a padded outside border; anything not
+        # reachable without crossing the target belongs to the object silhouette.
+        padded = np.pad(barrier, 1, mode="constant", constant_values=False)
+        open_space = (~padded).astype(np.uint8) * 255
+        flood_mask = np.zeros((open_space.shape[0] + 2, open_space.shape[1] + 2), dtype=np.uint8)
+        cv2.floodFill(open_space, flood_mask, (0, 0), 128)
+        outside = open_space == 128
+        silhouette = ~outside[1:-1, 1:-1]
+
+        alpha = (silhouette.astype(np.uint8) * 255)
+        alpha_image = Image.fromarray(alpha).filter(ImageFilter.GaussianBlur(radius=0.45))
+        rgba = crop.convert("RGBA")
+        rgba.putalpha(alpha_image)
+        visible = rgba.getchannel("A").getbbox()
+        if visible is None:
+            return rgba
+        margin = 6
+        left = max(0, visible[0] - margin)
+        top = max(0, visible[1] - margin)
+        right = min(rgba.width, visible[2] + margin)
+        bottom = min(rgba.height, visible[3] + margin)
+        return rgba.crop((left, top, right, bottom))
 
     def _get_sam_backend(self):
         if self._sam_checked:

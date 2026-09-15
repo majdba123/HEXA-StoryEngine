@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from app.models import PackageModel, StoryBeat, Transcript, VisualAsset
+from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
 
 
 class StoryPlanner:
-    """Builds visual beats; it does not decide pixels or animation curves."""
+    """Build narration-locked visual beats from package intent.
+
+    Final Package scene/script spans decide *what* visual material belongs to a phrase;
+    word/phrase timings decide *when* it becomes active. The planner never distributes
+    narration uniformly by scene index.
+    """
 
     def plan(
         self,
@@ -17,28 +22,152 @@ class StoryPlanner:
         assets_by_scene: dict[str, list[VisualAsset]] = defaultdict(list)
         for asset in assets:
             assets_by_scene[asset.scene_id].append(asset)
-        scenes = package.scenes
+        for rows in assets_by_scene.values():
+            rows.sort(key=lambda asset: (asset.source_area_ratio or 0.0), reverse=True)
+
         beats: list[StoryBeat] = []
         previous_primary: str | None = None
-        for index, segment in enumerate(transcript.segments):
-            scene = scenes[min(index * len(scenes) // max(1, len(transcript.segments)), len(scenes) - 1)]
+        beat_number = 1
+        for scene in package.scenes:
             scene_assets = assets_by_scene.get(scene.id, [])
-            primary = scene_assets[0].id if scene_assets else None
-            support = [asset.id for asset in scene_assets[1:3]]
-            action = "INTRODUCE" if previous_primary != primary else "REVEAL_DETAIL"
-            if previous_primary and primary and previous_primary != primary:
-                action = "HANDOFF"
-            beats.append(StoryBeat(
-                id=f"beat-{index + 1:03d}",
-                scene_id=scene.id,
-                start=segment.start,
-                end=segment.end,
-                narration=segment.text,
-                primary_asset_ids=[primary] if primary else [],
-                support_asset_ids=support,
-                action=action,
-                handoff_from=previous_primary if action == "HANDOFF" else None,
-            ))
-            if primary:
-                previous_primary = primary
+            if not scene_assets:
+                continue
+            events = scene.visual_progression or [self._default_event(scene)]
+            for event_index, event in enumerate(events):
+                trigger = event.get("trigger") if isinstance(event.get("trigger"), dict) else {}
+                char_start = self._int_or_none(trigger.get("global_char_start"))
+                char_end = self._int_or_none(trigger.get("global_char_end"))
+                if char_start is None:
+                    char_start = scene.script_char_start
+                if char_end is None:
+                    char_end = scene.script_char_end
+                fallback_segment = None
+                if transcript.segments:
+                    fallback_segment = transcript.segments[min(scene.order, len(transcript.segments) - 1)]
+                start, end, narration = self._timing_for_span(
+                    transcript,
+                    package.script,
+                    char_start,
+                    char_end,
+                    scene.narration_hint,
+                    fallback_segment,
+                )
+                if event_index > 0 and beats and start < beats[-1].end:
+                    # Multiple events inside the same package scene are allowed to
+                    # overlap only minimally; preserve event order deterministically.
+                    start = max(start, beats[-1].start + 0.05)
+                end = max(end, start + 0.12)
+
+                selected = self._select_assets(scene_assets)
+                primary = selected[0].id if selected else None
+                support = [asset.id for asset in selected[1:]]
+                raw_action = str(event.get("action") or "EXPLAIN").upper()
+                action = self._story_action(raw_action, previous_primary, primary)
+                targets = [str(value) for value in event.get("targets", []) if value]
+                beats.append(StoryBeat(
+                    id=f"beat-{beat_number:03d}",
+                    scene_id=scene.id,
+                    start=start,
+                    end=end,
+                    narration=narration,
+                    primary_asset_ids=[primary] if primary else [],
+                    support_asset_ids=support,
+                    action=action,
+                    handoff_from=previous_primary if previous_primary and primary != previous_primary else None,
+                    semantic_targets=targets,
+                ))
+                beat_number += 1
+                if primary:
+                    previous_primary = primary
+
+        # Guarantee monotonic, bounded ordering while retaining narration-locked
+        # timings. Scene spans from canonical script should already be monotonic.
+        beats.sort(key=lambda beat: (beat.start, beat.end, beat.id))
         return beats
+
+    @staticmethod
+    def _select_assets(scene_assets: list[VisualAsset]) -> list[VisualAsset]:
+        if len(scene_assets) <= 6:
+            return scene_assets
+        # Keep the dominant illustration plus the five largest independent cues.
+        return scene_assets[:6]
+
+    @staticmethod
+    def _default_event(scene: SceneSource) -> dict:
+        return {
+            "action": "EXPLAIN",
+            "targets": [unit.get("unit_id") for unit in scene.units if unit.get("unit_id")],
+            "trigger": {
+                "global_char_start": scene.script_char_start,
+                "global_char_end": scene.script_char_end,
+                "phrase": scene.narration_hint,
+            },
+        }
+
+    @staticmethod
+    def _story_action(raw_action: str, previous_primary: str | None, primary: str | None) -> str:
+        if previous_primary and primary and previous_primary != primary:
+            return "HANDOFF"
+        mapping = {
+            "INTRODUCE": "INTRODUCE",
+            "REVEAL": "REVEAL_DETAIL",
+            "EMPHASIZE": "EMPHASIZE",
+            "COMPARE": "COMPARE",
+            "RESULT": "RESULT",
+            "REJECT": "RESULT",
+            "EXPLAIN": "INTRODUCE" if previous_primary is None else "REVEAL_DETAIL",
+        }
+        return mapping.get(raw_action, "REVEAL_DETAIL")
+
+    @staticmethod
+    def _timing_for_span(
+        transcript: Transcript,
+        script: str | None,
+        char_start: int | None,
+        char_end: int | None,
+        hint: str | None,
+        fallback_segment=None,
+    ) -> tuple[float, float, str]:
+        if char_start is not None and char_end is not None:
+            effective_end = char_end + 1
+            words = [
+                word for word in transcript.words
+                if word.char_start is not None
+                and word.char_end is not None
+                and word.char_end > char_start
+                and word.char_start < effective_end
+            ]
+            if words:
+                narration = (script[char_start:effective_end] if script else hint) or " ".join(
+                    word.text for word in words
+                )
+                return words[0].start, words[-1].end, narration.strip()
+
+            if script:
+                script_length = max(1, len(script))
+                start = transcript.duration * max(0, char_start) / script_length
+                end = transcript.duration * min(script_length, effective_end) / script_length
+                narration = script[char_start:effective_end].strip() or (hint or "")
+                return start, max(start + 0.12, end), narration
+
+        # Backward-compatible package without canonical char spans: choose the
+        # transcript segment best matching the narration hint, otherwise one broad
+        # segment. This is intentionally secondary to canonical scene metadata.
+        if hint:
+            normalized = hint.strip()
+            for segment in transcript.segments:
+                if normalized and (normalized in segment.text or segment.text in normalized):
+                    return segment.start, segment.end, normalized
+        if fallback_segment is not None:
+            return fallback_segment.start, fallback_segment.end, hint or fallback_segment.text
+        if transcript.segments:
+            segment = transcript.segments[0]
+            return segment.start, segment.end, hint or segment.text
+        return 0.0, transcript.duration, hint or ""
+
+    @staticmethod
+    def _int_or_none(value) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None

@@ -44,7 +44,7 @@ class RecoveryDetector:
             layout = composition.get(beat.id)
             if layout and layout.items:
                 occupancy = min(1.0, sum(max(0.0, item.width) * max(0.0, item.height) for item in layout.items))
-                if occupancy < 0.18:
+                if occupancy < 0.24:
                     issues.append(DetectedIssue(
                         "LOW_SCREEN_OCCUPANCY",
                         f"Beat occupancy is too low: {beat.id}",
@@ -63,12 +63,25 @@ class RecoveryDetector:
         for cue in plan.motion:
             by_beat.setdefault(cue.beat_id, []).append(cue)
             beat = story_by_id.get(cue.beat_id)
-            if beat and cue.start < beat.start - 0.02:
+            if beat and cue.start < beat.start - 0.12:
                 issues.append(DetectedIssue(
                     "ELEMENT_APPEARS_TOO_EARLY",
                     f"Motion begins before narration: {cue.asset_id}",
                     {"beat_id": cue.beat_id, "asset_id": cue.asset_id},
                 ))
+            if beat and cue.asset_id in beat.primary_asset_ids:
+                beat_duration = max(0.05, beat.end - beat.start)
+                late_limit = min(0.42, max(0.18, beat_duration * 0.32))
+                if cue.start > beat.start + late_limit:
+                    issues.append(DetectedIssue(
+                        "ELEMENT_APPEARS_TOO_LATE",
+                        f"Motion begins too late for narration: {cue.asset_id}",
+                        {
+                            "beat_id": cue.beat_id,
+                            "asset_id": cue.asset_id,
+                            "delay": cue.start - beat.start,
+                        },
+                    ))
         for beat_id, cues in by_beat.items():
             if len(cues) >= 3:
                 starts = sorted(cue.start for cue in cues)
