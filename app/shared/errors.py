@@ -19,3 +19,7 @@ class DependencyUnavailableError(HexaError):
 
 class StageFailedError(HexaError):
     code = "STAGE_FAILED"
+
+
+class GenerationCancelledError(HexaError):
+    code = "GENERATION_CANCELLED"

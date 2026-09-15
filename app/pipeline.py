@@ -15,12 +15,17 @@ from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.recovery.manager import RecoveryManager
 from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
-from app.shared.errors import HexaError, StageFailedError
+from app.shared.errors import (
+    GenerationCancelledError,
+    HexaError,
+    StageFailedError,
+)
 from app.story import StoryPlanner
 from app.transcription import TranscriptionService
 from app.vision import VisionService
 
 ProgressCallback = Callable[[Stage, float, str], None]
+CancellationCallback = Callable[[], bool]
 
 
 class StoryEnginePipeline:
@@ -51,35 +56,44 @@ class StoryEnginePipeline:
         output_name: str | None = None,
         job_id: str | None = None,
         progress: ProgressCallback | None = None,
+        cancelled: CancellationCallback | None = None,
     ) -> Path:
         job_id = job_id or uuid.uuid4().hex
         workspace = self.settings.work_root / job_id
         workspace.mkdir(parents=True, exist_ok=True)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.04, "Reading Final Package")
         package = self.loader.load(package_path, workspace, script_path)
         audio_path = audio_path.expanduser().resolve()
         if not audio_path.is_file():
             raise StageFailedError("audio file not found", details={"path": str(audio_path)})
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.transcription, 0.12, "Aligning narration")
         transcript = self.transcriber.transcribe(audio_path, package.script)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.vision, 0.22, "Understanding scene elements")
         detections = self.vision.analyze(package)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.cutout, 0.32, "Extracting visual assets")
         assets = self.cutout.extract(package, detections, workspace)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
         story = self.story.plan(package, transcript, assets)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.composition, 0.53, "Composing frames")
         composition = self.composition.plan(story)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.62, "Planning element entrances and handoffs")
         motion = self.motion.plan(story, composition)
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.68, "Compiling render plan")
         plan, _ = self.render_planner.compile(
             transcript,
@@ -98,11 +112,14 @@ class StoryEnginePipeline:
             workspace=workspace,
             job_id=job_id,
             progress=progress,
+            cancelled=cancelled,
         )
 
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.76, "Rendering story")
         video_only = self.renderer.render(plan, workspace / "render" / "video-only.mp4")
 
+        self._check_cancel(cancelled)
         output_file = self._output_path(package.package_id, output_name)
         self._progress(progress, Stage.final, 0.90, "Building final video")
         final_path = self.final.mux(video_only, audio_path, output_file)
@@ -115,8 +132,10 @@ class StoryEnginePipeline:
             job_id=job_id,
             workspace=workspace,
             progress=progress,
+            cancelled=cancelled,
         )
-        self._progress(progress, Stage.final, 1.0, "Ready for Premiere")
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path
 
     def _recover_plan(
@@ -129,9 +148,11 @@ class StoryEnginePipeline:
         workspace: Path,
         job_id: str,
         progress: ProgressCallback | None,
+        cancelled: CancellationCallback | None,
     ) -> RenderPlan:
         attempts: dict[str, int] = {}
         while True:
+            self._check_cancel(cancelled)
             issues = self.detector.inspect_plan(plan)
             if not issues:
                 return plan
@@ -214,9 +235,11 @@ class StoryEnginePipeline:
         job_id: str,
         workspace: Path,
         progress: ProgressCallback | None,
+        cancelled: CancellationCallback | None,
     ) -> Path:
         attempts: dict[str, int] = {}
         while True:
+            self._check_cancel(cancelled)
             issues = self.detector.inspect_final(final_path, audio_path)
             if not issues:
                 return final_path
@@ -229,7 +252,10 @@ class StoryEnginePipeline:
 
             self._progress(progress, Stage.recovery, 0.94, f"Recovering {issue.code}")
             if result.invalidate_from_stage == "render":
-                video_only = self.renderer.render(plan, workspace / "render" / f"recovered-{attempt}.mp4")
+                video_only = self.renderer.render(
+                    plan,
+                    workspace / "render" / f"recovered-{attempt}.mp4",
+                )
                 final_path = self.final.mux(video_only, audio_path, final_path)
             elif result.invalidate_from_stage == "final":
                 final_path = self.final.mux(video_only, audio_path, final_path)
@@ -263,6 +289,11 @@ class StoryEnginePipeline:
     def _progress(callback: ProgressCallback | None, stage: Stage, value: float, message: str) -> None:
         if callback:
             callback(stage, value, message)
+
+    @staticmethod
+    def _check_cancel(callback: CancellationCallback | None) -> None:
+        if callback and callback():
+            raise GenerationCancelledError("generation cancelled by user")
 
     @staticmethod
     def _unresolved(issue: DetectedIssue) -> HexaError:
