@@ -75,14 +75,17 @@ class FinalPackageLoader:
         candidates: list[Path] = []
         if explicit:
             candidates.append(explicit.expanduser().resolve())
-        manifest_script = manifest.get("script")
-        if isinstance(manifest_script, str):
+        for field in ("script", "canonical_script"):
+            manifest_script = manifest.get(field)
+            if not isinstance(manifest_script, str):
+                continue
             candidate = (root / manifest_script).resolve()
             if self._inside(root, candidate) and candidate.exists():
                 candidates.append(candidate)
-            elif "\n" in manifest_script or len(manifest_script.split()) > 5:
+                continue
+            if field == "script" and ("\n" in manifest_script or len(manifest_script.split()) > 5):
                 return manifest_script.strip()
-        candidates.extend([root / "script.txt", root / "narration.txt"])
+        candidates.extend([root / "canonical_script.txt", root / "script.txt", root / "narration.txt"])
         for candidate in candidates:
             if candidate.exists() and candidate.is_file():
                 return candidate.read_text(encoding="utf-8-sig").strip()
