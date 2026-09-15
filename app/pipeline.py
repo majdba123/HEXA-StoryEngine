@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from typing import Callable
+
+from app.composition import CompositionPlanner
+from app.config import Settings
+from app.cutout import CutoutService
+from app.final import FinalExporter
+from app.input import FinalPackageLoader
+from app.models import RenderPlan, Stage
+from app.motion import MotionPlanner
+from app.recovery.detector import DetectedIssue, RecoveryDetector
+from app.recovery.manager import RecoveryManager
+from app.render import RenderPlanner
+from app.render.renderer import FFmpegRenderer
+from app.shared.errors import HexaError, StageFailedError
+from app.story import StoryPlanner
+from app.transcription import TranscriptionService
+from app.vision import VisionService
+
+ProgressCallback = Callable[[Stage, float, str], None]
+
+
+class StoryEnginePipeline:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or Settings.from_env()
+        self.loader = FinalPackageLoader()
+        self.transcriber = TranscriptionService(
+            model_name=self.settings.whisper_model,
+            ffprobe_bin=self.settings.ffprobe_bin,
+        )
+        self.vision = VisionService()
+        self.cutout = CutoutService(allow_scene_fallback=self.settings.allow_scene_fallback)
+        self.story = StoryPlanner()
+        self.composition = CompositionPlanner()
+        self.motion = MotionPlanner()
+        self.render_planner = RenderPlanner()
+        self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
+        self.final = FinalExporter(self.settings.ffmpeg_bin)
+        self.detector = RecoveryDetector(self.settings.ffprobe_bin)
+        self.recovery = RecoveryManager(Path.home() / ".hexa-storyengine" / "recovery")
+
+    def generate(
+        self,
+        *,
+        package_path: Path,
+        audio_path: Path,
+        script_path: Path | None = None,
+        output_name: str | None = None,
+        job_id: str | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> Path:
+        job_id = job_id or uuid.uuid4().hex
+        workspace = self.settings.work_root / job_id
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        self._progress(progress, Stage.input, 0.04, "Reading Final Package")
+        package = self.loader.load(package_path, workspace, script_path)
+        audio_path = audio_path.expanduser().resolve()
+        if not audio_path.is_file():
+            raise StageFailedError("audio file not found", details={"path": str(audio_path)})
+
+        self._progress(progress, Stage.transcription, 0.12, "Aligning narration")
+        transcript = self.transcriber.transcribe(audio_path, package.script)
+
+        self._progress(progress, Stage.vision, 0.22, "Understanding scene elements")
+        detections = self.vision.analyze(package)
+
+        self._progress(progress, Stage.cutout, 0.32, "Extracting visual assets")
+        assets = self.cutout.extract(package, detections, workspace)
+
+        self._progress(progress, Stage.story, 0.43, "Building visual story")
+        story = self.story.plan(package, transcript, assets)
+
+        self._progress(progress, Stage.composition, 0.53, "Composing frames")
+        composition = self.composition.plan(story)
+
+        self._progress(progress, Stage.motion, 0.62, "Planning element entrances and handoffs")
+        motion = self.motion.plan(story, composition)
+
+        self._progress(progress, Stage.render, 0.68, "Compiling render plan")
+        plan, _ = self.render_planner.compile(
+            transcript,
+            assets,
+            story,
+            composition,
+            motion,
+            workspace,
+        )
+
+        plan = self._recover_plan(
+            plan=plan,
+            package=package,
+            transcript=transcript,
+            detections=detections,
+            workspace=workspace,
+            job_id=job_id,
+            progress=progress,
+        )
+
+        self._progress(progress, Stage.render, 0.76, "Rendering story")
+        video_only = self.renderer.render(plan, workspace / "render" / "video-only.mp4")
+
+        output_file = self._output_path(package.package_id, output_name)
+        self._progress(progress, Stage.final, 0.90, "Building final video")
+        final_path = self.final.mux(video_only, audio_path, output_file)
+        final_path = self._recover_final(
+            final_path=final_path,
+            video_only=video_only,
+            audio_path=audio_path,
+            plan=plan,
+            package_id=package.package_id,
+            job_id=job_id,
+            workspace=workspace,
+            progress=progress,
+        )
+        self._progress(progress, Stage.final, 1.0, "Ready for Premiere")
+        return final_path
+
+    def _recover_plan(
+        self,
+        *,
+        plan: RenderPlan,
+        package,
+        transcript,
+        detections,
+        workspace: Path,
+        job_id: str,
+        progress: ProgressCallback | None,
+    ) -> RenderPlan:
+        attempts: dict[str, int] = {}
+        while True:
+            issues = self.detector.inspect_plan(plan)
+            if not issues:
+                return plan
+            issue = issues[0]
+            attempt = attempts.get(issue.code, 0) + 1
+            attempts[issue.code] = attempt
+            result = self.recovery.handle(code=issue.code, context=issue.context, attempt=attempt)
+            if result is None or not result.success or not result.invalidate_from_stage:
+                raise self._unresolved(issue)
+
+            self._progress(progress, Stage.recovery, 0.70, f"Recovering {issue.code}")
+            plan = self._rebuild_plan(
+                invalidate_from=result.invalidate_from_stage,
+                current=plan,
+                package=package,
+                transcript=transcript,
+                detections=detections,
+                workspace=workspace,
+            )
+            remaining = self.detector.inspect_plan(plan)
+            success = not any(item.code == issue.code for item in remaining)
+            self.recovery.record_outcome(
+                code=issue.code,
+                job_id=job_id,
+                package_id=package.package_id,
+                attempt=attempt,
+                handler_result=result,
+                success=success,
+                details={"remaining_issue_count": len(remaining)},
+            )
+            if not success and attempt >= 3:
+                raise self._unresolved(issue)
+
+    def _rebuild_plan(
+        self,
+        *,
+        invalidate_from: str,
+        current: RenderPlan,
+        package,
+        transcript,
+        detections,
+        workspace: Path,
+    ) -> RenderPlan:
+        assets = current.assets
+        story = current.story
+        composition = current.composition
+        motion = current.motion
+        order = ["cutout", "story", "composition", "motion", "render"]
+        try:
+            start = order.index(invalidate_from)
+        except ValueError:
+            start = len(order) - 1
+
+        if start <= 0:
+            assets = self.cutout.extract(package, detections, workspace)
+        if start <= 1:
+            story = self.story.plan(package, transcript, assets)
+        if start <= 2:
+            composition = self.composition.plan(story)
+        if start <= 3:
+            motion = self.motion.plan(story, composition)
+        plan, _ = self.render_planner.compile(
+            transcript,
+            assets,
+            story,
+            composition,
+            motion,
+            workspace,
+        )
+        return plan
+
+    def _recover_final(
+        self,
+        *,
+        final_path: Path,
+        video_only: Path,
+        audio_path: Path,
+        plan: RenderPlan,
+        package_id: str,
+        job_id: str,
+        workspace: Path,
+        progress: ProgressCallback | None,
+    ) -> Path:
+        attempts: dict[str, int] = {}
+        while True:
+            issues = self.detector.inspect_final(final_path, audio_path)
+            if not issues:
+                return final_path
+            issue = issues[0]
+            attempt = attempts.get(issue.code, 0) + 1
+            attempts[issue.code] = attempt
+            result = self.recovery.handle(code=issue.code, context=issue.context, attempt=attempt)
+            if result is None or not result.success:
+                raise self._unresolved(issue)
+
+            self._progress(progress, Stage.recovery, 0.94, f"Recovering {issue.code}")
+            if result.invalidate_from_stage == "render":
+                video_only = self.renderer.render(plan, workspace / "render" / f"recovered-{attempt}.mp4")
+                final_path = self.final.mux(video_only, audio_path, final_path)
+            elif result.invalidate_from_stage == "final":
+                final_path = self.final.mux(video_only, audio_path, final_path)
+            else:
+                raise self._unresolved(issue)
+
+            remaining = self.detector.inspect_final(final_path, audio_path)
+            success = not any(item.code == issue.code for item in remaining)
+            self.recovery.record_outcome(
+                code=issue.code,
+                job_id=job_id,
+                package_id=package_id,
+                attempt=attempt,
+                handler_result=result,
+                success=success,
+                details={"remaining_issue_count": len(remaining)},
+            )
+            if not success and attempt >= 3:
+                raise self._unresolved(issue)
+
+    def _output_path(self, package_id: str, output_name: str | None) -> Path:
+        name = output_name or f"{package_id}.mp4"
+        if Path(name).name != name:
+            raise StageFailedError("output name must be a file name, not a path")
+        if not name.lower().endswith(".mp4"):
+            name += ".mp4"
+        self.settings.output_root.mkdir(parents=True, exist_ok=True)
+        return self.settings.output_root / name
+
+    @staticmethod
+    def _progress(callback: ProgressCallback | None, stage: Stage, value: float, message: str) -> None:
+        if callback:
+            callback(stage, value, message)
+
+    @staticmethod
+    def _unresolved(issue: DetectedIssue) -> HexaError:
+        return StageFailedError(
+            f"unresolved recovery issue: {issue.code}",
+            details={"code": issue.code, "message": issue.message, **issue.context},
+        )

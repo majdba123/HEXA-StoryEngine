@@ -43,13 +43,19 @@ class FinalPackageLoader:
         if target.exists():
             shutil.rmtree(target)
         target.mkdir(parents=True)
-        with zipfile.ZipFile(source) as archive:
-            target_root = target.resolve()
-            for member in archive.infolist():
-                member_target = (target / member.filename).resolve()
-                if target_root not in member_target.parents and member_target != target_root:
-                    raise InvalidPackageError("unsafe path found inside Final Package")
-            archive.extractall(target)
+        try:
+            with zipfile.ZipFile(source) as archive:
+                target_root = target.resolve()
+                for member in archive.infolist():
+                    member_path = Path(member.filename)
+                    if member_path.is_absolute() or ".." in member_path.parts:
+                        raise InvalidPackageError("unsafe path found inside Final Package")
+                    member_target = (target / member.filename).resolve()
+                    if target_root not in member_target.parents and member_target != target_root:
+                        raise InvalidPackageError("unsafe path found inside Final Package")
+                archive.extractall(target)
+        except zipfile.BadZipFile as exc:
+            raise InvalidPackageError("Final Package ZIP is invalid") from exc
         children = [item for item in target.iterdir() if item.name != "__MACOSX"]
         if len(children) == 1 and children[0].is_dir():
             return children[0]
@@ -71,8 +77,8 @@ class FinalPackageLoader:
             candidates.append(explicit.expanduser().resolve())
         manifest_script = manifest.get("script")
         if isinstance(manifest_script, str):
-            candidate = root / manifest_script
-            if candidate.exists():
+            candidate = (root / manifest_script).resolve()
+            if self._inside(root, candidate) and candidate.exists():
                 candidates.append(candidate)
             elif "\n" in manifest_script or len(manifest_script.split()) > 5:
                 return manifest_script.strip()
@@ -93,6 +99,8 @@ class FinalPackageLoader:
                 if not isinstance(raw_path, str):
                     continue
                 image = (root / raw_path).resolve()
+                if not self._inside(root, image):
+                    raise InvalidPackageError(f"scene path escapes Final Package: {raw_path}")
                 if image.exists() and image.suffix.lower() in _IMAGE_EXTENSIONS:
                     scenes.append(SceneSource(
                         id=str(item.get("id") or f"scene-{index + 1:03d}"),
@@ -117,6 +125,12 @@ class FinalPackageLoader:
             SceneSource(id=f"scene-{i + 1:03d}", image_path=path, order=i)
             for i, path in enumerate(images)
         ]
+
+    @staticmethod
+    def _inside(root: Path, candidate: Path) -> bool:
+        root = root.resolve()
+        candidate = candidate.resolve()
+        return candidate == root or root in candidate.parents
 
     @staticmethod
     def _stable_package_id(source: Path) -> str:

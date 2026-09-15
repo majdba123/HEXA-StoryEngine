@@ -20,14 +20,39 @@ class RecoveryManager:
             if self.registry.get(issue.code) is None:
                 self.registry.upsert(issue)
 
-    def handle(self, *, code: str, job_id: str, package_id: str, context: dict, attempt: int) -> HandlerResult | None:
+    def handle(self, *, code: str, context: dict, attempt: int) -> HandlerResult | None:
+        """Return a proven recovery action without claiming the problem is solved.
+
+        The caller must re-run QA and call record_outcome afterwards. This prevents
+        a handler invocation from being mistaken for a successful repair.
+        """
         issue = self.registry.get(code)
         if issue is None or issue.status.value != "proven" or attempt > issue.max_attempts:
             return None
         handler = HANDLERS.get(issue.handler)
         if handler is None:
             return None
-        result = handler(context)
+        return handler(context)
+
+    def record_outcome(
+        self,
+        *,
+        code: str,
+        job_id: str,
+        package_id: str,
+        attempt: int,
+        handler_result: HandlerResult,
+        success: bool,
+        details: dict | None = None,
+    ) -> None:
+        issue = self.registry.get(code)
+        if issue is None:
+            return
+        payload = {
+            "message": handler_result.message,
+            "invalidate_from_stage": handler_result.invalidate_from_stage,
+            **(details or {}),
+        }
         self.history.append(RecoveryEvent(
             issue_code=issue.code,
             job_id=job_id,
@@ -35,7 +60,6 @@ class RecoveryManager:
             handler=issue.handler,
             handler_version=issue.handler_version,
             attempt=attempt,
-            success=result.success,
-            details={"message": result.message, "invalidate_from_stage": result.invalidate_from_stage},
+            success=success,
+            details=payload,
         ))
-        return result

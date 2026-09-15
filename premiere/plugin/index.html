@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>HEXA StoryEngine</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="panel">
+    <header>
+      <div>
+        <div class="brand">HEXA</div>
+        <div class="subtitle">StoryEngine</div>
+      </div>
+      <div id="engine-dot" class="dot offline"></div>
+    </header>
+
+    <section class="card">
+      <div class="label">Final Package</div>
+      <div class="row">
+        <button id="pick-package-folder">Folder</button>
+        <button id="pick-package-zip">ZIP</button>
+      </div>
+      <div id="package-path" class="path">No package selected</div>
+    </section>
+
+    <section class="card">
+      <div class="label">Audio</div>
+      <button id="pick-audio">Choose Audio</button>
+      <div id="audio-path" class="path">No audio selected</div>
+    </section>
+
+    <button id="generate" class="primary" disabled>Generate</button>
+
+    <section class="status-card">
+      <div class="status-row">
+        <span id="status-label">Ready</span>
+        <span id="status-percent">0%</span>
+      </div>
+      <div class="progress"><div id="progress-fill"></div></div>
+      <div id="status-message" class="message">Choose a Final Package and audio.</div>
+    </section>
+
+    <button id="add-to-timeline" class="secondary" hidden>Add to Timeline</button>
+    <div id="error" class="error" hidden></div>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>

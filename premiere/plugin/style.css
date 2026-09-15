@@ -1,0 +1,24 @@
+:root { color-scheme: dark; font-family: Arial, Helvetica, sans-serif; }
+body { margin: 0; background: #171717; color: #f5f5f5; }
+.panel { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+header { display: flex; align-items: center; justify-content: space-between; }
+.brand { font-size: 25px; font-weight: 800; letter-spacing: 1px; }
+.subtitle { font-size: 11px; opacity: 0.58; margin-top: 1px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot.online { background: #63d47a; }
+.dot.offline { background: #8a8a8a; }
+.card, .status-card { border: 1px solid #393939; border-radius: 10px; background: #222; padding: 12px; }
+.label { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+.row { display: flex; gap: 8px; }
+.row button { flex: 1; }
+button { width: 100%; min-height: 34px; border: 1px solid #4a4a4a; border-radius: 8px; background: #2c2c2c; color: #fff; font-weight: 700; }
+button:disabled { opacity: 0.38; }
+.primary { min-height: 42px; background: #ededed; color: #111; border-color: #ededed; }
+.secondary { min-height: 40px; }
+.path { margin-top: 8px; font-size: 11px; opacity: 0.65; overflow-wrap: anywhere; }
+.status-row { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; }
+.progress { height: 6px; margin: 10px 0; overflow: hidden; border-radius: 999px; background: #111; }
+#progress-fill { width: 0; height: 100%; background: #f5f5f5; transition: width 160ms ease; }
+.message, .error { font-size: 11px; line-height: 1.45; }
+.message { opacity: 0.75; }
+.error { border: 1px solid #8a3b3b; border-radius: 8px; padding: 10px; background: #3a1d1d; }
