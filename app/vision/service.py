@@ -21,12 +21,7 @@ class VisionObject:
 
 
 class VisionService:
-    """Discover only top-level, clearly separated visual groups.
-
-    This fallback is intentionally conservative. It is not an object-segmentation
-    engine: nearby details remain one authored visual group. Only large groups that
-    are visibly separated by meaningful whitespace are exposed independently.
-    """
+    """Semantic vision boundary with model-backed and deterministic fallback discovery."""
 
     def __init__(self) -> None:
         self._florence = None
@@ -104,8 +99,8 @@ class VisionService:
     def _visual_groups(self, scene_id: str, image_path: Path) -> list[VisionObject]:
         image = np.asarray(Image.open(image_path).convert("RGB"))
         height, width = image.shape[:2]
-        canvas_area = max(1, width * height)
-
+        # HEXA reference scenes are predominantly white. Downsample before component
+        # analysis so discovery remains cheap even for 4K Final Packages.
         foreground = np.min(image, axis=2) < 244
         block = 12
         rows = (height + block - 1) // block
@@ -113,7 +108,7 @@ class VisionService:
         padded = np.zeros((rows * block, cols * block), dtype=bool)
         padded[:height, :width] = foreground
         low = padded.reshape(rows, block, cols, block).any(axis=(1, 3))
-        low = self._dilate(low, iterations=3)
+        low = self._dilate(low, iterations=2)
 
         visited = np.zeros_like(low, dtype=bool)
         boxes: list[tuple[int, int, int, int, int]] = []
@@ -136,43 +131,25 @@ class VisionService:
                             if low[ny, nx] and not visited[ny, nx]:
                                 visited[ny, nx] = True
                                 queue.append((nx, ny))
-
-                if cells < 6:
+                if cells < 4:
                     continue
                 x0 = max(0, min_x * block - 18)
                 y0 = max(0, min_y * block - 18)
                 x1 = min(width, (max_x + 1) * block + 18)
                 y1 = min(height, (max_y + 1) * block + 18)
-                box_w = x1 - x0
-                box_h = y1 - y0
-                area = box_w * box_h
-                area_ratio = area / canvas_area
-                foreground_ratio = int(foreground[y0:y1, x0:x1].sum()) / canvas_area
-                substantial_shape = (
-                    (box_w / width >= 0.10 and box_h / height >= 0.16)
-                    or (box_w / width >= 0.18 and box_h / height >= 0.10)
-                )
-                if area_ratio < 0.018 or foreground_ratio < 0.008 or not substantial_shape:
+                area = (x1 - x0) * (y1 - y0)
+                if area < width * height * 0.002:
                     continue
                 boxes.append((area, x0, y0, x1, y1))
 
         boxes.sort(reverse=True)
         output: list[VisionObject] = []
-        for index, (_, x0, y0, x1, y1) in enumerate(boxes[:4]):
+        for index, (_, x0, y0, x1, y1) in enumerate(boxes[:6]):
             output.append(VisionObject(
                 scene_id=scene_id,
                 role="primary_visual" if index == 0 else f"support_visual_{index}",
                 bbox=(x0, y0, x1 - x0, y1 - y0),
-                confidence=0.58,
-                source_image=image_path,
-            ))
-
-        if not output:
-            output.append(VisionObject(
-                scene_id=scene_id,
-                role="primary_visual",
-                bbox=(0, 0, width, height),
-                confidence=0.50,
+                confidence=0.48,
                 source_image=image_path,
             ))
         return output

@@ -45,21 +45,18 @@ class CutoutService:
                 details={"code": "CUTOUT_BACKEND_REQUIRED", "detections": len(detections)},
             )
 
+        # Development-only fallback. Production defaults to disabled because whole
+        # scene posters are explicitly not an acceptable storytelling substitute.
         assets: list[VisualAsset] = []
         for scene in package.scenes:
             target = output_dir / f"{scene.id}{scene.image_path.suffix.lower()}"
             shutil.copy2(scene.image_path, target)
-            with Image.open(scene.image_path) as source_image:
-                source_width, source_height = source_image.size
             assets.append(VisualAsset(
                 id=f"{scene.id}:scene",
                 scene_id=scene.id,
                 role="scene_reference",
                 image_path=target,
                 extraction_method="scene_fallback",
-                source_bbox=(0, 0, source_width, source_height),
-                source_canvas_width=source_width,
-                source_canvas_height=source_height,
             ))
         return assets
 
@@ -68,6 +65,7 @@ class CutoutService:
         detections: list[VisionObject],
         output_dir: Path,
     ) -> list[VisualAsset]:
+        backend = self._get_sam_backend()
         assets: list[VisualAsset] = []
         counters: dict[str, int] = {}
         for detection in detections:
@@ -78,32 +76,27 @@ class CutoutService:
             asset_id = f"{detection.scene_id}:asset-{number:02d}"
             target = output_dir / f"{detection.scene_id}-asset-{number:02d}.png"
 
-            image, geometry_bbox, canvas_size = self._boxed_cutout_with_geometry(
-                detection.source_image,
-                detection.bbox,
-            )
+            method = "white_background"
+            image = None
+            if backend is not None:
+                try:
+                    image = backend.cutout(detection.source_image, detection.bbox)
+                    method = "sam2"
+                except Exception:
+                    image = None
+            if image is None:
+                image = self._boxed_cutout(detection.source_image, detection.bbox)
             if image.width < 2 or image.height < 2:
                 continue
-            image.save(target, format="PNG", optimize=False, compress_level=2)
-            source_width, source_height = canvas_size
-            area_ratio = (
-                geometry_bbox[2] * geometry_bbox[3] / max(1, source_width * source_height)
-            )
+            image.save(target, format="PNG", optimize=False, compress_level=3)
             assets.append(VisualAsset(
                 id=asset_id,
                 scene_id=detection.scene_id,
                 role=detection.role,
                 image_path=target,
-                source_bbox=geometry_bbox,
+                source_bbox=detection.bbox,
                 confidence=detection.confidence,
-                extraction_method="white_background_group",
-                independent=True,
-                compound=True,
-                component_count=1,
-                source_area_ratio=area_ratio,
-                source_canvas_width=source_width,
-                source_canvas_height=source_height,
-                can_animate_independently=True,
+                extraction_method=method,
             ))
         return assets
 
@@ -164,17 +157,9 @@ class CutoutService:
         source: Path,
         bbox: tuple[int, int, int, int],
     ) -> Image.Image:
-        image, _, _ = CutoutService._boxed_cutout_with_geometry(source, bbox)
-        return image
-
-    @staticmethod
-    def _boxed_cutout_with_geometry(
-        source: Path,
-        bbox: tuple[int, int, int, int],
-    ) -> tuple[Image.Image, tuple[int, int, int, int], tuple[int, int]]:
         image = Image.open(source).convert("RGB")
         x, y, width, height = bbox
-        context_margin = max(6, round(min(max(1, width), max(1, height)) * 0.035))
+        context_margin = max(8, round(min(max(1, width), max(1, height)) * 0.06))
         x0 = max(0, x - context_margin)
         y0 = max(0, y - context_margin)
         x1 = min(image.width, x + max(1, width) + context_margin)
@@ -182,6 +167,9 @@ class CutoutService:
         crop = image.crop((x0, y0, x1, y1))
         rgb = np.asarray(crop)
 
+        # Only white pixels connected to the crop boundary are background. This
+        # preserves white details inside icons/characters while reliably removing
+        # the white HEXA scene canvas around the object.
         near_white = np.min(rgb, axis=2) >= 242
         background = CutoutService._border_connected_background(near_white)
         alpha = np.full(near_white.shape, 255, dtype=np.uint8)
@@ -192,19 +180,27 @@ class CutoutService:
         rgba.putalpha(alpha_image)
         visible = rgba.getchannel("A").getbbox()
         if visible is None:
-            geometry = (x0, y0, max(1, x1 - x0), max(1, y1 - y0))
-            return rgba, geometry, image.size
+            return rgba
 
+        # Keep a transparent safety margin so later scaling/animation never grows a
+        # white fringe at the object boundary.
         margin = 6
         left = max(0, visible[0] - margin)
         top = max(0, visible[1] - margin)
         right = min(rgba.width, visible[2] + margin)
         bottom = min(rgba.height, visible[3] + margin)
-        geometry = (x0 + left, y0 + top, right - left, bottom - top)
-        return rgba.crop((left, top, right, bottom)), geometry, image.size
+        return rgba.crop((left, top, right, bottom))
 
     @staticmethod
     def _border_connected_background(near_white: np.ndarray) -> np.ndarray:
+        """Return border-connected white background without full-resolution Python flood fill.
+
+        Large Final Package scenes can contain millions of pixels. Flood-filling every
+        source pixel in Python is prohibitively slow, so connectivity is solved on an
+        adaptive coarse mask and then projected back onto the exact near-white mask.
+        Only pixels that are actually near-white can become transparent at full
+        resolution, which preserves colored edges and keeps the fallback deterministic.
+        """
         height, width = near_white.shape
         if height == 0 or width == 0:
             return np.zeros_like(near_white, dtype=bool)
@@ -256,5 +252,6 @@ class CutoutService:
 
         if block == 1:
             return connected
+
         expanded = np.repeat(np.repeat(connected, block, axis=0), block, axis=1)[:height, :width]
         return expanded & near_white

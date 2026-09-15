@@ -33,13 +33,6 @@ class SceneSource(BaseModel):
     order: int
     title: str | None = None
     narration_hint: str | None = None
-    script_char_start: int | None = None
-    script_char_end: int | None = None
-    purpose: str | None = None
-    visual_concept: str | None = None
-    relation_to_previous: str | None = None
-    units: list[dict[str, Any]] = Field(default_factory=list)
-    visual_progression: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PackageModel(BaseModel):
@@ -48,32 +41,12 @@ class PackageModel(BaseModel):
     scenes: list[SceneSource]
     script: str | None = None
     manifest: dict[str, Any] = Field(default_factory=dict)
-    scene_plan: dict[str, Any] = Field(default_factory=dict)
-
-
-class TranscriptWord(BaseModel):
-    start: float = Field(ge=0)
-    end: float = Field(gt=0)
-    text: str
-    char_start: int | None = None
-    char_end: int | None = None
-
-    @field_validator("text")
-    @classmethod
-    def word_non_empty(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("transcript word cannot be empty")
-        return value
 
 
 class TranscriptSegment(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
     text: str
-    char_start: int | None = None
-    char_end: int | None = None
-    words: list[TranscriptWord] = Field(default_factory=list)
 
     @field_validator("text")
     @classmethod
@@ -88,7 +61,6 @@ class Transcript(BaseModel):
     language: str | None = None
     duration: float = Field(gt=0)
     segments: list[TranscriptSegment]
-    words: list[TranscriptWord] = Field(default_factory=list)
 
 
 class VisualAsset(BaseModel):
@@ -99,13 +71,6 @@ class VisualAsset(BaseModel):
     source_bbox: tuple[int, int, int, int] | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
     extraction_method: str
-    independent: bool = True
-    compound: bool = False
-    component_count: int = Field(default=1, ge=1)
-    source_area_ratio: float | None = Field(default=None, ge=0, le=1)
-    source_canvas_width: int | None = Field(default=None, gt=0)
-    source_canvas_height: int | None = Field(default=None, gt=0)
-    can_animate_independently: bool = True
 
 
 class StoryBeat(BaseModel):
@@ -118,7 +83,6 @@ class StoryBeat(BaseModel):
     support_asset_ids: list[str] = Field(default_factory=list)
     action: str
     handoff_from: str | None = None
-    semantic_targets: list[str] = Field(default_factory=list)
 
 
 class LayoutItem(BaseModel):

@@ -21,23 +21,16 @@ class FinalPackageLoader:
         manifest_path = package_root / "manifest.json"
         manifest = self._load_json(manifest_path) if manifest_path.exists() else {}
         script = self._load_script(package_root, script_path, manifest)
-        scene_plan = self._load_scene_plan(package_root, manifest)
-        scenes = self._discover_scenes(package_root, manifest, scene_plan)
+        scenes = self._discover_scenes(package_root, manifest)
         if not scenes:
             raise InvalidPackageError("Final Package contains no scene images")
-        package_id = (
-            manifest.get("package_id")
-            or manifest.get("project_id")
-            or scene_plan.get("project_id")
-            or self._stable_package_id(source)
-        )
+        package_id = manifest.get("package_id") or self._stable_package_id(source)
         return PackageModel(
             root=package_root,
             package_id=str(package_id),
             scenes=scenes,
             script=script,
             manifest=manifest,
-            scene_plan=scene_plan,
         )
 
     def _materialize(self, source: Path, workspace: Path) -> Path:
@@ -73,24 +66,10 @@ class FinalPackageLoader:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise InvalidPackageError(f"invalid json: {path.name}") from exc
+            raise InvalidPackageError(f"invalid manifest: {path.name}") from exc
         if not isinstance(data, dict):
-            raise InvalidPackageError(f"json root must be an object: {path.name}")
+            raise InvalidPackageError("manifest root must be an object")
         return data
-
-    def _load_scene_plan(self, root: Path, manifest: dict) -> dict:
-        raw = manifest.get("scene_plan")
-        candidates: list[Path] = []
-        if isinstance(raw, str):
-            candidate = (root / raw).resolve()
-            if not self._inside(root, candidate):
-                raise InvalidPackageError("scene plan path escapes Final Package")
-            candidates.append(candidate)
-        candidates.append(root / "scene_plan.json")
-        for candidate in candidates:
-            if candidate.is_file():
-                return self._load_json(candidate)
-        return {}
 
     def _load_script(self, root: Path, explicit: Path | None, manifest: dict) -> str | None:
         candidates: list[Path] = []
@@ -112,41 +91,7 @@ class FinalPackageLoader:
                 return candidate.read_text(encoding="utf-8-sig").strip()
         return None
 
-    def _discover_scenes(self, root: Path, manifest: dict, scene_plan: dict) -> list[SceneSource]:
-        planned = scene_plan.get("scenes")
-        if isinstance(planned, list):
-            rows: list[SceneSource] = []
-            for index, item in enumerate(planned):
-                if not isinstance(item, dict):
-                    continue
-                raw_path = item.get("image") or item.get("path")
-                if not isinstance(raw_path, str):
-                    continue
-                image = (root / raw_path).resolve()
-                if not self._inside(root, image):
-                    raise InvalidPackageError(f"scene path escapes Final Package: {raw_path}")
-                if not image.is_file() or image.suffix.lower() not in _IMAGE_EXTENSIONS:
-                    continue
-                span = item.get("script_span") if isinstance(item.get("script_span"), dict) else {}
-                rows.append(SceneSource(
-                    id=str(item.get("scene_id") or item.get("id") or f"scene-{index + 1:03d}"),
-                    image_path=image,
-                    order=int(item.get("order", index + 1)) - 1,
-                    title=item.get("title"),
-                    narration_hint=span.get("text") or item.get("narration") or item.get("text"),
-                    script_char_start=self._int_or_none(span.get("global_char_start")),
-                    script_char_end=self._int_or_none(span.get("global_char_end")),
-                    purpose=item.get("purpose"),
-                    visual_concept=item.get("visual_concept"),
-                    relation_to_previous=item.get("relation_to_previous"),
-                    units=[row for row in item.get("units", []) if isinstance(row, dict)],
-                    visual_progression=[
-                        row for row in item.get("visual_progression", []) if isinstance(row, dict)
-                    ],
-                ))
-            if rows:
-                return sorted(rows, key=lambda row: row.order)
-
+    def _discover_scenes(self, root: Path, manifest: dict) -> list[SceneSource]:
         declared = manifest.get("scenes")
         scenes: list[SceneSource] = []
         if isinstance(declared, list):
@@ -183,13 +128,6 @@ class FinalPackageLoader:
             SceneSource(id=f"scene-{i + 1:03d}", image_path=path, order=i)
             for i, path in enumerate(images)
         ]
-
-    @staticmethod
-    def _int_or_none(value) -> int | None:
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
 
     @staticmethod
     def _inside(root: Path, candidate: Path) -> bool:
