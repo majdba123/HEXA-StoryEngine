@@ -5,13 +5,12 @@ import shutil
 from collections import deque
 from pathlib import Path
 
-import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
 from app.models import PackageModel, VisualAsset
 from app.shared.errors import StageFailedError
-from app.vision.service import VisionObject, build_structural_foreground
+from app.vision.service import VisionObject
 
 _IMAGE_EXTENSIONS = {".png", ".webp", ".jpg", ".jpeg"}
 
@@ -46,18 +45,21 @@ class CutoutService:
                 details={"code": "CUTOUT_BACKEND_REQUIRED", "detections": len(detections)},
             )
 
-        # Development-only fallback. Production defaults to disabled because whole
-        # scene posters are explicitly not an acceptable storytelling substitute.
         assets: list[VisualAsset] = []
         for scene in package.scenes:
             target = output_dir / f"{scene.id}{scene.image_path.suffix.lower()}"
             shutil.copy2(scene.image_path, target)
+            with Image.open(scene.image_path) as source_image:
+                source_width, source_height = source_image.size
             assets.append(VisualAsset(
                 id=f"{scene.id}:scene",
                 scene_id=scene.id,
                 role="scene_reference",
                 image_path=target,
                 extraction_method="scene_fallback",
+                source_bbox=(0, 0, source_width, source_height),
+                source_canvas_width=source_width,
+                source_canvas_height=source_height,
             ))
         return assets
 
@@ -66,10 +68,8 @@ class CutoutService:
         detections: list[VisionObject],
         output_dir: Path,
     ) -> list[VisualAsset]:
-        backend = self._get_sam_backend()
         assets: list[VisualAsset] = []
         counters: dict[str, int] = {}
-        component_cache: dict[Path, tuple[np.ndarray, np.ndarray]] = {}
         for detection in detections:
             if detection.bbox is None:
                 continue
@@ -78,162 +78,34 @@ class CutoutService:
             asset_id = f"{detection.scene_id}:asset-{number:02d}"
             target = output_dir / f"{detection.scene_id}-asset-{number:02d}.png"
 
-            method = "component_mask"
-            image = None
-            source_canvas_width = source_canvas_height = None
-            if backend is not None:
-                try:
-                    image = backend.cutout(detection.source_image, detection.bbox)
-                    method = "sam2"
-                except Exception:
-                    image = None
-            if image is None:
-                if detection.seed_points:
-                    cached = component_cache.get(detection.source_image)
-                    if cached is None:
-                        cached = self._component_data(detection.source_image)
-                        component_cache[detection.source_image] = cached
-                    source_rgb, labels = cached
-                    source_canvas_height, source_canvas_width = source_rgb.shape[:2]
-                    image = self._component_cutout(
-                        detection.source_image,
-                        source_rgb,
-                        detection.bbox,
-                        detection.seed_points,
-                        labels,
-                    )
-                else:
-                    image = self._boxed_cutout(detection.source_image, detection.bbox)
-                    method = "white_background"
+            image, geometry_bbox, canvas_size = self._boxed_cutout_with_geometry(
+                detection.source_image,
+                detection.bbox,
+            )
             if image.width < 2 or image.height < 2:
                 continue
-            # Working cutouts are lossless either way; low PNG compression avoids
-            # spending most of extraction time compressing temporary files.
-            image.save(target, format="PNG", optimize=False, compress_level=1)
-            source_area_ratio = getattr(detection, "area_ratio", 0.0) or None
-            component_count = max(1, int(getattr(detection, "component_count", 1)))
-            compound = bool(getattr(detection, "compound", False))
-            if source_canvas_width is None or source_canvas_height is None:
-                with Image.open(detection.source_image) as source_image:
-                    source_canvas_width, source_canvas_height = source_image.size
+            image.save(target, format="PNG", optimize=False, compress_level=2)
+            source_width, source_height = canvas_size
+            area_ratio = (
+                geometry_bbox[2] * geometry_bbox[3] / max(1, source_width * source_height)
+            )
             assets.append(VisualAsset(
                 id=asset_id,
                 scene_id=detection.scene_id,
                 role=detection.role,
                 image_path=target,
-                source_bbox=detection.bbox,
+                source_bbox=geometry_bbox,
                 confidence=detection.confidence,
-                extraction_method=method,
+                extraction_method="white_background_group",
                 independent=True,
-                compound=compound,
-                component_count=component_count,
-                source_area_ratio=source_area_ratio,
-                source_canvas_width=source_canvas_width,
-                source_canvas_height=source_canvas_height,
+                compound=True,
+                component_count=1,
+                source_area_ratio=area_ratio,
+                source_canvas_width=source_width,
+                source_canvas_height=source_height,
                 can_animate_independently=True,
             ))
         return assets
-
-    @staticmethod
-    def _component_data(source: Path) -> tuple[np.ndarray, np.ndarray]:
-        """Load a source scene once and build its strict connectivity labels once.
-
-        A scene often yields many independent objects. Re-decoding the same 2K image
-        for every object is pure disk/CPU waste and was the dominant full-package
-        cutout bottleneck.
-        """
-        bgr = cv2.imread(str(source), cv2.IMREAD_COLOR)
-        if bgr is None:
-            raise StageFailedError("unable to read cutout source", details={"path": str(source)})
-        structural = build_structural_foreground(bgr)
-        _, labels = cv2.connectedComponents(structural, connectivity=8)
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        return rgb, labels
-
-    @staticmethod
-    def _component_labels(source: Path) -> np.ndarray:
-        # Kept as a narrow compatibility helper for tests/extensions.
-        _, labels = CutoutService._component_data(source)
-        return labels
-
-    @staticmethod
-    def _component_cutout(
-        source: Path,
-        source_rgb: np.ndarray,
-        bbox: tuple[int, int, int, int],
-        seed_points: tuple[tuple[int, int], ...],
-        labels: np.ndarray,
-    ) -> Image.Image:
-        """Extract exactly the connected island(s) identified by ``seed_points``.
-
-        White areas enclosed by the target outline are kept only when that enclosed
-        region contains no *other* foreground component. This preserves white faces,
-        shoes and icon interiors while preventing an enclosing shape (for example a
-        thought bubble) from swallowing another disconnected object inside it.
-        """
-        x, y, width, height = bbox
-        source_height, source_width = source_rgb.shape[:2]
-        x0 = max(0, x)
-        y0 = max(0, y)
-        x1 = min(source_width, x + max(1, width))
-        y1 = min(source_height, y + max(1, height))
-        crop_rgb = source_rgb[y0:y1, x0:x1]
-
-        target_labels: set[int] = set()
-        for sx, sy in seed_points:
-            if 0 <= sy < labels.shape[0] and 0 <= sx < labels.shape[1]:
-                label = int(labels[sy, sx])
-                if label > 0:
-                    target_labels.add(label)
-        if not target_labels:
-            return CutoutService._boxed_cutout(source, bbox)
-
-        label_crop = labels[y0:y1, x0:x1]
-        target = np.isin(label_crop, list(target_labels))
-        other_foreground = (label_crop > 0) & (~target)
-
-        # Find holes enclosed by the target structural pixels.
-        padded_target = np.pad(target, 1, mode="constant", constant_values=False)
-        free_space = (~padded_target).astype(np.uint8) * 255
-        flood_mask = np.zeros((free_space.shape[0] + 2, free_space.shape[1] + 2), dtype=np.uint8)
-        cv2.floodFill(free_space, flood_mask, (0, 0), 128)
-        outside = free_space == 128
-        enclosed = (~outside[1:-1, 1:-1]) & (~target)
-
-        # Fill only enclosed white regions that do not contain another disconnected
-        # object. A bubble containing a wallet therefore stays separate from the wallet,
-        # while a character's white face remains part of the character matte.
-        fillable = np.zeros_like(target, dtype=bool)
-        if np.any(enclosed):
-            if not np.any(other_foreground & enclosed):
-                # The common case (face/shoe/icon holes): no need for another
-                # connected-component pass over the crop.
-                fillable = enclosed
-            else:
-                hole_count, hole_labels = cv2.connectedComponents(enclosed.astype(np.uint8), 8)
-                for hole_label in range(1, hole_count):
-                    hole = hole_labels == hole_label
-                    if not np.any(other_foreground & hole):
-                        fillable |= hole
-
-        silhouette = target | fillable
-        alpha = silhouette.astype(np.uint8) * 255
-        # Slight blur restores anti-aliased edges without growing the matte into a
-        # neighboring disconnected island.
-        alpha_image = Image.fromarray(alpha).filter(ImageFilter.GaussianBlur(radius=0.42))
-        rgba_array = np.empty((crop_rgb.shape[0], crop_rgb.shape[1], 4), dtype=np.uint8)
-        rgba_array[:, :, :3] = crop_rgb
-        rgba_array[:, :, 3] = np.asarray(alpha_image)
-        rgba = Image.fromarray(rgba_array, mode="RGBA")
-        visible = rgba.getchannel("A").getbbox()
-        if visible is None:
-            return rgba
-        margin = 5
-        left = max(0, visible[0] - margin)
-        top = max(0, visible[1] - margin)
-        right = min(rgba.width, visible[2] + margin)
-        bottom = min(rgba.height, visible[3] + margin)
-        return rgba.crop((left, top, right, bottom))
 
     def _get_sam_backend(self):
         if self._sam_checked:
@@ -292,9 +164,17 @@ class CutoutService:
         source: Path,
         bbox: tuple[int, int, int, int],
     ) -> Image.Image:
+        image, _, _ = CutoutService._boxed_cutout_with_geometry(source, bbox)
+        return image
+
+    @staticmethod
+    def _boxed_cutout_with_geometry(
+        source: Path,
+        bbox: tuple[int, int, int, int],
+    ) -> tuple[Image.Image, tuple[int, int, int, int], tuple[int, int]]:
         image = Image.open(source).convert("RGB")
         x, y, width, height = bbox
-        context_margin = max(8, round(min(max(1, width), max(1, height)) * 0.06))
+        context_margin = max(6, round(min(max(1, width), max(1, height)) * 0.035))
         x0 = max(0, x - context_margin)
         y0 = max(0, y - context_margin)
         x1 = min(image.width, x + max(1, width) + context_margin)
@@ -302,9 +182,6 @@ class CutoutService:
         crop = image.crop((x0, y0, x1, y1))
         rgb = np.asarray(crop)
 
-        # Only white pixels connected to the crop boundary are background. This
-        # preserves white details inside icons/characters while reliably removing
-        # the white HEXA scene canvas around the object.
         near_white = np.min(rgb, axis=2) >= 242
         background = CutoutService._border_connected_background(near_white)
         alpha = np.full(near_white.shape, 255, dtype=np.uint8)
@@ -315,27 +192,19 @@ class CutoutService:
         rgba.putalpha(alpha_image)
         visible = rgba.getchannel("A").getbbox()
         if visible is None:
-            return rgba
+            geometry = (x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+            return rgba, geometry, image.size
 
-        # Keep a transparent safety margin so later scaling/animation never grows a
-        # white fringe at the object boundary.
         margin = 6
         left = max(0, visible[0] - margin)
         top = max(0, visible[1] - margin)
         right = min(rgba.width, visible[2] + margin)
         bottom = min(rgba.height, visible[3] + margin)
-        return rgba.crop((left, top, right, bottom))
+        geometry = (x0 + left, y0 + top, right - left, bottom - top)
+        return rgba.crop((left, top, right, bottom)), geometry, image.size
 
     @staticmethod
     def _border_connected_background(near_white: np.ndarray) -> np.ndarray:
-        """Return border-connected white background without full-resolution Python flood fill.
-
-        Large Final Package scenes can contain millions of pixels. Flood-filling every
-        source pixel in Python is prohibitively slow, so connectivity is solved on an
-        adaptive coarse mask and then projected back onto the exact near-white mask.
-        Only pixels that are actually near-white can become transparent at full
-        resolution, which preserves colored edges and keeps the fallback deterministic.
-        """
         height, width = near_white.shape
         if height == 0 or width == 0:
             return np.zeros_like(near_white, dtype=bool)
@@ -387,6 +256,5 @@ class CutoutService:
 
         if block == 1:
             return connected
-
         expanded = np.repeat(np.repeat(connected, block, axis=0), block, axis=1)[:height, :width]
         return expanded & near_white
