@@ -26,3 +26,16 @@ jobs:
         run: ruff check app tests
       - name: Test
         run: pytest
+      - name: Upload tested source snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-storyengine-source-${{ github.sha }}
+          path: |
+            app
+            tests
+            pyproject.toml
+            README.md
+            HEXA.bat
+          if-no-files-found: error
+          retention-days: 7
