@@ -41,7 +41,38 @@ def test_scene_plan_drives_scene_ids_and_narration_timing(tmp_path: Path) -> Non
     beats = StoryPlanner().plan(model, transcript, assets)
     assert len(beats) == 2
     assert beats[0].scene_id == "SCENE_001"
-    assert beats[0].start == 0.20
-    assert beats[0].end == 0.95
-    assert beats[1].start == 1.50
-    assert beats[1].end == 2.25
+    assert beats[0].audio_start == 0.20
+    assert beats[0].audio_end == 0.95
+    assert beats[1].audio_start == 1.50
+    assert beats[1].audio_end == 2.25
+    assert 0.0 <= beats[0].start < beats[0].audio_start
+    assert beats[0].end == beats[1].start
+    assert beats[1].start < beats[1].audio_start
+    assert beats[1].end == transcript.duration
+
+
+def test_primary_motion_settles_on_audio_anchor() -> None:
+    from app.models import CompositionBeat, LayoutItem, StoryBeat
+    from app.motion.planner import MotionPlanner
+
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="SCENE_001",
+        start=0.86,
+        end=2.0,
+        audio_start=1.0,
+        audio_end=1.8,
+        narration="test",
+        primary_asset_ids=["a1"],
+        action="INTRODUCE",
+    )
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[LayoutItem(asset_id="a1", x=0.5, y=0.5, width=0.5, height=0.5)],
+    )]
+
+    cue = MotionPlanner().plan([beat], composition)[0]
+
+    assert cue.start <= beat.audio_start
+    assert cue.end <= beat.audio_start + 0.05
+    assert cue.start >= beat.start
