@@ -34,17 +34,31 @@ class FFmpegRenderer:
         segment_root = output.parent / f"{output.stem}-segments"
         segment_root.mkdir(parents=True, exist_ok=True)
 
-        jobs: list[tuple[int, object, float, Path]] = []
-        if story[0].start > 0.02:
+        total_frames = max(1, round(plan.duration * plan.fps))
+        first_frame = self._time_to_frame(story[0].start, plan.fps, total_frames)
+        jobs: list[tuple[int, object, float, int, Path]] = []
+        if first_frame > 0:
             prelude = segment_root / "0000-prelude.mp4"
-            self._render_color_segment(plan, story[0].start, prelude)
+            self._render_color_segment(
+                plan,
+                first_frame / plan.fps,
+                prelude,
+                frame_count=first_frame,
+            )
 
+        start_frame = first_frame
         for index, beat in enumerate(story, start=1):
-            next_start = story[index].start if index < len(story) else plan.duration
-            segment_end = min(plan.duration, max(beat.end, next_start))
-            duration = max(0.05, segment_end - beat.start)
+            if index < len(story):
+                end_frame = self._time_to_frame(story[index].start, plan.fps, total_frames)
+            else:
+                end_frame = total_frames
+            end_frame = max(start_frame + 1, min(total_frames, end_frame))
+            frame_count = end_frame - start_frame
+            duration = frame_count / plan.fps
+            segment_start = start_frame / plan.fps
             target = segment_root / f"{index:04d}-{beat.id}.mp4"
-            jobs.append((index, beat, duration, target))
+            jobs.append((index, beat, segment_start, frame_count, target))
+            start_frame = end_frame
 
         worker_env = os.getenv("HEXA_RENDER_WORKERS")
         if worker_env:
@@ -62,13 +76,14 @@ class FFmpegRenderer:
                     self._render_beat_segment,
                     plan,
                     beat,
-                    duration,
+                    segment_start,
+                    frame_count,
                     target,
                     assets,
                     composition,
                     motion,
                 ): target
-                for _, beat, duration, target in jobs
+                for _, beat, segment_start, frame_count, target in jobs
             }
             for future in as_completed(futures):
                 try:
@@ -85,7 +100,7 @@ class FFmpegRenderer:
         prelude = segment_root / "0000-prelude.mp4"
         if prelude.exists():
             segments.append(prelude)
-        segments.extend(target for _, _, _, target in jobs)
+        segments.extend(target for _, _, _, _, target in jobs)
         self._concat_segments(segments, output)
         return output
 
@@ -93,15 +108,17 @@ class FFmpegRenderer:
         self,
         plan: RenderPlan,
         beat,
-        duration: float,
+        segment_start: float,
+        frame_count: int,
         target: Path,
         assets: dict,
         composition: dict,
         motion: dict,
     ) -> None:
+        duration = frame_count / plan.fps
         layout = composition.get(beat.id)
         if not layout or not layout.items:
-            self._render_color_segment(plan, duration, target)
+            self._render_color_segment(plan, duration, target, frame_count=frame_count)
             return
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
@@ -127,26 +144,30 @@ class FFmpegRenderer:
             target_y = round(plan.height * (item.y - item.height / 2))
             global_start = float(cue.start if cue else beat.start)
             global_end = float(cue.end if cue else min(beat.end, beat.start + 0.32))
-            start = max(0.0, global_start - beat.start)
-            end = min(duration, max(start + 0.05, global_end - beat.start))
+            start = max(0.0, global_start - segment_start)
+            end = min(duration, max(start + 0.05, global_end - segment_start))
             reveal_duration = max(0.05, end - start)
+            fade_duration = min(0.18, max(0.10, reveal_duration * 0.42))
             source_label = f"asset{layer_index}"
             filters.append(
                 f"[{layer_index}:v]format=rgba,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
-                f"fade=t=in:st={start:.6f}:d={reveal_duration:.6f}:alpha=1[{source_label}]"
+                f"fade=t=in:st={start:.6f}:d={fade_duration:.6f}:alpha=1[{source_label}]"
             )
             kind = getattr(cue, "kind", "reveal_in") if cue else "reveal_in"
             if kind == "handoff_in":
-                x_expr = self._entry_expression(target_x, start, end, offset=72)
+                x_expr = self._entry_expression(target_x, start, end, offset=58)
                 y_expr = str(target_y)
             elif kind == "emphasis_in":
                 x_expr = str(target_x)
-                y_expr = self._entry_expression(target_y, start, end, offset=24)
+                y_expr = self._entry_expression(target_y, start, end, offset=20)
+            elif kind == "soft_in":
+                x_expr = str(target_x)
+                y_expr = self._entry_expression(target_y, start, end, offset=12)
             else:
                 x_expr = str(target_x)
-                y_expr = self._entry_expression(target_y, start, end, offset=38)
+                y_expr = self._entry_expression(target_y, start, end, offset=30)
             next_label = f"mix{layer_index}"
             filters.append(
                 f"[{previous}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
@@ -154,10 +175,18 @@ class FFmpegRenderer:
             )
             previous = next_label
         filters.append(f"[{previous}]format=yuv420p[vout]")
-        command.extend(self._encode_args(filters, target, plan.fps))
+        command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
 
-    def _render_color_segment(self, plan: RenderPlan, duration: float, target: Path) -> None:
+    def _render_color_segment(
+        self,
+        plan: RenderPlan,
+        duration: float,
+        target: Path,
+        *,
+        frame_count: int | None = None,
+    ) -> None:
+        frame_count = frame_count or max(1, round(duration * plan.fps))
         command = [
             self.ffmpeg_bin,
             "-y",
@@ -177,14 +206,24 @@ class FFmpegRenderer:
             "18",
             "-pix_fmt",
             "yuv420p",
+            "-bf",
+            "0",
             "-r",
             str(plan.fps),
+            "-frames:v",
+            str(frame_count),
             str(target),
         ]
         self._run(command, "blank render segment failed")
 
     def _render_blank(self, plan: RenderPlan, output: Path) -> Path:
-        self._render_color_segment(plan, plan.duration, output)
+        frame_count = max(1, round(plan.duration * plan.fps))
+        self._render_color_segment(
+            plan,
+            frame_count / plan.fps,
+            output,
+            frame_count=frame_count,
+        )
         return output
 
     def _concat_segments(self, segments: list[Path], output: Path) -> None:
@@ -218,7 +257,12 @@ class FFmpegRenderer:
             raise StageFailedError("renderer produced no output")
 
     @staticmethod
-    def _encode_args(filters: list[str], target: Path, fps: int) -> list[str]:
+    def _encode_args(
+        filters: list[str],
+        target: Path,
+        fps: int,
+        frame_count: int,
+    ) -> list[str]:
         return [
             "-filter_complex",
             ";".join(filters),
@@ -233,17 +277,31 @@ class FFmpegRenderer:
             "18",
             "-pix_fmt",
             "yuv420p",
+            "-bf",
+            "0",
             "-r",
             str(fps),
+            "-frames:v",
+            str(frame_count),
             str(target),
         ]
+
+
+    @staticmethod
+    def _time_to_frame(value: float, fps: int, total_frames: int) -> int:
+        return max(0, min(total_frames, round(max(0.0, value) * fps)))
 
     @staticmethod
     def _entry_expression(target: int, start: float, end: float, *, offset: int) -> str:
         duration = max(0.05, end - start)
+        # Smoothstep easing keeps strong motion without the abrupt constant-speed
+        # slide that made short beats feel rushed. p is clamped by the surrounding
+        # conditionals to the [0, 1] movement interval.
+        p = f"((t-{start:.6f})/{duration:.6f})"
+        eased = f"(3*{p}*{p}-2*{p}*{p}*{p})"
         return (
             f"{target}+if(lt(t,{start:.6f}),{offset},"
-            f"if(lt(t,{end:.6f}),{offset}*(1-(t-{start:.6f})/{duration:.6f}),0))"
+            f"if(lt(t,{end:.6f}),{offset}*(1-{eased}),0))"
         )
 
     @staticmethod
