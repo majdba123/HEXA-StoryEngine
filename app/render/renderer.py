@@ -20,7 +20,6 @@ class FFmpegRenderer:
     def render(self, plan: RenderPlan, output: Path) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
         assets = {asset.id: asset for asset in plan.assets}
-        story = {beat.id: beat for beat in plan.story}
         composition = {beat.beat_id: beat for beat in plan.composition}
         motion = {(cue.beat_id, cue.asset_id): cue for cue in plan.motion}
 
