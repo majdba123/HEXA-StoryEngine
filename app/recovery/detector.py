@@ -63,23 +63,33 @@ class RecoveryDetector:
         for cue in plan.motion:
             by_beat.setdefault(cue.beat_id, []).append(cue)
             beat = story_by_id.get(cue.beat_id)
-            if beat and cue.start < beat.start - 0.12:
+            if beat and cue.start < beat.start - 0.04:
                 issues.append(DetectedIssue(
                     "ELEMENT_APPEARS_TOO_EARLY",
-                    f"Motion begins before narration: {cue.asset_id}",
+                    f"Motion begins before its visual beat: {cue.asset_id}",
                     {"beat_id": cue.beat_id, "asset_id": cue.asset_id},
                 ))
             if beat and cue.asset_id in beat.primary_asset_ids:
-                beat_duration = max(0.05, beat.end - beat.start)
-                late_limit = min(0.42, max(0.18, beat_duration * 0.32))
-                if cue.start > beat.start + late_limit:
+                audio_anchor = beat.audio_start if beat.audio_start is not None else beat.start
+                peak_offset = cue.end - audio_anchor
+                if peak_offset > 0.12:
                     issues.append(DetectedIssue(
                         "ELEMENT_APPEARS_TOO_LATE",
-                        f"Motion begins too late for narration: {cue.asset_id}",
+                        f"Primary motion settles after narration anchor: {cue.asset_id}",
                         {
                             "beat_id": cue.beat_id,
                             "asset_id": cue.asset_id,
-                            "delay": cue.start - beat.start,
+                            "peak_offset": peak_offset,
+                        },
+                    ))
+                elif peak_offset < -0.18:
+                    issues.append(DetectedIssue(
+                        "ELEMENT_APPEARS_TOO_EARLY",
+                        f"Primary motion settles too far before narration anchor: {cue.asset_id}",
+                        {
+                            "beat_id": cue.beat_id,
+                            "asset_id": cue.asset_id,
+                            "peak_offset": peak_offset,
                         },
                     ))
         for beat_id, cues in by_beat.items():
@@ -111,16 +121,48 @@ class RecoveryDetector:
         if not has_audio:
             issues.append(DetectedIssue("FINAL_MISSING_AUDIO", "Final output has no audio stream"))
 
-        video_duration = float(video_probe.get("format", {}).get("duration") or 0)
-        audio_duration = float(audio_probe.get("format", {}).get("duration") or 0)
-        drift = abs(video_duration - audio_duration)
-        if video_duration > 0 and audio_duration > 0 and drift > 0.25:
+        video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
+        mux_audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), {})
+        video_duration = self._duration(video_stream, video_probe)
+        mux_audio_duration = self._duration(mux_audio_stream, video_probe)
+        source_audio_duration = float(audio_probe.get("format", {}).get("duration") or 0)
+        stream_drift = abs(video_duration - mux_audio_duration)
+        source_drift = abs(mux_audio_duration - source_audio_duration)
+        video_start = float(video_stream.get("start_time") or 0)
+        audio_start = float(mux_audio_stream.get("start_time") or 0)
+        start_drift = abs(video_start - audio_start)
+        if (
+            video_duration > 0
+            and mux_audio_duration > 0
+            and (stream_drift > 0.10 or start_drift > 0.05 or source_drift > 0.12)
+        ):
             issues.append(DetectedIssue(
                 "AUDIO_VIDEO_DRIFT",
-                f"Audio/video duration mismatch is {drift:.3f}s",
-                {"video_duration": video_duration, "audio_duration": audio_duration, "drift": drift},
+                (
+                    "A/V stream timing mismatch: "
+                    f"duration={stream_drift:.3f}s start={start_drift:.3f}s "
+                    f"source_audio={source_drift:.3f}s"
+                ),
+                {
+                    "video_duration": video_duration,
+                    "mux_audio_duration": mux_audio_duration,
+                    "source_audio_duration": source_audio_duration,
+                    "stream_drift": stream_drift,
+                    "start_drift": start_drift,
+                    "source_drift": source_drift,
+                },
             ))
         return self._dedupe(issues)
+
+    @staticmethod
+    def _duration(stream: dict, probe: dict) -> float:
+        value = stream.get("duration")
+        if value not in (None, "N/A", ""):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                pass
+        return float(probe.get("format", {}).get("duration") or 0)
 
     def _probe(self, path: Path) -> dict:
         command = [
