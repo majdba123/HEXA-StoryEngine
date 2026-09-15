@@ -197,7 +197,7 @@ class CutoutService:
         if not checkpoint.is_file():
             return None
         try:
-            from app.cutout.sam2 import SAM2CutoutBackend
+            from app.cutout.pass1.sam2 import SAM2CutoutBackend
 
             self._sam_backend = SAM2CutoutBackend(
                 checkpoint,

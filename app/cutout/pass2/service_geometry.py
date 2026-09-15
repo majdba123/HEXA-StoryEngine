@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 
 from app.models import VisualAsset
-from app.refinement2.models import CandidateProposal
+from app.cutout.pass2.models import CandidateProposal
 
 
 class _GeometryHelpersMixin:

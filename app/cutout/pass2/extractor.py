@@ -3,7 +3,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from app.refinement2.models import CandidateProposal, ExtractionResult
+from app.cutout.pass2.models import CandidateProposal, ExtractionResult
 
 
 class Pass1StyleExtractor:

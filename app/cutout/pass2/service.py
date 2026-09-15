@@ -6,18 +6,18 @@ import numpy as np
 from PIL import Image
 
 from app.models import VisualAsset
-from app.refinement2.extractor import Pass1StyleExtractor
-from app.refinement2.proposal import CVProposalEngine
-from app.refinement2.safety import PartitionSafetyGate
-from app.refinement2.segmenter import MaskBackend
-from app.refinement2.semantic import SemanticProposalBackend
-from app.refinement2.service_geometry import _GeometryHelpersMixin
-from app.refinement2.service_semantic import _SemanticRecoveryMixin
-from app.refinement2.validator import DetachedObjectValidator
+from app.cutout.pass2.extractor import Pass1StyleExtractor
+from app.cutout.pass2.proposal import CVProposalEngine
+from app.cutout.pass2.safety import PartitionSafetyGate
+from app.cutout.pass2.segmenter import MaskBackend
+from app.cutout.pass2.semantic import SemanticProposalBackend
+from app.cutout.pass2.service_geometry import _GeometryHelpersMixin
+from app.cutout.pass2.service_semantic import _SemanticRecoveryMixin
+from app.cutout.pass2.validator import DetachedObjectValidator
 from app.shared.errors import StageFailedError
 
 
-class Pass2RefinementService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
+class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
     """Detached-object recovery layer built around strict geometry preservation."""
 
     _MAX_SECONDARIES = 4
@@ -42,7 +42,7 @@ class Pass2RefinementService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
         workspace: Path,
         scene_unit_types: dict[str, list[str]] | None = None,
     ) -> list[VisualAsset]:
-        output_dir = workspace / "refinement2"
+        output_dir = workspace / "cutout" / "pass2"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         by_scene: dict[str, list[VisualAsset]] = {}
@@ -107,7 +107,7 @@ class Pass2RefinementService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
     ) -> list[VisualAsset] | None:
         if not asset.image_path.is_file():
             raise StageFailedError(
-                "refinement2 input asset is missing",
+                "cutout pass2 input asset is missing",
                 details={"asset_id": asset.id, "path": str(asset.image_path)},
             )
         with Image.open(asset.image_path) as opened:

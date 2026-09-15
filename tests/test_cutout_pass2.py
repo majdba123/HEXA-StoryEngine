@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from app.models import VisualAsset
-from app.refinement2 import Pass2RefinementService
+from app.cutout.pass2 import Pass2CutoutService
 
 
 def _asset(path: Path, *, touching: bool = False) -> VisualAsset:
@@ -68,7 +68,7 @@ def _tight_gap_asset(path: Path) -> VisualAsset:
 
 def test_pass2_recovers_tight_real_gap_without_cutting_geometry(tmp_path: Path) -> None:
     parent = _tight_gap_asset(tmp_path / "tight-gap.png")
-    result = Pass2RefinementService().refine([parent], tmp_path / "work-tight")
+    result = Pass2CutoutService().refine([parent], tmp_path / "work-tight")
     assert len(result) >= 2
     original = np.asarray(Image.open(parent.image_path).convert("RGBA"))[:, :, 3]
     main = np.asarray(Image.open(result[0].image_path).convert("RGBA"))[:, :, 3]
@@ -84,7 +84,7 @@ def test_pass2_recovers_tight_real_gap_without_cutting_geometry(tmp_path: Path) 
 
 def test_pass2_preserves_geometry_and_exact_alpha(tmp_path: Path) -> None:
     parent = _asset(tmp_path / "parent.png", touching=False)
-    result = Pass2RefinementService().refine([parent], tmp_path / "work")
+    result = Pass2CutoutService().refine([parent], tmp_path / "work")
     assert len(result) >= 2
     assert result[0].source_bbox == parent.source_bbox
     assert result[0].source_canvas_width == parent.source_canvas_width
@@ -106,7 +106,7 @@ def test_pass2_preserves_geometry_and_exact_alpha(tmp_path: Path) -> None:
 
 def test_pass2_rejects_hard_touching_objects(tmp_path: Path) -> None:
     parent = _asset(tmp_path / "touching.png", touching=True)
-    result = Pass2RefinementService().refine([parent], tmp_path / "work")
+    result = Pass2CutoutService().refine([parent], tmp_path / "work")
     assert len(result) == 1
     assert result[0].image_path == parent.image_path
 
@@ -115,7 +115,7 @@ class _FakeSemantic:
         self.bbox = bbox
 
     def detect(self, image_path: Path):
-        from app.refinement2.semantic import SemanticDetection
+        from app.cutout.pass2.semantic import SemanticDetection
 
         return [SemanticDetection(label="person", bbox=self.bbox, confidence=0.95)]
 
@@ -134,7 +134,7 @@ def test_semantic_backend_can_rescue_complete_detached_character(tmp_path: Path)
     # full right-hand figure mask from the synthetic scene, preserving parent canvas
     mask = np.zeros(rgba.shape[:2], dtype=bool)
     mask[:, 240:] = rgba[:, 240:, 3] > 0
-    service = Pass2RefinementService(
+    service = Pass2CutoutService(
         semantic_backend=_FakeSemantic((240, 30, 115, 190)),
         mask_backend=_FakeMask(mask),
     )

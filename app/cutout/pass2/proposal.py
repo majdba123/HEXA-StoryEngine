@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from app.refinement2.models import CandidateProposal, ProposalSource
+from app.cutout.pass2.models import CandidateProposal, ProposalSource
 
 
 @dataclass(slots=True)

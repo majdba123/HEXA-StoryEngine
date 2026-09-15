@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 
 from app.models import VisualAsset
-from app.refinement2.models import CandidateProposal, ProposalSource
-from app.refinement2.semantic import SemanticDetection
+from app.cutout.pass2.models import CandidateProposal, ProposalSource
+from app.cutout.pass2.semantic import SemanticDetection
 
 
 class _SemanticRecoveryMixin:

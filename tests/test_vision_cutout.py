@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from app.cutout.service import CutoutService
+from app.cutout import CutoutService
 from app.models import PackageModel, SceneSource
 from app.vision.service import VisionService
 

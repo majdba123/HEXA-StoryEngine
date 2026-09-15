@@ -7,16 +7,15 @@ from typing import Callable
 
 from app.composition import CompositionPlanner
 from app.config import Settings
-from app.cutout import CutoutService
+from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
 from app.input import FinalPackageLoader
 from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
-from app.refinement2 import Pass2RefinementService
-from app.refinement2.semantic import FlorenceSemanticBackend
-from app.refinement2.segmenter import SAM2MaskBackend
+from app.cutout.pass2.semantic import FlorenceSemanticBackend
+from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.recovery.manager import RecoveryManager
 from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
@@ -46,7 +45,7 @@ class StoryEnginePipeline:
         self.refinement = RefinementService()
         florence_raw = os.getenv("HEXA_FLORENCE_MODEL")
         sam_raw = os.getenv("HEXA_SAM2_CHECKPOINT")
-        self.refinement_vnext = Pass2RefinementService(
+        self.cutout_pass2 = Pass2CutoutService(
             semantic_backend=(
                 FlorenceSemanticBackend(Path(florence_raw).expanduser().resolve())
                 if florence_raw
@@ -174,7 +173,7 @@ class StoryEnginePipeline:
                 scene.id: [str(unit.get("type") or "") for unit in scene.units]
                 for scene in package.scenes
             }
-            return self.refinement_vnext.refine(
+            return self.cutout_pass2.refine(
                 assets,
                 workspace,
                 scene_unit_types=unit_types,
