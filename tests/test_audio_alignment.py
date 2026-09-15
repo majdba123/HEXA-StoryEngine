@@ -1,5 +1,3 @@
-import re
-
 from app.transcription.service import TranscriptionService, _WORD_RE
 
 
