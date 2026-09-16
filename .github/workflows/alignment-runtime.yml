@@ -38,7 +38,12 @@ jobs:
             "tokenizers==0.22.0" \
             "safetensors==0.6.2" \
             "pandas==2.2.3" \
-            "nltk==3.9.2"
+            "nltk==3.9.2" \
+            "click==8.1.8" \
+            "joblib==1.5.2" \
+            "regex==2025.7.34" \
+            "tqdm==4.67.1" \
+            "colorama==0.4.6"
 
       - name: Download pinned NLTK punkt_tab data
         env:
