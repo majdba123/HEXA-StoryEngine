@@ -43,11 +43,15 @@ class MotionPlanner:
             primary_start = max(beat.start, primary_end - entrance_duration)
 
             support_count = max(0, len(layout.items) - 1)
-            # Every support visual in this beat belongs to the same narrated event.
-            # It should therefore move *into* the narration anchor instead of waiting
-            # for a serial post-speech cascade. Keep only a tiny stagger so grouped
-            # elements remain readable without feeling simultaneous or mechanical.
-            support_step = 0.0 if support_count <= 1 else min(0.035, 0.11 / (support_count - 1))
+            support_window_end = min(
+                beat.end - 0.08,
+                audio_start + max(0.18, spoken_duration * 0.55),
+            )
+            if support_count:
+                available = max(0.0, support_window_end - max(primary_end, audio_start + 0.06))
+                support_step = min(0.38, max(0.16, available / max(1, support_count)))
+            else:
+                support_step = 0.0
 
             for index, item in enumerate(layout.items):
                 if index == 0:
@@ -56,12 +60,11 @@ class MotionPlanner:
                     kind = primary_kind
                 else:
                     support_duration = min(0.36, max(0.24, entrance_duration * 0.82))
-                    support_offset = min(0.11, (index - 1) * support_step)
-                    settle_at = min(beat.end - 0.04, audio_start + 0.02 + support_offset)
-                    cue_end = max(beat.start + 0.10, settle_at)
-                    cue_start = max(beat.start, cue_end - support_duration)
-                    if cue_end <= cue_start:
-                        cue_end = min(beat.end - 0.04, cue_start + 0.10)
+                    cue_start = max(primary_end + 0.10, audio_start + 0.05 + (index - 1) * support_step)
+                    latest_start = max(beat.start, beat.end - support_duration - 0.08)
+                    cue_start = min(cue_start, latest_start)
+                    cue_end = min(beat.end - 0.04, cue_start + support_duration)
+                    cue_end = max(cue_end, cue_start + 0.10)
                     kind = "soft_in" if visual_duration < 1.10 else "reveal_in"
 
                 cues.append(MotionCue(
