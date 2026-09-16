@@ -176,12 +176,12 @@ def test_renderer_executes_in_frame_travel_and_scale(tmp_path: Path) -> None:
     for index in range(45):
         ok, frame = capture.read()
         assert ok
-        if index in {3, 18, 35}:
+        if index in {3, 24, 35}:
             frames[index] = frame
     capture.release()
 
     early = _foreground_bounds(frames[3])
-    middle = _foreground_bounds(frames[18])
+    middle = _foreground_bounds(frames[24])
     late = _foreground_bounds(frames[35])
     early_width = early[1] - early[0] + 1
     late_width = late[1] - late[0] + 1
