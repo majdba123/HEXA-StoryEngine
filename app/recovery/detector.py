@@ -97,11 +97,28 @@ class RecoveryDetector:
         for beat_id, cues in by_beat.items():
             if len(cues) >= 3:
                 starts = sorted(cue.start for cue in cues)
-                if starts[-1] - starts[0] < 0.08:
+                start_span = starts[-1] - starts[0]
+                beat = story_by_id.get(beat_id)
+                audio_anchor = (
+                    beat.audio_start if beat and beat.audio_start is not None
+                    else beat.start if beat
+                    else None
+                )
+                narration_locked = False
+                if audio_anchor is not None:
+                    settle_offsets = [cue.end - audio_anchor for cue in cues]
+                    narration_locked = all(-0.18 <= offset <= 0.14 for offset in settle_offsets)
+
+                if start_span < 0.08 and not narration_locked:
                     issues.append(DetectedIssue(
                         "MULTI_ELEMENT_POP",
                         f"Too many simultaneous entrances: {beat_id}",
-                        {"beat_id": beat_id, "count": len(cues)},
+                        {
+                            "beat_id": beat_id,
+                            "count": len(cues),
+                            "start_span": start_span,
+                            "audio_anchor": audio_anchor,
+                        },
                     ))
         return self._dedupe(issues)
 
