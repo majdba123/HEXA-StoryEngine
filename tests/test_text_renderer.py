@@ -14,6 +14,8 @@ from app.models import (
     TextCue,
     TextLayoutItem,
     TextMotionCue,
+    TextMotionToken,
+    TextTokenCue,
     TextPlan,
     TextStyle,
     VisualAsset,
@@ -49,6 +51,22 @@ def _plan(tmp_path: Path) -> RenderPlan:
         anchor_asset_id="wallet",
         priority=90,
         style_id="amount",
+        tokens=[
+            TextTokenCue(
+                text="1000",
+                source_char_start=7,
+                source_char_end=11,
+                spoken_start=0.35,
+                spoken_end=0.55,
+            ),
+            TextTokenCue(
+                text="ريال",
+                source_char_start=12,
+                source_char_end=16,
+                spoken_start=0.62,
+                spoken_end=0.92,
+            ),
+        ],
     )
     return RenderPlan(
         duration=1.5,
@@ -100,7 +118,17 @@ def _plan(tmp_path: Path) -> RenderPlan:
             kind="text_number_in",
             start=0.35,
             end=0.55,
-            params={"visible_end": 1.18, "emphasis_time": 0.35},
+            params={"visible_end": 1.18, "emphasis_time": 0.35, "reveal_mode": "sequential_words"},
+            tokens=[
+                TextMotionToken(
+                    text="1000", start=0.35, end=0.52, visible_end=1.18,
+                    kind="text_word_number_primary_in",
+                ),
+                TextMotionToken(
+                    text="ريال", start=0.62, end=0.79, visible_end=1.18,
+                    kind="text_word_number_in",
+                ),
+            ],
         )],
     )
 
@@ -122,6 +150,8 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     assert "Noto Kufi Arabic" in payload
     assert "\\pos(960,216)" in payload
     assert "\\t(" in payload
+    assert payload.count("Dialogue: 0,") == 2
+    assert "{\\an5\\pos(960,216)" in payload
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")

@@ -1,3 +1,3 @@
-from app.text.semantic.selector import KeywordCandidate, TextSemanticSelector
+from app.text.semantic.selector import KeywordCandidate, KeywordToken, TextSemanticSelector
 
-__all__ = ["KeywordCandidate", "TextSemanticSelector"]
+__all__ = ["KeywordCandidate", "KeywordToken", "TextSemanticSelector"]

@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue
+from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue, TextMotionToken
 
 
 @dataclass(frozen=True, slots=True)
 class TextRenderTheme:
-    """Renderer-level visual tokens for sparse Arabic explainer keywords."""
+    """Renderer-level visual tokens for sparse explainer keywords."""
 
     font_family: str = "Noto Kufi Arabic"
     primary: str = "&H0027261F"      # dark navy/charcoal in ASS BGR order
@@ -19,12 +19,12 @@ class TextRenderTheme:
 
 
 class TextRenderer:
-    """Generate libass overlays for shaped RTL text without rasterizing text in Python.
+    """Render shaped RTL/LTR keyword text through libass/HarfBuzz/FriBidi.
 
-    libass delegates shaping/bidi to HarfBuzz/FriBidi when available in FFmpeg, which is
-    substantially safer for Arabic than hand-reversing strings or per-glyph placement.
-    The produced ASS script is deterministic and can be burned into the same FFmpeg encode
-    used for visual assets, avoiding an additional video generation pass.
+    Text stays an independent render layer, but is burned into the same FFmpeg segment
+    encode as visual assets. Multi-word cues are emitted as cumulative word stages whose
+    starts come from the TextMotion token anchors. This produces storytelling-style
+    word-by-word reveals without turning the layer into subtitles or inventing sync offsets.
     """
 
     def __init__(self, *, font_family: str = "Noto Kufi Arabic") -> None:
@@ -93,63 +93,130 @@ class TextRenderer:
                 continue
             style = style_by_id.get(cue.style_id)
             style_name = self._ass_style_name(style.id if style else cue.semantic_type)
-            start = max(0.0, motion.start - segment_start)
-            visible_end = float(motion.params.get("visible_end", cue.spoken_end))
-            end = min(duration, max(start + 0.12, visible_end - segment_start))
-            if end <= 0 or start >= duration:
-                continue
-            start = max(0.0, start)
-            end = min(duration, end)
-            if end <= start:
-                continue
             x = round(plan.width * item.x)
             y = round(plan.height * item.y)
-            tags = self._motion_tags(motion, item, start=start, end=end, x=x, y=y)
-            text = self._escape_text(cue.text)
-            events.append(
-                "Dialogue: 0,"
-                f"{self._ass_time(start)},{self._ass_time(end)},{style_name},,0,0,0,,"
-                f"{{{tags}}}{text}"
-            )
+            events.extend(self._cue_events(
+                cue_text=cue.text,
+                motion=motion,
+                item=item,
+                style_name=style_name,
+                x=x,
+                y=y,
+                segment_start=segment_start,
+                duration=duration,
+            ))
         return events
 
-    def _motion_tags(
+    def _cue_events(
         self,
+        *,
+        cue_text: str,
         motion: TextMotionCue,
         item: TextLayoutItem,
+        style_name: str,
+        x: int,
+        y: int,
+        segment_start: float,
+        duration: float,
+    ) -> list[str]:
+        del item
+        visible_end = float(motion.params.get("visible_end", motion.end))
+        tokens = sorted(motion.tokens, key=lambda row: (row.start, row.end))
+        if not tokens:
+            start = max(0.0, motion.start - segment_start)
+            end = min(duration, max(start + 0.12, visible_end - segment_start))
+            if end <= start or start >= duration:
+                return []
+            tags = self._stage_tags(
+                kind=motion.kind,
+                start=start,
+                entrance_end=max(start + 0.05, motion.end - segment_start),
+                end=end,
+                x=x,
+                y=y,
+                first=True,
+                final=True,
+            )
+            return [self._dialogue(start, end, style_name, tags, cue_text)]
+
+        events: list[str] = []
+        cumulative: list[str] = []
+        for index, token in enumerate(tokens):
+            cumulative.append(token.text)
+            global_start = token.start
+            global_end = tokens[index + 1].start if index + 1 < len(tokens) else visible_end
+            start = max(0.0, global_start - segment_start)
+            end = min(duration, global_end - segment_start)
+            if end <= start + 0.035 or start >= duration:
+                continue
+            entrance_end = min(end, max(start + 0.05, token.end - segment_start))
+            tags = self._stage_tags(
+                kind=token.kind,
+                start=start,
+                entrance_end=entrance_end,
+                end=end,
+                x=x,
+                y=y,
+                first=index == 0,
+                final=index == len(tokens) - 1,
+            )
+            events.append(self._dialogue(
+                start,
+                end,
+                style_name,
+                tags,
+                " ".join(cumulative),
+            ))
+        return events
+
+    def _stage_tags(
+        self,
         *,
+        kind: str,
         start: float,
+        entrance_end: float,
         end: float,
         x: int,
         y: int,
+        first: bool,
+        final: bool,
     ) -> str:
-        del item
-        entrance_ms = max(80, min(260, round(max(0.05, motion.end - motion.start) * 1000)))
-        fade_out_ms = max(80, min(180, round(max(0.08, end - start) * 120)))
-        base = ["\\an5", f"\\pos({x},{y})", f"\\fad({min(140, entrance_ms)},{fade_out_ms})"]
+        entrance_ms = max(90, min(220, round(max(0.05, entrance_end - start) * 1000)))
+        fade_out_ms = 120 if final and end > 0.18 else 0
 
-        if motion.kind == "text_number_in":
-            base.extend(["\\fscx92\\fscy92", f"\\t(0,{entrance_ms},\\fscx100\\fscy100)"])
-        elif motion.kind == "text_warning_in":
-            base.extend(["\\fscx90\\fscy90", f"\\t(0,{entrance_ms},\\fscx104\\fscy104)",
-                         f"\\t({entrance_ms},{entrance_ms + 110},\\fscx100\\fscy100)"])
-        elif motion.kind == "text_emphasis_in":
-            base.extend(["\\fscx94\\fscy94", f"\\t(0,{entrance_ms},\\fscx100\\fscy100)"])
+        if first:
+            base = ["\\an5", f"\\pos({x},{y})", f"\\fad(100,{fade_out_ms})"]
         else:
-            # A restrained vertical settle keeps keywords alive without competing with imagery.
-            start_y = y + 14
+            # Subsequent words are added without fading the already-visible phrase away.
+            # The compact scale/vertical settle makes the newly expanded phrase feel like
+            # one continuous storytelling gesture.
+            base = ["\\an5", f"\\pos({x},{y})"]
+            if fade_out_ms:
+                base.append(f"\\fad(0,{fade_out_ms})")
+
+        if "warning" in kind:
+            base.extend(["\\fscx91\\fscy91", f"\\t(0,{entrance_ms},\\fscx104\\fscy104)",
+                         f"\\t({entrance_ms},{entrance_ms + 90},\\fscx100\\fscy100)"])
+        elif "number" in kind:
+            base.extend(["\\fscx92\\fscy92", f"\\t(0,{entrance_ms},\\fscx102\\fscy102)",
+                         f"\\t({entrance_ms},{entrance_ms + 80},\\fscx100\\fscy100)"])
+        elif first:
+            start_y = y + 16
             base = ["\\an5", f"\\move({x},{start_y},{x},{y},0,{entrance_ms})",
-                    f"\\fad({min(140, entrance_ms)},{fade_out_ms})"]
+                    f"\\fad(100,{fade_out_ms})"]
+        else:
+            base.extend(["\\fscx95\\fscy95", f"\\t(0,{entrance_ms},\\fscx100\\fscy100)"])
         return "".join(base)
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme
         styles = [
-            self._style_line("Keyword", theme.primary, 50, outline=3.2, shadow=1.6),
-            self._style_line("Number", theme.accent, 62, outline=3.6, shadow=1.8),
-            self._style_line("Amount", theme.accent, 62, outline=3.6, shadow=1.8),
-            self._style_line("WarningAmount", theme.warning, 62, outline=3.8, shadow=1.9),
-            self._style_line("Emphasis", theme.primary, 54, outline=3.4, shadow=1.7),
+            self._style_line("Keyword", theme.primary, 68, outline=4.0, shadow=1.6),
+            self._style_line("Number", theme.accent, 84, outline=4.5, shadow=1.8),
+            self._style_line("Amount", theme.accent, 82, outline=4.5, shadow=1.8),
+            self._style_line("WarningAmount", theme.warning, 84, outline=4.8, shadow=2.0),
+            self._style_line("Warning", theme.warning, 76, outline=4.4, shadow=1.9),
+            self._style_line("Emphasis", theme.accent, 72, outline=4.2, shadow=1.7),
         ]
         return "\n".join([
             "[Script Info]",
@@ -184,8 +251,16 @@ class TextRenderer:
             "number": "Number",
             "amount": "Amount",
             "warning_amount": "WarningAmount",
+            "warning": "Warning",
             "emphasis": "Emphasis",
         }.get(style_id, "Keyword")
+
+    def _dialogue(self, start: float, end: float, style_name: str, tags: str, text: str) -> str:
+        return (
+            "Dialogue: 0,"
+            f"{self._ass_time(start)},{self._ass_time(end)},{style_name},,0,0,0,,"
+            f"{{{tags}}}{self._escape_text(text)}"
+        )
 
     @staticmethod
     def _escape_text(value: str) -> str:

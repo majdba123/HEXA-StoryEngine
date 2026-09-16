@@ -20,7 +20,9 @@ class FinalExporter:
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
-            "-shortest",
+            # Do not use -shortest here. AAC encoder priming/tail packet semantics can
+            # make the muxed audio stream a few milliseconds shorter than a frame-locked
+            # video, and -shortest would then drop valid final video frames.
             "-movflags", "+faststart",
             str(output),
         ]

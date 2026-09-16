@@ -149,6 +149,22 @@ class MotionCue(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class TextTokenCue(BaseModel):
+    text: str
+    source_char_start: int = Field(ge=0)
+    source_char_end: int = Field(gt=0)
+    spoken_start: float = Field(ge=0)
+    spoken_end: float = Field(gt=0)
+
+    @field_validator("text")
+    @classmethod
+    def token_text_non_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text token cannot be empty")
+        return value
+
+
 class TextCue(BaseModel):
     id: str
     beat_id: str
@@ -163,6 +179,7 @@ class TextCue(BaseModel):
     priority: int = 0
     style_id: str
     placement_hint: str | None = None
+    tokens: list[TextTokenCue] = Field(default_factory=list)
 
     @field_validator("text")
     @classmethod
@@ -203,6 +220,14 @@ class TextCompositionBeat(BaseModel):
     items: list[TextLayoutItem] = Field(default_factory=list)
 
 
+class TextMotionToken(BaseModel):
+    text: str
+    start: float
+    end: float
+    visible_end: float
+    kind: str = "text_word_in"
+
+
 class TextMotionCue(BaseModel):
     beat_id: str
     text_cue_id: str
@@ -210,6 +235,7 @@ class TextMotionCue(BaseModel):
     start: float
     end: float
     params: dict[str, Any] = Field(default_factory=dict)
+    tokens: list[TextMotionToken] = Field(default_factory=list)
 
 
 class RenderPlan(BaseModel):

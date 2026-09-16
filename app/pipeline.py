@@ -7,6 +7,7 @@ from typing import Callable
 
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
+from app.diagnostics import AssetUsageValidator
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
 from app.input import FinalPackageLoader
@@ -27,6 +28,7 @@ from app.shared.errors import (
 from app.story import StoryPlanner
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
+from app.transcription.alignment import WhisperXForcedAligner
 from app.vision import VisionService
 
 ProgressCallback = Callable[[Stage, float, str], None]
@@ -37,9 +39,18 @@ class StoryEnginePipeline:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings.from_env()
         self.loader = FinalPackageLoader()
+        alignment_models: dict[str, str] = {}
+        if self.settings.alignment_ar_model:
+            alignment_models["ar"] = self.settings.alignment_ar_model
+        if self.settings.alignment_en_model:
+            alignment_models["en"] = self.settings.alignment_en_model
         self.transcriber = TranscriptionService(
             model_name=self.settings.whisper_model,
             ffprobe_bin=self.settings.ffprobe_bin,
+            forced_aligner=WhisperXForcedAligner(
+                model_by_language=alignment_models or None,
+            ),
+            require_forced_alignment=self.settings.require_forced_alignment,
         )
         self.vision = VisionService()
         self.cutout = CutoutService(allow_scene_fallback=self.settings.allow_scene_fallback)
@@ -121,6 +132,7 @@ class StoryEnginePipeline:
             transcript=transcript,
             story=story,
             assets=assets,
+            package=package,
         )
 
         self._check_cancel(cancelled)
@@ -157,6 +169,7 @@ class StoryEnginePipeline:
             progress=progress,
             cancelled=cancelled,
         )
+        AssetUsageValidator.validate(plan)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.76, "Rendering story")
@@ -279,6 +292,7 @@ class StoryEnginePipeline:
                 transcript=transcript,
                 story=story,
                 assets=assets,
+                package=package,
             )
         if start <= 4:
             composition = self.composition.plan(story, assets)

@@ -91,6 +91,9 @@ def test_text_planner_selects_sparse_keywords_from_forced_alignment() -> None:
     assert text.cues[1].semantic_type == "warning_amount"
     assert all(cue.anchor_asset_id == "wallet" for cue in text.cues)
     assert all(cue.spoken_start >= 0 for cue in text.cues)
+    assert [token.text for token in text.cues[0].tokens] == ["1000", "ريال"]
+    assert [token.text for token in text.cues[1].tokens] == ["300", "ريال", "محجوزة"]
+    assert all(token.spoken_end > token.spoken_start for cue in text.cues for token in cue.tokens)
     assert {style.id for style in text.styles} == {"amount", "warning_amount"}
 
 
@@ -151,3 +154,6 @@ def test_text_motion_is_separate_and_locked_to_spoken_start() -> None:
         assert motion.start == source.spoken_start
         assert motion.params["emphasis_time"] == source.emphasis_time
         assert motion.params["anchor_asset_id"] == "wallet"
+        assert motion.params["reveal_mode"] == "sequential_words"
+        assert [token.text for token in motion.tokens] == [token.text for token in source.tokens]
+        assert [token.start for token in motion.tokens] == [token.spoken_start for token in source.tokens]

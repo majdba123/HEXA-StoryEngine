@@ -43,6 +43,15 @@ def default_text_styles() -> dict[str, TextStyle]:
             emphasis_role="warning",
         ),
         TextStyle(
+            id="warning",
+            role="warning",
+            font_role="display",
+            size_role="large",
+            color_role="warning",
+            background_role="none",
+            emphasis_role="warning",
+        ),
+        TextStyle(
             id="emphasis",
             role="emphasis",
             font_role="display",

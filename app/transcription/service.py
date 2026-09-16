@@ -26,10 +26,12 @@ class TranscriptionService:
         model_name: str,
         ffprobe_bin: str = "ffprobe",
         forced_aligner: ForcedAligner | None = None,
+        require_forced_alignment: bool = False,
     ) -> None:
         self.model_name = model_name
         self.ffprobe_bin = ffprobe_bin
         self.forced_aligner = forced_aligner or WhisperXForcedAligner()
+        self.require_forced_alignment = require_forced_alignment
 
     def transcribe(self, audio: Path, script: str | None = None) -> Transcript:
         audio = audio.expanduser().resolve()
@@ -42,9 +44,10 @@ class TranscriptionService:
                 aligned.timing_source = "forced_alignment"
                 return aligned
             except (DependencyUnavailableError, AlignmentRejectedError):
-                # Preserve the existing runtime as a controlled fallback until the
-                # forced-alignment runtime is provisioned everywhere. Production can
-                # validate alignment availability before rendering.
+                if self.require_forced_alignment:
+                    raise
+                # Controlled fallback for tests/diagnostics only. Product Settings use
+                # strict forced alignment so unsafe timing never silently drives render.
                 pass
 
         try:

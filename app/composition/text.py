@@ -91,10 +91,10 @@ class TextCompositionPlanner:
     def _estimated_box(cue: TextCue) -> tuple[float, float]:
         # Approximate ASS display width only for layout collision scoring. The renderer
         # performs real glyph shaping; this estimate intentionally stays conservative.
-        base = 0.17 + min(0.23, len(cue.text) * 0.011)
+        base = 0.20 + min(0.28, len(cue.text) * 0.013)
         if cue.priority >= 85:
-            base += 0.035
-        return min(0.44, base), 0.105 if cue.priority >= 85 else 0.09
+            base += 0.045
+        return min(0.52, base), 0.135 if cue.priority >= 85 else 0.115
 
     def _candidates(
         self,
