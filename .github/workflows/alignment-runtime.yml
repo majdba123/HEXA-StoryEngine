@@ -125,11 +125,85 @@ jobs:
         run: |
           find alignment_runtime/models -type d -name .cache -prune -exec rm -rf {} + || true
 
-      - name: Upload offline alignment runtime
+      - name: Split large Arabic model for transport
+        run: |
+          mkdir -p alignment_transport/ar-parts alignment_transport/ar-meta
+          split -b 250M -d -a 2 \
+            alignment_runtime/models/ar/pytorch_model.bin \
+            alignment_transport/ar-parts/pytorch_model.bin.part-
+          find alignment_runtime/models/ar -maxdepth 1 -type f ! -name pytorch_model.bin \
+            -exec cp {} alignment_transport/ar-meta/ \;
+          cp alignment_runtime/manifest.json alignment_transport/ar-meta/manifest.json
+          ls -lh alignment_transport/ar-parts
+
+      - name: Upload runtime wheels
         uses: actions/upload-artifact@v4
         with:
-          name: hexa-alignment-runtime-ar-en-v1
-          path: alignment_runtime
+          name: hexa-alignment-runtime-wheels-v1
+          path: alignment_runtime/wheels
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Arabic metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-ar-meta-v1
+          path: alignment_transport/ar-meta
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Arabic model part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-ar-part-00-v1
+          path: alignment_transport/ar-parts/pytorch_model.bin.part-00
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Arabic model part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-ar-part-01-v1
+          path: alignment_transport/ar-parts/pytorch_model.bin.part-01
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Arabic model part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-ar-part-02-v1
+          path: alignment_transport/ar-parts/pytorch_model.bin.part-02
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Arabic model part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-ar-part-03-v1
+          path: alignment_transport/ar-parts/pytorch_model.bin.part-03
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Arabic model part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-ar-part-04-v1
+          path: alignment_transport/ar-parts/pytorch_model.bin.part-04
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload English model
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-en-model-v1
+          path: alignment_runtime/models/en
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
