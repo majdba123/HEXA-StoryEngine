@@ -40,7 +40,10 @@ class MotionPlanner:
                     primary_kind = "reveal_in"
 
             primary_end = min(beat.end - 0.04, max(beat.start + 0.08, audio_start - 0.055))
-            primary_start = max(beat.start, primary_end - entrance_duration)
+            # Start the incoming primary at the visual beat boundary. Cross-beat
+            # alpha carry created washed-out silhouettes on white backgrounds; the
+            # authored lead-in now belongs entirely to the incoming object.
+            primary_start = beat.start
 
             support_count = max(0, len(layout.items) - 1)
             support_window_end = min(

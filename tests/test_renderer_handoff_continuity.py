@@ -49,7 +49,7 @@ def _read_frames(path: Path) -> list[np.ndarray]:
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg required",
 )
-def test_renderer_carries_outgoing_settled_visual_across_beat_handoff(tmp_path: Path) -> None:
+def test_renderer_transition_has_no_outgoing_ghost_or_internal_white_flash(tmp_path: Path) -> None:
     first_asset = tmp_path / "first.png"
     second_asset = tmp_path / "second.png"
     _write_rgba_asset(first_asset, (30, 60, 185, 255))
@@ -138,11 +138,12 @@ def test_renderer_carries_outgoing_settled_visual_across_beat_handoff(tmp_path: 
 
     frames = _read_frames(output)
     assert len(frames) == 60
-    # The second beat begins off the encoded-frame grid and rounds to frame 22. This also
-    # protects the outgoing segment's last encoded frame from a still-image EOF flash.
-    # The incoming actor starts at alpha=0, so continuity depends on the previous settled
-    # composition being carried underneath the handoff.
-    for frame_index in range(19, 28):
+    # The second beat begins at encoded frame 22. From that frame onward the centre of
+    # the scene must be dominated by the incoming red artwork, not a translucent blend
+    # of the previous blue object. This catches the pale "ghost silhouette" regression.
+    for frame_index in range(22, 28):
+        center = frames[frame_index][180, 320]  # BGR
+        assert int(center[2]) > int(center[0]) + 45, (frame_index, center.tolist())
         assert _mean_white_distance(frames[frame_index]) > 8.0, frame_index
 
     detector = RecoveryDetector("ffprobe", "ffmpeg")

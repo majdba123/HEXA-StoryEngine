@@ -8,26 +8,27 @@ from pathlib import Path
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.render.text import TextRenderer
+from app.render.transition import VisualTransitionPolicy
 
 
 class FFmpegRenderer:
     """Parallel beat-segment renderer with deterministic concat.
 
-    Beat segments are encoded independently for bounded render cost and recovery. A beat
-    boundary must still behave like one continuous authored timeline, so every segment
-    after the first carries the previous beat's settled composition underneath the new
-    beat until the incoming visual becomes visible. This renderer-only handoff prevents
-    white flashes without changing Story, Composition, Motion, or source-relative layout.
+    Beat segments are encoded independently for bounded render cost and recovery. Visual
+    cutouts stay opaque while moving: alpha crossfades on a white canvas create the exact
+    washed-out "ghost" silhouette that looks like a bad mask. True persistent assets are
+    held in place; unrelated outgoing artwork is never carried into the next beat.
     """
 
     def __init__(
         self,
         ffmpeg_bin: str = "ffmpeg",
         *,
-        text_font_family: str = "Noto Kufi Arabic",
+        text_font_family: str = "Noto Sans Arabic",
     ) -> None:
         self.ffmpeg_bin = ffmpeg_bin
         self.text_renderer = TextRenderer(font_family=text_font_family)
+        self.transition_policy = VisualTransitionPolicy()
 
     def render(self, plan: RenderPlan, output: Path) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -132,14 +133,11 @@ class FFmpegRenderer:
 
         ordered_items = sorted(layout.items, key=lambda row: row.z)
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
-        outgoing_items = (
-            sorted(previous_layout.items, key=lambda row: row.z)
-            if previous_layout and previous_layout.items
-            else []
-        )
+        transition = self.transition_policy.decide(previous_beat, previous_layout, layout)
+        persistent_ids = transition.persistent_asset_ids
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
-        for item in [*outgoing_items, *ordered_items]:
+        for item in ordered_items:
             asset = assets.get(item.asset_id)
             if asset is None or not asset.image_path.exists():
                 raise StageFailedError(
@@ -154,57 +152,36 @@ class FFmpegRenderer:
         ]
         composite_label = "base0"
 
-        handoff_start, handoff_fade = self._incoming_handoff_window(
-            beat=beat,
-            ordered_items=ordered_items,
-            segment_start=segment_start,
-            duration=duration,
-            motion=motion,
-        )
-        if outgoing_items:
-            fade_duration = min(
-                handoff_fade,
-                max(1.0 / plan.fps, duration - handoff_start),
-            )
-            for input_index, item in enumerate(outgoing_items):
-                box_w, box_h, target_x, target_y = self._geometry(plan, item)
-                source_label = f"outgoing{input_index}"
-                filters.append(
-                    f"[{input_index}:v]format=rgba,"
-                    f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
-                    f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},"
-                    "setpts=PTS-STARTPTS,"
-                    f"fade=t=out:st={handoff_start:.6f}:d={fade_duration:.6f}:alpha=1"
-                    f"[{source_label}]"
-                )
-                next_label = f"outmix{input_index}"
-                filters.append(
-                    f"[{composite_label}][{source_label}]overlay=x='{target_x}':y='{target_y}':"
-                    f"enable='between(t,0,{duration:.6f})':eof_action=pass:shortest=0"
-                    f"[{next_label}]"
-                )
-                composite_label = next_label
-
-        input_offset = len(outgoing_items)
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
-            start, end, fade_duration = self._cue_window(
+            start, end, _fade_duration = self._cue_window(
                 beat=beat,
                 cue=cue,
                 segment_start=segment_start,
                 duration=duration,
             )
-            input_index = input_offset + layer_index
+            persistent = item.asset_id in persistent_ids
+            if persistent:
+                start = 0.0
+                end = 0.0
+
             source_label = f"asset{layer_index}"
+            # Keep cutout alpha exactly as authored. Do not fade RGBA layers: on a white
+            # canvas a partially transparent coloured object turns into a pale duplicate
+            # silhouette. Visibility is binary; motion supplies the entrance gesture.
             filters.append(
-                f"[{input_index}:v]format=rgba,"
+                f"[{layer_index}:v]format=rgba,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
-                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
-                f"fade=t=in:st={start:.6f}:d={fade_duration:.6f}:alpha=1[{source_label}]"
+                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
+                f"[{source_label}]"
             )
+
             kind = cue.kind if cue else "reveal_in"
-            if kind == "handoff_in":
+            if persistent:
+                x_expr = str(target_x)
+                y_expr = str(target_y)
+            elif kind == "handoff_in":
                 x_expr = self._entry_expression(target_x, start, end, offset=58)
                 y_expr = str(target_y)
             elif kind == "emphasis_in":
@@ -216,10 +193,12 @@ class FFmpegRenderer:
             else:
                 x_expr = str(target_x)
                 y_expr = self._entry_expression(target_y, start, end, offset=30)
+
             next_label = f"mix{layer_index}"
+            enable_start = 0.0 if persistent else start
             filters.append(
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{start:.6f},{duration:.6f})':eof_action=pass:shortest=0"
+                f"enable='between(t,{enable_start:.6f},{duration:.6f})':eof_action=pass:shortest=0"
                 f"[{next_label}]"
             )
             composite_label = next_label

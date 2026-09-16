@@ -115,3 +115,41 @@ def test_director_uses_soft_zone_continuity_without_forcing_overlap() -> None:
 
     assert director._zone_family(second.zone) == preferred
     assert second.visual_overlap <= 0.001
+
+
+def test_director_uses_actual_alpha_footprint_for_negative_space(tmp_path) -> None:
+    from PIL import Image, ImageDraw
+    from app.models import VisualAsset
+
+    path = tmp_path / "sparse.png"
+    image = Image.new("RGBA", (400, 240), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image)
+    # Artwork occupies the left 62% of a broad authored canvas. The right side is real
+    # negative space and should be available to text even though LayoutItem is large.
+    draw.rounded_rectangle((0, 15, 245, 225), radius=20, fill=(20, 100, 220, 255))
+    image.save(path)
+
+    asset = VisualAsset(
+        id="hero",
+        scene_id="scene-001",
+        role="primary",
+        image_path=path,
+        extraction_method="fixture",
+    )
+    visual = CompositionBeat(
+        beat_id="beat-001",
+        items=[LayoutItem(asset_id="hero", x=0.50, y=0.50, width=0.90, height=0.78, z=20)],
+    )
+    director = TextPlacementDirector()
+    result = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-001", "300 محجوزة", 0.5, 1.1),
+        concurrent_text=[],
+        preferred_zone=None,
+        assets_by_id={"hero": asset},
+    )
+
+    assert result.visual_overlap <= 0.001
+    # The clean right-hand negative space should beat covering the opaque left cluster.
+    assert result.item.x >= 0.65

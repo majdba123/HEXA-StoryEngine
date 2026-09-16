@@ -149,13 +149,14 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
     assert "لاير" not in visible_text
-    assert "Noto Kufi Arabic" in payload
-    assert "\\move(960,234,960,216" in payload
-    assert "\\t(" in payload
-    # One stable phrase event reserves final geometry; token override tags reveal words
-    # at their individual forced-aligned timestamps without re-centering earlier text.
-    assert payload.count("Dialogue: 0,") == 1
-    assert payload.count("\\alpha&HFF&") == 2
+    assert "Noto Sans Arabic" in payload
+    assert "\\an6\\move(" in payload
+    assert "\\pos(" in payload
+    # Each reveal state is a complete logical phrase shaped as one bidi run. This avoids
+    # the temporary word reversal caused by inline override spans inside Arabic text.
+    assert payload.count("Dialogue: 0,") == 2
+    assert payload.count("\\alpha&HFF&") == 0
+    assert "1000 ريال" in payload
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
@@ -172,4 +173,4 @@ def test_ffmpeg_renderer_burns_text_in_same_segment_encode(tmp_path: Path) -> No
     payload = ass_files[0].read_text(encoding="utf-8")
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
-    assert payload.count("Dialogue: 0,") == 1
+    assert payload.count("Dialogue: 0,") == 2

@@ -138,7 +138,7 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
         composition = self.composition.plan(story, assets)
-        text_composition = self.text_composition.plan(story, composition, text.cues)
+        text_composition = self.text_composition.plan(story, composition, text.cues, assets)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
@@ -296,7 +296,7 @@ class StoryEnginePipeline:
             )
         if start <= 4:
             composition = self.composition.plan(story, assets)
-            text_composition = self.text_composition.plan(story, composition, text.cues)
+            text_composition = self.text_composition.plan(story, composition, text.cues, assets)
         if start <= 5:
             motion = self.motion.plan(story, composition)
             text_motion = self.text_motion.plan(story, text.cues, text_composition)

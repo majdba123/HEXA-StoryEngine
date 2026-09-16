@@ -6,29 +6,34 @@ from pathlib import Path
 from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue
 
 
+_RLI = "\u2067"
+_PDI = "\u2069"
+
+
 @dataclass(frozen=True, slots=True)
 class TextRenderTheme:
-    """High-contrast explainer-title tokens for sparse keyword storytelling."""
+    """Premium high-contrast tokens for sparse keyword storytelling."""
 
-    font_family: str = "Noto Kufi Arabic"
-    primary: str = "&H00452B16"      # dark navy, ASS AABBGGRR
-    accent: str = "&H00EB6E0A"       # saturated HEXA-style blue
-    gold: str = "&H001AA4F2"         # warm gold for numbers
-    warning: str = "&H003F4BE3"      # warm red
-    outline: str = "&H00FFFFFF"       # white separation from detailed artwork
-    shadow: str = "&H500D1826"        # translucent navy depth
+    font_family: str = "Noto Sans Arabic"
+    primary: str = "&H00351D0B"       # #0B1D35 deep navy, ASS AABBGGRR
+    accent: str = "&H00EB7A0A"        # #0A7AEB electric blue
+    gold: str = "&H001AA2F4"          # #F4A21A warm gold
+    warning: str = "&H003F4BE3"       # #E34B3F warm red
+    light_outline: str = "&H00FFF9F3" # warm white separation
+    dark_outline: str = "&H00351D0B"  # navy edge for coloured titles
+    shadow: str = "&H520B1526"        # translucent navy depth
 
 
 class TextRenderer:
-    """Render shaped RTL/LTR sparse keywords through libass/HarfBuzz/FriBidi.
+    """Render stable Arabic keyword motion through libass/HarfBuzz/FriBidi.
 
-    A multi-word cue is one stable ASS line, not a sequence of recentered subtitle
-    fragments. Future words are laid out invisibly from the cue's first frame and each
-    word reveals at its exact forced-alignment timestamp. This keeps the final phrase
-    geometry stable while producing authored word-by-word storytelling motion.
+    Inline ASS override spans split the Unicode bidi run and can temporarily reorder
+    Arabic words while they reveal. Instead, each reveal state is a complete logical
+    phrase shaped by libass as one bidi run. Every state uses a fixed edge anchor, so the
+    line grows into its final footprint without re-centering or reversing earlier words.
     """
 
-    def __init__(self, *, font_family: str = "Noto Kufi Arabic") -> None:
+    def __init__(self, *, font_family: str = "Noto Sans Arabic") -> None:
         self.theme = TextRenderTheme(font_family=font_family)
 
     def write_beat_ass(
@@ -94,23 +99,28 @@ class TextRenderer:
                 continue
             style = style_by_id.get(cue.style_id)
             style_name = self._ass_style_name(style.id if style else cue.semantic_type)
-            x = round(plan.width * item.x)
             y = round(plan.height * item.y)
-            event = self._cue_event(
+            rtl = self._contains_arabic(cue.text)
+            if rtl:
+                # Right-edge anchoring makes cumulative Arabic phrases expand leftward
+                # while keeping the final lane fixed. This is stable for mixed numbers.
+                x = round(plan.width * min(0.97, item.x + item.max_width / 2))
+            else:
+                x = round(plan.width * max(0.03, item.x - item.max_width / 2))
+            events.extend(self._cue_events(
                 cue_text=cue.text,
                 motion=motion,
                 item=item,
                 style_name=style_name,
                 x=x,
                 y=y,
+                rtl=rtl,
                 segment_start=segment_start,
                 duration=duration,
-            )
-            if event is not None:
-                events.append(event)
+            ))
         return events
 
-    def _cue_event(
+    def _cue_events(
         self,
         *,
         cue_text: str,
@@ -119,61 +129,93 @@ class TextRenderer:
         style_name: str,
         x: int,
         y: int,
+        rtl: bool,
         segment_start: float,
         duration: float,
-    ) -> str | None:
+    ) -> list[str]:
         del item
         visible_end = float(motion.params.get("visible_end", motion.end))
         event_global_start = max(motion.start, segment_start)
-        start = max(0.0, event_global_start - segment_start)
-        end = min(duration, visible_end - segment_start)
-        if end <= start + 0.06 or start >= duration:
-            return None
+        local_end = min(duration, visible_end - segment_start)
+        if local_end <= 0.06 or event_global_start >= segment_start + duration:
+            return []
 
         tokens = sorted(motion.tokens, key=lambda row: (row.start, row.end))
-        entrance_ms = max(120, min(220, round((motion.end - motion.start) * 1000)))
-        start_y = y + (18 if "warning" not in motion.kind else 12)
-        line_tags = (
-            f"\\an5\\move({x},{start_y},{x},{y},0,{entrance_ms})"
-            "\\fad(75,140)"
-        )
-
         if not tokens:
-            return self._dialogue(start, end, style_name, line_tags, cue_text)
+            start = max(0.0, event_global_start - segment_start)
+            if local_end <= start + 0.04:
+                return []
+            tags = self._line_tags(x=x, y=y, rtl=rtl, first=True)
+            return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
-        base_color = self._style_color(style_name)
-        token_fragments: list[str] = []
+        events: list[str] = []
         for index, token in enumerate(tokens):
-            rel_start_ms = max(0, round((token.start - event_global_start) * 1000))
-            settle_ms = max(
-                rel_start_ms + 90,
-                min(rel_start_ms + 230, round((token.end - event_global_start) * 1000)),
-            )
-            # Every token reserves its final layout space from frame one but remains
-            # invisible until its real spoken timestamp. Blur + alpha + colour settle
-            # creates motion without changing glyph metrics, so earlier words never jump.
-            initial_color = self._token_flash_color(token.kind, base_color, index)
-            tags = (
-                f"\\1c{initial_color}\\alpha&HFF&\\blur3.8"
-                f"\\t({rel_start_ms},{settle_ms},\\1c{base_color}\\alpha&H00&\\blur0.25)"
-            )
-            token_fragments.append(f"{{{tags}}}{self._escape_text(token.text)}")
+            state_global_start = max(event_global_start, token.start)
+            if state_global_start >= visible_end:
+                continue
+            next_start = tokens[index + 1].start if index + 1 < len(tokens) else visible_end
+            state_global_end = min(visible_end, max(state_global_start + 0.04, next_start))
+            start = max(0.0, state_global_start - segment_start)
+            end = min(duration, state_global_end - segment_start)
+            if end <= start + 0.02 or start >= duration:
+                continue
 
-        # If a transformed display phrase has no one-to-one token text, fall back to the
-        # canonical cue text rather than producing a malformed line. Current semantic
-        # planning preserves token display provenance, so this is a defensive guard.
-        text = " ".join(token_fragments) if token_fragments else self._escape_text(cue_text)
-        return self._dialogue_raw(start, end, style_name, line_tags, text)
+            # Full logical phrase prefix -> one FriBidi/HarfBuzz shaping run. No inline
+            # alpha tags are inserted between Arabic tokens, which eliminates temporary
+            # reverse ordering during reveal.
+            state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
+            if not state_text:
+                continue
+            tags = self._line_tags(x=x, y=y, rtl=rtl, first=index == 0)
+            events.append(self._dialogue(
+                start,
+                end,
+                style_name,
+                tags,
+                self._directional_text(state_text, rtl),
+            ))
+        return events
+
+    @staticmethod
+    def _line_tags(*, x: int, y: int, rtl: bool, first: bool) -> str:
+        alignment = 6 if rtl else 4  # middle-right for RTL, middle-left for LTR
+        if first:
+            # One restrained entry gesture for the phrase. Later word states hold the
+            # exact anchor so the line does not bounce or re-center.
+            direction = 14 if rtl else -14
+            return (
+                f"\\an{alignment}\\move({x + direction},{y + 10},{x},{y},0,165)"
+                "\\fad(65,0)\\blur0.35"
+            )
+        return f"\\an{alignment}\\pos({x},{y})\\blur0.25"
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme
         styles = [
-            self._style_line("Keyword", theme.primary, 88, outline=5.2, shadow=2.2),
-            self._style_line("Number", theme.gold, 116, outline=6.2, shadow=2.8),
-            self._style_line("Amount", theme.accent, 108, outline=5.8, shadow=2.6),
-            self._style_line("WarningAmount", theme.warning, 114, outline=6.2, shadow=2.9),
-            self._style_line("Warning", theme.warning, 104, outline=5.9, shadow=2.7),
-            self._style_line("Emphasis", theme.accent, 98, outline=5.6, shadow=2.5),
+            self._style_line(
+                "Keyword", theme.primary, 98, outline_color=theme.light_outline,
+                outline=2.8, shadow=2.0,
+            ),
+            self._style_line(
+                "Number", theme.gold, 132, outline_color=theme.dark_outline,
+                outline=3.8, shadow=2.8,
+            ),
+            self._style_line(
+                "Amount", theme.accent, 120, outline_color=theme.dark_outline,
+                outline=3.4, shadow=2.6,
+            ),
+            self._style_line(
+                "WarningAmount", theme.warning, 124, outline_color=theme.dark_outline,
+                outline=3.8, shadow=2.8,
+            ),
+            self._style_line(
+                "Warning", theme.warning, 114, outline_color=theme.dark_outline,
+                outline=3.5, shadow=2.6,
+            ),
+            self._style_line(
+                "Emphasis", theme.accent, 110, outline_color=theme.dark_outline,
+                outline=3.2, shadow=2.4,
+            ),
         ]
         return "\n".join([
             "[Script Info]",
@@ -196,9 +238,18 @@ class TextRenderer:
             "",
         ])
 
-    def _style_line(self, name: str, color: str, size: int, *, outline: float, shadow: float) -> str:
+    def _style_line(
+        self,
+        name: str,
+        color: str,
+        size: int,
+        *,
+        outline_color: str,
+        outline: float,
+        shadow: float,
+    ) -> str:
         return (
-            f"Style: {name},{self.theme.font_family},{size},{color},{color},{self.theme.outline},"
+            f"Style: {name},{self.theme.font_family},{size},{color},{color},{outline_color},"
             f"{self.theme.shadow},-1,0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},5,50,50,34,1"
         )
 
@@ -212,33 +263,30 @@ class TextRenderer:
             "emphasis": "Emphasis",
         }.get(style_id, "Keyword")
 
-    def _style_color(self, style_name: str) -> str:
-        return {
-            "Number": self.theme.gold,
-            "Amount": self.theme.accent,
-            "WarningAmount": self.theme.warning,
-            "Warning": self.theme.warning,
-            "Emphasis": self.theme.accent,
-        }.get(style_name, self.theme.primary)
+    @staticmethod
+    def _contains_arabic(value: str) -> bool:
+        return any(
+            "\u0600" <= char <= "\u06ff"
+            or "\u0750" <= char <= "\u077f"
+            or "\u08a0" <= char <= "\u08ff"
+            for char in value
+        )
 
-    def _token_flash_color(self, kind: str, base_color: str, index: int) -> str:
-        # A brief role-aware colour arrival gives each word a visual beat without scale
-        # changes that would disturb Arabic shaping or re-center the phrase.
-        if "warning" in kind:
-            return self.theme.gold if index == 0 else self.theme.warning
-        if "number" in kind:
-            return self.theme.gold
-        if index == 0:
-            return self.theme.accent
-        return base_color
+    @staticmethod
+    def _directional_text(value: str, rtl: bool) -> str:
+        # RLI/PDI are standard Unicode bidi isolates supported by FriBidi. They keep
+        # mixed Arabic + Western digits inside one stable RTL paragraph without manual
+        # character reversal or language-specific hacks.
+        return f"{_RLI}{value}{_PDI}" if rtl else value
 
     def _dialogue(self, start: float, end: float, style_name: str, tags: str, text: str) -> str:
         return self._dialogue_raw(start, end, style_name, tags, self._escape_text(text))
 
-    def _dialogue_raw(self, start: float, end: float, style_name: str, tags: str, text: str) -> str:
+    @staticmethod
+    def _dialogue_raw(start: float, end: float, style_name: str, tags: str, text: str) -> str:
         return (
             "Dialogue: 0,"
-            f"{self._ass_time(start)},{self._ass_time(end)},{style_name},,0,0,0,,"
+            f"{TextRenderer._ass_time(start)},{TextRenderer._ass_time(end)},{style_name},,0,0,0,,"
             f"{{{tags}}}{text}"
         )
 

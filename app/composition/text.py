@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.composition.text_director import PlacedTextRegion, TextPlacementDirector
-from app.models import CompositionBeat, StoryBeat, TextCompositionBeat, TextCue
+from app.models import CompositionBeat, StoryBeat, TextCompositionBeat, TextCue, VisualAsset
 from app.text.timing.visibility import TextVisibilityPolicy
 
 
@@ -19,8 +19,10 @@ class TextCompositionPlanner:
         beats: list[StoryBeat],
         visual_composition: list[CompositionBeat],
         text_cues: list[TextCue],
+        assets: list[VisualAsset] | None = None,
     ) -> list[TextCompositionBeat]:
         visual_by_beat = {beat.beat_id: beat for beat in visual_composition}
+        assets_by_id = {asset.id: asset for asset in (assets or [])}
         cues_by_beat: dict[str, list[TextCue]] = defaultdict(list)
         for cue in text_cues:
             cues_by_beat[cue.beat_id].append(cue)
@@ -58,6 +60,7 @@ class TextCompositionPlanner:
                     cue=cue,
                     concurrent_text=concurrent,
                     preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
+                    assets_by_id=assets_by_id,
                 )
                 items.append(result.item)
                 placed.append(

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem
+from app.composition.footprint import AlphaFootprintResolver
+from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
 
 
 Box = tuple[float, float, float, float]
@@ -56,6 +57,9 @@ class TextPlacementDirector:
     _GRID_STEP_X = 0.04
     _GRID_STEP_Y = 0.045
 
+    def __init__(self) -> None:
+        self.footprints = AlphaFootprintResolver()
+
     def place(
         self,
         *,
@@ -64,10 +68,11 @@ class TextPlacementDirector:
         cue: TextCue,
         concurrent_text: list[PlacedTextRegion],
         preferred_zone: str | None,
+        assets_by_id: dict[str, VisualAsset] | None = None,
     ) -> PlacementResult:
         width, height = self.estimated_box(cue)
         anchor = self._anchor(cue, visual)
-        visual_regions = self._visual_regions(beat, visual)
+        visual_regions = self._visual_regions(beat, visual, assets_by_id or {})
         candidates = self._candidate_field(width, height, anchor)
 
         scored = [
@@ -115,9 +120,12 @@ class TextPlacementDirector:
             else:
                 units += 1.0
         size_factor = 1.10 if cue.priority >= 85 else 1.0
-        width = 0.070 + units * 0.0205 * size_factor
-        width = max(0.20, min(0.52, width))
-        height = 0.145 if cue.priority >= 85 else 0.125
+        # Deliberately conservative: libass shaping can make Arabic/mixed numeric
+        # phrases wider than a character-count estimate. Slight over-reservation is
+        # preferable to a title clipping into artwork.
+        width = 0.080 + units * 0.0235 * size_factor
+        width = max(0.22, min(0.58, width))
+        height = 0.155 if cue.priority >= 85 else 0.135
         return width, height
 
     def _candidate_field(
@@ -206,8 +214,12 @@ class TextPlacementDirector:
             direct = self._intersection_ratio(box, region.box)
             protected = self._intersection_ratio(box, region.protected_box)
             actual_overlap += direct
-            score += direct * 520.0 * region.weight
-            score += protected * 92.0 * region.weight
+            # Direct artwork coverage is effectively forbidden. The protected halo
+            # also carries a large penalty so text does not visually "kiss" objects.
+            if direct > 0.004:
+                score += 12000.0 * direct * region.weight
+            score += direct * 1600.0 * region.weight
+            score += protected * 260.0 * region.weight
 
         for placed in concurrent_text:
             score += self._intersection_ratio(box, placed.box) * 680.0
@@ -232,6 +244,7 @@ class TextPlacementDirector:
         self,
         beat: StoryBeat,
         visual: CompositionBeat | None,
+        assets_by_id: dict[str, VisualAsset],
     ) -> list[_VisualRegion]:
         if visual is None:
             return []
@@ -248,7 +261,8 @@ class TextPlacementDirector:
             else:
                 weight = 1.0
                 pad_x, pad_y = 0.016, 0.020
-            box = self._visual_box(item)
+            footprint = self.footprints.resolve(item, assets_by_id.get(item.asset_id))
+            box = footprint.box
             output.append(
                 _VisualRegion(
                     box=box,
