@@ -1,3 +1,4 @@
+import re
 import shutil
 from pathlib import Path
 
@@ -145,13 +146,16 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
 
     assert path is not None
     payload = path.read_text(encoding="utf-8")
-    assert "1000 ريال" in payload
-    assert "لاير" not in payload
+    visible_text = re.sub(r"\{[^}]*\}", "", payload)
+    assert "1000 ريال" in visible_text
+    assert "لاير" not in visible_text
     assert "Noto Kufi Arabic" in payload
-    assert "\\pos(960,216)" in payload
+    assert "\\move(960,234,960,216" in payload
     assert "\\t(" in payload
-    assert payload.count("Dialogue: 0,") == 2
-    assert "{\\an5\\pos(960,216)" in payload
+    # One stable phrase event reserves final geometry; token override tags reveal words
+    # at their individual forced-aligned timestamps without re-centering earlier text.
+    assert payload.count("Dialogue: 0,") == 1
+    assert payload.count("\\alpha&HFF&") == 2
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
@@ -165,4 +169,7 @@ def test_ffmpeg_renderer_burns_text_in_same_segment_encode(tmp_path: Path) -> No
     assert target.stat().st_size > 0
     ass_files = list((tmp_path / "out-segments").glob("*-text.ass"))
     assert len(ass_files) == 1
-    assert "1000 ريال" in ass_files[0].read_text(encoding="utf-8")
+    payload = ass_files[0].read_text(encoding="utf-8")
+    visible_text = re.sub(r"\{[^}]*\}", "", payload)
+    assert "1000 ريال" in visible_text
+    assert payload.count("Dialogue: 0,") == 1

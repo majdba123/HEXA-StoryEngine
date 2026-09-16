@@ -147,3 +147,68 @@ def test_semantic_backend_can_rescue_complete_detached_character(tmp_path: Path)
     assert result[1].source_bbox == parent.source_bbox
     assert result[1].source_canvas_width == parent.source_canvas_width
     assert result[1].source_canvas_height == parent.source_canvas_height
+
+
+def test_whole_object_completer_absorbs_enclosed_clock_parts() -> None:
+    from app.cutout.pass2.completeness import WholeObjectCompleter
+
+    canvas = Image.new("RGBA", (320, 220), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(canvas)
+    # Protected parent far away.
+    draw.rounded_rectangle((20, 55, 130, 180), radius=15, fill=(20, 100, 220, 255))
+    # Detached clock: outer ring is the structural seed, hands/dots are disconnected.
+    draw.ellipse((190, 45, 275, 130), outline=(220, 140, 30, 255), width=12)
+    draw.line((232, 87, 232, 62), fill=(150, 90, 10, 255), width=6)
+    draw.line((232, 87, 252, 99), fill=(150, 90, 10, 255), width=6)
+    draw.ellipse((260, 82, 267, 89), fill=(150, 90, 10, 255))
+    draw.ellipse((257, 98, 264, 105), fill=(150, 90, 10, 255))
+    rgba = np.asarray(canvas)
+
+    seed = np.zeros(rgba.shape[:2], dtype=bool)
+    yy, xx = np.ogrid[:220, :320]
+    dist = np.sqrt((xx - 232.5) ** 2 + (yy - 87.5) ** 2)
+    seed[(dist >= 31) & (dist <= 45) & (rgba[:, :, 3] > 0)] = True
+    protected = np.zeros_like(seed)
+    protected[55:181, 20:131] = rgba[55:181, 20:131, 3] > 0
+
+    result = WholeObjectCompleter().complete(rgba, seed, protected)
+
+    assert result is not None
+    assert result.added_pixels > 0
+    # Center hands and both dots must travel with the clock ring.
+    assert result.mask[75, 232]
+    assert result.mask[99, 250]
+    assert result.mask[85, 263]
+    assert not np.any(result.mask & protected)
+
+
+def test_whole_object_completer_absorbs_alarm_rays_but_not_neighbour() -> None:
+    from app.cutout.pass2.completeness import WholeObjectCompleter
+
+    canvas = Image.new("RGBA", (360, 240), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(canvas)
+    # Protected neighbouring object.
+    draw.rounded_rectangle((20, 75, 145, 205), radius=18, fill=(25, 95, 210, 255))
+    # Siren body.
+    draw.rounded_rectangle((225, 95, 275, 165), radius=12, fill=(230, 55, 40, 255))
+    draw.rectangle((218, 162, 282, 180), fill=(30, 75, 145, 255))
+    # Detached authored rays above the siren.
+    for x0, y0, x1, y1 in [
+        (250, 82, 250, 64), (232, 84, 224, 68), (268, 84, 276, 68),
+        (218, 93, 202, 86), (282, 93, 298, 86),
+    ]:
+        draw.line((x0, y0, x1, y1), fill=(255, 100, 80, 170), width=5)
+    rgba = np.asarray(canvas)
+    visible = rgba[:, :, 3] > 0
+    seed = visible.copy()
+    seed[:, :200] = False
+    seed[:90, :] = False  # body only, deliberately excluding rays
+    protected = np.zeros_like(seed)
+    protected[:, :170] = visible[:, :170]
+
+    result = WholeObjectCompleter().complete(rgba, seed, protected)
+
+    assert result is not None
+    assert result.mask[68, 250]
+    assert result.mask[87, 207]
+    assert not np.any(result.mask & protected)

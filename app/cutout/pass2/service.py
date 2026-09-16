@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 
 from app.models import VisualAsset
+from app.cutout.pass2.completeness import WholeObjectCompleter
 from app.cutout.pass2.extractor import Pass1StyleExtractor
 from app.cutout.pass2.proposal import CVProposalEngine
 from app.cutout.pass2.safety import PartitionSafetyGate
@@ -32,6 +33,7 @@ class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
         self.proposals = CVProposalEngine()
         self.validator = DetachedObjectValidator()
         self.extractor = Pass1StyleExtractor()
+        self.completer = WholeObjectCompleter()
         self.safety = PartitionSafetyGate()
         self.semantic_backend = semantic_backend
         self.mask_backend = mask_backend
@@ -179,9 +181,26 @@ class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
 
             if extracted is None:
                 continue
-            if any(np.any(mask & extracted.mask) for mask in accepted_masks):
+
+            # Pass2 proposals are based on strong structural ink. Complete the mask
+            # against the original alpha canvas before it becomes independently
+            # animatable, otherwise weak but visually-bound parts (rays, clock hands,
+            # glows, antialiased shadows) can remain on the parent as a pre-entry ghost.
+            completion_protected = protected.copy()
+            for accepted in accepted_masks:
+                completion_protected |= accepted
+            completed = self.completer.complete(
+                rgba,
+                extracted.mask,
+                protected=completion_protected,
+            )
+            if completed is None:
+                # Whole-object-or-reject: a partial/ambiguous split is worse than a
+                # compound asset because Motion would expose the segmentation defect.
                 continue
-            accepted_masks.append(extracted.mask)
+            if any(np.any(mask & completed.mask) for mask in accepted_masks):
+                continue
+            accepted_masks.append(completed.mask)
             if len(accepted_masks) >= min(self._MAX_SECONDARIES, max_secondaries):
                 break
 
@@ -195,7 +214,20 @@ class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
                 limit=remaining_slots,
                 existing=accepted_masks,
             )
-            accepted_masks.extend(semantic_masks)
+            for semantic_mask in semantic_masks:
+                semantic_protected = dominant.core_mask.copy()
+                for accepted in accepted_masks:
+                    semantic_protected |= accepted
+                completed = self.completer.complete(
+                    rgba,
+                    semantic_mask,
+                    protected=semantic_protected,
+                )
+                if completed is None:
+                    continue
+                if any(np.any(mask & completed.mask) for mask in accepted_masks):
+                    continue
+                accepted_masks.append(completed.mask)
 
         if not self.safety.validate(rgba[:, :, 3], accepted_masks):
             return None
