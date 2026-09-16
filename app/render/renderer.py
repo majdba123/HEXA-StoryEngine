@@ -194,7 +194,7 @@ class FFmpegRenderer:
                     f"[{input_index}:v]format=rgba,"
                     f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
                     f"scale=w='iw*({scale_expr})':h='ih*({scale_expr})':eval=frame,"
-                    f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},"
+                    f"trim=duration={duration:.6f},"
                     "setpts=PTS-STARTPTS,"
                     f"fade=t=out:st={handoff_start:.6f}:d={fade_duration:.6f}:alpha=1"
                     f"[{source_label}]"
@@ -272,7 +272,7 @@ class FFmpegRenderer:
                 f"[{input_index}:v]format=rgba,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
                 f"scale=w='iw*({scale_expr})':h='ih*({scale_expr})':eval=frame,"
-                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
+                f"trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
                 f"fade=t=in:st={start:.6f}:d={fade_duration:.6f}:alpha=1[{source_label}]"
             )
             x_expr = f"{target_x}+({box_w}-overlay_w)/2+({entry_x})+({travel_x})"
