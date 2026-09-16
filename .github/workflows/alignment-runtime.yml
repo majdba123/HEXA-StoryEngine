@@ -40,6 +40,32 @@ jobs:
             "pandas==2.2.3" \
             "nltk==3.9.2"
 
+      - name: Download pinned NLTK punkt_tab data
+        env:
+          NLTK_DATA_REVISION: "4f15a3d89eefe9748ec1c05be495d91289197155"
+        run: |
+          set -euo pipefail
+          mkdir -p alignment_runtime/nltk_data/tokenizers
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/nltk/nltk_data/${NLTK_DATA_REVISION}/packages/tokenizers/punkt_tab.zip" \
+            --output alignment_runtime/punkt_tab.zip
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          archive = Path("alignment_runtime/punkt_tab.zip")
+          destination = Path("alignment_runtime/nltk_data/tokenizers")
+          with zipfile.ZipFile(archive) as bundle:
+              members = bundle.namelist()
+              if not members or any(not name.startswith("punkt_tab/") for name in members):
+                  raise SystemExit("unexpected punkt_tab archive layout")
+              bundle.extractall(destination)
+          archive.unlink()
+          required = destination / "punkt_tab" / "english" / "ortho_context.tab"
+          if not required.is_file():
+              raise SystemExit(f"missing required punkt_tab resource: {required}")
+          PY
+
       - name: Download pinned Arabic and English alignment models
         env:
           HF_HUB_DISABLE_TELEMETRY: "1"
@@ -75,11 +101,18 @@ jobs:
           )
           PY
 
+      - name: Remove Hugging Face transient cache metadata
+        run: |
+          find alignment_runtime/models -type d -name .cache -prune -exec rm -rf {} + || true
+
       - name: Write immutable runtime manifest
+        env:
+          NLTK_DATA_REVISION: "4f15a3d89eefe9748ec1c05be495d91289197155"
         run: |
           python - <<'PY'
           import hashlib
           import json
+          import os
           from pathlib import Path
 
           root = Path("alignment_runtime")
@@ -101,6 +134,12 @@ jobs:
               "runtime": "hexa-alignment-ar-en-v1",
               "whisperx": "3.8.6",
               "transformers": "4.56.2",
+              "nltk": "3.9.2",
+              "nltk_data": {
+                  "repo": "nltk/nltk_data",
+                  "revision": os.environ["NLTK_DATA_REVISION"],
+                  "resource": "tokenizers/punkt_tab",
+              },
               "arabic_model": {
                   "repo": "jonatasgrosman/wav2vec2-large-xlsr-53-arabic",
                   "revision": "fbecdcb965fc37262dc8d6dc9bd82f36974c01eb",
@@ -121,9 +160,17 @@ jobs:
           print("runtime bytes:", sum(item["size"] for item in files))
           PY
 
-      - name: Remove Hugging Face transient cache metadata
+      - name: Verify punkt_tab works offline
         run: |
-          find alignment_runtime/models -type d -name .cache -prune -exec rm -rf {} + || true
+          python -m pip install --no-index --find-links alignment_runtime/wheels "nltk==3.9.2"
+          NLTK_DATA="$PWD/alignment_runtime/nltk_data" python - <<'PY'
+          import os
+          import nltk
+
+          nltk.data.path[:] = [os.environ["NLTK_DATA"]]
+          resource = nltk.data.find("tokenizers/punkt_tab/english/")
+          print("offline punkt_tab:", resource)
+          PY
 
       - name: Split large Arabic model for transport
         run: |
@@ -141,6 +188,15 @@ jobs:
         with:
           name: hexa-alignment-runtime-wheels-v1
           path: alignment_runtime/wheels
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload pinned NLTK data
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-nltk-data-v1
+          path: alignment_runtime/nltk_data
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
