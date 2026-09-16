@@ -10,13 +10,13 @@ from app.shared.errors import DependencyUnavailableError, StageFailedError
 
 
 class FFmpegRenderer:
-    """Parallel beat renderer with semantic motion and continuous handoffs.
+    """Parallel beat-segment renderer with deterministic concat.
 
-    Beat segments are encoded independently for bounded render cost and recovery. Each
-    incoming actor executes its authored entry plus optional in-frame travel/scale.
-    During the following beat, the previous composition executes its authored exit while
-    fading under the incoming composition. This keeps the timeline visually continuous
-    without putting arbitrary delays back into Story or speech alignment.
+    Beat segments are encoded independently for bounded render cost and recovery. A beat
+    boundary must still behave like one continuous authored timeline, so every segment
+    after the first carries the previous beat's settled composition underneath the new
+    beat until the incoming visual becomes visible. This renderer-only handoff prevents
+    white flashes without changing Story, Composition, Motion, or source-relative layout.
     """
 
     def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
@@ -161,49 +161,18 @@ class FFmpegRenderer:
             )
             for input_index, item in enumerate(outgoing_items):
                 box_w, box_h, target_x, target_y = self._geometry(plan, item)
-                previous_cue = (
-                    motion.get((previous_beat.id, item.asset_id))
-                    if previous_beat is not None
-                    else None
-                )
-                exit_dx = self._param_float(previous_cue, "exit_dx_ratio", 0.0) * box_w
-                exit_dy = self._param_float(previous_cue, "exit_dy_ratio", 0.0) * box_h
-                exit_scale = self._param_float(previous_cue, "exit_scale", 1.0)
-                exit_end = min(duration, handoff_start + fade_duration)
-                scale_expr = self._scale_expression(
-                    start=handoff_start,
-                    end=exit_end,
-                    from_scale=1.0,
-                    to_scale=exit_scale,
-                    easing="ease_in_cubic",
-                )
-                x_motion = self._phase_delta_expression(
-                    start=handoff_start,
-                    end=exit_end,
-                    delta=exit_dx,
-                    easing="ease_in_cubic",
-                )
-                y_motion = self._phase_delta_expression(
-                    start=handoff_start,
-                    end=exit_end,
-                    delta=exit_dy,
-                    easing="ease_in_cubic",
-                )
                 source_label = f"outgoing{input_index}"
                 filters.append(
                     f"[{input_index}:v]format=rgba,"
                     f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
-                    f"scale=w='iw*({scale_expr})':h='ih*({scale_expr})':eval=frame,"
-                    f"trim=duration={duration:.6f},"
+                    f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},"
                     "setpts=PTS-STARTPTS,"
                     f"fade=t=out:st={handoff_start:.6f}:d={fade_duration:.6f}:alpha=1"
                     f"[{source_label}]"
                 )
                 next_label = f"outmix{input_index}"
-                x_expr = f"{target_x}+({box_w}-overlay_w)/2+({x_motion})"
-                y_expr = f"{target_y}+({box_h}-overlay_h)/2+({y_motion})"
                 filters.append(
-                    f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
+                    f"[{composite_label}][{source_label}]overlay=x='{target_x}':y='{target_y}':"
                     f"enable='between(t,0,{duration:.6f})':eof_action=pass:shortest=0"
                     f"[{next_label}]"
                 )
@@ -221,62 +190,25 @@ class FFmpegRenderer:
             )
             input_index = input_offset + layer_index
             source_label = f"asset{layer_index}"
-
-            entry_dx, entry_dy = self._legacy_entry_delta(cue, box_w=box_w, box_h=box_h)
-            entry_scale = self._param_float(cue, "entry_scale", 1.0)
-            travel_start, travel_end = self._travel_window(
-                cue=cue,
-                segment_start=segment_start,
-                duration=duration,
-                fallback=end,
-            )
-            travel_enabled = bool(cue and cue.params.get("travel_enabled", False)) and travel_end > travel_start
-            travel_dx = self._param_float(cue, "travel_dx_ratio", 0.0) * box_w if travel_enabled else 0.0
-            travel_dy = self._param_float(cue, "travel_dy_ratio", 0.0) * box_h if travel_enabled else 0.0
-            travel_scale = self._param_float(cue, "travel_scale", 1.0) if travel_enabled else 1.0
-
-            entry_x = self._entry_delta_expression(start, end, entry_dx)
-            entry_y = self._entry_delta_expression(start, end, entry_dy)
-            travel_x = self._phase_delta_expression(
-                start=travel_start,
-                end=travel_end,
-                delta=travel_dx,
-                easing="smoothstep",
-            )
-            travel_y = self._phase_delta_expression(
-                start=travel_start,
-                end=travel_end,
-                delta=travel_dy,
-                easing="smoothstep",
-            )
-            entry_scale_expr = self._scale_expression(
-                start=start,
-                end=end,
-                from_scale=entry_scale,
-                to_scale=1.0,
-                easing="ease_out_cubic",
-            )
-            if travel_enabled:
-                travel_scale_expr = self._scale_expression(
-                    start=travel_start,
-                    end=travel_end,
-                    from_scale=1.0,
-                    to_scale=travel_scale,
-                    easing="smoothstep",
-                )
-                scale_expr = f"({entry_scale_expr})*({travel_scale_expr})"
-            else:
-                scale_expr = entry_scale_expr
-
             filters.append(
                 f"[{input_index}:v]format=rgba,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
-                f"scale=w='iw*({scale_expr})':h='ih*({scale_expr})':eval=frame,"
-                f"trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
+                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS,"
                 f"fade=t=in:st={start:.6f}:d={fade_duration:.6f}:alpha=1[{source_label}]"
             )
-            x_expr = f"{target_x}+({box_w}-overlay_w)/2+({entry_x})+({travel_x})"
-            y_expr = f"{target_y}+({box_h}-overlay_h)/2+({entry_y})+({travel_y})"
+            kind = cue.kind if cue else "reveal_in"
+            if kind == "handoff_in":
+                x_expr = self._entry_expression(target_x, start, end, offset=58)
+                y_expr = str(target_y)
+            elif kind == "emphasis_in":
+                x_expr = str(target_x)
+                y_expr = self._entry_expression(target_y, start, end, offset=20)
+            elif kind == "soft_in":
+                x_expr = str(target_x)
+                y_expr = self._entry_expression(target_y, start, end, offset=12)
+            else:
+                x_expr = str(target_x)
+                y_expr = self._entry_expression(target_y, start, end, offset=30)
             next_label = f"mix{layer_index}"
             filters.append(
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
@@ -326,22 +258,6 @@ class FFmpegRenderer:
         reveal_duration = max(0.05, end - start)
         fade_duration = min(0.18, max(0.10, reveal_duration * 0.42))
         return start, end, fade_duration
-
-    @staticmethod
-    def _travel_window(
-        *,
-        cue: MotionCue | None,
-        segment_start: float,
-        duration: float,
-        fallback: float,
-    ) -> tuple[float, float]:
-        if cue is None or not cue.params.get("travel_enabled", False):
-            return fallback, fallback
-        global_start = float(cue.params.get("travel_start", cue.end))
-        global_end = float(cue.params.get("travel_end", global_start))
-        start = max(0.0, min(duration, global_start - segment_start))
-        end = max(start, min(duration, global_end - segment_start))
-        return start, end
 
     @staticmethod
     def _geometry(plan: RenderPlan, item) -> tuple[int, int, int, int]:
@@ -467,76 +383,11 @@ class FFmpegRenderer:
         return max(0, min(total_frames, round(max(0.0, value) * fps)))
 
     @staticmethod
-    def _param_float(cue: MotionCue | None, key: str, default: float) -> float:
-        if cue is None:
-            return default
-        try:
-            return float(cue.params.get(key, default))
-        except (TypeError, ValueError):
-            return default
-
-    @classmethod
-    def _legacy_entry_delta(cls, cue: MotionCue | None, *, box_w: int, box_h: int) -> tuple[float, float]:
-        if cue is not None and int(cue.params.get("motion_version", 1)) >= 2:
-            return (
-                cls._param_float(cue, "entry_dx_ratio", 0.0) * box_w,
-                cls._param_float(cue, "entry_dy_ratio", 0.0) * box_h,
-            )
-        kind = cue.kind if cue else "reveal_in"
-        if kind == "handoff_in":
-            return 58.0, 0.0
-        if kind == "emphasis_in":
-            return 0.0, 20.0
-        if kind == "soft_in":
-            return 0.0, 12.0
-        return 0.0, 30.0
-
-    @classmethod
-    def _entry_delta_expression(cls, start: float, end: float, delta: float) -> str:
-        if abs(delta) < 1e-6:
-            return "0"
-        progress = cls._eased_progress_expression(start, end, "ease_out_cubic")
-        return f"({delta:.6f})*(1-({progress}))"
-
-    @classmethod
-    def _phase_delta_expression(cls, *, start: float, end: float, delta: float, easing: str) -> str:
-        if abs(delta) < 1e-6 or end <= start:
-            return "0"
-        progress = cls._eased_progress_expression(start, end, easing)
-        return f"({delta:.6f})*({progress})"
-
-    @classmethod
-    def _scale_expression(
-        cls,
-        *,
-        start: float,
-        end: float,
-        from_scale: float,
-        to_scale: float,
-        easing: str,
-    ) -> str:
-        if end <= start or abs(to_scale - from_scale) < 1e-6:
-            return f"{to_scale:.6f}"
-        progress = cls._eased_progress_expression(start, end, easing)
-        delta = to_scale - from_scale
-        return f"({from_scale:.6f}+({delta:.6f})*({progress}))"
-
-    @staticmethod
-    def _eased_progress_expression(start: float, end: float, easing: str) -> str:
-        duration = max(0.05, end - start)
-        raw = f"((t-{start:.6f})/{duration:.6f})"
-        p = f"max(0,min(1,{raw}))"
-        if easing == "ease_out_cubic":
-            return f"(1-pow(1-({p}),3))"
-        if easing == "ease_in_cubic":
-            return f"pow(({p}),3)"
-        return f"(3*({p})*({p})-2*({p})*({p})*({p}))"
-
-    @staticmethod
     def _entry_expression(target: int, start: float, end: float, *, offset: int) -> str:
-        # Backward-compatible helper retained for callers/tests that still exercise the
-        # V1 expression directly. V2 rendering uses normalized semantic deltas above.
         duration = max(0.05, end - start)
+        # Smoothstep easing keeps strong motion without the abrupt constant-speed
+        # slide that made short beats feel rushed. p is clamped by the surrounding
+        # conditionals to the [0, 1] movement interval.
         p = f"((t-{start:.6f})/{duration:.6f})"
         eased = f"(3*{p}*{p}-2*{p}*{p}*{p})"
         return (
