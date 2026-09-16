@@ -6,6 +6,11 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.models import Transcript, TranscriptSegment, TranscriptWord
+from app.transcription.alignment import (
+    AlignmentRejectedError,
+    ForcedAligner,
+    WhisperXForcedAligner,
+)
 from app.shared.errors import DependencyUnavailableError
 from app.shared.media import probe_duration
 
@@ -15,14 +20,31 @@ _STRONG_PUNCTUATION = frozenset(".!?؟؛;\n")
 
 
 class TranscriptionService:
-    def __init__(self, *, model_name: str, ffprobe_bin: str = "ffprobe") -> None:
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        ffprobe_bin: str = "ffprobe",
+        forced_aligner: ForcedAligner | None = None,
+    ) -> None:
         self.model_name = model_name
         self.ffprobe_bin = ffprobe_bin
+        self.forced_aligner = forced_aligner or WhisperXForcedAligner()
 
     def transcribe(self, audio: Path, script: str | None = None) -> Transcript:
         audio = audio.expanduser().resolve()
         if not audio.exists():
             raise FileNotFoundError(audio)
+        if script:
+            duration = probe_duration(audio, self.ffprobe_bin)
+            try:
+                return self.forced_aligner.align(audio, script, duration)
+            except (DependencyUnavailableError, AlignmentRejectedError):
+                # Preserve the existing runtime as a controlled fallback until the
+                # forced-alignment runtime is provisioned everywhere. Production can
+                # validate alignment availability before rendering.
+                pass
+
         try:
             return self._faster_whisper(audio, script)
         except (ImportError, ModuleNotFoundError, DependencyUnavailableError):
