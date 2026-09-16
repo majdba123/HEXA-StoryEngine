@@ -5,13 +5,13 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from app.composition import CompositionPlanner
+from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
 from app.input import FinalPackageLoader
 from app.models import RenderPlan, Stage
-from app.motion import MotionPlanner
+from app.motion import MotionPlanner, TextMotionPlanner
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
 from app.cutout.pass2.semantic import FlorenceSemanticBackend
@@ -25,6 +25,7 @@ from app.shared.errors import (
     StageFailedError,
 )
 from app.story import StoryPlanner
+from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.vision import VisionService
 
@@ -61,8 +62,11 @@ class StoryEnginePipeline:
             ),
         )
         self.story = StoryPlanner()
+        self.text = TextPlanner()
         self.composition = CompositionPlanner()
+        self.text_composition = TextCompositionPlanner()
         self.motion = MotionPlanner()
+        self.text_motion = TextMotionPlanner()
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
         self.final = FinalExporter(self.settings.ffmpeg_bin)
@@ -112,15 +116,25 @@ class StoryEnginePipeline:
         story = self.story.plan(package, transcript, assets)
 
         self._check_cancel(cancelled)
-        self._progress(progress, Stage.composition, 0.53, "Composing frames")
+        self._progress(progress, Stage.text, 0.48, "Selecting narration-locked keywords")
+        text = self.text.plan(
+            transcript=transcript,
+            story=story,
+            assets=assets,
+        )
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
         composition = self.composition.plan(story, assets)
+        text_composition = self.text_composition.plan(story, composition, text.cues)
 
         self._check_cancel(cancelled)
-        self._progress(progress, Stage.motion, 0.62, "Planning element entrances and handoffs")
+        self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
         motion = self.motion.plan(story, composition)
+        text_motion = self.text_motion.plan(story, text.cues, text_composition)
 
         self._check_cancel(cancelled)
-        self._progress(progress, Stage.render, 0.68, "Compiling render plan")
+        self._progress(progress, Stage.render, 0.69, "Compiling render plan")
         plan, _ = self.render_planner.compile(
             transcript,
             assets,
@@ -128,6 +142,9 @@ class StoryEnginePipeline:
             composition,
             motion,
             workspace,
+            text=text,
+            text_composition=text_composition,
+            text_motion=text_motion,
         )
 
         plan = self._recover_plan(
@@ -240,9 +257,12 @@ class StoryEnginePipeline:
     ) -> RenderPlan:
         assets = current.assets
         story = current.story
+        text = current.text
         composition = current.composition
+        text_composition = current.text_composition
         motion = current.motion
-        order = ["cutout", "refinement", "story", "composition", "motion", "render"]
+        text_motion = current.text_motion
+        order = ["cutout", "refinement", "story", "text", "composition", "motion", "render"]
         try:
             start = order.index(invalidate_from)
         except ValueError:
@@ -255,9 +275,17 @@ class StoryEnginePipeline:
         if start <= 2:
             story = self.story.plan(package, transcript, assets)
         if start <= 3:
-            composition = self.composition.plan(story, assets)
+            text = self.text.plan(
+                transcript=transcript,
+                story=story,
+                assets=assets,
+            )
         if start <= 4:
+            composition = self.composition.plan(story, assets)
+            text_composition = self.text_composition.plan(story, composition, text.cues)
+        if start <= 5:
             motion = self.motion.plan(story, composition)
+            text_motion = self.text_motion.plan(story, text.cues, text_composition)
         plan, _ = self.render_planner.compile(
             transcript,
             assets,
@@ -265,6 +293,9 @@ class StoryEnginePipeline:
             composition,
             motion,
             workspace,
+            text=text,
+            text_composition=text_composition,
+            text_motion=text_motion,
         )
         return plan
 

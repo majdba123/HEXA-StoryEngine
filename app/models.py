@@ -21,6 +21,7 @@ class Stage(StrEnum):
     cutout = "cutout"
     refinement = "refinement"
     story = "story"
+    text = "text"
     composition = "composition"
     motion = "motion"
     render = "render"
@@ -90,6 +91,7 @@ class Transcript(BaseModel):
     duration: float = Field(gt=0)
     segments: list[TranscriptSegment]
     words: list[TranscriptWord] = Field(default_factory=list)
+    timing_source: str = "unknown"
 
 
 class VisualAsset(BaseModel):
@@ -147,6 +149,69 @@ class MotionCue(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class TextCue(BaseModel):
+    id: str
+    beat_id: str
+    text: str
+    semantic_type: str
+    source_char_start: int = Field(ge=0)
+    source_char_end: int = Field(gt=0)
+    spoken_start: float = Field(ge=0)
+    spoken_end: float = Field(gt=0)
+    emphasis_time: float = Field(ge=0)
+    anchor_asset_id: str | None = None
+    priority: int = 0
+    style_id: str
+    placement_hint: str | None = None
+
+    @field_validator("text")
+    @classmethod
+    def text_non_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text cue cannot be empty")
+        return value
+
+
+class TextStyle(BaseModel):
+    id: str
+    role: str
+    font_role: str
+    size_role: str
+    color_role: str
+    background_role: str
+    emphasis_role: str
+
+
+class TextPlan(BaseModel):
+    cues: list[TextCue] = Field(default_factory=list)
+    styles: list[TextStyle] = Field(default_factory=list)
+
+
+class TextLayoutItem(BaseModel):
+    text_cue_id: str
+    x: float
+    y: float
+    max_width: float
+    z: int = 50
+    anchor_asset_id: str | None = None
+    placement: str = "safe_top"
+
+
+class TextCompositionBeat(BaseModel):
+    beat_id: str
+    items: list[TextLayoutItem] = Field(default_factory=list)
+
+
+class TextMotionCue(BaseModel):
+    beat_id: str
+    text_cue_id: str
+    kind: str
+    start: float
+    end: float
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class RenderPlan(BaseModel):
     width: int = 1920
     height: int = 1080
@@ -156,6 +221,9 @@ class RenderPlan(BaseModel):
     composition: list[CompositionBeat]
     motion: list[MotionCue]
     assets: list[VisualAsset]
+    text: TextPlan = Field(default_factory=TextPlan)
+    text_composition: list[TextCompositionBeat] = Field(default_factory=list)
+    text_motion: list[TextMotionCue] = Field(default_factory=list)
 
 
 class JobRequest(BaseModel):

@@ -38,7 +38,9 @@ class TranscriptionService:
         if script:
             duration = probe_duration(audio, self.ffprobe_bin)
             try:
-                return self.forced_aligner.align(audio, script, duration)
+                aligned = self.forced_aligner.align(audio, script, duration)
+                aligned.timing_source = "forced_alignment"
+                return aligned
             except (DependencyUnavailableError, AlignmentRejectedError):
                 # Preserve the existing runtime as a controlled fallback until the
                 # forced-alignment runtime is provisioned everywhere. Production can
@@ -89,6 +91,7 @@ class TranscriptionService:
             duration=duration,
             segments=segments,
             words=words,
+            timing_source="whisper_word_timestamps",
         )
         if script:
             transcript = self._attach_script_char_spans(transcript, script)
@@ -147,7 +150,13 @@ class TranscriptionService:
                 char_end=len(script),
                 words=words,
             )]
-        return Transcript(language=None, duration=duration, segments=segments, words=words)
+        return Transcript(
+            language=None,
+            duration=duration,
+            segments=segments,
+            words=words,
+            timing_source="script_fallback",
+        )
 
     def _speech_intervals(self, audio: Path, duration: float) -> list[tuple[float, float]]:
         """Return speech-active intervals from FFmpeg silence detection."""
