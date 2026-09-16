@@ -78,7 +78,7 @@ def test_primary_motion_settles_on_audio_anchor() -> None:
     assert cue.start >= beat.start
 
 
-def test_support_motion_converges_on_audio_anchor_instead_of_lagging() -> None:
+def test_support_motion_reveals_sequentially_during_spoken_window() -> None:
     from app.models import CompositionBeat, LayoutItem, StoryBeat
     from app.motion.planner import MotionPlanner
 
@@ -106,7 +106,11 @@ def test_support_motion_converges_on_audio_anchor_instead_of_lagging() -> None:
     supports = cues[1:]
 
     assert len(supports) == 4
-    assert all(cue.start < beat.audio_start for cue in supports)
-    assert all(cue.end <= beat.audio_start + 0.13 for cue in supports)
     assert all(beat.start <= cue.start < cue.end <= beat.end for cue in supports)
-    assert max(cue.end for cue in supports) - min(cue.end for cue in supports) <= 0.12
+    assert supports[0].start >= beat.audio_start
+    assert supports[-1].end <= beat.audio_end
+
+    starts = [cue.start for cue in supports]
+    assert starts == sorted(starts)
+    gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
+    assert all(0.15 <= gap <= 0.39 for gap in gaps)
