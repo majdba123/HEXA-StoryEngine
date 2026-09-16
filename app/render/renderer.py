@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.render.text import TextRenderer
 
 
 class FFmpegRenderer:
@@ -19,8 +20,14 @@ class FFmpegRenderer:
     white flashes without changing Story, Composition, Motion, or source-relative layout.
     """
 
-    def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
+    def __init__(
+        self,
+        ffmpeg_bin: str = "ffmpeg",
+        *,
+        text_font_family: str = "Noto Kufi Arabic",
+    ) -> None:
         self.ffmpeg_bin = ffmpeg_bin
+        self.text_renderer = TextRenderer(font_family=text_font_family)
 
     def render(self, plan: RenderPlan, output: Path) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -216,6 +223,19 @@ class FFmpegRenderer:
                 f"[{next_label}]"
             )
             composite_label = next_label
+
+        ass_path = self.text_renderer.write_beat_ass(
+            plan,
+            beat,
+            segment_start=segment_start,
+            duration=duration,
+            output=target.parent / f"{target.stem}-text.ass",
+        )
+        if ass_path is not None:
+            text_label = "textmix"
+            filters.append(self.text_renderer.ass_filter(ass_path, composite_label, text_label))
+            composite_label = text_label
+
         filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
