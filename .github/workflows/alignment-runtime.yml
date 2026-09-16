@@ -1,0 +1,135 @@
+name: Alignment Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - majd
+    paths:
+      - ".github/workflows/alignment-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install runtime builder
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "huggingface-hub==0.34.4"
+
+      - name: Download pinned alignment wheels
+        run: |
+          mkdir -p alignment_runtime/wheels
+          python -m pip download --only-binary=:all: --no-deps \
+            --dest alignment_runtime/wheels \
+            "whisperx==3.8.6" \
+            "transformers==4.56.2" \
+            "huggingface-hub==0.34.4" \
+            "tokenizers==0.22.0" \
+            "safetensors==0.6.2" \
+            "pandas==2.2.3" \
+            "nltk==3.9.2"
+
+      - name: Download pinned Arabic and English alignment models
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+        run: |
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+
+          snapshot_download(
+              repo_id="jonatasgrosman/wav2vec2-large-xlsr-53-arabic",
+              revision="fbecdcb965fc37262dc8d6dc9bd82f36974c01eb",
+              local_dir="alignment_runtime/models/ar",
+              allow_patterns=[
+                  "*.json",
+                  "*.txt",
+                  "vocab.json",
+                  "preprocessor_config.json",
+                  "special_tokens_map.json",
+                  "pytorch_model.bin",
+              ],
+          )
+          snapshot_download(
+              repo_id="facebook/wav2vec2-base-960h",
+              revision="b530d38415b1bde67599e577c87c1d18ac2b652b",
+              local_dir="alignment_runtime/models/en",
+              allow_patterns=[
+                  "*.json",
+                  "*.txt",
+                  "vocab.json",
+                  "preprocessor_config.json",
+                  "special_tokens_map.json",
+                  "model.safetensors",
+              ],
+          )
+          PY
+
+      - name: Write immutable runtime manifest
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("alignment_runtime")
+          files = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or ".cache" in path.parts:
+                  continue
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                      digest.update(chunk)
+              files.append({
+                  "path": path.relative_to(root).as_posix(),
+                  "size": path.stat().st_size,
+                  "sha256": digest.hexdigest(),
+              })
+
+          manifest = {
+              "runtime": "hexa-alignment-ar-en-v1",
+              "whisperx": "3.8.6",
+              "transformers": "4.56.2",
+              "arabic_model": {
+                  "repo": "jonatasgrosman/wav2vec2-large-xlsr-53-arabic",
+                  "revision": "fbecdcb965fc37262dc8d6dc9bd82f36974c01eb",
+                  "license": "Apache-2.0",
+              },
+              "english_model": {
+                  "repo": "facebook/wav2vec2-base-960h",
+                  "revision": "b530d38415b1bde67599e577c87c1d18ac2b652b",
+                  "license": "Apache-2.0",
+              },
+              "files": files,
+          }
+          (root / "manifest.json").write_text(
+              json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          print("runtime files:", len(files))
+          print("runtime bytes:", sum(item["size"] for item in files))
+          PY
+
+      - name: Remove Hugging Face transient cache metadata
+        run: |
+          find alignment_runtime/models -type d -name .cache -prune -exec rm -rf {} + || true
+
+      - name: Upload offline alignment runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-alignment-runtime-ar-en-v1
+          path: alignment_runtime
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
