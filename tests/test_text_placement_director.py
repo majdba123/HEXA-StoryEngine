@@ -1,0 +1,117 @@
+from app.composition.text_director import PlacedTextRegion, TextPlacementDirector
+from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue
+
+
+def _beat() -> StoryBeat:
+    return StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=4.0,
+        audio_start=0.0,
+        audio_end=4.0,
+        narration="الرصيد 1000 ريال و300 ريال محجوزة",
+        primary_asset_ids=["hero"],
+        support_asset_ids=["support"],
+        action="EMPHASIZE",
+    )
+
+
+def _cue(cue_id: str, text: str, start: float, end: float, priority: int = 90) -> TextCue:
+    return TextCue(
+        id=cue_id,
+        beat_id="beat-001",
+        text=text,
+        semantic_type="amount",
+        source_char_start=0,
+        source_char_end=max(1, len(text)),
+        spoken_start=start,
+        spoken_end=end,
+        emphasis_time=start,
+        anchor_asset_id="hero",
+        priority=priority,
+        style_id="amount",
+    )
+
+
+def test_director_keeps_text_off_large_primary_artwork() -> None:
+    director = TextPlacementDirector()
+    visual = CompositionBeat(
+        beat_id="beat-001",
+        items=[
+            LayoutItem(asset_id="hero", x=0.50, y=0.52, width=0.56, height=0.62, z=20),
+            LayoutItem(asset_id="support", x=0.80, y=0.68, width=0.12, height=0.15, z=15),
+        ],
+    )
+
+    result = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-001", "1000 ريال", 0.5, 1.1),
+        concurrent_text=[],
+        preferred_zone=None,
+    )
+
+    assert result.visual_overlap <= 0.001
+    assert 0.04 < result.item.x < 0.96
+    assert 0.05 < result.item.y < 0.95
+
+
+def test_director_separates_concurrent_text_regions() -> None:
+    director = TextPlacementDirector()
+    visual = CompositionBeat(
+        beat_id="beat-001",
+        items=[LayoutItem(asset_id="hero", x=0.50, y=0.50, width=0.42, height=0.48, z=20)],
+    )
+    first = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-001", "1000 ريال", 0.5, 1.2),
+        concurrent_text=[],
+        preferred_zone=None,
+    )
+    occupied = [
+        PlacedTextRegion(
+            cue_id="text-001",
+            start=0.5,
+            end=1.8,
+            box=first.box,
+            zone=first.zone,
+        )
+    ]
+    second = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-002", "300 محجوزة", 0.8, 1.5),
+        concurrent_text=occupied,
+        preferred_zone=None,
+    )
+
+    assert director._intersection_ratio(first.box, second.box) <= 0.001
+    assert second.visual_overlap <= 0.001
+
+
+def test_director_uses_soft_zone_continuity_without_forcing_overlap() -> None:
+    director = TextPlacementDirector()
+    visual = CompositionBeat(
+        beat_id="beat-001",
+        items=[LayoutItem(asset_id="hero", x=0.58, y=0.52, width=0.48, height=0.50, z=20)],
+    )
+    first = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-001", "1000 ريال", 0.4, 0.9),
+        concurrent_text=[],
+        preferred_zone=None,
+    )
+    preferred = director._zone_family(first.zone)
+    second = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-002", "500 ريال", 2.0, 2.4),
+        concurrent_text=[],
+        preferred_zone=preferred,
+    )
+
+    assert director._zone_family(second.zone) == preferred
+    assert second.visual_overlap <= 0.001
