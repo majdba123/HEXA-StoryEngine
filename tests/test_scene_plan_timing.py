@@ -76,3 +76,37 @@ def test_primary_motion_settles_on_audio_anchor() -> None:
     assert cue.start <= beat.audio_start
     assert cue.end <= beat.audio_start + 0.05
     assert cue.start >= beat.start
+
+
+def test_support_motion_converges_on_audio_anchor_instead_of_lagging() -> None:
+    from app.models import CompositionBeat, LayoutItem, StoryBeat
+    from app.motion.planner import MotionPlanner
+
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="SCENE_001",
+        start=0.70,
+        end=3.0,
+        audio_start=1.0,
+        audio_end=2.6,
+        narration="test",
+        primary_asset_ids=["a1"],
+        support_asset_ids=["a2", "a3", "a4", "a5"],
+        action="INTRODUCE",
+    )
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id=f"a{index}", x=0.5, y=0.5, width=0.4, height=0.4)
+            for index in range(1, 6)
+        ],
+    )]
+
+    cues = MotionPlanner().plan([beat], composition)
+    supports = cues[1:]
+
+    assert len(supports) == 4
+    assert all(cue.start < beat.audio_start for cue in supports)
+    assert all(cue.end <= beat.audio_start + 0.13 for cue in supports)
+    assert all(beat.start <= cue.start < cue.end <= beat.end for cue in supports)
+    assert max(cue.end for cue in supports) - min(cue.end for cue in supports) <= 0.12
