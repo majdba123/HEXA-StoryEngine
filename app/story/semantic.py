@@ -8,6 +8,7 @@ from app.models import (
     StoryEntity,
     StoryRelation,
     StorySemanticContext,
+    StoryTrigger,
 )
 
 
@@ -259,6 +260,19 @@ class PackageStoryInterpreter:
 
         return StorySemanticContext(
             story_role=story_role,
+            event_id=self._string_or_none(event.get("event_id")),
+            event_order=self._int_or_none(event.get("order")),
+            event_trigger=self._trigger(event.get("trigger")),
+            scene_purpose=scene.purpose,
+            scene_visual_concept=scene.visual_concept,
+            scene_metadata={
+                "purpose": scene.purpose,
+                "visual_concept": scene.visual_concept,
+                "relation_to_previous": scene.relation_to_previous,
+                "script_char_start": scene.script_char_start,
+                "script_char_end": scene.script_char_end,
+            },
+            event_metadata=dict(event),
             entities=entities,
             relations=relations,
             subject_unit_ids=subject_ids,
@@ -301,6 +315,21 @@ class PackageStoryInterpreter:
             role=PackageStoryInterpreter._string_or_none(unit.get("role")),
             narrative_function=PackageStoryInterpreter._string_or_none(unit.get("narrative_function")),
             semantic_intent=PackageStoryInterpreter._string_or_none(unit.get("semantic_intent")),
+            appear_trigger=PackageStoryInterpreter._trigger(unit.get("appear_trigger")),
+            focus_trigger=PackageStoryInterpreter._trigger(unit.get("focus_trigger")),
+            exit_trigger=PackageStoryInterpreter._trigger(unit.get("exit_trigger")),
+            package_metadata=dict(unit),
+        )
+
+    @staticmethod
+    def _trigger(value) -> StoryTrigger | None:
+        if not isinstance(value, dict):
+            return None
+        return StoryTrigger(
+            phrase=PackageStoryInterpreter._string_or_none(value.get("phrase")),
+            occurrence_in_scene=PackageStoryInterpreter._int_or_none(value.get("occurrence_in_scene")),
+            global_char_start=PackageStoryInterpreter._int_or_none(value.get("global_char_start")),
+            global_char_end=PackageStoryInterpreter._int_or_none(value.get("global_char_end")),
         )
 
     def _story_role(self, value: str, *, is_first_beat: bool) -> str:
@@ -383,14 +412,52 @@ class PackageStoryInterpreter:
         if scene.relation_to_previous:
             output.append(f"scene_relation:{scene.relation_to_previous}")
         if scene.visual_concept:
-            output.append("scene_visual_concept")
+            output.append(f"scene_visual_concept:{scene.visual_concept}")
         if scene.purpose:
-            output.append("scene_purpose")
-        output.extend(
-            f"entity:{entity.unit_id}:{entity.semantic_name}"
-            for entity in entities
-            if entity.semantic_name
-        )
+            output.append(f"scene_purpose:{scene.purpose}")
+        if event.get("event_id"):
+            output.append(f"event_id:{event['event_id']}")
+        if event.get("order") is not None:
+            output.append(f"event_order:{event['order']}")
+        trigger = event.get("trigger") if isinstance(event.get("trigger"), dict) else {}
+        if trigger.get("phrase"):
+            output.append(f"event_trigger_phrase:{trigger['phrase']}")
+        if trigger.get("global_char_start") is not None or trigger.get("global_char_end") is not None:
+            output.append(
+                f"event_trigger_chars:{trigger.get('global_char_start')}:{trigger.get('global_char_end')}"
+            )
+        for entity in entities:
+            if entity.semantic_name:
+                output.append(f"entity:{entity.unit_id}:{entity.semantic_name}")
+            if entity.entity_type:
+                output.append(f"entity_type:{entity.unit_id}:{entity.entity_type}")
+            if entity.role:
+                output.append(f"entity_role:{entity.unit_id}:{entity.role}")
+            if entity.narrative_function:
+                output.append(
+                    f"entity_narrative_function:{entity.unit_id}:{entity.narrative_function}"
+                )
+            if entity.semantic_intent:
+                output.append(f"entity_semantic_intent:{entity.unit_id}:{entity.semantic_intent}")
+            for name, unit_trigger in (
+                ("appear", entity.appear_trigger),
+                ("focus", entity.focus_trigger),
+                ("exit", entity.exit_trigger),
+            ):
+                if unit_trigger is None:
+                    continue
+                if unit_trigger.phrase:
+                    output.append(
+                        f"entity_{name}_phrase:{entity.unit_id}:{unit_trigger.phrase}"
+                    )
+                if (
+                    unit_trigger.global_char_start is not None
+                    or unit_trigger.global_char_end is not None
+                ):
+                    output.append(
+                        f"entity_{name}_chars:{entity.unit_id}:"
+                        f"{unit_trigger.global_char_start}:{unit_trigger.global_char_end}"
+                    )
         output.extend(
             f"relation:{relation.source_unit_id}:{relation.kind}:{relation.target_unit_id}"
             for relation in relations
@@ -406,6 +473,13 @@ class PackageStoryInterpreter:
     def _normalize(value: str | None) -> str:
         text = str(value or "").casefold().replace("-", "_").replace("/", "_")
         return re.sub(r"[^\w\u0600-\u06ff]+", "_", text).strip("_")
+
+    @staticmethod
+    def _int_or_none(value) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _string_or_none(value) -> str | None:
