@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from app.choreography import ChoreographyPlan
 from app.models import CompositionBeat, LayoutItem, StoryBeat, VisualAsset
+
+from .states import CompositionStateDirector
 
 
 class CompositionPlanner:
@@ -12,10 +15,14 @@ class CompositionPlanner:
     scene while every object remains independently animatable.
     """
 
+    def __init__(self) -> None:
+        self.states = CompositionStateDirector()
+
     def plan(
         self,
         beats: list[StoryBeat],
         assets: list[VisualAsset] | None = None,
+        choreography: ChoreographyPlan | None = None,
     ) -> list[CompositionBeat]:
         by_id = {asset.id: asset for asset in (assets or [])}
         output: list[CompositionBeat] = []
@@ -27,7 +34,7 @@ class CompositionPlanner:
             else:
                 items = self._fallback_layout(ids)
             output.append(CompositionBeat(beat_id=beat.id, items=items))
-        return output
+        return self.states.apply(beats, output, choreography)
 
     @staticmethod
     def _has_source_geometry(asset: VisualAsset) -> bool:
