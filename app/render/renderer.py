@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.render.motion import FFmpegMotionAdapter
 from app.render.text import TextRenderer
 from app.render.transition import VisualTransitionPolicy
 
@@ -29,6 +30,7 @@ class FFmpegRenderer:
         self.ffmpeg_bin = ffmpeg_bin
         self.text_renderer = TextRenderer(font_family=text_font_family)
         self.transition_policy = VisualTransitionPolicy()
+        self.motion_adapter = FFmpegMotionAdapter()
 
     def render(self, plan: RenderPlan, output: Path) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +183,16 @@ class FFmpegRenderer:
             if persistent:
                 x_expr = str(target_x)
                 y_expr = str(target_y)
+            elif cue is not None and self.motion_adapter.supports(cue):
+                x_expr, y_expr = self.motion_adapter.position_expressions(
+                    cue=cue,
+                    target_x=target_x,
+                    target_y=target_y,
+                    canvas_width=plan.width,
+                    canvas_height=plan.height,
+                    segment_start=segment_start,
+                    segment_duration=duration,
+                )
             elif kind == "handoff_in":
                 x_expr = self._entry_expression(target_x, start, end, offset=58)
                 y_expr = str(target_y)
