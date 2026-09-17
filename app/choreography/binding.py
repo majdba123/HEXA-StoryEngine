@@ -2,34 +2,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.models import SceneSource, VisualAsset
+from app.models import SceneSource, StoryBeat, VisualAsset
 
 
 @dataclass(frozen=True, slots=True)
 class AssetBinding:
     """Semantic roles assigned to already-extracted visual assets.
 
-    Binding does not alter layout. It only tells Choreography which extracted object is
-    the focal object for the current event, which object it should interact with, and
-    which assets behave as human actors/reaction witnesses.
+    Binding does not alter layout. It tells Choreography which extracted object is the
+    focal object, which object it can interact with, which assets behave as actors, and
+    how Final Package semantic unit IDs map onto available cutouts. Mapping is best-effort
+    and confidence is explicit; Choreography never fabricates an unavailable cutout.
     """
 
     focus_asset_id: str | None
     interaction_asset_id: str | None
     actor_asset_ids: tuple[str, ...] = ()
+    semantic_asset_map: tuple[tuple[str, str], ...] = ()
+    binding_confidence: float = 1.0
 
 
 class SemanticAssetBinder:
-    """Bind package semantics to cutouts using metadata + conservative geometry.
+    """Bind Final Package semantic units to existing cutouts conservatively.
 
-    The Final Package describes *what* is a main/secondary character but extracted
-    connected components do not always carry that semantic label. This binder therefore
-    uses explicit asset roles when available and only falls back to conservative portrait
-    geometry when the scene metadata says a character is present. It never performs
-    topic- or scene-id-specific matching.
+    The package is the semantic authority. Extracted connected components often lack a
+    one-to-one unit identifier, so this binder uses explicit asset roles first, declared
+    character types second, and source geometry only as a bounded fallback. It never
+    hard-codes scene numbers or business-domain nouns.
     """
 
-    _CHARACTER_ROLE_WORDS = ("character", "narrator", "person", "human", "customer")
+    _CHARACTER_ROLE_WORDS = ("character", "narrator", "person", "human", "customer", "actor")
 
     def bind(
         self,
@@ -37,19 +39,17 @@ class SemanticAssetBinder:
         scene: SceneSource | None,
         assets: list[VisualAsset],
         action: str,
+        beat: StoryBeat | None = None,
     ) -> AssetBinding:
-        del action  # reserved for future action-specific target policies
+        del action  # semantics are read from the scene/Story context instead of action names.
         if not assets:
-            return AssetBinding(None, None, ())
+            return AssetBinding(None, None, (), (), 0.0)
 
-        character_count = self._declared_character_count(scene)
+        character_units = self._character_units(scene)
+        character_count = min(2, len(character_units))
         actor_ids: tuple[str, ...] = ()
         if character_count:
-            ranked = sorted(
-                assets,
-                key=lambda asset: self._character_score(asset),
-                reverse=True,
-            )
+            ranked = sorted(assets, key=self._character_score, reverse=True)
             candidates = [asset for asset in ranked if self._is_character_candidate(asset)]
             actor_ids = tuple(asset.id for asset in candidates[:character_count])
 
@@ -58,9 +58,6 @@ class SemanticAssetBinder:
         focus_pool = [asset for asset in independent if asset.id not in actor_set]
         if not focus_pool:
             focus_pool = independent or list(assets)
-
-        # Prefer the largest meaningful non-character object. Tiny labels/arrows are
-        # supporting evidence and should not steal the event from the main concept.
         focus_pool.sort(key=self._visual_weight, reverse=True)
         focus = focus_pool[0]
 
@@ -72,25 +69,108 @@ class SemanticAssetBinder:
             actor_assets.sort(key=self._visual_weight, reverse=True)
             interaction = actor_assets[0] if actor_assets else None
 
+        semantic_map = self._semantic_map(
+            scene=scene,
+            beat=beat,
+            assets=assets,
+            focus=focus,
+            interaction=interaction,
+            actor_ids=actor_ids,
+        )
+        confidence = self._binding_confidence(scene, semantic_map, assets)
         return AssetBinding(
             focus_asset_id=focus.id,
             interaction_asset_id=interaction.id if interaction is not None else None,
             actor_asset_ids=actor_ids,
+            semantic_asset_map=tuple(semantic_map.items()),
+            binding_confidence=confidence,
         )
 
-    @staticmethod
-    def _declared_character_count(scene: SceneSource | None) -> int:
+    def _semantic_map(
+        self,
+        *,
+        scene: SceneSource | None,
+        beat: StoryBeat | None,
+        assets: list[VisualAsset],
+        focus: VisualAsset,
+        interaction: VisualAsset | None,
+        actor_ids: tuple[str, ...],
+    ) -> dict[str, str]:
         if scene is None:
-            return 0
-        count = 0
-        for unit in scene.units:
-            unit_type = str(unit.get("type") or "").upper()
-            semantic_name = str(unit.get("semantic_name") or "").casefold()
-            if unit_type in {"MAIN_CHARACTER", "SECONDARY_CHARACTER"}:
-                count += 1
-            elif "character" in semantic_name or "customer" in semantic_name:
-                count += 1
-        return min(2, count)
+            return {}
+        units = [unit for unit in scene.units if isinstance(unit, dict) and unit.get("unit_id")]
+        if not units:
+            return {}
+
+        asset_by_id = {asset.id: asset for asset in assets}
+        mapping: dict[str, str] = {}
+        used: set[str] = set()
+
+        # Declared character units are the most reliable semantic->asset class mapping.
+        for unit, asset_id in zip(self._character_units(scene), actor_ids):
+            mapping[str(unit["unit_id"])] = asset_id
+            used.add(asset_id)
+
+        target_order = list(beat.semantic_targets) if beat else []
+        target_rank = {unit_id: index for index, unit_id in enumerate(target_order)}
+        non_character = [unit for unit in units if not self._is_character_unit(unit)]
+        non_character.sort(
+            key=lambda unit: (
+                0 if str(unit.get("role") or "").upper() == "PRIMARY" else 1,
+                target_rank.get(str(unit.get("unit_id")), 10_000),
+                str(unit.get("unit_id")),
+            )
+        )
+
+        candidates = [focus]
+        if interaction is not None and interaction.id != focus.id:
+            candidates.append(interaction)
+        candidates.extend(
+            sorted(
+                (asset for asset in assets if asset.id not in actor_ids and asset.id not in {row.id for row in candidates}),
+                key=self._visual_weight,
+                reverse=True,
+            )
+        )
+        for unit in non_character:
+            unit_id = str(unit["unit_id"])
+            if unit_id in mapping:
+                continue
+            candidate = next((asset for asset in candidates if asset.id not in used), None)
+            if candidate is None:
+                break
+            mapping[unit_id] = candidate.id
+            used.add(candidate.id)
+
+        # If a semantic relationship points to a declared character but geometry could
+        # not identify the actor, do not fake the mapping. Leaving it unresolved lets
+        # InteractionIntent become non-executable while preserving the semantic evidence.
+        return {unit_id: asset_id for unit_id, asset_id in mapping.items() if asset_id in asset_by_id}
+
+    @staticmethod
+    def _binding_confidence(
+        scene: SceneSource | None,
+        semantic_map: dict[str, str],
+        assets: list[VisualAsset],
+    ) -> float:
+        if scene is None or not scene.units:
+            return 0.70 if assets else 0.0
+        declared = [unit for unit in scene.units if isinstance(unit, dict) and unit.get("unit_id")]
+        if not declared:
+            return 0.72
+        coverage = len(semantic_map) / len(declared)
+        return max(0.45, min(1.0, 0.58 + coverage * 0.42))
+
+    @staticmethod
+    def _character_units(scene: SceneSource | None) -> list[dict]:
+        if scene is None:
+            return []
+        return [unit for unit in scene.units if SemanticAssetBinder._is_character_unit(unit)]
+
+    @staticmethod
+    def _is_character_unit(unit: dict) -> bool:
+        unit_type = str(unit.get("type") or "").upper()
+        return unit_type in {"MAIN_CHARACTER", "SECONDARY_CHARACTER", "CHARACTER", "PERSON"}
 
     @classmethod
     def _is_character_candidate(cls, asset: VisualAsset) -> bool:
@@ -107,8 +187,6 @@ class SemanticAssetBinder:
         else:
             portrait = height / max(width, 1e-6)
         area = width * height
-        # Deliberately strict: only use geometry when scene metadata already says a
-        # character exists. This avoids classifying phones/towers as people globally.
         return (
             height >= 0.52
             and 0.16 <= width <= 0.42
@@ -146,8 +224,6 @@ class SemanticAssetBinder:
     def _meaningful_support(cls, asset: VisualAsset, focus: VisualAsset) -> bool:
         focus_weight = max(cls._visual_weight(focus), 1e-6)
         weight = cls._visual_weight(asset)
-        # Ignore microscopic detached labels/arrows as the main interaction target,
-        # while still allowing a clearly independent second object to participate.
         return weight >= max(0.012, focus_weight * 0.12)
 
     @staticmethod
