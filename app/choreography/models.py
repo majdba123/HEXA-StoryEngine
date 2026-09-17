@@ -37,6 +37,71 @@ class ContinuityMode(StrEnum):
     SEMANTIC_HANDOFF = "SEMANTIC_HANDOFF"
 
 
+class ParticipantRole(StrEnum):
+    SUBJECT = "SUBJECT"
+    OBJECT = "OBJECT"
+    RESULT = "RESULT"
+    ACTOR = "ACTOR"
+    SUPPORT = "SUPPORT"
+
+
+class VisualGrammarStage(StrEnum):
+    ENTER = "ENTER"
+    READ = "READ"
+    ADD = "ADD"
+    RELATE = "RELATE"
+    RESULT = "RESULT"
+    RELEASE = "RELEASE"
+
+
+@dataclass(frozen=True, slots=True)
+class AssetRequirement:
+    semantic_unit_id: str
+    participant_role: ParticipantRole
+    reason: str
+    required_for_action: str
+    satisfied: bool
+    bound_asset_id: str | None = None
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class VisualStateTransition:
+    asset_id: str
+    from_state: str
+    to_state: str
+    reason: str
+    semantic_unit_id: str | None = None
+    confidence: float = 1.0
+    meaningful: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class InteractionIntent:
+    semantic_action: str
+    relationship: str | None
+    subject_asset_id: str | None
+    object_asset_id: str | None
+    result_asset_id: str | None = None
+    subject_unit_id: str | None = None
+    object_unit_id: str | None = None
+    result_unit_id: str | None = None
+    authority: str = "CHOREOGRAPHY_ACTION"
+    confidence: float = 0.0
+    executable: bool = False
+    requires_state_change: bool = False
+    evidence: tuple[str, ...] = ()
+
+    @property
+    def participant_asset_ids(self) -> tuple[str, ...]:
+        rows = (
+            self.subject_asset_id,
+            self.object_asset_id,
+            self.result_asset_id,
+        )
+        return tuple(dict.fromkeys(value for value in rows if value))
+
+
 @dataclass(frozen=True, slots=True)
 class ChoreographyDirective:
     beat_id: str
@@ -52,10 +117,38 @@ class ChoreographyDirective:
     actor_asset_ids: tuple[str, ...] = ()
     support_asset_ids: tuple[str, ...] = ()
     semantic_labels: tuple[str, ...] = ()
+    semantic_unit_ids: tuple[str, ...] = ()
     relationship: str | None = None
+    interaction: InteractionIntent | None = None
+    interactions: tuple[InteractionIntent, ...] = ()
+    state_transitions: tuple[VisualStateTransition, ...] = ()
     continuity_from: str | None = None
     continuity_mode: ContinuityMode = ContinuityMode.NONE
     pacing_bias: float = 1.0
+    package_evidence: tuple[str, ...] = ()
+    grammar_stages: tuple[VisualGrammarStage, ...] = ()
+    asset_requirements: tuple[AssetRequirement, ...] = ()
+
+    def participant_role(self, asset_id: str) -> ParticipantRole:
+        # A declared human actor keeps ACTOR semantics even when an explicit relationship
+        # names it as subject/object. This lets Motion express guide/reaction behavior
+        # instead of treating a person like a generic moving object.
+        if asset_id in self.actor_asset_ids:
+            return ParticipantRole.ACTOR
+        rows = self.interactions or ((self.interaction,) if self.interaction is not None else ())
+        for interaction in rows:
+            if asset_id == interaction.result_asset_id:
+                return ParticipantRole.RESULT
+        for interaction in rows:
+            if asset_id == interaction.subject_asset_id:
+                return ParticipantRole.SUBJECT
+            if asset_id == interaction.object_asset_id:
+                return ParticipantRole.OBJECT
+        return ParticipantRole.SUPPORT
+
+    @property
+    def has_meaningful_state_change(self) -> bool:
+        return any(row.meaningful and row.from_state != row.to_state for row in self.state_transitions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +160,9 @@ class ChoreographySequence:
     hook: HookKind = HookKind.NONE
     hook_mechanism: HookMechanism = HookMechanism.NONE
     tension_peak: float = 0.0
+    interaction_count: int = 0
+    meaningful_state_change_count: int = 0
+    grammar_stages: tuple[VisualGrammarStage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
