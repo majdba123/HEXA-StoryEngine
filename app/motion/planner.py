@@ -71,7 +71,7 @@ class MotionPlanner:
                 attention_reset = directive.hook == HookKind.REHOOK
                 variant = beat_index % 4
                 intensity = directive.energy
-                action = directive.action
+                action = directive.interaction.semantic_action if directive.interaction is not None else directive.action
                 phase = directive.phase.value
                 tension = directive.tension
                 hook_kind = directive.hook.value
@@ -134,6 +134,11 @@ class MotionPlanner:
                     primary_item=primary_item,
                     target_item=target_item,
                 )
+                participant_role = (
+                    directive.participant_role(item.asset_id).value
+                    if directive is not None
+                    else "SUPPORT"
+                )
                 continuity_source = previous_items.get(item.asset_id)
                 semantic_handoff = bool(
                     directive is not None
@@ -169,6 +174,7 @@ class MotionPlanner:
                         variant=variant + index,
                         same_asset=continuity_source is not None,
                         is_primary=item is primary_item,
+                        participant_role=participant_role,
                     )
                 else:
                     program = self.primitives.build(
@@ -185,6 +191,7 @@ class MotionPlanner:
                         tension=tension,
                         variant=variant + index,
                         is_primary=item is primary_item,
+                        participant_role=participant_role,
                     )
                 # Choreography may promote a semantic support cutout (for example a card,
                 # wallet, or limit badge) to visual focus while Story keeps the authored
@@ -233,6 +240,62 @@ class MotionPlanner:
                                 "actor_asset_ids": list(directive.actor_asset_ids),
                                 "continuity_from": directive.continuity_from,
                                 "continuity_mode": directive.continuity_mode.value,
+                                "participant_role": participant_role,
+                                "semantic_unit_ids": list(directive.semantic_unit_ids),
+                                "state_transitions": [
+                                    {
+                                        "asset_id": row.asset_id,
+                                        "from": row.from_state,
+                                        "to": row.to_state,
+                                        "reason": row.reason,
+                                        "semantic_unit_id": row.semantic_unit_id,
+                                        "confidence": row.confidence,
+                                        "meaningful": row.meaningful,
+                                    }
+                                    for row in directive.state_transitions
+                                ],
+                                "interaction": (
+                                    {
+                                        "semantic_action": directive.interaction.semantic_action,
+                                        "relationship": directive.interaction.relationship,
+                                        "subject_asset_id": directive.interaction.subject_asset_id,
+                                        "object_asset_id": directive.interaction.object_asset_id,
+                                        "result_asset_id": directive.interaction.result_asset_id,
+                                        "authority": directive.interaction.authority,
+                                        "confidence": directive.interaction.confidence,
+                                        "executable": directive.interaction.executable,
+                                    }
+                                    if directive.interaction is not None
+                                    else None
+                                ),
+                                "interactions": [
+                                    {
+                                        "semantic_action": row.semantic_action,
+                                        "relationship": row.relationship,
+                                        "subject_asset_id": row.subject_asset_id,
+                                        "object_asset_id": row.object_asset_id,
+                                        "result_asset_id": row.result_asset_id,
+                                        "subject_unit_id": row.subject_unit_id,
+                                        "object_unit_id": row.object_unit_id,
+                                        "result_unit_id": row.result_unit_id,
+                                        "authority": row.authority,
+                                        "confidence": row.confidence,
+                                        "executable": row.executable,
+                                    }
+                                    for row in directive.interactions
+                                ],
+                                "package_evidence": list(directive.package_evidence),
+                                "grammar_stages": [stage.value for stage in directive.grammar_stages],
+                                "asset_requirements": [
+                                    {
+                                        "semantic_unit_id": row.semantic_unit_id,
+                                        "participant_role": row.participant_role.value,
+                                        "required_for_action": row.required_for_action,
+                                        "satisfied": row.satisfied,
+                                        "bound_asset_id": row.bound_asset_id,
+                                    }
+                                    for row in directive.asset_requirements
+                                ],
                             }
                             if directive is not None
                             else None
