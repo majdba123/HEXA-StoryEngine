@@ -135,10 +135,11 @@ def test_renderer_executes_choreography_scale_and_recoil(tmp_path: Path) -> None
     FFmpegRenderer("ffmpeg").render(plan, output)
     assert output.is_file() and output.stat().st_size > 0
     cap = cv2.VideoCapture(str(output))
-    frames=[]
+    frames = []
     while True:
-        ok, frame=cap.read()
-        if not ok: break
+        ok, frame = cap.read()
+        if not ok:
+            break
         frames.append(frame)
     cap.release()
     assert len(frames) == 48
