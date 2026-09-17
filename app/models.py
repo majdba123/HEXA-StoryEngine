@@ -111,6 +111,39 @@ class VisualAsset(BaseModel):
     can_animate_independently: bool = True
 
 
+class StoryEntity(BaseModel):
+    unit_id: str
+    semantic_name: str | None = None
+    entity_type: str | None = None
+    role: str | None = None
+    narrative_function: str | None = None
+    semantic_intent: str | None = None
+
+
+class StoryRelation(BaseModel):
+    source_unit_id: str
+    target_unit_id: str
+    kind: str
+    authority: str
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    causal: bool = False
+
+
+class StorySemanticContext(BaseModel):
+    story_role: str = "CONTEXT"
+    entities: list[StoryEntity] = Field(default_factory=list)
+    relations: list[StoryRelation] = Field(default_factory=list)
+    subject_unit_ids: list[str] = Field(default_factory=list)
+    object_unit_ids: list[str] = Field(default_factory=list)
+    result_unit_ids: list[str] = Field(default_factory=list)
+    narrative_functions: list[str] = Field(default_factory=list)
+    semantic_intents: list[str] = Field(default_factory=list)
+    continuity_relation: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    tension: float = Field(default=0.0, ge=0, le=1)
+
+
 class StoryBeat(BaseModel):
     id: str
     scene_id: str
@@ -124,6 +157,7 @@ class StoryBeat(BaseModel):
     action: str
     handoff_from: str | None = None
     semantic_targets: list[str] = Field(default_factory=list)
+    semantic_context: StorySemanticContext | None = None
 
 
 class LayoutItem(BaseModel):

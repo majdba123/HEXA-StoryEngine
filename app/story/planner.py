@@ -4,6 +4,9 @@ from collections import defaultdict
 
 from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
 
+from .graph import StoryGraph, StoryGraphBuilder
+from .semantic import PackageStoryInterpreter
+
 
 class StoryPlanner:
     """Build narration-locked visual beats from package intent.
@@ -16,6 +19,13 @@ class StoryPlanner:
     _DEFAULT_VISUAL_LEAD = 0.24
     _MAX_VISUAL_LEAD = 0.30
     _MIN_VISUAL_BEAT = 0.08
+
+    def __init__(self) -> None:
+        self.semantic_interpreter = PackageStoryInterpreter()
+        self.graph_builder = StoryGraphBuilder()
+
+    def build_graph(self, beats: list[StoryBeat]) -> StoryGraph:
+        return self.graph_builder.build(beats)
 
     def plan(
         self,
@@ -68,6 +78,11 @@ class StoryPlanner:
                 raw_action = str(event.get("action") or "EXPLAIN").upper()
                 action = self._story_action(raw_action, previous_primary, primary)
                 targets = [str(value) for value in event.get("targets", []) if value]
+                semantic_context = self.semantic_interpreter.interpret(
+                    scene,
+                    event,
+                    is_first_beat=(beat_number == 1),
+                )
                 beats.append(StoryBeat(
                     id=f"beat-{beat_number:03d}",
                     scene_id=scene.id,
@@ -81,6 +96,7 @@ class StoryPlanner:
                     action=action,
                     handoff_from=previous_primary if previous_primary and primary != previous_primary else None,
                     semantic_targets=targets,
+                    semantic_context=semantic_context,
                 ))
                 beat_number += 1
                 if primary:
