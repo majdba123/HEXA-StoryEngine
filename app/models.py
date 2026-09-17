@@ -111,6 +111,13 @@ class VisualAsset(BaseModel):
     can_animate_independently: bool = True
 
 
+class StoryTrigger(BaseModel):
+    phrase: str | None = None
+    occurrence_in_scene: int | None = None
+    global_char_start: int | None = None
+    global_char_end: int | None = None
+
+
 class StoryEntity(BaseModel):
     unit_id: str
     semantic_name: str | None = None
@@ -118,6 +125,10 @@ class StoryEntity(BaseModel):
     role: str | None = None
     narrative_function: str | None = None
     semantic_intent: str | None = None
+    appear_trigger: StoryTrigger | None = None
+    focus_trigger: StoryTrigger | None = None
+    exit_trigger: StoryTrigger | None = None
+    package_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class StoryRelation(BaseModel):
@@ -131,6 +142,13 @@ class StoryRelation(BaseModel):
 
 class StorySemanticContext(BaseModel):
     story_role: str = "CONTEXT"
+    event_id: str | None = None
+    event_order: int | None = None
+    event_trigger: StoryTrigger | None = None
+    scene_purpose: str | None = None
+    scene_visual_concept: str | None = None
+    scene_metadata: dict[str, Any] = Field(default_factory=dict)
+    event_metadata: dict[str, Any] = Field(default_factory=dict)
     entities: list[StoryEntity] = Field(default_factory=list)
     relations: list[StoryRelation] = Field(default_factory=list)
     subject_unit_ids: list[str] = Field(default_factory=list)
@@ -172,6 +190,9 @@ class LayoutItem(BaseModel):
 class CompositionBeat(BaseModel):
     beat_id: str
     items: list[LayoutItem]
+    state_name: str = "AUTHORED"
+    semantic_focus_asset_id: str | None = None
+    state_evidence: list[str] = Field(default_factory=list)
 
 
 class MotionCue(BaseModel):
@@ -213,6 +234,11 @@ class TextCue(BaseModel):
     priority: int = 0
     style_id: str
     placement_hint: str | None = None
+    story_role: str | None = None
+    choreography_action: str | None = None
+    semantic_unit_ids: list[str] = Field(default_factory=list)
+    relationship: str | None = None
+    package_evidence: list[str] = Field(default_factory=list)
     tokens: list[TextTokenCue] = Field(default_factory=list)
 
     @field_validator("text")
