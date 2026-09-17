@@ -147,8 +147,11 @@ class StoryPlanner:
 
     @staticmethod
     def _story_action(raw_action: str, previous_primary: str | None, primary: str | None) -> str:
-        if previous_primary and primary and previous_primary != primary:
-            return "HANDOFF"
+        # Semantic action and visual continuity are independent concerns. Changing the
+        # primary asset creates ``handoff_from`` on StoryBeat, but it must not erase a
+        # RESULT/COMPARE/EMPHASIZE intent coming from the package. Motion consumes both
+        # signals separately. ``primary`` is retained in the signature for compatibility.
+        del primary
         mapping = {
             "INTRODUCE": "INTRODUCE",
             "REVEAL": "REVEAL_DETAIL",
@@ -156,6 +159,7 @@ class StoryPlanner:
             "COMPARE": "COMPARE",
             "RESULT": "RESULT",
             "REJECT": "RESULT",
+            "HANDOFF": "HANDOFF",
             "EXPLAIN": "INTRODUCE" if previous_primary is None else "REVEAL_DETAIL",
         }
         return mapping.get(raw_action, "REVEAL_DETAIL")

@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator
@@ -73,6 +74,7 @@ class StoryEnginePipeline:
             ),
         )
         self.story = StoryPlanner()
+        self.choreography = ChoreographyDirector()
         self.text = TextPlanner()
         self.composition = CompositionPlanner()
         self.text_composition = TextCompositionPlanner()
@@ -125,6 +127,7 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
         story = self.story.plan(package, transcript, assets)
+        choreography = self.choreography.plan(package, story, assets)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.text, 0.48, "Selecting narration-locked keywords")
@@ -142,7 +145,7 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
-        motion = self.motion.plan(story, composition)
+        motion = self.motion.plan(story, composition, choreography)
         text_motion = self.text_motion.plan(story, text.cues, text_composition)
 
         self._check_cancel(cancelled)
@@ -287,6 +290,7 @@ class StoryEnginePipeline:
             assets = self._apply_refinement(package, assets, workspace)
         if start <= 2:
             story = self.story.plan(package, transcript, assets)
+        choreography = self.choreography.plan(package, story, assets)
         if start <= 3:
             text = self.text.plan(
                 transcript=transcript,
@@ -298,7 +302,7 @@ class StoryEnginePipeline:
             composition = self.composition.plan(story, assets)
             text_composition = self.text_composition.plan(story, composition, text.cues, assets)
         if start <= 5:
-            motion = self.motion.plan(story, composition)
+            motion = self.motion.plan(story, composition, choreography)
             text_motion = self.text_motion.plan(story, text.cues, text_composition)
         plan, _ = self.render_planner.compile(
             transcript,

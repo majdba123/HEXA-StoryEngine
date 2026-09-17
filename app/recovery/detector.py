@@ -73,7 +73,16 @@ class RecoveryDetector:
                 ))
             if beat and cue.asset_id in beat.primary_asset_ids:
                 audio_anchor = beat.audio_start if beat.audio_start is not None else beat.start
-                peak_offset = cue.end - audio_anchor
+                # Motion V3+ may continue a semantic reaction/follow-through after the
+                # object has already reached its readable Composition target. QA must
+                # judge semantic arrival, not the tail of the gesture. Legacy cues have
+                # no explicit settle marker, so cue.end remains the safe fallback.
+                semantic_settle = cue.params.get("semantic_settle_time", cue.end)
+                try:
+                    semantic_settle = float(semantic_settle)
+                except (TypeError, ValueError):
+                    semantic_settle = cue.end
+                peak_offset = semantic_settle - audio_anchor
                 if peak_offset > 0.12:
                     issues.append(DetectedIssue(
                         "ELEMENT_APPEARS_TOO_LATE",

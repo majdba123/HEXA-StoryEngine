@@ -100,3 +100,108 @@ def test_standard_easing_boundaries(name: str, expected_mid: float) -> None:
     assert sample_easing(name, 0.0) == pytest.approx(0.0)
     assert sample_easing(name, 0.5) == pytest.approx(expected_mid)
     assert sample_easing(name, 1.0) == pytest.approx(1.0)
+
+
+def test_choreography_reject_creates_meaningful_interaction_and_scale_reaction() -> None:
+    from pathlib import Path
+    from app.choreography import ChoreographyDirector
+    from app.models import PackageModel, SceneSource
+
+    beat = _beat(action="REVEAL_DETAIL")
+    package = PackageModel(
+        root=Path("/tmp"), package_id="p", script="x",
+        scenes=[SceneSource(
+            id="scene-001", image_path=Path("/scene.png"), order=1,
+            units=[{"semantic_name":"subsequent_decline","narrative_function":"EXPLAIN_SUBSEQUENT_DECLINE"}],
+        )],
+    )
+    choreography = ChoreographyDirector().plan(package, [beat], [])
+    cue = MotionPlanner().plan([beat], [_composition()], choreography)[0]
+    keyframes = cue.params["program"]["keyframes"]
+
+    assert cue.params["choreography"]["action"] == "REJECT"
+    assert cue.params["program"]["name"] == "reject_attempt_recoil"
+    assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in keyframes) > 0.04
+    assert max(frame["scale"] for frame in keyframes) >= 1.05
+    assert min(frame["scale"] for frame in keyframes) < 1.0
+
+
+def test_semantic_handoff_begins_from_previous_focal_position() -> None:
+    from pathlib import Path
+    from app.choreography import ChoreographyDirector
+    from app.models import PackageModel, SceneSource
+
+    first = _beat(beat_id="beat-001", start=0.0, end=1.8, audio_start=0.2, audio_end=1.6)
+    first.primary_asset_ids = ["old"]
+    first.support_asset_ids = []
+    second = _beat(beat_id="beat-002", start=1.8, end=3.8, audio_start=2.0, audio_end=3.5)
+    second.scene_id = "scene-002"
+    second.primary_asset_ids = ["new"]
+    second.support_asset_ids = []
+    package = PackageModel(
+        root=Path("/tmp"), package_id="p", script="x",
+        scenes=[
+            SceneSource(id="scene-001", image_path=Path("/a.png"), order=1, units=[]),
+            SceneSource(id="scene-002", image_path=Path("/b.png"), order=2, units=[]),
+        ],
+    )
+    composition = [
+        CompositionBeat(beat_id=first.id, items=[LayoutItem(asset_id="old", x=0.25, y=0.50, width=0.30, height=0.40)]),
+        CompositionBeat(beat_id=second.id, items=[LayoutItem(asset_id="new", x=0.70, y=0.55, width=0.32, height=0.42)]),
+    ]
+    choreography = ChoreographyDirector().plan(package, [first, second], [])
+    cue = [c for c in MotionPlanner().plan([first, second], composition, choreography) if c.beat_id == second.id][0]
+    program = cue.params["program"]
+
+    assert program["name"].startswith("handoff_then_")
+    assert program["keyframes"][0]["dx"] < -0.20
+    assert program["keyframes"][0]["scale"] == pytest.approx(0.80)
+
+
+def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
+    from pathlib import Path
+    from app.choreography import ChoreographyDirector
+    from app.models import PackageModel, SceneSource, VisualAsset
+
+    first = _beat(beat_id="beat-001", start=0.0, end=1.8, audio_start=0.2, audio_end=1.6)
+    first.primary_asset_ids = ["old"]
+    first.support_asset_ids = []
+    second = _beat(beat_id="beat-002", start=1.8, end=3.8, audio_start=2.0, audio_end=3.5)
+    second.scene_id = "scene-002"
+    second.primary_asset_ids = ["new"]
+    second.support_asset_ids = ["target"]
+    package = PackageModel(
+        root=Path("/tmp"), package_id="p", script="x",
+        scenes=[
+            SceneSource(id="scene-001", image_path=Path("/a.png"), order=1, units=[]),
+            SceneSource(
+                id="scene-002", image_path=Path("/b.png"), order=2,
+                units=[{"semantic_name": "subsequent_decline", "narrative_function": "EXPLAIN_SUBSEQUENT_DECLINE"}],
+            ),
+        ],
+    )
+    assets = [
+        VisualAsset(id="old", scene_id="scene-001", role="primary_visual", image_path=Path("/old.png"), extraction_method="test", source_area_ratio=0.3),
+        VisualAsset(id="new", scene_id="scene-002", role="primary_visual", image_path=Path("/new.png"), extraction_method="test", source_area_ratio=0.3),
+        VisualAsset(id="target", scene_id="scene-002", role="support_visual_1", image_path=Path("/target.png"), extraction_method="test", source_area_ratio=0.15),
+    ]
+    composition = [
+        CompositionBeat(beat_id=first.id, items=[LayoutItem(asset_id="old", x=0.24, y=0.50, width=0.30, height=0.40)]),
+        CompositionBeat(beat_id=second.id, items=[
+            LayoutItem(asset_id="new", x=0.65, y=0.50, width=0.30, height=0.40),
+            LayoutItem(asset_id="target", x=0.82, y=0.50, width=0.20, height=0.30),
+        ]),
+    ]
+    choreography = ChoreographyDirector().plan(package, [first, second], assets)
+    cue = [
+        c for c in MotionPlanner().plan([first, second], composition, choreography)
+        if c.beat_id == second.id and c.asset_id == "new"
+    ][0]
+    program = cue.params["program"]
+
+    assert program["name"] == "handoff_then_reject_attempt_recoil"
+    settle = program["settle_progress"]
+    tail = [frame for frame in program["keyframes"] if frame["progress"] > settle]
+    assert tail
+    assert max(frame["scale"] for frame in tail) >= 1.05
+    assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in tail) > 0.02

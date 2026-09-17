@@ -60,6 +60,35 @@ class FFmpegMotionAdapter:
         )
         return f"{target_x}+({x_offsets})", f"{target_y}+({y_offsets})"
 
+
+    def scale_expression(
+        self,
+        *,
+        cue: MotionCue,
+        segment_start: float,
+        segment_duration: float,
+    ) -> str:
+        program = cue.params.get("program")
+        if not isinstance(program, dict):
+            return "1"
+        keyframes = program.get("keyframes")
+        if not isinstance(keyframes, list) or len(keyframes) < 2:
+            return "1"
+        local_start = max(0.0, float(cue.start) - segment_start)
+        local_end = min(
+            segment_duration,
+            max(local_start + 0.05, float(cue.end) - segment_start),
+        )
+        window = max(0.05, local_end - local_start)
+        return self._axis_expression(
+            keyframes=keyframes,
+            axis="scale",
+            scale=1,
+            start=local_start,
+            window=window,
+            default=1.0,
+        )
+
     def _axis_expression(
         self,
         *,
@@ -68,12 +97,13 @@ class FFmpegMotionAdapter:
         scale: int,
         start: float,
         window: float,
+        default: float = 0.0,
     ) -> str:
         parsed: list[tuple[float, float, str]] = []
         for frame in keyframes:
             try:
                 progress = float(frame["progress"])
-                value = float(frame.get(axis, 0.0)) * scale
+                value = float(frame.get(axis, default)) * scale
                 easing = str(frame.get("easing") or "ease_out_cubic")
             except (KeyError, TypeError, ValueError):
                 continue
