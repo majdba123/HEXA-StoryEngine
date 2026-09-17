@@ -37,7 +37,7 @@ class MotionCompiler:
             end=window.end,
             params={
                 "engine_version": self.ENGINE_VERSION,
-                "semantic_action": beat.action,
+                "semantic_action": (choreography or {}).get("action") or beat.action,
                 "semantic_settle_time": window.semantic_settle,
                 "audio_anchor": audio_start,
                 "spoken_duration": max(0.0, audio_end - audio_start),
