@@ -8,7 +8,7 @@ from typing import Callable
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
-from app.diagnostics import AssetUsageValidator
+from app.diagnostics import AssetUsageValidator, StorytellingValidator
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
 from app.input import FinalPackageLoader
@@ -136,17 +136,34 @@ class StoryEnginePipeline:
             story=story,
             assets=assets,
             package=package,
+            choreography=choreography,
         )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
-        composition = self.composition.plan(story, assets)
+        composition = self.composition.plan(story, assets, choreography)
         text_composition = self.text_composition.plan(story, composition, text.cues, assets)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
         motion = self.motion.plan(story, composition, choreography)
-        text_motion = self.text_motion.plan(story, text.cues, text_composition)
+        text_motion = self.text_motion.plan(
+            story, text.cues, text_composition, choreography
+        )
+
+        authoring_report = StorytellingValidator.validate(
+            package=package,
+            story=story,
+            choreography=choreography,
+            composition=composition,
+            motion=motion,
+            text=text,
+            text_motion=text_motion,
+        )
+        StorytellingValidator.write(
+            authoring_report,
+            workspace / "diagnostics" / "storytelling-authoring.json",
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.69, "Compiling render plan")
@@ -297,13 +314,16 @@ class StoryEnginePipeline:
                 story=story,
                 assets=assets,
                 package=package,
+                choreography=choreography,
             )
         if start <= 4:
-            composition = self.composition.plan(story, assets)
+            composition = self.composition.plan(story, assets, choreography)
             text_composition = self.text_composition.plan(story, composition, text.cues, assets)
         if start <= 5:
             motion = self.motion.plan(story, composition, choreography)
-            text_motion = self.text_motion.plan(story, text.cues, text_composition)
+            text_motion = self.text_motion.plan(
+                story, text.cues, text_composition, choreography
+            )
         plan, _ = self.render_planner.compile(
             transcript,
             assets,
