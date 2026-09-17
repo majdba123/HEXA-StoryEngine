@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.choreography import ChoreographyPlan
 from app.models import PackageModel, StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
 from app.text.semantic import TextSemanticSelector
 from app.text.style import TextStyleResolver
@@ -7,7 +8,11 @@ from app.text.timing import TextTimingPlanner
 
 
 class TextPlanner:
-    """Build sparse keyword text cues without changing the visual timing baseline."""
+    """Build sparse narration-locked text cues from Story + Final Package semantics.
+
+    Text remains an independent layer. Choreography may provide semantic synchronization
+    and anchor choice, but it never owns the wording or forced-aligned timing.
+    """
 
     def __init__(
         self,
@@ -27,17 +32,18 @@ class TextPlanner:
         story: list[StoryBeat],
         assets: list[VisualAsset] | None = None,
         package: PackageModel | None = None,
+        choreography: ChoreographyPlan | None = None,
     ) -> TextPlan:
-        # The planner is package-generic: it consumes the standard Final Package model
-        # and never relies on project IDs, scene numbers, or package-specific spans.
-        # ``package`` is accepted now so semantic strategies can use authored metadata
-        # without changing the public stage contract later.
-        del assets, package
+        del assets
+        scene_by_id = {scene.id: scene for scene in package.scenes} if package else {}
         cues: list[TextCue] = []
         styles: dict[str, TextStyle] = {}
         cue_number = 1
 
         for beat in story:
+            directive = choreography.for_beat(beat.id) if choreography else None
+            context = beat.semantic_context
+            scene = scene_by_id.get(beat.scene_id)
             candidates = self.semantic.select(beat, transcript)
             for candidate in candidates:
                 timed = self.timing.align(candidate, transcript)
@@ -45,7 +51,15 @@ class TextPlanner:
                     continue
                 style = self.style.resolve(timed)
                 styles[style.id] = style
-                anchor_asset_id = (beat.primary_asset_ids or [None])[0]
+                anchor_asset_id = (
+                    directive.primary_asset_id
+                    if directive is not None and directive.primary_asset_id
+                    else (beat.primary_asset_ids or [None])[0]
+                )
+                package_evidence = list(context.evidence) if context else []
+                if scene and scene.relation_to_previous:
+                    package_evidence.append(f"scene_relation:{scene.relation_to_previous}")
+                relationship = directive.relationship if directive is not None else None
                 cues.append(TextCue(
                     id=f"text-{cue_number:03d}",
                     beat_id=beat.id,
@@ -60,6 +74,11 @@ class TextPlanner:
                     priority=self._priority(candidate.semantic_type),
                     style_id=style.id,
                     placement_hint="anchor",
+                    story_role=context.story_role if context else None,
+                    choreography_action=directive.action if directive is not None else None,
+                    semantic_unit_ids=list(directive.semantic_unit_ids) if directive is not None else [],
+                    relationship=relationship,
+                    package_evidence=list(dict.fromkeys(package_evidence)),
                     tokens=[
                         TextTokenCue(
                             text=token.display_text,
