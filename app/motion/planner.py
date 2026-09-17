@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.choreography import ChoreographyPlan, ContinuityMode, HookKind
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat
 from app.motion.compiler import MotionCompiler
-from app.motion.primitives import MotionPrimitiveLibrary
+from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
 from app.motion.timing import MotionTimingPolicy
 
@@ -17,7 +17,7 @@ class MotionPlanner:
     """
 
     def __init__(self) -> None:
-        self.primitives = MotionPrimitiveLibrary()
+        self.primitives = SemanticMotionPrimitiveLibrary()
         self.timing = MotionTimingPolicy()
         self.style = MotionStyleDirector()
         self.compiler = MotionCompiler()
