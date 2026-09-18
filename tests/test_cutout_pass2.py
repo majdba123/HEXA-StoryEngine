@@ -213,6 +213,7 @@ def test_whole_object_completer_absorbs_alarm_rays_but_not_neighbour() -> None:
     assert result.mask[87, 207]
     assert not np.any(result.mask & protected)
 
+
 def test_pass2_general_priority_prefers_animation_sized_object_over_tiny_fragment() -> None:
     from app.cutout.pass2.models import CandidateProposal, ProposalSource
 
