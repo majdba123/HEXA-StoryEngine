@@ -91,6 +91,24 @@ class _SemanticRecoveryMixin:
         if bw <= 0 or bh <= 0 or x >= width or y >= height:
             return -1.0
         score = float(detection.confidence)
+
+        width_share = bw / max(1, width)
+        height_share = bh / max(1, height)
+        area_share = width_share * height_share
+        aspect = bh / max(1, bw)
+        balanced_area = 1.0 - min(1.0, abs(area_share - 0.10) / 0.10)
+        score += balanced_area * 0.6
+        if 0.50 <= aspect <= 2.00:
+            score += 0.25
+
+        useful_object_tokens = (
+            "card", "wallet", "phone", "mobile", "cart", "bag", "box",
+            "package", "receipt", "tag", "label", "coin", "money", "cash",
+            "bill", "price", "alert", "warning", "badge", "icon", "product",
+        )
+        if any(token in label for token in useful_object_tokens):
+            score += 1.1
+
         wants_character = any(
             token in str(unit_type).upper()
             for unit_type in target_types
@@ -100,8 +118,7 @@ class _SemanticRecoveryMixin:
             semantic_match = any(token in label for token in ("person", "human", "character", "man", "woman", "boy", "girl", "people"))
             if semantic_match:
                 score += 4.0
-            aspect = bh / max(1, bw)
-            score += min(2.5, aspect) * 0.7 + (bh / max(1, height)) * 1.5
+            score += min(2.5, aspect) * 0.7 + height_share * 1.5
         return score
 
     @staticmethod
