@@ -206,6 +206,7 @@ def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
     assert max(frame["scale"] for frame in tail) >= 1.05
     assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in tail) > 0.02
 
+
 def test_pass2_family_secondary_uses_footprint_locked_reveal() -> None:
     from pathlib import Path
     from app.models import VisualAsset
