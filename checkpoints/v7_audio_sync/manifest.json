@@ -1,0 +1,74 @@
+{
+  "checkpoint": "HEXA V7 Audio-Synced Object Storytelling",
+  "status": "USER_APPROVED_STRONG_BASELINE",
+  "recorded_date": "2026-09-18",
+  "source_parent_head": "26a5bd43c838e4002d30c1b9108a9f9303b42ce8",
+  "branch": "majd",
+  "inputs": {
+    "final_package": {
+      "name": "HEXA_INSUFFICIENT_BALANCE_AR_HEXA_V20_SCENE_PACKAGE_V1_FINAL(2).zip",
+      "sha256": "6abda3a85214305e37ab4b533cdb23b522607e631c68e70d54438ca8cb145535"
+    },
+    "narration": {
+      "name": "ElevenLabs_2026-09-15T14_15_00_Ahmed - Intellectual, Calm & Educational_pvc_sp101_s76_sb100_se0_b_m2(3).mp3",
+      "sha256": "22f7f36f48648b965beff564c54aaefa5b5f45f270fb8b3a0ce52d8e0826deeb"
+    }
+  },
+  "render": {
+    "name": "HEXA_V7_AUDIO_SYNC_OBJECT_STORYTELLING_FULL_RENDER.mp4",
+    "sha256": "b1964762ed826b2442cd76085b2f31bd067e8595fe71424600eabd1a5e0329cd",
+    "size_bytes": 21536565,
+    "duration_seconds": 102.4,
+    "video": "H.264 1920x1080 CFR 30fps",
+    "audio": "AAC mono 44.1kHz",
+    "user_judgment": "عظيم جدا / current best baseline",
+    "strict_proven": false
+  },
+  "behavior": {
+    "aligned_words": 227,
+    "object_layers": 96,
+    "story_beats": 49,
+    "text_cues": 21,
+    "object_reveal": "audio/content-triggered instead of all-at-once scene exposure",
+    "text_placement": "dynamic negative-space placement with artwork-overlap avoidance",
+    "known_caveat": "strict collision audit still reported transient Pass2-family collision events; preserve V7 as user-approved baseline and fix next without regressing synchronization/motion/text placement."
+  },
+  "bundle": {
+    "file": "checkpoint_bundle.tar.gz",
+    "sha256": "862bbfaaecd24b1bee4e57afc3e532d1494520789624a82767854193df3ebebd",
+    "files": {
+      "align_ctc.py": "d384a22e73ed8713cf4ba42a3f686ec051a5b9d8769d89e017437edf4b42ceb7",
+      "alignment.json": "175c691832eb26bb7a9d43af4adb1148c9f5343f72389e55305518900f06304d",
+      "assets.json": "1a016645000cbff0d3362f7fb5515638af244cff1297c22d5c2785c8f929c0cb",
+      "build_v7_plan.py": "b08d53e82aa5127560adccf386bbe57b0e3beb76cda2fc62b6afd63767ec2e71",
+      "collision_audit_v7.py": "ef9552f4b8297104fef72f727a7febc320cbf13a1d4aa8f6e15e2502e53bf7c5",
+      "ffprobe-final.json": "d90c23d5507b33cc9927925287db51a0de7da0a4ebad5e880056dfd2744d7705",
+      "object-audio-sync.json": "d303f55a098c61d120cbfa3285a8e63d95090a007ccfaead5b811ff05d2c3295",
+      "render_v7.py": "24af55f3bd75e55b34f5f22486593192e2102f36afc694656ca7b4ebcda5c2cf",
+      "render_v7_fast.py": "1aa0f24487220c62e8d3a6dcf637a2764dfcca295232e8ec4d3ffb5562c105e7",
+      "reposition_text.py": "0050449f7ca214ce9e4b85c301e0fb79b40208aaae52ac081c9129bc21f8e960",
+      "reposition_text_v2.py": "04dd963ad17958ff4144444414259e971a4879873c0beb9e4e7f451c30303105",
+      "serialize_assets.py": "ba1a594fba5b0a130b46b1f1c3e9a4d68ade62ffc108b2fa9d3c8f8685fae182",
+      "text-placement.json": "f5d1fae446627ac99d279117eb12a6f7355106bcb3d51df98c9d78ee5237cf25",
+      "v7_plan.json": "6549851393aeb9cccf2a28b2c6a0be8284c837593d730cd59d8a3d58b6dbd211"
+    },
+    "storage": "Library: /HEXA/checkpoints/v7_audio_sync/HEXA_V7_AUDIO_SYNC_CHECKPOINT_BUNDLE.tar.gz"
+  },
+  "runtime_source_archive": {
+    "file": "runtime_source.tar.gz.b64",
+    "encoding": "base64(gzip(tar))",
+    "decoded_sha256": "782528d182d08d56764a4d7f5d2081f52093d43a6cda2f274a5b1bf668a935d5",
+    "decoded_size_bytes": 14906,
+    "restore": "python checkpoints/v7_audio_sync/restore_runtime.py <destination>",
+    "files": {
+      "align_ctc.py": "d384a22e73ed8713cf4ba42a3f686ec051a5b9d8769d89e017437edf4b42ceb7",
+      "build_v7_plan.py": "b08d53e82aa5127560adccf386bbe57b0e3beb76cda2fc62b6afd63767ec2e71",
+      "collision_audit_v7.py": "ef9552f4b8297104fef72f727a7febc320cbf13a1d4aa8f6e15e2502e53bf7c5",
+      "render_v7.py": "24af55f3bd75e55b34f5f22486593192e2102f36afc694656ca7b4ebcda5c2cf",
+      "render_v7_fast.py": "1aa0f24487220c62e8d3a6dcf637a2764dfcca295232e8ec4d3ffb5562c105e7",
+      "reposition_text.py": "0050449f7ca214ce9e4b85c301e0fb79b40208aaae52ac081c9129bc21f8e960",
+      "reposition_text_v2.py": "04dd963ad17958ff4144444414259e971a4879873c0beb9e4e7f451c30303105",
+      "serialize_assets.py": "ba1a594fba5b0a130b46b1f1c3e9a4d68ade62ffc108b2fa9d3c8f8685fae182"
+    }
+  }
+}
