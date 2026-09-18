@@ -205,3 +205,35 @@ def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
     assert tail
     assert max(frame["scale"] for frame in tail) >= 1.05
     assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in tail) > 0.02
+
+def test_pass2_family_secondary_uses_footprint_locked_reveal() -> None:
+    from pathlib import Path
+    from app.models import VisualAsset
+
+    beat = _beat()
+    family = VisualAsset(
+        id="family:secondary-01",
+        scene_id=beat.scene_id,
+        role="secondary_object",
+        image_path=Path("/tmp/family.png"),
+        extraction_method="component_mask+pass2_secondary",
+        parent_asset_id="family",
+        asset_family_id="family",
+        render_as_family_canvas=True,
+    )
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[LayoutItem(asset_id=family.id, x=0.5, y=0.5, width=0.5, height=0.5)],
+    )]
+
+    cue = MotionPlanner().plan([beat], composition, assets=[family])[0]
+
+    assert cue.params["program"]["name"] == "family_secondary_footprint_locked_reveal"
+    assert cue.params["render_constraints"] == {
+        "geometry_lock": "authored_footprint",
+        "reveal_mode": "alpha_only",
+    }
+    for frame in cue.params["program"]["keyframes"]:
+        assert frame["dx"] == 0.0
+        assert frame["dy"] == 0.0
+        assert frame["scale"] == 1.0
