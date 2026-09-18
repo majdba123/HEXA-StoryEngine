@@ -149,7 +149,7 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
     assert "لاير" not in visible_text
-    assert "Noto Sans Arabic" in payload
+    assert "Noto Kufi Arabic" in payload
     assert "\\an6\\move(" in payload
     assert "\\pos(" in payload
     # Each reveal state is a complete logical phrase shaped as one bidi run. This avoids
