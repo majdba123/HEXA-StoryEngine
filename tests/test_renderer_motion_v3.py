@@ -143,3 +143,72 @@ def test_renderer_executes_choreography_scale_and_recoil(tmp_path: Path) -> None
         frames.append(frame)
     cap.release()
     assert len(frames) == 48
+
+
+def _red_bbox(frame: np.ndarray) -> tuple[int, int, int, int]:
+    blue, green, red = cv2.split(frame)
+    mask = (red.astype(np.int16) - blue.astype(np.int16) > 70) & (
+        red.astype(np.int16) - green.astype(np.int16) > 70
+    )
+    ys, xs = np.where(mask)
+    assert len(xs) > 20
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_family_secondary_reveal_keeps_visible_footprint_locked(tmp_path: Path) -> None:
+    primary_path = tmp_path / "primary.png"
+    secondary_path = tmp_path / "secondary.png"
+    Image.new("RGBA", (220, 180), (255, 255, 255, 0)).save(primary_path)
+    secondary = Image.new("RGBA", (220, 180), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(secondary)
+    draw.rounded_rectangle((130, 45, 205, 145), radius=12, fill=(220, 55, 55, 255))
+    secondary.save(secondary_path)
+
+    assets = [
+        VisualAsset(
+            id="family", scene_id="scene-001", role="primary_visual",
+            image_path=primary_path, extraction_method="test+pass2_main",
+            asset_family_id="family", render_as_family_canvas=True,
+        ),
+        VisualAsset(
+            id="family:secondary-01", scene_id="scene-001", role="secondary_object",
+            image_path=secondary_path, extraction_method="test+pass2_secondary",
+            parent_asset_id="family", asset_family_id="family",
+            render_as_family_canvas=True,
+        ),
+    ]
+    beat = StoryBeat(
+        id="beat-001", scene_id="scene-001", start=0.0, end=1.0,
+        audio_start=0.0, audio_end=0.9, narration="test",
+        primary_asset_ids=["family"], support_asset_ids=["family:secondary-01"],
+        action="INTRODUCE",
+    )
+    composition = [CompositionBeat(beat_id=beat.id, items=[
+        LayoutItem(asset_id="family", x=0.5, y=0.5, width=0.55, height=0.62, z=10),
+        LayoutItem(asset_id="family:secondary-01", x=0.5, y=0.5, width=0.55, height=0.62, z=20),
+    ])]
+    motion = MotionPlanner().plan([beat], composition, assets=assets)
+    plan = RenderPlan(
+        width=640, height=360, fps=30, duration=1.0, story=[beat],
+        composition=composition, motion=motion, assets=assets,
+    )
+    output = tmp_path / "family-lock.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+
+    cap = cv2.VideoCapture(str(output))
+    frames = []
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frames.append(frame)
+    cap.release()
+    boxes = [_red_bbox(frames[i]) for i in (5, 9, 14, 20)]
+    widths = [x1 - x0 for x0, _y0, x1, _y1 in boxes]
+    heights = [y1 - y0 for _x0, y0, _x1, y1 in boxes]
+    centers = [((x0 + x1) / 2, (y0 + y1) / 2) for x0, y0, x1, y1 in boxes]
+    assert max(widths) - min(widths) <= 3
+    assert max(heights) - min(heights) <= 3
+    assert max(c[0] for c in centers) - min(c[0] for c in centers) <= 2.5
+    assert max(c[1] for c in centers) - min(c[1] for c in centers) <= 2.5

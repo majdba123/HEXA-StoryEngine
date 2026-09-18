@@ -92,17 +92,34 @@ class _GeometryHelpersMixin:
     @staticmethod
     def _candidate_priority(candidate, shape: tuple[int, int], target_types: list[str]) -> float:
         height, width = shape
-        x, y, bw, bh = candidate.bbox
+        _x, _y, bw, bh = candidate.bbox
         score = candidate.stability * 2.0 + candidate.area_share
+
+        width_share = bw / max(1, width)
+        height_share = bh / max(1, height)
+        aspect = bh / max(1, bw)
+        box_share = max(1e-6, width_share * height_share)
+        occupancy = min(1.0, candidate.area_share / box_share)
+
+        # Promote useful animation-sized objects without rewarding tiny decoration.
+        balanced_area = 1.0 - min(1.0, abs(candidate.area_share - 0.11) / 0.11)
+        score += balanced_area * 1.2
+        score += occupancy * 0.9
+        if candidate.area_share < 0.012:
+            score -= 0.45
+        if width_share < 0.05 or height_share < 0.05:
+            score -= 0.25
+        if 0.55 <= aspect <= 1.95:
+            score += 0.40
+        elif aspect >= 1.15 and height_share >= 0.30 and width_share <= 0.42:
+            score += 0.32
+
         wants_character = any(
             token in str(unit_type).upper()
             for unit_type in target_types
             for token in ("CHARACTER", "PERSON", "HUMAN")
         )
         if wants_character:
-            aspect = bh / max(1, bw)
-            height_share = bh / max(1, height)
-            width_share = bw / max(1, width)
             figure_score = (
                 min(2.5, aspect) * 0.8
                 + min(1.0, height_share) * 1.8

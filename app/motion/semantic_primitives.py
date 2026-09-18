@@ -12,6 +12,24 @@ class SemanticMotionPrimitiveLibrary(MotionPrimitiveLibrary):
     REACT/CONNECT actions and prevents generic support layers from post-settle wobbling.
     """
 
+    def build_family_secondary(self) -> MotionProgram:
+        """Reveal a registered Pass2 family layer without changing its footprint.
+
+        Pass2 family layers share the parent canvas and therefore already encode their
+        authoritative resting registration. Translation or scale would sweep the alpha
+        footprint through pixels that are intentionally empty in the authored final
+        state. Keep geometry fixed and let the renderer reveal the layer with alpha.
+        """
+        return MotionProgram(
+            name="family_secondary_footprint_locked_reveal",
+            settle_progress=0.42,
+            keyframes=(
+                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "smoothstep"),
+                MotionKeyframe(0.42, 0.0, 0.0, 1.0, "smoothstep"),
+                MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+            ),
+        )
+
     def build(
         self,
         *,

@@ -71,7 +71,7 @@ class CVProposalEngine:
         (16, 205),
     )
     _MIN_CONSENSUS = 2
-    _MIN_AREA_SHARE = 0.009
+    _MIN_AREA_SHARE = 0.0065
     _MAX_AREA_SHARE = 0.72
     _MIN_DIM_SHARE = 0.03
 

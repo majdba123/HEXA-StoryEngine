@@ -14,7 +14,7 @@ _PDI = "\u2069"
 class TextRenderTheme:
     """Premium high-contrast tokens for sparse keyword storytelling."""
 
-    font_family: str = "Noto Sans Arabic"
+    font_family: str = "Noto Kufi Arabic"
     primary: str = "&H00351D0B"       # #0B1D35 deep navy, ASS AABBGGRR
     accent: str = "&H00EB7A0A"        # #0A7AEB electric blue
     gold: str = "&H001AA2F4"          # #F4A21A warm gold
@@ -33,7 +33,7 @@ class TextRenderer:
     line grows into its final footprint without re-centering or reversing earlier words.
     """
 
-    def __init__(self, *, font_family: str = "Noto Sans Arabic") -> None:
+    def __init__(self, *, font_family: str = "Noto Kufi Arabic") -> None:
         self.theme = TextRenderTheme(font_family=font_family)
 
     def write_beat_ass(
@@ -193,28 +193,28 @@ class TextRenderer:
         theme = self.theme
         styles = [
             self._style_line(
-                "Keyword", theme.primary, 98, outline_color=theme.light_outline,
-                outline=2.8, shadow=2.0,
+                "Keyword", theme.primary, 112, outline_color=theme.light_outline,
+                outline=3.2, shadow=2.2,
             ),
             self._style_line(
-                "Number", theme.gold, 132, outline_color=theme.dark_outline,
+                "Number", theme.gold, 148, outline_color=theme.dark_outline,
+                outline=4.1, shadow=3.0,
+            ),
+            self._style_line(
+                "Amount", theme.accent, 136, outline_color=theme.dark_outline,
                 outline=3.8, shadow=2.8,
             ),
             self._style_line(
-                "Amount", theme.accent, 120, outline_color=theme.dark_outline,
-                outline=3.4, shadow=2.6,
+                "WarningAmount", theme.warning, 138, outline_color=theme.dark_outline,
+                outline=4.1, shadow=3.0,
             ),
             self._style_line(
-                "WarningAmount", theme.warning, 124, outline_color=theme.dark_outline,
-                outline=3.8, shadow=2.8,
+                "Warning", theme.warning, 126, outline_color=theme.dark_outline,
+                outline=3.7, shadow=2.8,
             ),
             self._style_line(
-                "Warning", theme.warning, 114, outline_color=theme.dark_outline,
-                outline=3.5, shadow=2.6,
-            ),
-            self._style_line(
-                "Emphasis", theme.accent, 110, outline_color=theme.dark_outline,
-                outline=3.2, shadow=2.4,
+                "Emphasis", theme.accent, 122, outline_color=theme.dark_outline,
+                outline=3.6, shadow=2.6,
             ),
         ]
         return "\n".join([

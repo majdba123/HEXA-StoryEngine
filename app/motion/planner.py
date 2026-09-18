@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.choreography import ChoreographyPlan, ContinuityMode, HookKind
-from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat
+from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
 from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
@@ -27,8 +27,10 @@ class MotionPlanner:
         beats: list[StoryBeat],
         composition: list[CompositionBeat],
         choreography: ChoreographyPlan | None = None,
+        assets: list[VisualAsset] | None = None,
     ) -> list[MotionCue]:
         by_beat = {item.beat_id: item for item in composition}
+        by_asset = {asset.id: asset for asset in assets or []}
         cues: list[MotionCue] = []
         previous_pace_tier: str | None = None
         last_attention_reset = 0.0
@@ -45,9 +47,15 @@ class MotionPlanner:
                 visual_duration = max(0.08, beat.end - beat.start)
                 count = len(layout.items)
                 for index, item in enumerate(layout.items):
-                    program = self.primitives.build_legacy(
-                        action=beat.action, item=item, index=index, count=count,
-                        visual_duration=visual_duration,
+                    asset = by_asset.get(item.asset_id)
+                    family_secondary = self._is_family_secondary(asset)
+                    program = (
+                        self.primitives.build_family_secondary()
+                        if family_secondary
+                        else self.primitives.build_legacy(
+                            action=beat.action, item=item, index=index, count=count,
+                            visual_duration=visual_duration,
+                        )
                     )
                     window = self.timing.legacy_window(
                         beat=beat, distance=program.travel_distance, index=index, count=count,
@@ -57,6 +65,10 @@ class MotionPlanner:
                         beat=beat, asset_id=item.asset_id, program=program, window=window,
                         index=index, count=count, hook=False, handoff=bool(beat.handoff_from),
                         attention_reset=False, variant=0, intensity=1.0, choreography=None,
+                        render_constraints=(
+                            {"geometry_lock": "authored_footprint", "reveal_mode": "alpha_only"}
+                            if family_secondary else None
+                        ),
                     ))
                 continue
 
@@ -129,6 +141,8 @@ class MotionPlanner:
             previous_items = {item.asset_id: item for item in previous_layout.items} if previous_layout else {}
 
             for index, item in enumerate(layout.items):
+                asset = by_asset.get(item.asset_id)
+                family_secondary = self._is_family_secondary(asset)
                 interaction_vector = self._interaction_vector(
                     item=item,
                     primary_item=primary_item,
@@ -146,7 +160,9 @@ class MotionPlanner:
                     and item.asset_id == primary_item.asset_id
                     and previous_primary_item is not None
                 )
-                if continuity_source is not None or semantic_handoff:
+                if family_secondary:
+                    program = self.primitives.build_family_secondary()
+                elif continuity_source is not None or semantic_handoff:
                     source = continuity_source or previous_primary_item
                     assert source is not None
                     previous_offset = (source.x - item.x, source.y - item.y)
@@ -226,6 +242,10 @@ class MotionPlanner:
                         attention_reset=attention_reset,
                         variant=variant,
                         intensity=intensity,
+                        render_constraints=(
+                            {"geometry_lock": "authored_footprint", "reveal_mode": "alpha_only"}
+                            if family_secondary else None
+                        ),
                         choreography=(
                             {
                                 "sequence_id": directive.sequence_id,
@@ -306,6 +326,14 @@ class MotionPlanner:
             previous_layout = layout
             previous_directive = directive
         return cues
+
+    @staticmethod
+    def _is_family_secondary(asset: VisualAsset | None) -> bool:
+        return bool(
+            asset is not None
+            and asset.parent_asset_id
+            and asset.render_as_family_canvas
+        )
 
     @staticmethod
     def _primary_item(
