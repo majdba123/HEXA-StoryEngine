@@ -129,6 +129,8 @@ class RefinementService:
             "image_path": main_path,
             "source_area_ratio": parent_ratio * main_share,
             "extraction_method": f"{asset.extraction_method}+refined_main",
+            "asset_family_id": asset.asset_family_id or asset.id,
+            "render_as_family_canvas": True,
         })
         secondary = asset.model_copy(update={
             "id": f"{asset.id}:secondary-01",
@@ -141,6 +143,9 @@ class RefinementService:
             "compound": False,
             "component_count": 1,
             "can_animate_independently": True,
+            "parent_asset_id": asset.id,
+            "asset_family_id": asset.asset_family_id or asset.id,
+            "render_as_family_canvas": True,
         })
         return [main, secondary]
 

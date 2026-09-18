@@ -44,7 +44,9 @@ class RecoveryDetector:
                     {"beat_id": beat.id},
                 ))
             layout = composition.get(beat.id)
-            if layout and layout.items:
+            if layout and layout.items and all(item.placement_source == "fallback" for item in layout.items):
+                # Legacy fallback layouts use box-area occupancy. Authored/pass2 plans are
+                # validated against visible alpha footprints by AuthoringVisualQA instead.
                 occupancy = min(1.0, sum(max(0.0, item.width) * max(0.0, item.height) for item in layout.items))
                 if occupancy < 0.24:
                     issues.append(DetectedIssue(

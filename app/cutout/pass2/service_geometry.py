@@ -173,6 +173,8 @@ class _GeometryHelpersMixin:
             "image_path": main_path,
             "source_area_ratio": parent_ratio * (1.0 - total_secondary_share),
             "extraction_method": f"{asset.extraction_method}+pass2_main",
+            "asset_family_id": asset.asset_family_id or asset.id,
+            "render_as_family_canvas": True,
             # geometry intentionally unchanged: source_bbox/canvas copied verbatim
         })]
 
@@ -197,6 +199,9 @@ class _GeometryHelpersMixin:
                 "compound": False,
                 "component_count": 1,
                 "can_animate_independently": True,
+                "parent_asset_id": asset.id,
+                "asset_family_id": asset.asset_family_id or asset.id,
+                "render_as_family_canvas": True,
                 # source_bbox/source_canvas deliberately inherited exactly
             }))
         return output

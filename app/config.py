@@ -19,6 +19,8 @@ class Settings:
     alignment_ar_model: str | None = None
     alignment_en_model: str | None = None
     require_forced_alignment: bool = False
+    require_text_layer: bool = False
+    qwen3_vl_model: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,4 +45,6 @@ class Settings:
             # Product runs fail closed on missing/unsafe alignment. Tests or controlled
             # offline fallbacks can opt out explicitly through Settings.
             require_forced_alignment=os.getenv("HEXA_REQUIRE_FORCED_ALIGNMENT", "1") == "1",
+            require_text_layer=os.getenv("HEXA_REQUIRE_TEXT_LAYER", "1") == "1",
+            qwen3_vl_model=os.getenv("HEXA_QWEN3_VL_MODEL") or None,
         )

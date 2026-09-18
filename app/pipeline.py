@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Callable
 
 from app.choreography import ChoreographyDirector
+from app.assets import AssetManager
+from app.director import Qwen3VLBackend, VisualDirector
+from app.reference import ReferenceAnalyzer
+from app.qa import AuthoringVisualQA, RenderedVisualQA
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
@@ -13,7 +17,7 @@ from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
 from app.input import FinalPackageLoader
 from app.models import RenderPlan, Stage
-from app.motion import MotionPlanner, TextMotionPlanner
+from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
 from app.cutout.pass2.semantic import FlorenceSemanticBackend
@@ -74,12 +78,18 @@ class StoryEnginePipeline:
             ),
         )
         self.story = StoryPlanner()
+        self.reference = ReferenceAnalyzer().analyze()
+        self.asset_manager = AssetManager()
+        self.director = VisualDirector(Qwen3VLBackend(self.settings.qwen3_vl_model))
         self.choreography = ChoreographyDirector()
         self.text = TextPlanner()
         self.composition = CompositionPlanner()
         self.text_composition = TextCompositionPlanner()
         self.motion = MotionPlanner()
+        self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.text_motion = TextMotionPlanner()
+        self.authoring_qa = AuthoringVisualQA(self.reference.profile)
+        self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
         self.final = FinalExporter(self.settings.ffmpeg_bin)
@@ -123,10 +133,12 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.refinement, 0.38, "Checking isolated secondary visuals")
         assets = self._apply_refinement(package, assets, workspace)
+        assets = self.asset_manager.normalize(assets)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
         story = self.story.plan(package, transcript, assets)
+        directions = self.director.plan(package, story, assets)
         choreography = self.choreography.plan(package, story, assets)
 
         self._check_cancel(cancelled)
@@ -141,12 +153,12 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
-        composition = self.composition.plan(story, assets, choreography)
+        composition = self.composition.plan(story, assets, choreography, directions)
         text_composition = self.text_composition.plan(story, composition, text.cues, assets)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
-        motion = self.motion.plan(story, composition, choreography)
+        motion = self.motion_reference.enforce(self.motion.plan(story, composition, choreography))
         text_motion = self.text_motion.plan(
             story, text.cues, text_composition, choreography
         )
@@ -164,6 +176,14 @@ class StoryEnginePipeline:
             authoring_report,
             workspace / "diagnostics" / "storytelling-authoring.json",
         )
+        visual_report = self.authoring_qa.inspect(
+            transcript=transcript,
+            composition=composition,
+            motion=motion,
+            text=text,
+            assets=assets,
+        )
+        self.authoring_qa.require(visual_report, require_text=self.settings.require_text_layer)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.69, "Compiling render plan")
@@ -210,6 +230,7 @@ class StoryEnginePipeline:
             progress=progress,
             cancelled=cancelled,
         )
+        self.rendered_visual_qa.inspect(final_path, workspace / "diagnostics")
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path
@@ -305,8 +326,10 @@ class StoryEnginePipeline:
             assets = self.cutout.extract(package, detections, workspace)
         if start <= 1:
             assets = self._apply_refinement(package, assets, workspace)
+        assets = self.asset_manager.normalize(list(assets))
         if start <= 2:
             story = self.story.plan(package, transcript, assets)
+        directions = self.director.plan(package, story, assets)
         choreography = self.choreography.plan(package, story, assets)
         if start <= 3:
             text = self.text.plan(
@@ -317,10 +340,10 @@ class StoryEnginePipeline:
                 choreography=choreography,
             )
         if start <= 4:
-            composition = self.composition.plan(story, assets, choreography)
+            composition = self.composition.plan(story, assets, choreography, directions)
             text_composition = self.text_composition.plan(story, composition, text.cues, assets)
         if start <= 5:
-            motion = self.motion.plan(story, composition, choreography)
+            motion = self.motion_reference.enforce(self.motion.plan(story, composition, choreography))
             text_motion = self.text_motion.plan(
                 story, text.cues, text_composition, choreography
             )

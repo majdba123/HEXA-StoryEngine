@@ -109,6 +109,9 @@ class VisualAsset(BaseModel):
     source_canvas_width: int | None = Field(default=None, gt=0)
     source_canvas_height: int | None = Field(default=None, gt=0)
     can_animate_independently: bool = True
+    parent_asset_id: str | None = None
+    asset_family_id: str | None = None
+    render_as_family_canvas: bool = False
 
 
 class StoryTrigger(BaseModel):
@@ -185,6 +188,7 @@ class LayoutItem(BaseModel):
     width: float
     height: float
     z: int = 0
+    placement_source: str = "authored"
 
 
 class CompositionBeat(BaseModel):
