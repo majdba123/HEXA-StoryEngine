@@ -25,7 +25,7 @@ class FFmpegRenderer:
         self,
         ffmpeg_bin: str = "ffmpeg",
         *,
-        text_font_family: str = "Noto Sans Arabic",
+        text_font_family: str = "Noto Kufi Arabic",
     ) -> None:
         self.ffmpeg_bin = ffmpeg_bin
         self.text_renderer = TextRenderer(font_family=text_font_family)
@@ -157,13 +157,20 @@ class FFmpegRenderer:
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
-            start, end, _fade_duration = self._cue_window(
+            start, end, fade_duration = self._cue_window(
                 beat=beat,
                 cue=cue,
                 segment_start=segment_start,
                 duration=duration,
             )
             persistent = item.asset_id in persistent_ids
+            render_constraints = (
+                cue.params.get("render_constraints", {})
+                if cue is not None and isinstance(cue.params, dict)
+                else {}
+            )
+            geometry_locked = render_constraints.get("geometry_lock") == "authored_footprint"
+            alpha_only_reveal = render_constraints.get("reveal_mode") == "alpha_only"
 
             source_label = f"asset{layer_index}"
             base_source_label = f"asset{layer_index}base"
@@ -177,8 +184,21 @@ class FFmpegRenderer:
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
                 f"[{base_source_label}]"
             )
+            transform_source_label = base_source_label
+            if alpha_only_reveal and not persistent:
+                reveal_label = f"asset{layer_index}reveal"
+                filters.append(
+                    f"[{transform_source_label}]fade=t=in:st={start:.6f}:"
+                    f"d={fade_duration:.6f}:alpha=1[{reveal_label}]"
+                )
+                transform_source_label = reveal_label
+
             scale_expr = "1"
-            if cue is not None and self.motion_adapter.supports(cue):
+            if (
+                not geometry_locked
+                and cue is not None
+                and self.motion_adapter.supports(cue)
+            ):
                 scale_expr = self.motion_adapter.scale_expression(
                     cue=cue,
                     segment_start=segment_start,
@@ -186,15 +206,18 @@ class FFmpegRenderer:
                 )
             if scale_expr != "1":
                 filters.append(
-                    f"[{base_source_label}]scale="
+                    f"[{transform_source_label}]scale="
                     f"w='max(2,iw*({scale_expr}))':h='max(2,ih*({scale_expr}))':eval=frame"
                     f"[{source_label}]"
                 )
             else:
-                filters.append(f"[{base_source_label}]null[{source_label}]")
+                filters.append(f"[{transform_source_label}]null[{source_label}]")
 
             kind = cue.kind if cue else "reveal_in"
-            if cue is not None and self.motion_adapter.supports(cue):
+            if geometry_locked:
+                x_expr = str(target_x)
+                y_expr = str(target_y)
+            elif cue is not None and self.motion_adapter.supports(cue):
                 x_expr, y_expr = self.motion_adapter.position_expressions(
                     cue=cue,
                     target_x=target_x,
