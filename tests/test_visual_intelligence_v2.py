@@ -112,7 +112,8 @@ def test_composition_preserves_shared_family_registration(tmp_path: Path) -> Non
 
 def test_layout_solver_preserves_safe_authored_layout(tmp_path: Path) -> None:
     a_path, b_path = tmp_path / "a.png", tmp_path / "b.png"
-    _image(a_path); _image(b_path)
+    _image(a_path)
+    _image(b_path)
     assets = [
         VisualAsset(id="a", scene_id="s", role="object", image_path=a_path, extraction_method="test"),
         VisualAsset(id="b", scene_id="s", role="object", image_path=b_path, extraction_method="test"),
@@ -128,7 +129,8 @@ def test_layout_solver_preserves_safe_authored_layout(tmp_path: Path) -> None:
 
 def test_layout_solver_repairs_catastrophic_independent_overlap(tmp_path: Path) -> None:
     a_path, b_path = tmp_path / "a.png", tmp_path / "b.png"
-    _image(a_path); _image(b_path)
+    _image(a_path)
+    _image(b_path)
     assets = [
         VisualAsset(id="a", scene_id="s", role="object", image_path=a_path, extraction_method="test"),
         VisualAsset(id="b", scene_id="s", role="object", image_path=b_path, extraction_method="test"),
