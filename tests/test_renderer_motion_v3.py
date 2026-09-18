@@ -144,6 +144,7 @@ def test_renderer_executes_choreography_scale_and_recoil(tmp_path: Path) -> None
     cap.release()
     assert len(frames) == 48
 
+
 def _red_bbox(frame: np.ndarray) -> tuple[int, int, int, int]:
     blue, green, red = cv2.split(frame)
     mask = (red.astype(np.int16) - blue.astype(np.int16) > 70) & (
