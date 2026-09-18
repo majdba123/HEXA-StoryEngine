@@ -212,3 +212,47 @@ def test_whole_object_completer_absorbs_alarm_rays_but_not_neighbour() -> None:
     assert result.mask[68, 250]
     assert result.mask[87, 207]
     assert not np.any(result.mask & protected)
+
+def test_pass2_general_priority_prefers_animation_sized_object_over_tiny_fragment() -> None:
+    from app.cutout.pass2.models import CandidateProposal, ProposalSource
+
+    shape = (240, 420)
+    mask = np.zeros(shape, dtype=bool)
+    useful = CandidateProposal(
+        id="useful",
+        bbox=(250, 60, 90, 110),
+        center=(295.0, 115.0),
+        area_share=0.10,
+        stability=5 / 7,
+        source=ProposalSource.cv,
+        core_mask=mask,
+    )
+    fragment = CandidateProposal(
+        id="fragment",
+        bbox=(360, 20, 18, 18),
+        center=(369.0, 29.0),
+        area_share=0.007,
+        stability=5 / 7,
+        source=ProposalSource.cv,
+        core_mask=mask,
+    )
+
+    service = Pass2CutoutService()
+    useful_score = service._candidate_priority(useful, shape, [])
+    fragment_score = service._candidate_priority(fragment, shape, [])
+
+    assert useful_score > fragment_score
+
+
+def test_pass2_semantic_priority_is_generic_for_animation_useful_objects() -> None:
+    from app.cutout.pass2.semantic import SemanticDetection
+
+    shape = (240, 420)
+    service = Pass2CutoutService()
+    wallet = SemanticDetection(label="wallet", bbox=(240, 60, 100, 100), confidence=0.80)
+    unknown = SemanticDetection(label="abstract blob", bbox=(240, 60, 100, 100), confidence=0.80)
+
+    wallet_score = service._semantic_priority(wallet, shape, [])
+    unknown_score = service._semantic_priority(unknown, shape, [])
+
+    assert wallet_score > unknown_score
