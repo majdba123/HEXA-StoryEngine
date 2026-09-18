@@ -128,8 +128,8 @@ class ConstraintLayoutSolver:
     def _assign(
         self,
         family_ids: list[str],
-        centers: dict[str, tuple[float, float],
-        zones: list[tuple[float, float],
+        centers: dict[str, tuple[float, float]],
+        zones: list[tuple[float, float]],
     ) -> dict[str, tuple[float, float]]:
         try:
             from ortools.sat.python import cp_model
