@@ -128,8 +128,7 @@ def schedule_windows(
         last = max(important, key=lambda r: r.settle_at)
         audio_start = max(lower, beat.audio_start if beat.audio_start is not None else lower)
         gap = upper - last.settle_at
-        typical_phrase = sum(r.phrase_end - r.phrase_start for r in important) / len(important)
-        if gap > max((upper - audio_start) * 0.20, typical_phrase):
+        if gap > (upper - audio_start) * 0.20:
             last.evidence.extend([
                 "EARLY_SCENE_COMPLETION",
                 "no_confident_unassigned_late_visual_material",

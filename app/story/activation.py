@@ -334,9 +334,15 @@ class SemanticActivationPlanner:
         for _ in range(len(assets)):
             changed = False
             for asset in pending:
-                if asset.id in by_asset or not asset.parent_asset_id:
+                if asset.id in by_asset:
                     continue
-                parent = by_asset.get(asset.parent_asset_id)
+                parent = by_asset.get(asset.parent_asset_id or "")
+                if (parent is None and not asset.parent_asset_id and asset.asset_family_id
+                        and (not asset.can_animate_independently or asset.render_as_family_canvas)):
+                    family = [row for row in by_asset.values() if row.policy != "GROUP"
+                              and asset_by_id[row.asset_id].asset_family_id == asset.asset_family_id]
+                    if len(family) == 1:
+                        parent = family[0]
                 if parent is None:
                     continue
                 inherited = parent.model_copy(update={
@@ -371,8 +377,7 @@ class SemanticActivationPlanner:
         upper = min(beat.end, beat.audio_end if beat.audio_end is not None else beat.end)
         lower = max(beat.start, beat.audio_start if beat.audio_start is not None else beat.start)
         last_end = max(row.spoken_end for row in activations)
-        typical = sum(row.spoken_end - row.spoken_start for row in activations) / len(activations)
-        if upper - last_end <= max((upper - lower) * 0.20, typical):
+        if upper - last_end <= (upper - lower) * 0.20:
             return
         # Only move to a near-equivalent, already accepted spoken meaning. Explicit
         # package triggers never move. No artificial delay or phrase stretching.

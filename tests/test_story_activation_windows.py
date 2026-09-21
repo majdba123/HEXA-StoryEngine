@@ -170,3 +170,59 @@ def test_metadata_order_does_not_hide_earlier_narration(tmp_path):
     beat.semantic_targets = [a.id for a in reversed(assets)]
     result = SemanticActivationPlanner(scorer=Scorer()).enrich(package, transcript, assets, [beat])[0]
     assert [r.trigger_text for r in result.asset_activations] == [w.text for w in transcript.words]
+
+
+def test_completion_uses_near_equivalent_late_phrase_only_when_supported(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2, 11)
+    scorer = Scorer({"concept00": {"concept00": 0.95, "concept01": 0.94}, "concept01": {}})
+    result = SemanticActivationPlanner(scorer=scorer).enrich(package, transcript, assets, [beat])[0]
+    matched = next(r for r in result.asset_activations if r.activation_policy == "OWN_WINDOW")
+    assert matched.trigger_text == "concept01"
+    assert "early_completion_reassigned_to_confident_late_phrase" in matched.evidence
+    assert "EARLY_SCENE_COMPLETION" not in matched.evidence
+
+
+def test_eight_second_phrase_does_not_hide_three_second_completion_gap(tmp_path):
+    *_, beat = scene_case(tmp_path, 1, 11)
+    row = AssetActivation(asset_id="x", spoken_start=0, spoken_end=8, policy="EXPLICIT")
+    result = schedule_windows([row], beat, 11, set())[0]
+    assert result.settle_at == 8
+    assert "EARLY_SCENE_COMPLETION" in result.evidence
+
+
+def test_safe_family_member_inherits_unique_anchor(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    assets[0].asset_family_id = "family"
+    member = assets[0].model_copy(update={"id": "member", "can_animate_independently": False})
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets + [member], [beat])[0]
+    rows = {r.asset_id: r for r in result.asset_activations}
+    assert rows["member"].activation_policy == "INHERITED_WINDOW"
+    assert rows["member"].reveal_start == rows[assets[0].id].reveal_start
+
+
+def test_ambiguous_family_does_not_inherit(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    for asset in assets:
+        asset.asset_family_id = "family"
+    member = assets[0].model_copy(update={"id": "member", "can_animate_independently": False})
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets + [member], [beat])[0]
+    row = next(r for r in result.asset_activations if r.asset_id == "member")
+    assert row.activation_policy == "SAFE_ABSTENTION"
+
+
+def test_missing_semantic_context_cannot_create_scene_start_window(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    beat.semantic_context = None
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(package, transcript, assets, [beat])[0]
+    assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
+    assert result.asset_activations[0].reveal_start is None
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), 0.51])
+def test_invalid_or_weak_model_scores_abstain(tmp_path, score):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    planner = SemanticActivationPlanner(scorer=Scorer({"concept00": {"concept00": score}}))
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
