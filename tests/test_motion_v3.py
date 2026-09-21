@@ -66,15 +66,20 @@ def test_motion_v3_is_backend_neutral_and_does_not_mutate_composition() -> None:
     assert cues[1].start > cues[0].start
 
 
-def test_result_program_contains_a_real_reaction_not_only_an_entrance() -> None:
+def test_result_program_uses_one_clean_entry_then_holds() -> None:
     cues = MotionPlanner().plan([_beat(action="RESULT")], [_composition()])
     primary = cues[0]
-    keyframes = primary.params["program"]["keyframes"]
+    program = primary.params["program"]
+    keyframes = program["keyframes"]
 
-    assert primary.params["program"]["name"] == "result_impact"
-    assert len(keyframes) >= 5
-    dx_values = [frame["dx"] for frame in keyframes]
-    assert min(dx_values) < 0 < max(dx_values)
+    assert program["name"] == "result_impact"
+    assert len(keyframes) <= 3
+    settle = program["settle_progress"]
+    post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
+    assert post_settle
+    assert all(frame["dx"] == 0.0 for frame in post_settle)
+    assert all(frame["dy"] == 0.0 for frame in post_settle)
+    assert all(frame["scale"] == 1.0 for frame in post_settle)
 
 
 def test_fast_speech_compresses_motion_duration() -> None:
@@ -121,9 +126,11 @@ def test_choreography_reject_creates_meaningful_interaction_and_scale_reaction()
 
     assert cue.params["choreography"]["action"] == "REJECT"
     assert cue.params["program"]["name"] == "reject_attempt_recoil"
-    assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in keyframes) > 0.04
-    assert max(frame["scale"] for frame in keyframes) >= 1.05
-    assert min(frame["scale"] for frame in keyframes) < 1.0
+    assert len(keyframes) <= 3
+    assert abs(keyframes[0]["dx"]) + abs(keyframes[0]["dy"]) > 0.0
+    assert keyframes[-1]["dx"] == 0.0
+    assert keyframes[-1]["dy"] == 0.0
+    assert keyframes[-1]["scale"] == 1.0
 
 
 def test_semantic_handoff_begins_from_previous_focal_position() -> None:
@@ -158,7 +165,7 @@ def test_semantic_handoff_begins_from_previous_focal_position() -> None:
     assert 0.92 <= program["keyframes"][0]["scale"] <= 1.08
 
 
-def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
+def test_semantic_handoff_freezes_reject_asset_after_arrival() -> None:
     from pathlib import Path
     from app.choreography import ChoreographyDirector
     from app.models import PackageModel, SceneSource, VisualAsset
@@ -201,10 +208,11 @@ def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
 
     assert program["name"] == "reject_attempt_recoil"
     settle = program["settle_progress"]
-    tail = [frame for frame in program["keyframes"] if frame["progress"] > settle]
+    tail = [frame for frame in program["keyframes"] if frame["progress"] >= settle]
     assert tail
-    assert max(frame["scale"] for frame in tail) >= 1.05
-    assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in tail) > 0.02
+    assert all(frame["dx"] == 0.0 for frame in tail)
+    assert all(frame["dy"] == 0.0 for frame in tail)
+    assert all(frame["scale"] == 1.0 for frame in tail)
 
 
 def test_dense_scene_motion_is_bounded_and_settles_to_composition() -> None:
@@ -260,3 +268,22 @@ def test_pass2_family_secondary_uses_footprint_locked_reveal() -> None:
         assert frame["dx"] == 0.0
         assert frame["dy"] == 0.0
         assert frame["scale"] == 1.0
+
+
+def test_every_planned_asset_is_frozen_from_semantic_settle_to_beat_end() -> None:
+    beat = _beat(action="REACT", start=0.0, end=2.8, audio_start=0.25, audio_end=2.4)
+    composition = _composition()
+    cues = MotionPlanner().plan([beat], [composition])
+
+    assert cues
+    for cue in cues:
+        program = cue.params["program"]
+        settle = program["settle_progress"]
+        keyframes = program["keyframes"]
+        assert len(keyframes) <= 3
+        post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
+        assert post_settle
+        for frame in post_settle:
+            assert frame["dx"] == 0.0
+            assert frame["dy"] == 0.0
+            assert frame["scale"] == 1.0
