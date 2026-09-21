@@ -145,6 +145,10 @@ Implementation checkpoints:
   `[montage] Add semantic synchronization QA`
 - `22b9c1c86ee8e60033ad56e75331c3f4121775a2`
   `[montage] Add multimodal Story sync fallback and runtime`
+- `89200219ae7a638e1c41a2077bff43940d6c768b`
+  `[montage] Add per-asset semantic sync diagnostics`
+- `7e03851f685dfb1a193e971eb68b0344ef08a1ff`
+  `[montage] Defer VLM sync matching to unresolved semantics`
 
 Current semantic timing design:
 1. Narrow explicit Final Package triggers are accepted as highest-confidence evidence.
@@ -177,6 +181,8 @@ CI proof:
 - run `35600241035` for `11d5d698...`: SUCCESS, 104 tests.
 - run `35600631569` for `abba657...`: SUCCESS, 107 tests.
 - run `35601157706` for `22b9c1c...`: SUCCESS, 108 tests.
+- run `35601586057` for `8920021...`: SUCCESS, 108 tests.
+- run `35601905928` for `7e03851...`: SUCCESS, 108 tests.
 
 Generality rules retained:
 - no assumption that a scene contains a character;
