@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import unicodedata
@@ -24,6 +25,8 @@ from app.models import (
 from .binding import SemanticAssetBinder
 from .windows import ScheduledStoryBeat, schedule_windows
 
+
+_LOG = logging.getLogger(__name__)
 
 _ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 _NON_WORD = re.compile(r"[^0-9A-Za-z\u0600-\u06FF]+", re.UNICODE)
@@ -65,6 +68,8 @@ class HybridSemanticTextScorer:
         self._device = "cpu"
         self._disabled = False
         self._cache: dict[str, object] = {}
+        self.runtime_available: bool | None = None
+        self.runtime_error: str | None = None
 
     def score(self, query: str, candidates: list[str]) -> tuple[list[float], bool]:
         lexical = [self._lexical_score(query, candidate) for candidate in candidates]
@@ -79,21 +84,9 @@ class HybridSemanticTextScorer:
     def _embedding_scores(self, query: str, candidates: list[str]) -> list[float] | None:
         if not candidates:
             return None
-        if not self.model_name:
-            if self.required:
-                raise DependencyUnavailableError(
-                    "semantic text model is required but no model is configured"
-                )
-            return None
-        if self._disabled:
-            if self.required:
-                raise DependencyUnavailableError(
-                    "semantic text model was disabled after a previous load failure",
-                    details={"model": self.model_name},
-                )
+        if not self.ensure_available():
             return None
         try:
-            self._load()
             query_vector = self._encode([self._prefix(query, query=True)])[0]
             candidate_vectors = self._encode(
                 [self._prefix(value, query=False) for value in candidates]
@@ -101,18 +94,47 @@ class HybridSemanticTextScorer:
             scores = self._torch.matmul(candidate_vectors, query_vector)
             return [max(0.0, min(1.0, float(value))) for value in scores.tolist()]
         except Exception as exc:
-            self._disabled = True
-            self._tokenizer = None
-            self._model = None
-            self._torch = None
-            self._cache.clear()
+            self._runtime_failure(exc)
+            return None
+
+    def ensure_available(self) -> bool:
+        if self.runtime_available is True:
+            return True
+        if not self.model_name:
+            self._runtime_failure(RuntimeError("semantic_model_not_configured"))
+            return False
+        if self._disabled:
             if self.required:
                 raise DependencyUnavailableError(
-                    "required multilingual semantic model could not be loaded",
-                    details={"model": self.model_name, "error": str(exc)},
-                ) from exc
-            # Tests/diagnostics may explicitly opt into lexical-only degradation.
-            return None
+                    "semantic runtime unavailable", details={
+                        "model": self.model_name, "error": self.runtime_error,
+                        "code": "SEMANTIC_RUNTIME_UNAVAILABLE",
+                    },
+                )
+            return False
+        try:
+            self._load()
+            self.runtime_available = True
+            self.runtime_error = None
+            return True
+        except Exception as exc:
+            self._runtime_failure(exc)
+            return False
+
+    def _runtime_failure(self, exc: Exception) -> None:
+        self.runtime_available = False
+        self.runtime_error = str(exc)
+        self._disabled = True
+        self._tokenizer = self._model = self._torch = None
+        self._cache.clear()
+        _LOG.error("SEMANTIC_RUNTIME_UNAVAILABLE model=%s error=%s", self.model_name, exc)
+        if self.required:
+            raise DependencyUnavailableError(
+                "semantic runtime unavailable", details={
+                    "model": self.model_name, "error": self.runtime_error,
+                    "code": "SEMANTIC_RUNTIME_UNAVAILABLE",
+                },
+            ) from exc
 
     def _load(self) -> None:
         if self._model is not None:
@@ -129,10 +151,11 @@ class HybridSemanticTextScorer:
         self._model.eval()
 
     def _encode(self, texts: list[str]):
-        uncached = [value for value in texts if value not in self._cache]
-        if uncached:
+        uncached = list(dict.fromkeys(value for value in texts if value not in self._cache))
+        for offset in range(0, len(uncached), 32):
+            batch = uncached[offset:offset + 32]
             encoded = self._tokenizer(
-                uncached,
+                batch,
                 padding=True,
                 truncation=True,
                 max_length=128,
@@ -145,7 +168,7 @@ class HybridSemanticTextScorer:
             mask = encoded["attention_mask"].unsqueeze(-1).expand(hidden.size()).float()
             pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
             pooled = self._torch.nn.functional.normalize(pooled, p=2, dim=1).cpu()
-            for text, vector in zip(uncached, pooled):
+            for text, vector in zip(batch, pooled):
                 self._cache[text] = vector
         return self._torch.stack([self._cache[value] for value in texts])
 
@@ -207,6 +230,7 @@ class SemanticActivationPlanner:
         )
         self.visual_backend = visual_backend
         self._visual_cache: dict[str, dict[str, _VisualSemanticMatch]] = {}
+        self.diagnostics: dict[str, Any] = {}
 
     def enrich(
         self,
@@ -215,6 +239,16 @@ class SemanticActivationPlanner:
         assets: list[VisualAsset],
         beats: list[StoryBeat],
     ) -> list[StoryBeat]:
+        self.diagnostics = {
+            "semantic_runtime_available": None, "trusted_count": 0,
+            "inherited_count": 0, "abstained_count": 0, "runtime_failure_count": 0,
+            "assets": [],
+        }
+        if isinstance(self.scorer, HybridSemanticTextScorer):
+            try:
+                self.scorer.ensure_available()
+            finally:
+                self._runtime_diagnostics()
         scene_by_id = {scene.id: scene for scene in package.scenes}
         assets_by_scene: dict[str, list[VisualAsset]] = {}
         for asset in assets:
@@ -241,7 +275,23 @@ class SemanticActivationPlanner:
             data = beat.model_dump()
             data["asset_activations"] = windows
             output.append(ScheduledStoryBeat.model_validate(data))
+            for row in windows:
+                key = {"OWN_WINDOW": "trusted_count", "INHERITED_WINDOW": "inherited_count",
+                       "SAFE_ABSTENTION": "abstained_count"}[row.activation_policy]
+                self.diagnostics[key] += 1
+        self._runtime_diagnostics()
+        _LOG.info("Story semantic summary: %s", json.dumps(
+            {k: v for k, v in self.diagnostics.items() if k != "assets"}, ensure_ascii=False,
+        ))
         return output
+
+    def _runtime_diagnostics(self) -> None:
+        if isinstance(self.scorer, HybridSemanticTextScorer):
+            self.diagnostics.update(
+                semantic_runtime_available=self.scorer.runtime_available,
+                semantic_runtime_error=self.scorer.runtime_error,
+                runtime_failure_count=int(self.scorer.runtime_available is False),
+            )
 
     def _activations_for_beat(
         self,
