@@ -119,3 +119,77 @@ Real-package validation before publication:
 Operational rule:
 - Users may run `HEXA.bat`, choose a Final Package ZIP plus narration audio, and press
   Generate. Production generation must not bypass forced alignment or Authoring QA.
+
+
+## MONTAGE SEMANTIC AUDIO SYNCHRONIZATION — 2026-09-21
+
+Development branch: `montage`.
+
+Protected branches at the start of this work:
+- `majd` = `d1c2ad87116238ed7c46e1b01f6e129a0d2cd5ed`
+- `bayer` = `d1c2ad87116238ed7c46e1b01f6e129a0d2cd5ed`
+- neither protected branch is modified by this synchronization work.
+
+Synchronization responsibility contract:
+- Final Package remains immutable input and its geometry is not changed.
+- Story owns semantic timing: asset meaning -> narration phrase -> aligned audio time.
+- Motion owns only execution: enter before the Story anchor, settle on the anchor,
+  then remain stable under the existing entry/settle/freeze contract.
+- Composition remains the sole spatial destination authority.
+- Choreography remains the semantic motion/action authority and does not own audio time.
+
+Implementation checkpoints:
+- `11d5d6981178b0705aeac29148ac1277e8b72b8b`
+  `[montage] Add Story semantic asset activation timing`
+- `abba657a0727607e64926087a566c60a354362f5`
+  `[montage] Add semantic synchronization QA`
+- `22b9c1c86ee8e60033ad56e75331c3f4121775a2`
+  `[montage] Add multimodal Story sync fallback and runtime`
+
+Current semantic timing design:
+1. Narrow explicit Final Package triggers are accepted as highest-confidence evidence.
+2. Story builds phrase candidates from forced-aligned words and exact script character spans.
+3. A multilingual semantic encoder can match English/Arabic semantic metadata to Arabic
+   narration phrases. Product default is `intfloat/multilingual-e5-small`, with runtime
+   override through `HEXA_SEMANTIC_TEXT_MODEL`.
+4. If Qwen3-VL is configured, Story can perform one joint scene decision mapping
+   semantic unit -> extracted asset -> narration phrase. Returned IDs and phrase indexes
+   are strictly validated and low-confidence matches are discarded.
+5. Parent/family sub-assets may inherit a trusted parent semantic anchor instead of
+   inventing a separate word-level trigger.
+6. Low-confidence or ambiguous matches explicitly abstain and use conservative fallback
+   timing. The system must never fabricate semantic certainty merely to animate an asset.
+7. MotionTimingPolicy consumes `AssetActivation` and uses its `spoken_start` as the
+   semantic settle target when the activation is trusted.
+8. StorySyncQA compares each trusted Story anchor with the compiled Motion settle time.
+   A drift greater than 50 ms, missing motion cue, missing settle time, or invalid
+   non-monotonic semantic ordering is a production failure. Diagnostics are written to
+   `diagnostics/story-sync-qa.json`.
+
+Runtime provisioning:
+- `HEXA.bat` now uses a versioned readiness marker and installs desktop,
+  transcription, WhisperX alignment, and semantic-model runtime dependencies.
+- The multilingual semantic model is lazy-loaded and cached in-process.
+- Optional semantic/VLM inference is fail-safe: dependency/model failure falls back to
+  conservative timing rather than corrupting geometry or crashing render planning.
+
+CI proof:
+- run `35600241035` for `11d5d698...`: SUCCESS, 104 tests.
+- run `35600631569` for `abba657...`: SUCCESS, 107 tests.
+- run `35601157706` for `22b9c1c...`: SUCCESS, 108 tests.
+
+Generality rules retained:
+- no assumption that a scene contains a character;
+- no fixed asset count or six-asset cap;
+- dense scenes may abstain instead of forcing one phrase per asset;
+- real photos and illustrations share the same semantic timing contract;
+- long Arabic text is matched only within the current aligned scene/beat;
+- fast/short beats may safely fall back when there is not enough executable motion time;
+- repeated assets can receive different Story activations on different beats;
+- no Final Package schema change is required.
+
+PROVEN status:
+- Code/CI contract: PROVEN GREEN on `montage`.
+- Real-package semantic visual synchronization: NOT YET VISUALLY PROVEN.
+  The next acceptance step is to run multiple real Final Packages and inspect whether
+  the chosen icon/phrase pairs are semantically correct, not merely time-correct.
