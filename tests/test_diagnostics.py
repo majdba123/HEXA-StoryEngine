@@ -80,4 +80,32 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
     assert payload["error"]["code"] == "STAGE_FAILED"
     assert payload["error"]["details"]["reason"] == "test"
     assert recovery[0]["issue_code"] == "LOW_SCREEN_OCCUPANCY"
-    assert workspace_payload["files"][0]["path"] == "render-plan.json"
+    assert {row["path"] for row in workspace_payload["files"]} >= {"render-plan.json", "generation.log"}
+
+
+def test_diagnostic_report_persists_generation_log(tmp_path: Path) -> None:
+    package = tmp_path / "package-log"
+    package.mkdir()
+    audio = tmp_path / "audio-log.wav"
+    audio.write_bytes(b"fake")
+    settings = Settings(
+        work_root=tmp_path / "work-log",
+        output_root=tmp_path / "outputs-log",
+        ffmpeg_bin="ffmpeg",
+        ffprobe_bin="ffprobe",
+        whisper_model="small",
+        engine_host="127.0.0.1",
+        engine_port=8765,
+        allow_scene_fallback=False,
+    )
+    report = BuildReportSession(
+        job_id="log-job",
+        settings=settings,
+        package_path=package,
+        audio_path=audio,
+    )
+    report.on_progress(Stage.cutout, 0.35, "Pass1 ready: 20 assets")
+    assert report.log_path.is_file()
+    content = report.log_path.read_text(encoding="utf-8")
+    assert "Pass1 ready: 20 assets" in content
+    assert "cutout" in content

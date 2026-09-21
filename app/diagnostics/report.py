@@ -48,20 +48,26 @@ class BuildReportSession:
         self.output_path: Path | None = None
         self.stage_events: list[dict[str, Any]] = []
         self.error: dict[str, Any] | None = None
+        self.log_path = (self.settings.work_root / self.job_id / "generation.log").resolve()
 
     def on_progress(self, stage: Stage, value: float, message: str) -> None:
-        self.stage_events.append({
+        event = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "elapsed_seconds": round(monotonic() - self._started_monotonic, 3),
             "stage": stage.value,
             "progress": round(float(value), 4),
             "message": message,
-        })
+        }
+        self.stage_events.append(event)
+        self._append_log(
+            f"[{round(float(value) * 100):03d}%] {stage.value}: {message}"
+        )
 
     def complete(self, output_path: Path) -> None:
         self.status = "completed"
         self.output_path = output_path.expanduser().resolve()
         self.finished_at = datetime.now(timezone.utc)
+        self._append_log(f"DONE: {self.output_path}")
 
     def fail(self, exc: BaseException) -> None:
         self.status = "failed"
@@ -74,10 +80,22 @@ class BuildReportSession:
             "details": self._sanitize(details),
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
         }
+        self._append_log(f"FAILED: {type(exc).__name__}: {exc}")
 
     def cancel(self) -> None:
         self.status = "cancelled"
         self.finished_at = datetime.now(timezone.utc)
+        self._append_log("CANCELLED")
+
+    def _append_log(self, line: str) -> None:
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with self.log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{stamp} {line}\n")
+        except OSError:
+            # Logging must never be allowed to break video generation.
+            pass
 
     def export_zip(self, destination: Path) -> Path:
         destination = destination.expanduser().resolve()
@@ -128,6 +146,7 @@ class BuildReportSession:
                 "allow_scene_fallback": self.settings.allow_scene_fallback,
             },
             "stage_events": self.stage_events,
+            "log_file": self._path_metadata(self.log_path),
             "last_stage": self.stage_events[-1]["stage"] if self.stage_events else None,
             "error": self.error,
         }

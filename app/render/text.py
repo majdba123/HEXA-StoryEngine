@@ -133,7 +133,7 @@ class TextRenderer:
         segment_start: float,
         duration: float,
     ) -> list[str]:
-        del item
+        font_scale = max(0.55, min(1.0, float(item.font_scale)))
         visible_end = float(motion.params.get("visible_end", motion.end))
         event_global_start = max(motion.start, segment_start)
         local_end = min(duration, visible_end - segment_start)
@@ -145,7 +145,7 @@ class TextRenderer:
             start = max(0.0, event_global_start - segment_start)
             if local_end <= start + 0.04:
                 return []
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=True)
+            tags = self._line_tags(x=x, y=y, rtl=rtl, first=True, font_scale=font_scale)
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
         events: list[str] = []
@@ -166,7 +166,7 @@ class TextRenderer:
             state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
             if not state_text:
                 continue
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=index == 0)
+            tags = self._line_tags(x=x, y=y, rtl=rtl, first=index == 0, font_scale=font_scale)
             events.append(self._dialogue(
                 start,
                 end,
@@ -177,17 +177,19 @@ class TextRenderer:
         return events
 
     @staticmethod
-    def _line_tags(*, x: int, y: int, rtl: bool, first: bool) -> str:
+    def _line_tags(*, x: int, y: int, rtl: bool, first: bool, font_scale: float = 1.0) -> str:
         alignment = 6 if rtl else 4  # middle-right for RTL, middle-left for LTR
+        scale = max(55, min(100, round(font_scale * 100)))
+        size_tag = f"\\fscx{scale}\\fscy{scale}"
         if first:
             # One restrained entry gesture for the phrase. Later word states hold the
             # exact anchor so the line does not bounce or re-center.
             direction = 14 if rtl else -14
             return (
-                f"\\an{alignment}\\move({x + direction},{y + 10},{x},{y},0,165)"
+                f"\\an{alignment}{size_tag}\\move({x + direction},{y + 10},{x},{y},0,165)"
                 "\\fad(65,0)\\blur0.35"
             )
-        return f"\\an{alignment}\\pos({x},{y})\\blur0.25"
+        return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur0.25"
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme

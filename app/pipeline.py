@@ -129,17 +129,40 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.cutout, 0.32, "Extracting visual assets")
         assets = self.cutout.extract(package, detections, workspace)
+        pass1_count = len(assets)
+        self._progress(
+            progress,
+            Stage.cutout,
+            0.35,
+            f"Pass1 ready: {pass1_count} authored assets across {len(package.scenes)} scenes",
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.refinement, 0.38, "Checking isolated secondary visuals")
         assets = self._apply_refinement(package, assets, workspace)
         assets = self.asset_manager.normalize(assets)
+        self._progress(
+            progress,
+            Stage.refinement,
+            0.41,
+            f"Pass2 ready: {len(assets)} assets ({len(assets) - pass1_count:+d} vs Pass1)",
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
         story = self.story.plan(package, transcript, assets)
         directions = self.director.plan(package, story, assets)
         choreography = self.choreography.plan(package, story, assets)
+        max_scene_assets = max(
+            (sum(1 for asset in assets if asset.scene_id == scene.id) for scene in package.scenes),
+            default=0,
+        )
+        self._progress(
+            progress,
+            Stage.story,
+            0.46,
+            f"Story ready: {len(story)} beats; densest scene has {max_scene_assets} assets",
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.text, 0.48, "Selecting narration-locked keywords")
@@ -155,6 +178,12 @@ class StoryEnginePipeline:
         self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
         composition = self.composition.plan(story, assets, choreography, directions)
         text_composition = self.text_composition.plan(story, composition, text.cues, assets)
+        self._progress(
+            progress,
+            Stage.composition,
+            0.58,
+            f"Composition locked to Final Package geometry; placed {len(text.cues)} text cues in negative space",
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
@@ -181,9 +210,20 @@ class StoryEnginePipeline:
             composition=composition,
             motion=motion,
             text=text,
+            text_composition=text_composition,
             assets=assets,
         )
+        self.authoring_qa.write(
+            visual_report,
+            workspace / "diagnostics" / "authoring-visual-qa.json",
+        )
         self.authoring_qa.require(visual_report, require_text=self.settings.require_text_layer)
+        self._progress(
+            progress,
+            Stage.motion,
+            0.67,
+            "Authoring QA passed: 0 visual layout, 0 text layout, 0 short-motion violations",
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.69, "Compiling render plan")

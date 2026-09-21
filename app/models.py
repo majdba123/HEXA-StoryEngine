@@ -274,6 +274,7 @@ class TextLayoutItem(BaseModel):
     x: float
     y: float
     max_width: float
+    font_scale: float = Field(default=1.0, ge=0.55, le=1.0)
     z: int = 50
     anchor_asset_id: str | None = None
     placement: str = "safe_top"

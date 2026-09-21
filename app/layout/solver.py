@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from itertools import permutations
 
 from app.assets import AssetManager
 from app.layout.footprint import AlphaFootprintResolver, AssetFootprint
@@ -10,11 +9,18 @@ from app.reference import HexaVisualProfile
 
 
 class ConstraintLayoutSolver:
-    """Preserve authored geometry and repair only unsafe layouts.
+    """Validate authored geometry and minimally repair only geometry-less fallbacks.
 
-    OR-Tools is used when available to assign semantic families to safe reference zones;
-    a deterministic exhaustive assignment is used as the exact fallback for <=4 groups.
+    A Final Package scene is already composed. Reflowing those authored assets into
+    generic zones is destructive, especially after Pass2 creates more movable layers.
+    Authored items are therefore spatially immutable. The solver exists only for legacy
+    assets that genuinely lack source geometry.
     """
+
+    _OFFSCREEN_TOLERANCE = 0.006
+    _FALLBACK_GAP = 0.015
+    _MAX_FALLBACK_STEP = 0.08
+    _MAX_ITERATIONS = 10
 
     def __init__(
         self,
@@ -26,17 +32,23 @@ class ConstraintLayoutSolver:
 
     def solve(self, beat: CompositionBeat, assets: list[VisualAsset]) -> CompositionBeat:
         by_id = {asset.id: asset for asset in assets}
-        groups = self._groups(beat.items, by_id)
-        violations = self.inspect(beat.items, by_id)
-        if not violations and len(groups) <= self.profile.max_standard_elements:
-            evidence = [*beat.state_evidence, "layout:authored_preserved"]
+        issues = self.inspect(beat.items, by_id)
+        has_fallback = any(not self._authored(item) for item in beat.items)
+
+        if not has_fallback:
+            evidence = [*beat.state_evidence, "layout:authored_geometry_locked"]
             return beat.model_copy(update={"state_evidence": list(dict.fromkeys(evidence))})
 
-        repaired = self._repair(beat.items, by_id, groups)
+        if not issues:
+            evidence = [*beat.state_evidence, "layout:fallback_safe"]
+            return beat.model_copy(update={"state_evidence": list(dict.fromkeys(evidence))})
+
+        repaired = self._repair_fallback_only(beat.items, by_id)
+        remaining = self.inspect(repaired, by_id)
         evidence = [
             *beat.state_evidence,
-            "layout:constraint_repair",
-            *(f"layout_violation:{row}" for row in violations[:6]),
+            "layout:minimal_fallback_repair",
+            *(f"layout_violation:{row}" for row in remaining[:6]),
         ]
         return beat.model_copy(update={
             "items": repaired,
@@ -51,145 +63,179 @@ class ConstraintLayoutSolver:
             footprint = self.footprints.resolve(item, asset)
             resolved.append((item, asset, footprint))
             x0, y0, x1, y1 = footprint.box
-            role = (asset.role if asset else "").lower()
-            narrator = "narrator" in role or role in {"main_character", "main_narrator"}
-            left = 0.0 if narrator else self.profile.safe_left
-            right = 1.0 if narrator else self.profile.safe_right
-            top = 0.0 if narrator else self.profile.safe_top
-            bottom = 1.0 if narrator else self.profile.safe_bottom
-            if x0 < left - 0.012 or x1 > right + 0.012 or y0 < top - 0.012 or y1 > bottom + 0.012:
-                issues.append(f"safe_margin:{item.asset_id}")
+
+            if self._authored(item):
+                if (
+                    x0 < -self._OFFSCREEN_TOLERANCE
+                    or y0 < -self._OFFSCREEN_TOLERANCE
+                    or x1 > 1.0 + self._OFFSCREEN_TOLERANCE
+                    or y1 > 1.0 + self._OFFSCREEN_TOLERANCE
+                ):
+                    issues.append(f"authored_offscreen:{item.asset_id}")
+            else:
+                if (
+                    x0 < self.profile.safe_left - 0.012
+                    or x1 > self.profile.safe_right + 0.012
+                    or y0 < self.profile.safe_top - 0.012
+                    or y1 > self.profile.safe_bottom + 0.012
+                ):
+                    issues.append(f"fallback_safe_margin:{item.asset_id}")
 
         for index, (item_a, asset_a, foot_a) in enumerate(resolved):
             for item_b, asset_b, foot_b in resolved[index + 1:]:
                 if asset_a and asset_b and AssetManager.family_id(asset_a) == AssetManager.family_id(asset_b):
                     continue
+                if self._authored(item_a) and self._authored(item_b):
+                    continue
                 ratio = self._overlap_ratio(foot_a.box, foot_b.box)
                 if ratio > self.profile.catastrophic_overlap_ratio:
-                    issues.append(f"overlap:{item_a.asset_id}:{item_b.asset_id}:{ratio:.3f}")
+                    issues.append(f"fallback_overlap:{item_a.asset_id}:{item_b.asset_id}:{ratio:.3f}")
         return issues
 
-    def _repair(
+    def _repair_fallback_only(
         self,
         items: list[LayoutItem],
         by_id: dict[str, VisualAsset],
-        groups: dict[str, list[LayoutItem]],
     ) -> list[LayoutItem]:
-        family_ids = list(groups)
-        if len(family_ids) > self.profile.max_standard_elements:
-            family_ids = family_ids[: self.profile.max_standard_elements]
-
-        centers = {
-            family_id: self._group_center(groups[family_id], by_id)
-            for family_id in family_ids
-        }
-        zones = self._zones(len(family_ids))
-        assignment = self._assign(family_ids, centers, zones)
-
-        output: list[LayoutItem] = []
-        for family_id in family_ids:
-            members = groups[family_id]
-            old_x, old_y = centers[family_id]
-            new_x, new_y = assignment[family_id]
-            dx = new_x - old_x
-            dy = new_y - old_y
-            for item in members:
-                output.append(item.model_copy(update={
-                    "x": max(0.02, min(0.98, item.x + dx)),
-                    "y": max(0.03, min(0.97, item.y + dy)),
-                    "placement_source": "constraint_solver",
-                }))
-        return sorted(output, key=lambda row: row.z, reverse=False)
-
-    def _groups(
-        self,
-        items: list[LayoutItem],
-        by_id: dict[str, VisualAsset],
-    ) -> dict[str, list[LayoutItem]]:
-        grouped: dict[str, list[LayoutItem]] = defaultdict(list)
+        current = {item.asset_id: item for item in items}
+        family_members: dict[str, list[str]] = defaultdict(list)
         for item in items:
             asset = by_id.get(item.asset_id)
             family = AssetManager.family_id(asset) if asset else item.asset_id
-            grouped[family].append(item)
-        return dict(grouped)
+            family_members[family].append(item.asset_id)
 
-    def _group_center(
-        self,
-        items: list[LayoutItem],
-        by_id: dict[str, VisualAsset],
-    ) -> tuple[float, float]:
-        boxes = [self.footprints.resolve(item, by_id.get(item.asset_id)).box for item in items]
-        x0 = min(box[0] for box in boxes)
-        y0 = min(box[1] for box in boxes)
-        x1 = max(box[2] for box in boxes)
-        y1 = max(box[3] for box in boxes)
-        return ((x0 + x1) / 2, (y0 + y1) / 2)
-
-    def _assign(
-        self,
-        family_ids: list[str],
-        centers: dict[str, tuple[float, float]],
-        zones: list[tuple[float, float]],
-    ) -> dict[str, tuple[float, float]]:
-        try:
-            from ortools.sat.python import cp_model
-        except ImportError:
-            return self._assign_exhaustive(family_ids, centers, zones)
-
-        model = cp_model.CpModel()
-        choices: dict[tuple[int, int], object] = {}
-        for i in range(len(family_ids)):
-            for j in range(len(zones)):
-                choices[i, j] = model.new_bool_var(f"family_{i}_zone_{j}")
-            model.add(sum(choices[i, j] for j in range(len(zones))) == 1)
-        for j in range(len(zones)):
-            model.add(sum(choices[i, j] for i in range(len(family_ids))) <= 1)
-
-        costs = []
-        for i, family in enumerate(family_ids):
-            cx, cy = centers[family]
-            for j, (zx, zy) in enumerate(zones):
-                cost = int(round(((cx - zx) ** 2 + (cy - zy) ** 2) * 100_000))
-                costs.append(cost * choices[i, j])
-        model.minimize(sum(costs))
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 0.15
-        status = solver.solve(model)
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return self._assign_exhaustive(family_ids, centers, zones)
-        return {
-            family: zones[next(j for j in range(len(zones)) if solver.value(choices[i, j]))]
-            for i, family in enumerate(family_ids)
+        locked = {
+            family
+            for family, ids in family_members.items()
+            if all(self._authored(current[asset_id]) for asset_id in ids)
         }
 
-    @staticmethod
-    def _assign_exhaustive(
-        family_ids: list[str],
-        centers: dict[str, tuple[float, float]],
-        zones: list[tuple[float, float]],
-    ) -> dict[str, tuple[float, float]]:
-        best = None
-        best_cost = float("inf")
-        for candidate in permutations(zones, len(family_ids)):
-            cost = 0.0
-            for family, zone in zip(family_ids, candidate):
-                cx, cy = centers[family]
-                cost += (cx - zone[0]) ** 2 + (cy - zone[1]) ** 2
-            if cost < best_cost:
-                best_cost = cost
-                best = candidate
-        assert best is not None
-        return dict(zip(family_ids, best))
+        for _ in range(self._MAX_ITERATIONS):
+            changed = False
+            for family, ids in family_members.items():
+                if family in locked:
+                    continue
+                dx, dy = self._safe_frame_shift(ids, current, by_id)
+                if abs(dx) > 1e-9 or abs(dy) > 1e-9:
+                    self._translate(ids, current, dx, dy)
+                    changed = True
+
+            families = list(family_members)
+            for i, family_a in enumerate(families):
+                for family_b in families[i + 1:]:
+                    if family_a in locked and family_b in locked:
+                        continue
+                    box_a = self._family_box(family_members[family_a], current, by_id)
+                    box_b = self._family_box(family_members[family_b], current, by_id)
+                    if self._overlap_ratio(box_a, box_b) <= self.profile.catastrophic_overlap_ratio:
+                        continue
+                    shift_a, shift_b = self._separation_shifts(
+                        box_a,
+                        box_b,
+                        movable_a=family_a not in locked,
+                        movable_b=family_b not in locked,
+                    )
+                    if shift_a != (0.0, 0.0):
+                        self._translate(family_members[family_a], current, *shift_a)
+                        changed = True
+                    if shift_b != (0.0, 0.0):
+                        self._translate(family_members[family_b], current, *shift_b)
+                        changed = True
+            if not changed:
+                break
+
+        return [current[item.asset_id] for item in items]
+
+    def _safe_frame_shift(
+        self,
+        ids: list[str],
+        current: dict[str, LayoutItem],
+        by_id: dict[str, VisualAsset],
+    ) -> tuple[float, float]:
+        x0, y0, x1, y1 = self._family_box(ids, current, by_id)
+        dx = 0.0
+        dy = 0.0
+        if x0 < self.profile.safe_left:
+            dx = self.profile.safe_left - x0
+        elif x1 > self.profile.safe_right:
+            dx = self.profile.safe_right - x1
+        if y0 < self.profile.safe_top:
+            dy = self.profile.safe_top - y0
+        elif y1 > self.profile.safe_bottom:
+            dy = self.profile.safe_bottom - y1
+        return self._cap(dx), self._cap(dy)
+
+    def _family_box(
+        self,
+        ids: list[str],
+        current: dict[str, LayoutItem],
+        by_id: dict[str, VisualAsset],
+    ) -> tuple[float, float, float, float]:
+        boxes = [
+            self.footprints.resolve(current[asset_id], by_id.get(asset_id)).box
+            for asset_id in ids
+        ]
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+
+    def _separation_shifts(
+        self,
+        a: tuple[float, float, float, float],
+        b: tuple[float, float, float, float],
+        *,
+        movable_a: bool,
+        movable_b: bool,
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        overlap_x = min(a[2], b[2]) - max(a[0], b[0])
+        overlap_y = min(a[3], b[3]) - max(a[1], b[1])
+        if overlap_x <= 0 or overlap_y <= 0:
+            return (0.0, 0.0), (0.0, 0.0)
+        center_a = ((a[0] + a[2]) / 2, (a[1] + a[3]) / 2)
+        center_b = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+        if overlap_x <= overlap_y:
+            sign = -1.0 if center_a[0] <= center_b[0] else 1.0
+            total = min(self._MAX_FALLBACK_STEP, overlap_x + self._FALLBACK_GAP)
+            vector = (sign * total, 0.0)
+        else:
+            sign = -1.0 if center_a[1] <= center_b[1] else 1.0
+            total = min(self._MAX_FALLBACK_STEP, overlap_y + self._FALLBACK_GAP)
+            vector = (0.0, sign * total)
+
+        if movable_a and movable_b:
+            half = (vector[0] / 2, vector[1] / 2)
+            return half, (-half[0], -half[1])
+        if movable_a:
+            return vector, (0.0, 0.0)
+        if movable_b:
+            return (0.0, 0.0), (-vector[0], -vector[1])
+        return (0.0, 0.0), (0.0, 0.0)
 
     @staticmethod
-    def _zones(count: int) -> list[tuple[float, float]]:
-        if count <= 1:
-            return [(0.50, 0.52)]
-        if count == 2:
-            return [(0.29, 0.52), (0.71, 0.52)]
-        if count == 3:
-            return [(0.28, 0.31), (0.28, 0.72), (0.70, 0.52)]
-        return [(0.27, 0.29), (0.73, 0.29), (0.27, 0.71), (0.73, 0.71)]
+    def _translate(
+        ids: list[str],
+        current: dict[str, LayoutItem],
+        dx: float,
+        dy: float,
+    ) -> None:
+        for asset_id in ids:
+            item = current[asset_id]
+            current[asset_id] = item.model_copy(update={
+                "x": item.x + dx,
+                "y": item.y + dy,
+                "placement_source": "minimal_fallback_repair",
+            })
+
+    @classmethod
+    def _cap(cls, value: float) -> float:
+        return max(-cls._MAX_FALLBACK_STEP, min(cls._MAX_FALLBACK_STEP, value))
+
+    @staticmethod
+    def _authored(item: LayoutItem) -> bool:
+        return item.placement_source.startswith("authored")
 
     @staticmethod
     def _overlap_ratio(a, b) -> float:

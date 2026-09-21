@@ -153,9 +153,9 @@ def test_semantic_handoff_begins_from_previous_focal_position() -> None:
     cue = [c for c in MotionPlanner().plan([first, second], composition, choreography) if c.beat_id == second.id][0]
     program = cue.params["program"]
 
-    assert program["name"].startswith("handoff_then_")
-    assert program["keyframes"][0]["dx"] < -0.20
-    assert program["keyframes"][0]["scale"] == pytest.approx(0.80)
+    assert not program["name"].startswith("handoff_then_")
+    assert abs(program["keyframes"][0]["dx"]) <= 0.12
+    assert 0.92 <= program["keyframes"][0]["scale"] <= 1.08
 
 
 def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
@@ -199,12 +199,34 @@ def test_semantic_handoff_keeps_reject_action_after_arrival() -> None:
     ][0]
     program = cue.params["program"]
 
-    assert program["name"] == "handoff_then_reject_attempt_recoil"
+    assert program["name"] == "reject_attempt_recoil"
     settle = program["settle_progress"]
     tail = [frame for frame in program["keyframes"] if frame["progress"] > settle]
     assert tail
     assert max(frame["scale"] for frame in tail) >= 1.05
     assert max(abs(frame["dx"]) + abs(frame["dy"]) for frame in tail) > 0.02
+
+
+def test_dense_scene_motion_is_bounded_and_settles_to_composition() -> None:
+    beat = _beat(start=0.0, end=2.4, audio_start=0.2, audio_end=2.0)
+    beat.primary_asset_ids = ["a0"]
+    beat.support_asset_ids = [f"a{i}" for i in range(1, 20)]
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id=f"a{i}", x=0.08 + (i % 5) * 0.2, y=0.15 + (i // 5) * 0.22, width=0.10, height=0.10)
+            for i in range(20)
+        ],
+    )]
+    cues = MotionPlanner().plan([beat], composition)
+    assert len(cues) == 20
+    for cue in cues:
+        keyframes = cue.params["program"]["keyframes"]
+        assert max(abs(frame["dx"]) for frame in keyframes) <= 0.045 + 1e-9
+        assert max(abs(frame["dy"]) for frame in keyframes) <= 0.045 + 1e-9
+        assert keyframes[-1]["dx"] == 0.0
+        assert keyframes[-1]["dy"] == 0.0
+        assert keyframes[-1]["scale"] == 1.0
 
 
 def test_pass2_family_secondary_uses_footprint_locked_reveal() -> None:

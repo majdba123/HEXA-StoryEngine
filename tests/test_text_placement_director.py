@@ -153,3 +153,37 @@ def test_director_uses_actual_alpha_footprint_for_negative_space(tmp_path) -> No
     assert result.visual_overlap <= 0.001
     # The clean right-hand negative space should beat covering the opaque left cluster.
     assert result.item.x >= 0.65
+
+
+def test_authoring_qa_checks_text_against_locked_visual_geometry(tmp_path) -> None:
+    from PIL import Image, ImageDraw
+    from app.models import TextCompositionBeat, TextLayoutItem, TextPlan, Transcript, VisualAsset
+    from app.qa import AuthoringVisualQA
+
+    path = tmp_path / "opaque.png"
+    image = Image.new("RGBA", (200, 200), (255, 255, 255, 0))
+    ImageDraw.Draw(image).rectangle((0, 0, 199, 199), fill=(20, 80, 180, 255))
+    image.save(path)
+    asset = VisualAsset(
+        id="hero", scene_id="scene-001", role="primary", image_path=path,
+        extraction_method="test",
+    )
+    visual = [CompositionBeat(
+        beat_id="beat-001",
+        items=[LayoutItem(asset_id="hero", x=0.5, y=0.5, width=0.5, height=0.5, placement_source="authored_scene_geometry")],
+    )]
+    cue = _cue("text-001", "1000 ريال", 0.2, 0.8)
+    text = TextPlan(cues=[cue], styles=[])
+    text_comp = [TextCompositionBeat(
+        beat_id="beat-001",
+        items=[TextLayoutItem(text_cue_id=cue.id, x=0.5, y=0.5, max_width=0.3)],
+    )]
+    report = AuthoringVisualQA().inspect(
+        transcript=Transcript(language="ar", duration=1.0, segments=[], timing_source="forced_alignment"),
+        composition=visual,
+        motion=[],
+        text=text,
+        text_composition=text_comp,
+        assets=[asset],
+    )
+    assert report.text_layout_violations

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from app.choreography import ChoreographyPlan, ContinuityMode, HookKind
+from app.choreography import ChoreographyPlan, HookKind
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
+from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
 from app.motion.timing import MotionTimingPolicy
@@ -36,7 +37,6 @@ class MotionPlanner:
         last_attention_reset = 0.0
         previous_beat: StoryBeat | None = None
         previous_layout: CompositionBeat | None = None
-        previous_directive = None
 
         for beat_index, beat in enumerate(beats):
             layout = by_beat.get(beat.id)
@@ -126,18 +126,6 @@ class MotionPlanner:
                 primary_item,
                 preferred_asset_id=preferred_interaction_id,
             )
-            previous_preferred_id = (
-                previous_directive.primary_asset_id if previous_directive is not None else None
-            )
-            previous_primary_item = (
-                self._primary_item(
-                    previous_beat,
-                    previous_layout.items,
-                    preferred_asset_id=previous_preferred_id,
-                )
-                if previous_beat is not None and previous_layout is not None and previous_layout.items
-                else None
-            )
             previous_items = {item.asset_id: item for item in previous_layout.items} if previous_layout else {}
 
             for index, item in enumerate(layout.items):
@@ -154,25 +142,18 @@ class MotionPlanner:
                     else "SUPPORT"
                 )
                 continuity_source = previous_items.get(item.asset_id)
-                semantic_handoff = bool(
-                    directive is not None
-                    and directive.continuity_mode == ContinuityMode.SEMANTIC_HANDOFF
-                    and item.asset_id == primary_item.asset_id
-                    and previous_primary_item is not None
-                )
+                # Continuity is allowed only for the exact same visual asset. A semantic
+                # handoff between unrelated illustrations must not start the new artwork
+                # from the previous artwork's screen position; that was the source of
+                # large cross-screen sweeps on dense/new Final Packages.
                 if family_secondary:
                     program = self.primitives.build_family_secondary()
-                elif continuity_source is not None or semantic_handoff:
-                    source = continuity_source or previous_primary_item
-                    assert source is not None
+                elif continuity_source is not None:
+                    source = continuity_source
                     previous_offset = (source.x - item.x, source.y - item.y)
-                    if continuity_source is not None:
-                        width_ratio = source.width / max(item.width, 1e-6)
-                        height_ratio = source.height / max(item.height, 1e-6)
-                        previous_scale = max(0.62, min(1.45, (width_ratio + height_ratio) / 2.0))
-                    else:
-                        # Different artwork: preserve focal direction without fake morphing.
-                        previous_scale = 0.80
+                    width_ratio = source.width / max(item.width, 1e-6)
+                    height_ratio = source.height / max(item.height, 1e-6)
+                    previous_scale = max(0.82, min(1.18, (width_ratio + height_ratio) / 2.0))
                     program = self.primitives.build_continuity(
                         action=action,
                         item=item,
@@ -188,7 +169,7 @@ class MotionPlanner:
                         energy=intensity,
                         tension=tension,
                         variant=variant + index,
-                        same_asset=continuity_source is not None,
+                        same_asset=True,
                         is_primary=item is primary_item,
                         participant_role=participant_role,
                     )
@@ -209,6 +190,13 @@ class MotionPlanner:
                         is_primary=item is primary_item,
                         participant_role=participant_role,
                     )
+                program = self._apply_density_budget(
+                    program,
+                    count=count,
+                    primary=(item is primary_item),
+                    geometry_locked=family_secondary,
+                )
+
                 # Choreography may promote a semantic support cutout (for example a card,
                 # wallet, or limit badge) to visual focus while Story keeps the authored
                 # scene-primary artwork for continuity/QA. Both need to be readable at the
@@ -324,8 +312,51 @@ class MotionPlanner:
                 )
             previous_beat = beat
             previous_layout = layout
-            previous_directive = directive
         return cues
+
+    @staticmethod
+    def _apply_density_budget(
+        program: MotionProgram,
+        *,
+        count: int,
+        primary: bool,
+        geometry_locked: bool = False,
+    ) -> MotionProgram:
+        """Bound global motion as scene density grows while preserving final geometry."""
+        if geometry_locked:
+            return program
+        if count <= 3:
+            density = 1.0
+            max_offset = 0.12 if primary else 0.075
+            scale_factor = 1.0
+        elif count <= 6:
+            density = 0.78
+            max_offset = 0.085 if primary else 0.055
+            scale_factor = 0.82
+        elif count <= 10:
+            density = 0.60
+            max_offset = 0.060 if primary else 0.040
+            scale_factor = 0.65
+        else:
+            density = 0.48
+            max_offset = 0.045 if primary else 0.030
+            scale_factor = 0.52
+
+        frames: list[MotionKeyframe] = []
+        for frame in program.keyframes:
+            dx = max(-max_offset, min(max_offset, frame.dx * density))
+            dy = max(-max_offset, min(max_offset, frame.dy * density))
+            scale = 1.0 + (frame.scale - 1.0) * scale_factor
+            # Avoid dramatic zooms on dense scenes; Composition owns final size.
+            scale = max(0.92 if primary else 0.95, min(1.08 if primary else 1.055, scale))
+            if abs(frame.progress - program.settle_progress) <= 1e-9 or frame.progress >= 1.0 - 1e-9:
+                dx, dy, scale = 0.0, 0.0, 1.0
+            frames.append(MotionKeyframe(frame.progress, dx, dy, scale, frame.easing))
+        return MotionProgram(
+            name=f"density_safe_{program.name}" if count > 3 else program.name,
+            keyframes=tuple(frames),
+            settle_progress=program.settle_progress,
+        )
 
     @staticmethod
     def _is_family_secondary(asset: VisualAsset | None) -> bool:

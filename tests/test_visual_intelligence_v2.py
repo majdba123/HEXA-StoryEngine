@@ -124,10 +124,10 @@ def test_layout_solver_preserves_safe_authored_layout(tmp_path: Path) -> None:
     ])
     solved = ConstraintLayoutSolver().solve(beat, assets)
     assert solved.items == beat.items
-    assert "layout:authored_preserved" in solved.state_evidence
+    assert "layout:authored_geometry_locked" in solved.state_evidence
 
 
-def test_layout_solver_repairs_catastrophic_independent_overlap(tmp_path: Path) -> None:
+def test_layout_solver_never_reflows_authored_overlap(tmp_path: Path) -> None:
     a_path, b_path = tmp_path / "a.png", tmp_path / "b.png"
     _image(a_path)
     _image(b_path)
@@ -136,12 +136,67 @@ def test_layout_solver_repairs_catastrophic_independent_overlap(tmp_path: Path) 
         VisualAsset(id="b", scene_id="s", role="object", image_path=b_path, extraction_method="test"),
     ]
     beat = CompositionBeat(beat_id="b", items=[
-        LayoutItem(asset_id="a", x=0.50, y=0.5, width=0.50, height=0.6),
-        LayoutItem(asset_id="b", x=0.52, y=0.5, width=0.50, height=0.6),
+        LayoutItem(asset_id="a", x=0.50, y=0.5, width=0.50, height=0.6, placement_source="authored_scene_geometry"),
+        LayoutItem(asset_id="b", x=0.52, y=0.5, width=0.50, height=0.6, placement_source="authored_scene_geometry"),
     ])
     solved = ConstraintLayoutSolver().solve(beat, assets)
-    assert "layout:constraint_repair" in solved.state_evidence
-    assert abs(solved.items[0].x - solved.items[1].x) > 0.30
+    assert solved.items == beat.items
+    assert "layout:authored_geometry_locked" in solved.state_evidence
+
+
+def test_layout_solver_repairs_only_geometry_less_fallback(tmp_path: Path) -> None:
+    a_path, b_path = tmp_path / "a.png", tmp_path / "b.png"
+    _image(a_path)
+    _image(b_path)
+    assets = [
+        VisualAsset(id="a", scene_id="s", role="object", image_path=a_path, extraction_method="test"),
+        VisualAsset(id="b", scene_id="s", role="object", image_path=b_path, extraction_method="test"),
+    ]
+    beat = CompositionBeat(beat_id="b", items=[
+        LayoutItem(asset_id="a", x=0.50, y=0.5, width=0.50, height=0.6, placement_source="fallback_missing_source_geometry"),
+        LayoutItem(asset_id="b", x=0.52, y=0.5, width=0.50, height=0.6, placement_source="fallback_missing_source_geometry"),
+    ])
+    solved = ConstraintLayoutSolver().solve(beat, assets)
+    assert "layout:minimal_fallback_repair" in solved.state_evidence
+    assert solved.items != beat.items
+
+
+def test_composition_maps_source_bbox_directly_to_scene_canvas(tmp_path: Path) -> None:
+    path = tmp_path / "asset.png"
+    _image(path, size=(200, 100))
+    asset = VisualAsset(
+        id="a", scene_id="scene-001", role="object", image_path=path,
+        source_bbox=(100, 200, 400, 300), source_canvas_width=1000, source_canvas_height=1000,
+        extraction_method="test",
+    )
+    item = CompositionPlanner().plan([_beat(["a"])], [asset])[0].items[0]
+    assert item.x == pytest.approx(0.5 - (1.0 / (16 / 9)) / 2 + 0.3 * (1.0 / (16 / 9)))
+    assert item.y == pytest.approx(0.35)
+    assert item.width == pytest.approx(0.4 * (1.0 / (16 / 9)))
+    assert item.height == pytest.approx(0.3)
+
+
+def test_dense_authored_scene_does_not_move_existing_assets_when_count_grows(tmp_path: Path) -> None:
+    assets = []
+    for index in range(20):
+        path = tmp_path / f"a-{index}.png"
+        _image(path, size=(40, 40))
+        assets.append(VisualAsset(
+            id=f"a{index}", scene_id="scene-001", role="object", image_path=path,
+            source_bbox=(20 + (index % 5) * 180, 30 + (index // 5) * 200, 80, 80),
+            source_canvas_width=1000, source_canvas_height=900, extraction_method="test",
+            source_area_ratio=0.01,
+        ))
+    planner = CompositionPlanner()
+    small = planner.plan([_beat([a.id for a in assets[:3]])], assets[:3])[0]
+    dense = planner.plan([_beat([a.id for a in assets])], assets)[0]
+    dense_by_id = {item.asset_id: item for item in dense.items}
+    for item in small.items:
+        other = dense_by_id[item.asset_id]
+        assert (item.x, item.y, item.width, item.height) == pytest.approx(
+            (other.x, other.y, other.width, other.height)
+        )
+    assert len(dense.items) == 20
 
 
 def test_short_directional_motion_becomes_non_directional() -> None:

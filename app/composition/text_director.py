@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.composition.footprint import AlphaFootprintResolver
+from app.composition.occupancy import VisualOccupancyMap
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
 
 
@@ -54,11 +55,12 @@ class TextPlacementDirector:
 
     _SAFE_MARGIN_X = 0.045
     _SAFE_MARGIN_Y = 0.055
-    _GRID_STEP_X = 0.04
-    _GRID_STEP_Y = 0.045
+    _GRID_STEP_X = 0.02
+    _GRID_STEP_Y = 0.0225
 
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
+        self.occupancy = VisualOccupancyMap()
 
     def place(
         self,
@@ -70,31 +72,41 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
     ) -> PlacementResult:
-        width, height = self.estimated_box(cue)
         anchor = self._anchor(cue, visual)
-        visual_regions = self._visual_regions(beat, visual, assets_by_id or {})
-        candidates = self._candidate_field(width, height, anchor)
+        asset_map = assets_by_id or {}
+        visual_regions = self._visual_regions(beat, visual, asset_map)
+        occupancy = self.occupancy.build(visual.items, asset_map) if visual is not None and asset_map else None
 
-        scored = [
-            self._score_candidate(
-                candidate,
-                width=width,
-                height=height,
-                anchor=anchor,
-                visual_regions=visual_regions,
-                concurrent_text=concurrent_text,
-                preferred_zone=preferred_zone,
-                cue=cue,
-            )
-            for candidate in candidates
-        ]
-        best = min(scored, key=lambda row: (row[0], row[1].prior, row[1].y, row[1].x))
-        score, candidate, box, overlap = best
+        scored = []
+        for font_scale in self._font_scales(cue):
+            width, height = self.estimated_box(cue, scale=font_scale)
+            candidates = self._candidate_field(width, height, anchor)
+            for candidate in candidates:
+                score_row = self._score_candidate(
+                    candidate,
+                    width=width,
+                    height=height,
+                    anchor=anchor,
+                    visual_regions=visual_regions,
+                    concurrent_text=concurrent_text,
+                    preferred_zone=preferred_zone,
+                    cue=cue,
+                    occupancy=occupancy,
+                )
+                # Prefer the authored typography size whenever whitespace permits, but
+                # reducing text is always safer than moving the Final Package artwork.
+                scale_penalty = (1.0 - font_scale) * 1.6
+                scored.append((*score_row, font_scale, width))
+                scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
+
+        best = min(scored, key=lambda row: (row[0], -row[4], row[1].prior, row[1].y, row[1].x))
+        score, candidate, box, overlap, font_scale, width = best
         item = TextLayoutItem(
             text_cue_id=cue.id,
             x=candidate.x,
             y=candidate.y,
             max_width=width,
+            font_scale=font_scale,
             z=50 + min(20, cue.priority // 5),
             anchor_asset_id=cue.anchor_asset_id,
             placement=candidate.zone,
@@ -108,7 +120,7 @@ class TextPlacementDirector:
         )
 
     @staticmethod
-    def estimated_box(cue: TextCue) -> tuple[float, float]:
+    def estimated_box(cue: TextCue, *, scale: float = 1.0) -> tuple[float, float]:
         units = 0.0
         for char in cue.text.strip():
             if char.isspace():
@@ -124,9 +136,15 @@ class TextPlacementDirector:
         # phrases wider than a character-count estimate. Slight over-reservation is
         # preferable to a title clipping into artwork.
         width = 0.080 + units * 0.0235 * size_factor
-        width = max(0.22, min(0.58, width))
-        height = 0.155 if cue.priority >= 85 else 0.135
+        width = max(0.22, min(0.58, width)) * scale
+        height = (0.155 if cue.priority >= 85 else 0.135) * scale
         return width, height
+
+    @staticmethod
+    def _font_scales(cue: TextCue) -> tuple[float, ...]:
+        # Sparse keywords remain large by default. Dense artwork may force a controlled
+        # reduction, but never below a readable production floor.
+        return (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56) if cue.priority >= 85 else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
 
     def _candidate_field(
         self,
@@ -205,21 +223,28 @@ class TextPlacementDirector:
         concurrent_text: list[PlacedTextRegion],
         preferred_zone: str | None,
         cue: TextCue,
+        occupancy,
     ) -> tuple[float, _Candidate, Box, float]:
         box = self._box(candidate.x, candidate.y, width, height)
         score = candidate.prior
 
-        actual_overlap = 0.0
+        # Pixel occupancy is authoritative for visual collision. Bounding boxes are
+        # deliberately only a soft halo because irregular cutouts can contain large
+        # negative-space regions that are safe and visually intentional for text.
+        actual_overlap = (
+            self.occupancy.overlap(occupancy, box).ratio
+            if occupancy is not None
+            else max(
+                (self._intersection_ratio(box, region.box) for region in visual_regions),
+                default=0.0,
+            )
+        )
+        if actual_overlap > 0.002:
+            score += 180000.0 * actual_overlap
+        score += actual_overlap * 12000.0
         for region in visual_regions:
-            direct = self._intersection_ratio(box, region.box)
             protected = self._intersection_ratio(box, region.protected_box)
-            actual_overlap += direct
-            # Direct artwork coverage is effectively forbidden. The protected halo
-            # also carries a large penalty so text does not visually "kiss" objects.
-            if direct > 0.004:
-                score += 12000.0 * direct * region.weight
-            score += direct * 1600.0 * region.weight
-            score += protected * 260.0 * region.weight
+            score += protected * 18.0 * region.weight
 
         for placed in concurrent_text:
             score += self._intersection_ratio(box, placed.box) * 680.0
@@ -233,7 +258,8 @@ class TextPlacementDirector:
 
         score += self._edge_penalty(box) * 110.0
         score += self._center_penalty(candidate.x, candidate.y) * 0.18
-        score -= self._clearance_bonus(box, visual_regions) * 0.42
+        clearance = (self.occupancy.clearance(occupancy, box) if occupancy is not None else self._clearance_bonus(box, visual_regions))
+        score -= clearance * 1.10
 
         if cue.priority >= 85 and self._zone_family(candidate.zone) in {"top", "bottom"}:
             score -= 0.045

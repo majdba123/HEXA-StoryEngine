@@ -11,6 +11,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -113,11 +114,14 @@ class MainWindow(QMainWindow):
         self.report_button = QPushButton("استخراج تقرير التشخيص")
         self.open_video_button = QPushButton("فتح الفيديو")
         self.open_folder_button = QPushButton("فتح مجلد النتيجة")
+        self.open_log_button = QPushButton("فتح ملف السجل")
+        self.clear_log_button = QPushButton("مسح اللوحة")
 
         self.cancel_button.setEnabled(False)
         self.report_button.setEnabled(False)
         self.open_video_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
+        self.open_log_button.setEnabled(False)
 
         central = QWidget()
         root = QVBoxLayout(central)
@@ -142,7 +146,16 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self.progress_bar)
         root.addWidget(self.status_label)
-        root.addWidget(self.log_view, 1)
+
+        log_box = QGroupBox("لوحة السجل")
+        log_layout = QVBoxLayout(log_box)
+        log_layout.addWidget(self.log_view, 1)
+        log_actions = QHBoxLayout()
+        log_actions.addWidget(self.open_log_button)
+        log_actions.addWidget(self.clear_log_button)
+        log_actions.addStretch(1)
+        log_layout.addLayout(log_actions)
+        root.addWidget(log_box, 1)
 
         result_actions = QHBoxLayout()
         result_actions.addWidget(self.open_video_button)
@@ -159,6 +172,8 @@ class MainWindow(QMainWindow):
         self.report_button.clicked.connect(self._export_report)
         self.open_video_button.clicked.connect(self._open_video)
         self.open_folder_button.clicked.connect(self._open_folder)
+        self.open_log_button.clicked.connect(self._open_log)
+        self.clear_log_button.clicked.connect(self.log_view.clear)
 
     def _package_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -263,6 +278,8 @@ class MainWindow(QMainWindow):
         self.report_button.setEnabled(False)
         self.open_video_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
+        self.open_log_button.setEnabled(True)
+        self.log_view.append(f"LOG: {report.log_path}")
         thread.start()
 
     @Slot(str, int, str)
@@ -345,6 +362,16 @@ class MainWindow(QMainWindow):
         if target.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
+    @Slot()
+    def _open_log(self) -> None:
+        if self._report is None:
+            return
+        path = self._report.log_path
+        if path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        elif path.parent.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
     def _apply_style(self) -> None:
         self.setStyleSheet(
             """
@@ -352,6 +379,11 @@ class MainWindow(QMainWindow):
             QLabel#title { font-size: 28px; font-weight: 700; }
             QLabel#subtitle { color: #aeb4bd; margin-bottom: 8px; }
             QLabel#status { color: #cbd2db; padding: 4px 0; }
+            QGroupBox {
+                border: 1px solid #323842; border-radius: 8px; margin-top: 10px;
+                padding-top: 10px; font-weight: 600;
+            }
+            QGroupBox::title { subcontrol-origin: margin; right: 10px; padding: 0 6px; }
             QLineEdit, QTextEdit {
                 background: #1b1f24; border: 1px solid #323842; border-radius: 7px;
                 padding: 8px; color: #f7f7f7;

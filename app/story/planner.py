@@ -145,9 +145,10 @@ class StoryPlanner:
 
     @staticmethod
     def _select_assets(scene_assets: list[VisualAsset]) -> list[VisualAsset]:
-        if len(scene_assets) <= 6:
-            return scene_assets
-        return scene_assets[:6]
+        # Final Package geometry already defines the complete scene. Story may rank
+        # primary/support meaning, but it must never discard extracted scene assets
+        # simply because the scene is dense. Motion becomes calmer as density grows.
+        return list(scene_assets)
 
     @staticmethod
     def _default_event(scene: SceneSource) -> dict:

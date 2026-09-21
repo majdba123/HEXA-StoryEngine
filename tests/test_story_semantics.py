@@ -207,3 +207,25 @@ def test_story_v2_graph_preserves_package_continuity_without_inventing_causality
     assert len(identity) == 1
     assert identity[0].shared_semantic_names == ["shared_actor"]
     assert identity[0].causal is False
+
+
+def test_story_keeps_all_dense_scene_assets_for_motion_authoring(tmp_path: Path) -> None:
+    scene_json = '''{
+      "project_id":"generic","scenes":[{
+        "scene_id":"SCENE_001","order":1,"image":"scenes/SCENE_001.png",
+        "script_span":{"global_char_start":0,"global_char_end":9,"text":"alpha beta"},
+        "visual_progression":[{"action":"EXPLAIN","targets":[],
+          "trigger":{"global_char_start":0,"global_char_end":9}}]
+      }]}
+    '''
+    package, image = _package(tmp_path, scene_json)
+    assets = [
+        VisualAsset(
+            id=f"asset-{index:02d}", scene_id="SCENE_001", role="support",
+            image_path=image, extraction_method="test", source_area_ratio=1.0 / (index + 2),
+        )
+        for index in range(20)
+    ]
+    beat = StoryPlanner().plan(package, _transcript(), assets)[0]
+    assert len(beat.primary_asset_ids) + len(beat.support_asset_ids) == 20
+    assert set(beat.primary_asset_ids + beat.support_asset_ids) == {asset.id for asset in assets}
