@@ -297,3 +297,16 @@ def test_visual_inventory_does_not_force_ambiguous_e5_match(tmp_path, monkeypatc
 
     row = next(r for r in result.asset_activations if r.asset_id == assets[0].id)
     assert row.activation_policy == "SAFE_ABSTENTION"
+
+
+
+def test_semantic_diagnostics_report_eligible_coverage(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    scorer = Scorer({"concept00": {"concept00": 0.95}, "concept01": {}})
+    planner = SemanticActivationPlanner(scorer=scorer)
+    planner.enrich(package, transcript, assets, [beat])
+
+    assert planner.diagnostics["eligible_asset_count"] == 2
+    assert planner.diagnostics["trusted_eligible_count"] == 1
+    assert planner.diagnostics["inherited_eligible_count"] == 0
+    assert planner.diagnostics["eligible_coverage"] == pytest.approx(0.5)
