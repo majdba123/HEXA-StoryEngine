@@ -20,7 +20,8 @@ from app.models import (
     VisualAsset,
 )
 from app.motion import MotionPlanner
-from app.story.activation import SemanticActivationPlanner
+from app.story.activation import HybridSemanticTextScorer, SemanticActivationPlanner
+from app.shared.errors import DependencyUnavailableError
 
 
 class _FakeSemanticScorer:
@@ -256,3 +257,16 @@ def test_story_uses_joint_visual_semantic_match_when_text_evidence_is_weak(
     assert by_asset["bulb"].trigger_text == "يفكر"
     assert by_asset["bulb"].spoken_start == pytest.approx(1.70)
     assert by_asset["bulb"].confidence == pytest.approx(0.91)
+
+
+def test_required_semantic_model_fails_closed_instead_of_lexical_downgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scorer = HybridSemanticTextScorer("missing/test-model", required=True)
+
+    def fail_load() -> None:
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(scorer, "_load", fail_load)
+    with pytest.raises(DependencyUnavailableError):
+        scorer.score("thinking idea", ["يفكر", "مختلفة"])

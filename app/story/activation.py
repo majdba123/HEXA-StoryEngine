@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
+from app.shared.errors import DependencyUnavailableError
 from app.models import (
     AssetActivation,
     PackageModel,
@@ -53,8 +54,9 @@ class HybridSemanticTextScorer:
     instead of failing generation.
     """
 
-    def __init__(self, model_name: str | None = None) -> None:
+    def __init__(self, model_name: str | None = None, *, required: bool = False) -> None:
         self.model_name = model_name
+        self.required = required
         self._tokenizer = None
         self._model = None
         self._torch = None
@@ -73,7 +75,20 @@ class HybridSemanticTextScorer:
         ], True
 
     def _embedding_scores(self, query: str, candidates: list[str]) -> list[float] | None:
-        if not self.model_name or self._disabled or not candidates:
+        if not candidates:
+            return None
+        if not self.model_name:
+            if self.required:
+                raise DependencyUnavailableError(
+                    "semantic text model is required but no model is configured"
+                )
+            return None
+        if self._disabled:
+            if self.required:
+                raise DependencyUnavailableError(
+                    "semantic text model was disabled after a previous load failure",
+                    details={"model": self.model_name},
+                )
             return None
         try:
             self._load()
@@ -83,13 +98,18 @@ class HybridSemanticTextScorer:
             )
             scores = self._torch.matmul(candidate_vectors, query_vector)
             return [max(0.0, min(1.0, float(value))) for value in scores.tolist()]
-        except Exception:
-            # Optional semantic inference must never make generation unusable.
+        except Exception as exc:
             self._disabled = True
             self._tokenizer = None
             self._model = None
             self._torch = None
             self._cache.clear()
+            if self.required:
+                raise DependencyUnavailableError(
+                    "required multilingual semantic model could not be loaded",
+                    details={"model": self.model_name, "error": str(exc)},
+                ) from exc
+            # Tests/diagnostics may explicitly opt into lexical-only degradation.
             return None
 
     def _load(self) -> None:
@@ -174,11 +194,14 @@ class SemanticActivationPlanner:
         self,
         *,
         semantic_model_name: str | None = None,
+        semantic_model_required: bool = False,
         scorer: HybridSemanticTextScorer | None = None,
         visual_backend: Any | None = None,
     ) -> None:
         self.binder = SemanticAssetBinder()
-        self.scorer = scorer or HybridSemanticTextScorer(semantic_model_name)
+        self.scorer = scorer or HybridSemanticTextScorer(
+            semantic_model_name, required=semantic_model_required
+        )
         self.visual_backend = visual_backend
         self._visual_cache: dict[str, dict[str, _VisualSemanticMatch]] = {}
 

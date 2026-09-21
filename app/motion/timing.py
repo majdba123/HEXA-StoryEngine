@@ -67,10 +67,14 @@ class MotionTimingPolicy:
 
         if primary:
             base_duration = {
-                "snap": 0.34,
-                "brisk": 0.46,
-                "balanced": 0.64,
-                "deliberate": 0.84,
+                # Reference videos sustain meaningful entry motion for roughly
+                # 0.4-0.8s instead of snapping into place in 0.15-0.30s.
+                # These are preferred window lengths; short beats and semantic
+                # anchors still clamp them safely to executable capacity.
+                "snap": 0.42,
+                "brisk": 0.54,
+                "balanced": 0.70,
+                "deliberate": 0.86,
             }[pace_tier]
             if hook:
                 base_duration = max(base_duration, 0.56)
@@ -98,10 +102,10 @@ class MotionTimingPolicy:
             )
 
         base_duration = {
-            "snap": 0.20,
-            "brisk": 0.30,
-            "balanced": 0.43,
-            "deliberate": 0.58,
+            "snap": 0.34,
+            "brisk": 0.44,
+            "balanced": 0.56,
+            "deliberate": 0.68,
         }[pace_tier]
         if hook:
             base_duration = min(base_duration, 0.32)

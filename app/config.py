@@ -22,6 +22,7 @@ class Settings:
     require_text_layer: bool = False
     qwen3_vl_model: str | None = None
     semantic_text_model: str | None = None
+    require_semantic_model: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -52,4 +53,7 @@ class Settings:
                 os.getenv("HEXA_SEMANTIC_TEXT_MODEL", "intfloat/multilingual-e5-small").strip()
                 or None
             ),
+            # Production must not silently downgrade semantic phrase matching to
+            # lexical-only timing when the multilingual encoder is unavailable.
+            require_semantic_model=os.getenv("HEXA_REQUIRE_SEMANTIC_MODEL", "1") == "1",
         )

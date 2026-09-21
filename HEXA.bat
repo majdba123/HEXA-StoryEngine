@@ -19,13 +19,19 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-if not exist ".venv\.hexa-desktop-ready-v3" (
+if not exist ".venv\.hexa-desktop-ready-v4" (
     echo [HEXA] Installing desktop requirements for the first run...
     ".venv\Scripts\python.exe" -m pip install --upgrade pip
     if errorlevel 1 goto :setup_failed
     ".venv\Scripts\python.exe" -m pip install -e ".[desktop,transcription,alignment,semantic]"
     if errorlevel 1 goto :setup_failed
-    type nul > ".venv\.hexa-desktop-ready-v3"
+    echo [HEXA] Verifying synchronization runtime...
+    ".venv\Scripts\python.exe" -c "import whisperx, torch, transformers, sentencepiece"
+    if errorlevel 1 goto :setup_failed
+    echo [HEXA] Preparing multilingual semantic model cache...
+    ".venv\Scripts\python.exe" -c "from transformers import AutoTokenizer, AutoModel; m='intfloat/multilingual-e5-small'; AutoTokenizer.from_pretrained(m); AutoModel.from_pretrained(m)"
+    if errorlevel 1 goto :setup_failed
+    type nul > ".venv\.hexa-desktop-ready-v4"
 )
 
 if exist ".venv\Scripts\pythonw.exe" (

@@ -18,20 +18,22 @@ class StoryPlanner:
     narrated idea instead of reacting after the listener has already heard it.
     """
 
-    _DEFAULT_VISUAL_LEAD = 0.24
-    _MAX_VISUAL_LEAD = 0.30
+    _DEFAULT_VISUAL_LEAD = 0.42
+    _MAX_VISUAL_LEAD = 0.62
     _MIN_VISUAL_BEAT = 0.08
 
     def __init__(
         self,
         *,
         semantic_model_name: str | None = None,
+        semantic_model_required: bool = False,
         visual_backend: Any | None = None,
     ) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
         self.activation = SemanticActivationPlanner(
             semantic_model_name=semantic_model_name,
+            semantic_model_required=semantic_model_required,
             visual_backend=visual_backend,
         )
 

@@ -339,19 +339,30 @@ class MotionPlanner:
             for frame in program.keyframes
             if abs(frame.progress - program.settle_progress) <= 1e-9
         )
+        # Once post-arrival reactions are removed, an early settle_progress only
+        # compresses the visible entrance. Reference-calibrated motion spends most
+        # of the available window travelling, then freezes cleanly on the semantic
+        # anchor. Keep primitives that intentionally settle at 100%, otherwise use
+        # a common readable 78% entry phase.
+        settle_progress = max(0.78, program.settle_progress)
+        # The reference edit style uses a readable deceleration curve. Several
+        # semantic primitives start with ease_out_expo/back, which front-load too
+        # much distance into the first few frames once the program is reduced to
+        # one clean entry. Normalize that single entry segment to cubic ease-out:
+        # fast enough to feel intentional, but with a long, smooth settle.
         frames = [
             MotionKeyframe(
                 0.0,
                 first.dx,
                 first.dy,
                 first.scale,
-                first.easing,
+                "ease_out_cubic",
             ),
         ]
-        if program.settle_progress < 1.0 - 1e-9:
+        if settle_progress < 1.0 - 1e-9:
             frames.append(
                 MotionKeyframe(
-                    program.settle_progress,
+                    settle_progress,
                     0.0,
                     0.0,
                     1.0,
@@ -362,7 +373,7 @@ class MotionPlanner:
         return MotionProgram(
             name=program.name,
             keyframes=tuple(frames),
-            settle_progress=program.settle_progress,
+            settle_progress=settle_progress,
         )
 
     @staticmethod

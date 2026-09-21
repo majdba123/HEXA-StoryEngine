@@ -134,6 +134,8 @@ class FFmpegMotionAdapter:
             return p
         if name == "ease_in_cubic":
             return f"({p})*({p})*({p})"
+        if name == "ease_out_cubic":
+            return f"1-pow(1-({p}),3)"
         if name == "ease_in_out_cubic":
             return f"if(lt({p},0.5),4*({p})*({p})*({p}),1-pow(-2*({p})+2,3)/2)"
         if name == "smoothstep":

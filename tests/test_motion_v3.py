@@ -74,6 +74,8 @@ def test_result_program_uses_one_clean_entry_then_holds() -> None:
 
     assert program["name"] == "result_impact"
     assert len(keyframes) <= 3
+    assert keyframes[0]["easing"] == "ease_out_cubic"
+    assert program["settle_progress"] >= 0.78
     settle = program["settle_progress"]
     post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
     assert post_settle

@@ -80,6 +80,7 @@ class StoryEnginePipeline:
         semantic_vlm = Qwen3VLBackend(self.settings.qwen3_vl_model)
         self.story = StoryPlanner(
             semantic_model_name=self.settings.semantic_text_model,
+            semantic_model_required=self.settings.require_semantic_model,
             visual_backend=semantic_vlm,
         )
         self.story_sync_qa = StorySyncQA()
