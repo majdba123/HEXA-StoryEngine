@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.models import (
     AssetActivation, PackageModel, SceneSource, StoryBeat, StoryEntity,
-    StorySemanticContext, Transcript, TranscriptWord, VisualAsset,
+    StorySemanticContext, StoryTrigger, Transcript, TranscriptWord, VisualAsset,
 )
 from app.story.activation import SemanticActivationPlanner
 from app.story.windows import ScheduledStoryBeat, StoryAssetActivation, schedule_windows
@@ -226,3 +226,42 @@ def test_invalid_or_weak_model_scores_abstain(tmp_path, score):
     planner = SemanticActivationPlanner(scorer=Scorer({"concept00": {"concept00": score}}))
     result = planner.enrich(package, transcript, assets, [beat])[0]
     assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
+
+
+def test_spoken_phrase_may_finish_after_visual_handoff_without_losing_anchor(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    beat.start = 0.0
+    beat.end = 1.78
+    beat.audio_start = 0.0
+    beat.audio_end = 1.96
+    transcript.duration = 2.5
+    transcript.words[0].start = 1.20
+    transcript.words[0].end = 1.96
+    beat.semantic_context.entities[0].appear_trigger = StoryTrigger(
+        phrase=transcript.words[0].text,
+        occurrence_in_scene=1,
+        global_char_start=transcript.words[0].char_start,
+        global_char_end=transcript.words[0].char_end,
+    )
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    row = result.asset_activations[0]
+    assert row.activation_policy == "OWN_WINDOW"
+    assert row.phrase_end == pytest.approx(1.96)
+    assert row.settle_at == pytest.approx(1.78)
+    assert row.semantic_peak <= row.settle_at
+
+
+def test_phrase_start_after_visual_handoff_still_abstains(tmp_path):
+    *_, beat = scene_case(tmp_path, 1)
+    beat.start = 0.0
+    beat.end = 1.0
+    beat.audio_end = 1.5
+    row = AssetActivation(
+        asset_id="x", spoken_start=1.1, spoken_end=1.4,
+        policy="EXPLICIT", confidence=0.98,
+    )
+    result = schedule_windows([row], beat, 2.0, {"x"})[0]
+    assert result.activation_policy == "SAFE_ABSTENTION"
+    assert "NO_VISUAL_SETTLE_CAPACITY" not in result.evidence

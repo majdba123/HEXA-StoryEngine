@@ -658,10 +658,10 @@ class SemanticActivationPlanner:
         self._decisions[(beat.id, entity.unit_id)] = decision
         if not query:
             return []
-        upper = min(beat.end, beat.audio_end if beat.audio_end is not None else beat.end)
+        speech_upper = beat.audio_end if beat.audio_end is not None else beat.end
         viable = [row for row in candidates
                   if math.isfinite(row.spoken_start) and math.isfinite(row.spoken_end)
-                  and beat.start <= row.spoken_start < row.spoken_end <= upper]
+                  and beat.start <= row.spoken_start < row.spoken_end <= speech_upper]
         if not viable:
             decision["reason"] = "no_aligned_phrase_candidates"
             return []
@@ -750,8 +750,9 @@ class SemanticActivationPlanner:
                 continue
 
             start = span_words[0].start
+            speech_upper = beat.audio_end if beat.audio_end is not None else beat.end
             if (not math.isfinite(start) or not math.isfinite(span_words[-1].end)
-                    or start < beat.start or span_words[-1].end > beat.end
+                    or start < beat.start or span_words[-1].end > speech_upper
                     or span_words[-1].end <= start):
                 continue
             return AssetActivation(
@@ -883,7 +884,7 @@ class SemanticActivationPlanner:
                 if word.char_start is not None
                 and word.char_end is not None
                 and word.char_end > trigger.global_char_start
-                and word.char_start <= trigger.global_char_end + 1
+                and word.char_start <= trigger.global_char_end
             ]
 
         phrase = (trigger.phrase or "").strip()

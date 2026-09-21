@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.models import StoryEntity, StoryTrigger, TranscriptWord
 from app.story.activation import HybridSemanticTextScorer, SemanticActivationPlanner
 from app.story.binding import SemanticAssetBinder
@@ -109,3 +111,31 @@ def test_e5_scoring_path_is_primary_and_not_lexical(monkeypatch):
     scores, used = scorer.score("security vulnerability", ["نقاط الضعف", "عبارة أخرى"])
     assert used and scores[0] > scores[1]
     assert calls == [("security vulnerability", ["نقاط الضعف", "عبارة أخرى"])]
+
+
+def test_explicit_global_span_does_not_capture_next_word(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    package.script = "first next"
+    transcript.words = [
+        TranscriptWord(text="first", start=0.0, end=0.8, char_start=0, char_end=5),
+        TranscriptWord(text="next", start=0.8, end=1.5, char_start=6, char_end=10),
+    ]
+    beat.start = 0.0
+    beat.end = 0.9
+    beat.audio_start = 0.0
+    beat.audio_end = 0.8
+    beat.semantic_context.entities = [StoryEntity(
+        unit_id=assets[0].id,
+        appear_trigger=StoryTrigger(
+            phrase="first", occurrence_in_scene=1,
+            global_char_start=0, global_char_end=5,
+        ),
+    )]
+    beat.semantic_targets = [assets[0].id]
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    row = next(r for r in result.asset_activations if r.asset_id == assets[0].id)
+    assert row.policy == "EXPLICIT"
+    assert row.trigger_text == "first"
+    assert row.spoken_end == pytest.approx(0.8)
