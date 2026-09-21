@@ -231,3 +231,69 @@ def test_runtime_failure_does_not_mask_missing_semantic_binding_reason(tmp_path)
     assert planner.diagnostics["semantic_runtime_available"] is False
     assert diag["semantic_text"] == ""
     assert diag["reason"] == "no_semantic_binding"
+
+
+
+class _InventoryOnlyBackend:
+    enabled = True
+
+    def __init__(self, asset_id: str, description: str, confidence: float = 0.94):
+        self.asset_id = asset_id
+        self.description = description
+        self.confidence = confidence
+        self.calls = []
+
+    def decide(self, image_path, prompt):
+        self.calls.append(prompt)
+        if "visual semantic inventory stage" in prompt:
+            return {"assets": [{
+                "asset_id": self.asset_id,
+                "description": self.description,
+                "category": "security",
+                "semantic": True,
+                "confidence": self.confidence,
+            }]}
+        return {"matches": []}
+
+
+def test_unbound_visual_inventory_description_can_drive_e5_phrase_match(tmp_path, monkeypatch):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    from PIL import Image
+    Image.new("RGB", (320, 180), "white").save(package.scenes[0].image_path)
+    for asset in assets:
+        Image.new("RGBA", (100, 100), (255, 255, 255, 0)).save(asset.image_path)
+    beat.semantic_context.entities = []
+    beat.semantic_targets = []
+    transcript.words[0].text = "نقاط الضعف"
+    backend = _InventoryOnlyBackend(assets[0].id, "security vulnerability")
+    scorer = Scorer({"security vulnerability": {"نقاط الضعف": 0.93}})
+    planner = SemanticActivationPlanner(scorer=scorer, visual_backend=backend)
+    monkeypatch.setattr(planner.visual_resolver, "cache_root", tmp_path / "semantic-cache")
+
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+
+    row = next(r for r in result.asset_activations if r.asset_id == assets[0].id)
+    assert row.activation_policy == "OWN_WINDOW"
+    assert row.source == "visual_inventory_semantic_match"
+    assert row.trigger_text == "نقاط الضعف"
+    assert planner.diagnostics["visual_semantic_count"] == 1
+    assert any("visual semantic inventory stage" in prompt for prompt in backend.calls)
+
+
+def test_visual_inventory_does_not_force_ambiguous_e5_match(tmp_path, monkeypatch):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    from PIL import Image
+    Image.new("RGB", (320, 180), "white").save(package.scenes[0].image_path)
+    for asset in assets:
+        Image.new("RGBA", (100, 100), (255, 255, 255, 0)).save(asset.image_path)
+    beat.semantic_context.entities = []
+    beat.semantic_targets = []
+    backend = _InventoryOnlyBackend(assets[0].id, "security concept")
+    scorer = Scorer({"security concept": {"concept00": 0.91, "concept01": 0.90}})
+    planner = SemanticActivationPlanner(scorer=scorer, visual_backend=backend)
+    monkeypatch.setattr(planner.visual_resolver, "cache_root", tmp_path / "semantic-cache")
+
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+
+    row = next(r for r in result.asset_activations if r.asset_id == assets[0].id)
+    assert row.activation_policy == "SAFE_ABSTENTION"

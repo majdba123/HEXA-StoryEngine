@@ -23,6 +23,7 @@ from app.models import (
 )
 
 from .binding import SemanticAssetBinder
+from .visual_semantic import VisualSemanticInventory, VisualSemanticResolver
 from .windows import ScheduledStoryBeat, schedule_windows
 
 
@@ -239,7 +240,9 @@ class SemanticActivationPlanner:
             semantic_model_name, required=semantic_model_required
         )
         self.visual_backend = visual_backend
+        self.visual_resolver = VisualSemanticResolver(visual_backend)
         self._visual_cache: dict[str, _VisualSceneMatches] = {}
+        self._inventory_counted_scenes: set[str] = set()
         self.diagnostics: dict[str, Any] = {}
         self._decisions: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -251,9 +254,11 @@ class SemanticActivationPlanner:
         beats: list[StoryBeat],
     ) -> list[StoryBeat]:
         self._decisions.clear()
+        self._inventory_counted_scenes.clear()
         self.diagnostics = {
             "semantic_runtime_available": None, "trusted_count": 0,
             "inherited_count": 0, "abstained_count": 0, "runtime_failure_count": 0,
+            "visual_inventory_count": 0, "visual_semantic_count": 0,
             "assets": [],
         }
         if isinstance(self.scorer, HybridSemanticTextScorer):
@@ -307,13 +312,14 @@ class SemanticActivationPlanner:
             )
 
     def _record_diagnostic(self, beat: StoryBeat, row: AssetActivation) -> None:
-        decision = dict(self._decisions.get((beat.id, row.semantic_unit_id or ""), {}))
+        decision = dict(self._decisions.get((beat.id, row.asset_id), {}))
         entities = self._ordered_entities(beat)
         entity = next((e for e in entities if e.unit_id == row.semantic_unit_id), None)
         source = (
             "inherited" if row.policy == "GROUP" else
             "explicit" if row.policy == "EXPLICIT" else
             "E5" if row.source == "multilingual_semantic_match" else
+            "E5_VISUAL" if row.source == "visual_inventory_semantic_match" else
             "VLM" if row.source in {"vlm_joint_scene_match", "vlm_direct_asset_phrase_match"} else
             "lexical" if row.source == "lexical_semantic_match" else "abstention"
         )
@@ -332,7 +338,7 @@ class SemanticActivationPlanner:
             **decision, "beat_id": beat.id, "asset_id": row.asset_id,
             "semantic_unit_id": row.semantic_unit_id,
             "semantic_text": decision.get("semantic_text") or (
-                self._semantic_query(entity, None, beat) if entity else ""
+                self._semantic_query(entity, None, beat, None) if entity else ""
             ),
             "chosen_phrase": row.trigger_text if chosen else None,
             "source": source, "reason": reason,
@@ -370,6 +376,13 @@ class SemanticActivationPlanner:
         entities = self._ordered_entities(beat)
         words = self._beat_words(transcript, scene, beat)
         candidates = self._phrase_candidates(words, package.script)
+        visual_inventory = self.visual_resolver.resolve(scene=scene, assets=assets, beat=beat)
+        if scene.id not in self._inventory_counted_scenes:
+            self._inventory_counted_scenes.add(scene.id)
+            self.diagnostics["visual_inventory_count"] += len(visual_inventory.assets)
+            self.diagnostics["visual_semantic_count"] += sum(
+                1 for row in visual_inventory.assets.values() if row.semantic
+            )
         asset_by_id = {asset.id: asset for asset in assets}
         activations: list[AssetActivation] = []
         options: list[tuple[StoryEntity, VisualAsset, list[AssetActivation]]] = []
@@ -388,15 +401,22 @@ class SemanticActivationPlanner:
                 entity=entity, asset=asset, words=words, script=package.script,
                 scene=scene, beat=beat,
             )
+            visual_semantic = visual_inventory.for_asset(asset.id)
+            visual_description = (
+                visual_semantic.description
+                if visual_semantic is not None and visual_semantic.semantic
+                else None
+            )
             ranked = [explicit] if explicit else self._semantic_options(
-                entity=entity, asset=asset, query=self._semantic_query(entity, asset, beat),
+                entity=entity, asset=asset,
+                query=self._semantic_query(entity, asset, beat, visual_description),
                 candidates=candidates, beat=beat,
             )
             if not ranked and self.visual_backend is not None:
                 if visual_matches is None:
                     visual_matches = self._visual_matches(
                         scene=scene, assets=assets, entities=entities,
-                        candidates=candidates, beat=beat,
+                        candidates=candidates, beat=beat, inventory=visual_inventory,
                     )
                 match = visual_matches.by_unit.get(entity.unit_id)
                 visual_asset = asset
@@ -437,6 +457,36 @@ class SemanticActivationPlanner:
 
         self._repair_early_completion(activations, options, beat)
 
+        # Extracted cutouts that have no package semantic unit can still participate
+        # when the visual-only inventory gave them a confident concrete meaning. E5
+        # retrieves narration phrases from that description before VLM verification.
+        direct_edges: list[tuple[AssetActivation, VisualAsset]] = []
+        for asset in assets:
+            if asset.id in used_assets or not asset.can_animate_independently:
+                continue
+            if (asset.role or "").casefold() in {"background", "decorative"}:
+                continue
+            visual_semantic = visual_inventory.for_asset(asset.id)
+            if (
+                visual_semantic is None
+                or not visual_semantic.semantic
+                or visual_semantic.confidence < 0.82
+            ):
+                continue
+            for row in self._direct_semantic_options(
+                asset=asset, query=visual_semantic.description, candidates=candidates,
+                beat=beat, visual_confidence=visual_semantic.confidence,
+            ):
+                direct_edges.append((row, asset))
+        direct_edges.sort(key=lambda item: (-item[0].confidence, item[0].spoken_start, item[1].id))
+        for row, asset in direct_edges:
+            if asset.id in used_assets:
+                continue
+            if any(self._overlapping_anchors(row, chosen) for chosen in activations):
+                continue
+            activations.append(row)
+            used_assets.add(asset.id)
+
         # Some extracted cutouts have no package semantic unit at all. A configured
         # local VLM may bind only those unresolved visual assets directly to one of
         # the already aligned phrase candidates. It never creates text/timestamps,
@@ -451,7 +501,7 @@ class SemanticActivationPlanner:
             if visual_matches is None:
                 visual_matches = self._visual_matches(
                     scene=scene, assets=assets, entities=entities,
-                    candidates=candidates, beat=beat,
+                    candidates=candidates, beat=beat, inventory=visual_inventory,
                 )
             for asset_id, match in sorted(
                 visual_matches.by_asset.items(),
@@ -640,12 +690,12 @@ class SemanticActivationPlanner:
         entities: list[StoryEntity],
         candidates: list[_PhraseCandidate],
         beat: StoryBeat,
+        inventory: VisualSemanticInventory,
     ) -> _VisualSceneMatches:
         backend = self.visual_backend
         if (
             backend is None
             or not getattr(backend, "enabled", False)
-            or not entities
             or not candidates
             or len(assets) < 2
         ):
@@ -668,12 +718,16 @@ class SemanticActivationPlanner:
         asset_rows = []
         for asset in assets:
             bbox = list(asset.source_bbox) if asset.source_bbox else None
+            semantic = inventory.for_asset(asset.id)
             asset_rows.append({
                 "asset_id": asset.id,
                 "role": asset.role,
                 "bbox": bbox,
                 "independent": asset.can_animate_independently,
                 "parent_asset_id": asset.parent_asset_id,
+                "visual_description": semantic.description if semantic else None,
+                "visual_semantic": semantic.semantic if semantic else None,
+                "visual_confidence": round(semantic.confidence, 3) if semantic else None,
             })
         entity_rows = [{
             "unit_id": entity.unit_id,
@@ -686,7 +740,9 @@ class SemanticActivationPlanner:
 
         prompt = (
             "You are the semantic synchronization matcher for a production video editor. "
-            "The image is the authored final scene. Do not redesign it. "
+            "The image is a contact sheet: authored final scene plus labelled cutouts. "
+            "Visual descriptions were produced earlier without narration; use them as evidence, "
+            "but verify against the actual cutouts. Do not redesign the scene. "
             "Return one JSON object only with key 'matches'. Each match must contain "
             "asset_id, phrase_index, confidence and may include unit_id. Choose only IDs "
             "and phrase indices supplied below. When a known semantic unit applies, include "
@@ -700,7 +756,12 @@ class SemanticActivationPlanner:
             f"Phrase candidates: {json.dumps(phrase_rows, ensure_ascii=False)}."
         )
         try:
-            payload = backend.decide(scene.image_path, prompt)
+            visual_input = (
+                inventory.contact_sheet_path
+                if inventory.contact_sheet_path is not None and inventory.contact_sheet_path.is_file()
+                else scene.image_path
+            )
+            payload = backend.decide(visual_input, prompt)
         except Exception:
             payload = None
         parsed_units: dict[str, _VisualSemanticMatch] = {}
@@ -751,7 +812,7 @@ class SemanticActivationPlanner:
     ) -> list[AssetActivation]:
         decision = {"semantic_text": query, "reason": "missing_semantic_metadata",
                     "score": None, "runner_up_score": None, "margin": None, "phrase_index": None}
-        self._decisions[(beat.id, entity.unit_id)] = decision
+        self._decisions[(beat.id, asset.id)] = decision
         if not query:
             return []
         speech_upper = beat.audio_end if beat.audio_end is not None else beat.end
@@ -820,6 +881,40 @@ class SemanticActivationPlanner:
             if len(result) >= self._MAX_ASSIGNMENT_CANDIDATES:
                 break
         return result
+
+    def _direct_semantic_options(
+        self,
+        *,
+        asset: VisualAsset,
+        query: str,
+        candidates: list[_PhraseCandidate],
+        beat: StoryBeat,
+        visual_confidence: float,
+    ) -> list[AssetActivation]:
+        pseudo = StoryEntity(unit_id=f"visual::{asset.id}")
+        rows = self._semantic_options(
+            entity=pseudo, asset=asset, query=query, candidates=candidates, beat=beat,
+        )
+        accepted: list[AssetActivation] = []
+        for row in rows:
+            if row.source != "multilingual_semantic_match" or row.confidence < 0.72:
+                continue
+            margin = 0.0
+            for evidence in row.evidence:
+                if evidence.startswith("margin="):
+                    try:
+                        margin = float(evidence.split("=", 1)[1])
+                    except ValueError:
+                        margin = 0.0
+            if margin < 0.025:
+                continue
+            accepted.append(row.model_copy(update={
+                "semantic_unit_id": None,
+                "source": "visual_inventory_semantic_match",
+                "confidence": min(row.confidence, visual_confidence),
+                "evidence": row.evidence + ["visual_only_inventory_query"],
+            }))
+        return accepted
 
     def _explicit_activation(
         self,
@@ -929,9 +1024,12 @@ class SemanticActivationPlanner:
     @staticmethod
     def _semantic_query(
         entity: StoryEntity, asset: VisualAsset | None, beat: StoryBeat | None = None,
+        visual_description: str | None = None,
     ) -> str:
         del asset  # Extraction role/filename is not evidence of semantic meaning.
         values: list[str] = []
+        if visual_description and visual_description.strip():
+            values.append(visual_description.strip())
         metadata = entity.package_metadata
         for container in (metadata, metadata.get("semantic_context")):
             if not isinstance(container, dict):
