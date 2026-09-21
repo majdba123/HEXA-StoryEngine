@@ -120,7 +120,15 @@ def test_story_semantic_activation_anchors_visual_to_spoken_phrase(tmp_path: Pat
     )
     character = _asset(tmp_path, "character", "character")
     bulb = _asset(tmp_path, "bulb", "idea_icon")
-    scorer = _FakeSemanticScorer({
+    class QueryAwareScorer(_FakeSemanticScorer):
+        def score(self, query: str, candidates: list[str]) -> tuple[list[float], bool]:
+            # Joint assignment needs asset-specific evidence; an identical score
+            # vector for every query falsely claims both objects mean the same thing.
+            if "white hacker" in query:
+                return [0.96 if text == "الهاكر الأبيض" else 0.1 for text in candidates], True
+            return super().score(query, candidates)
+
+    scorer = QueryAwareScorer({
         "يفكر": 0.94,
         "يفكر بطريقة": 0.86,
         "الهاكر": 0.90,

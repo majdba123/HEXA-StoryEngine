@@ -4,6 +4,7 @@ from app.story.graph import StoryGraph, StoryGraphBuilder, StoryGraphEdge, Story
 from app.story.planner import StoryPlanner
 from app.story.semantic import PackageStoryInterpreter
 from app.story.sync_qa import StorySyncEntry, StorySyncQA, StorySyncReport
+from app.story.windows import ScheduledStoryBeat, StoryAssetActivation
 
 __all__ = [
     "AssetBinding",
@@ -19,4 +20,6 @@ __all__ = [
     "StorySyncEntry",
     "StorySyncQA",
     "StorySyncReport",
+    "ScheduledStoryBeat",
+    "StoryAssetActivation",
 ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from app.models import (
 )
 
 from .binding import SemanticAssetBinder
+from .windows import ScheduledStoryBeat, schedule_windows
 
 
 _ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
@@ -184,7 +186,8 @@ class HybridSemanticTextScorer:
 class SemanticActivationPlanner:
     """Choose narration anchors for important cutouts without changing visual geometry."""
 
-    _MAX_NGRAM = 4
+    _MAX_NGRAM = 8
+    _MAX_ASSIGNMENT_CANDIDATES = 8
     _MIN_SEMANTIC_SCORE = 0.68
     _MIN_SEMANTIC_MARGIN = 0.015
     _MIN_LEXICAL_SCORE = 0.72
@@ -218,10 +221,11 @@ class SemanticActivationPlanner:
             assets_by_scene.setdefault(asset.scene_id, []).append(asset)
 
         output: list[StoryBeat] = []
+        self._visual_cache.clear()
         for beat in beats:
             scene = scene_by_id.get(beat.scene_id)
             scene_assets = assets_by_scene.get(beat.scene_id, [])
-            if scene is None or not scene_assets or beat.semantic_context is None:
+            if scene is None or not scene_assets:
                 output.append(beat)
                 continue
             activations = self._activations_for_beat(
@@ -231,7 +235,12 @@ class SemanticActivationPlanner:
                 assets=scene_assets,
                 beat=beat,
             )
-            output.append(beat.model_copy(update={"asset_activations": activations}))
+            windows = schedule_windows(
+                activations, beat, transcript.duration, set(beat.primary_asset_ids),
+            )
+            data = beat.model_dump()
+            data["asset_activations"] = windows
+            output.append(ScheduledStoryBeat.model_validate(data))
         return output
 
     def _activations_for_beat(
@@ -255,105 +264,144 @@ class SemanticActivationPlanner:
         candidates = self._phrase_candidates(words, package.script)
         asset_by_id = {asset.id: asset for asset in assets}
         activations: list[AssetActivation] = []
-        previous_anchor = beat.start
+        options: list[tuple[StoryEntity, VisualAsset, list[AssetActivation]]] = []
         visual_matches: dict[str, _VisualSemanticMatch] | None = None
 
         for entity in entities:
-            asset_id = semantic_map.get(entity.unit_id)
-            asset = asset_by_id.get(asset_id or "")
+            asset = asset_by_id.get(semantic_map.get(entity.unit_id, ""))
             if asset is None:
                 continue
-
-            explicit = self._explicit_activation(
-                entity=entity,
-                asset=asset,
-                words=words,
-                script=package.script,
-                scene=scene,
-                beat=beat,
-            )
-            if explicit is not None:
-                activations.append(explicit)
-                if explicit.spoken_start is not None:
-                    previous_anchor = max(previous_anchor, explicit.spoken_start)
+            # Non-independent children are inherited after the scene assignment.
+            if asset.parent_asset_id and not asset.can_animate_independently:
                 continue
-
-            activation = self._semantic_activation(
-                entity=entity,
-                asset=asset,
-                query=self._semantic_query(entity, asset),
-                candidates=candidates,
-                beat=beat,
-                previous_anchor=previous_anchor,
+            if (entity.role or "").upper() in {"DECORATIVE", "BACKGROUND"}:
+                continue
+            explicit = self._explicit_activation(
+                entity=entity, asset=asset, words=words, script=package.script,
+                scene=scene, beat=beat,
             )
-
-            # Multimodal inference is deliberately a fallback. It is much more
-            # expensive than the multilingual text matcher, so a dense scene must not
-            # trigger one VLM request per asset. The first unresolved entity causes one
-            # joint scene request; every later unresolved entity reuses that result.
-            if activation is None and self.visual_backend is not None:
+            ranked = [explicit] if explicit else self._semantic_options(
+                entity=entity, asset=asset, query=self._semantic_query(entity, asset),
+                candidates=candidates, beat=beat,
+            )
+            if not ranked and self.visual_backend is not None:
                 if visual_matches is None:
                     visual_matches = self._visual_matches(
-                        scene=scene,
-                        assets=assets,
-                        entities=entities,
-                        candidates=candidates,
-                        beat=beat,
+                        scene=scene, assets=assets, entities=entities,
+                        candidates=candidates, beat=beat,
                     )
-                visual_match = visual_matches.get(entity.unit_id)
+                match = visual_matches.get(entity.unit_id)
                 visual_asset = asset
-                if visual_match is not None and visual_match.confidence >= 0.82:
-                    visual_asset = asset_by_id.get(visual_match.asset_id) or asset
+                if match is not None and match.confidence >= 0.82:
+                    visual_asset = asset_by_id.get(match.asset_id) or asset
                 activation = self._visual_activation(
-                    entity=entity,
-                    asset=visual_asset,
-                    match=visual_match,
-                    candidates=candidates,
-                    beat=beat,
-                    previous_anchor=previous_anchor,
+                    entity=entity, asset=visual_asset, match=match,
+                    candidates=candidates, beat=beat, previous_anchor=beat.start,
                 )
                 if activation is not None:
+                    ranked = [activation]
                     asset = visual_asset
+            options.append((entity, asset, ranked))
 
-            if activation is not None:
-                activations.append(activation)
-                if activation.spoken_start is not None:
-                    previous_anchor = max(previous_anchor, activation.spoken_start)
-            else:
-                # A wrong word anchor is worse than the existing narration-aware fallback.
-                activations.append(AssetActivation(
-                    asset_id=asset.id,
-                    semantic_unit_id=entity.unit_id,
-                    confidence=0.0,
-                    source="semantic_abstention",
-                    policy="FALLBACK",
-                    evidence=["no_confident_phrase_match"],
-                ))
+        # Bounded scene-wide edge assignment. Strong/explicit evidence wins before
+        # metadata priority. A contested asset can use only a near-best, independently
+        # confident alternative; occupied phrases never lower acceptance thresholds.
+        edges = []
+        for order, (entity, asset, ranked) in enumerate(options):
+            for row in ranked:
+                edges.append((row, entity, asset, order))
+        edges.sort(key=lambda item: (
+            item[0].policy != "EXPLICIT", -item[0].confidence,
+            (item[1].role or "").upper() != "PRIMARY",
+            item[0].spoken_start, len((item[0].trigger_text or "").split()),
+            item[3], item[2].id,
+        ))
+        used_units: set[str] = set()
+        used_assets: set[str] = set()
+        for row, entity, asset, _order in edges:
+            if entity.unit_id in used_units or asset.id in used_assets:
+                continue
+            if any(self._overlapping_anchors(row, chosen) for chosen in activations):
+                continue
+            activations.append(row)
+            used_units.add(entity.unit_id)
+            used_assets.add(asset.id)
 
+        self._repair_early_completion(activations, options, beat)
         by_asset = {row.asset_id: row for row in activations}
-        for asset in assets:
-            if asset.id in by_asset or not asset.parent_asset_id:
-                continue
-            parent = by_asset.get(asset.parent_asset_id)
-            if parent is None or parent.spoken_start is None or parent.policy == "FALLBACK":
-                continue
-            inherited = AssetActivation(
-                asset_id=asset.id,
-                semantic_unit_id=parent.semantic_unit_id,
-                trigger_text=parent.trigger_text,
-                trigger_char_start=parent.trigger_char_start,
-                trigger_char_end=parent.trigger_char_end,
-                spoken_start=parent.spoken_start,
-                spoken_end=parent.spoken_end,
-                confidence=min(0.78, parent.confidence),
-                source="parent_semantic_anchor",
-                policy="GROUP",
-                evidence=["inherits_parent_semantic_time"],
-            )
-            activations.append(inherited)
-            by_asset[asset.id] = inherited
+        # Resolve parent chains in bounded passes, independent of input ordering.
+        pending = sorted(assets, key=lambda asset: asset.id)
+        for _ in range(len(assets)):
+            changed = False
+            for asset in pending:
+                if asset.id in by_asset or not asset.parent_asset_id:
+                    continue
+                parent = by_asset.get(asset.parent_asset_id)
+                if parent is None:
+                    continue
+                inherited = parent.model_copy(update={
+                    "asset_id": asset.id, "policy": "GROUP",
+                    "confidence": min(0.78, parent.confidence),
+                    "source": "parent_semantic_anchor",
+                    "evidence": ["inherits_parent_semantic_time"],
+                })
+                activations.append(inherited)
+                by_asset[asset.id] = inherited
+                changed = True
+            if not changed:
+                break
+        for asset in sorted(assets, key=lambda asset: asset.id):
+            if asset.id not in by_asset:
+                unit_id = next((entity.unit_id for entity, bound, _ in options
+                                if bound.id == asset.id), None)
+                activations.append(AssetActivation(
+                    asset_id=asset.id, semantic_unit_id=unit_id, confidence=0.0,
+                    source="semantic_abstention", policy="FALLBACK",
+                    evidence=["no_confident_uncontested_phrase_match", "SAFE_ABSTENTION"],
+                ))
+        return sorted(activations, key=lambda row: (
+            row.spoken_start if row.spoken_start is not None else math.inf,
+            row.policy == "GROUP", row.asset_id,
+        ))
 
-        return activations
+    @staticmethod
+    def _repair_early_completion(activations, options, beat: StoryBeat) -> None:
+        if not activations:
+            return
+        upper = min(beat.end, beat.audio_end if beat.audio_end is not None else beat.end)
+        lower = max(beat.start, beat.audio_start if beat.audio_start is not None else beat.start)
+        last_end = max(row.spoken_end for row in activations)
+        typical = sum(row.spoken_end - row.spoken_start for row in activations) / len(activations)
+        if upper - last_end <= max((upper - lower) * 0.20, typical):
+            return
+        # Only move to a near-equivalent, already accepted spoken meaning. Explicit
+        # package triggers never move. No artificial delay or phrase stretching.
+        alternatives = []
+        for _entity, _asset, ranked in options:
+            for candidate in ranked:
+                for index, current in enumerate(activations):
+                    if (current.policy == "SEMANTIC" and candidate.asset_id == current.asset_id
+                            and candidate.semantic_unit_id == current.semantic_unit_id
+                            and candidate.confidence >= current.confidence - 0.03
+                            and candidate.spoken_end > last_end
+                            and not any(SemanticActivationPlanner._overlapping_anchors(candidate, row)
+                                        for j, row in enumerate(activations) if j != index)):
+                        alternatives.append((index, candidate))
+        if alternatives:
+            index, chosen = min(alternatives, key=lambda item: (
+                -item[1].spoken_end, -item[1].confidence, item[1].asset_id,
+            ))
+            activations[index] = chosen.model_copy(update={
+                "evidence": chosen.evidence + ["early_completion_reassigned_to_confident_late_phrase"],
+            })
+
+    @staticmethod
+    def _overlapping_anchors(left: AssetActivation, right: AssetActivation) -> bool:
+        if None in (left.spoken_start, left.spoken_end, right.spoken_start, right.spoken_end):
+            return False
+        overlap = min(left.spoken_end, right.spoken_end) - max(left.spoken_start, right.spoken_start)
+        shortest = min(left.spoken_end - left.spoken_start, right.spoken_end - right.spoken_start)
+        return overlap > max(0.0, shortest * 0.5)
 
     def _visual_activation(
         self,
@@ -368,6 +416,7 @@ class SemanticActivationPlanner:
         if (
             match is None
             or match.asset_id != asset.id
+            or not math.isfinite(match.confidence)
             or match.confidence < 0.78
             or match.phrase_index < 0
             or match.phrase_index >= len(candidates)
@@ -499,73 +548,58 @@ class SemanticActivationPlanner:
         self._visual_cache[cache_key] = parsed
         return parsed
 
-    def _semantic_activation(
-        self,
-        *,
-        entity: StoryEntity,
-        asset: VisualAsset,
-        query: str,
-        candidates: list[_PhraseCandidate],
-        beat: StoryBeat,
-        previous_anchor: float,
-    ) -> AssetActivation | None:
-        if not query or not candidates:
-            return None
-        viable = [
-            row for row in candidates
-            if row.spoken_start >= previous_anchor - 0.08
-            and row.spoken_start <= beat.end - 0.025
-            and row.spoken_end >= beat.start
-        ]
+    def _semantic_options(
+        self, *, entity: StoryEntity, asset: VisualAsset, query: str,
+        candidates: list[_PhraseCandidate], beat: StoryBeat,
+    ) -> list[AssetActivation]:
+        if not query:
+            return []
+        upper = min(beat.end, beat.audio_end if beat.audio_end is not None else beat.end)
+        viable = [row for row in candidates
+                  if math.isfinite(row.spoken_start) and math.isfinite(row.spoken_end)
+                  and beat.start <= row.spoken_start < row.spoken_end <= upper]
         if not viable:
-            return None
-
+            return []
         scores, semantic_used = self.scorer.score(query, [row.text for row in viable])
-        ranked = sorted(range(len(viable)), key=lambda index: scores[index], reverse=True)
+        ranked = sorted(
+            (index for index, score in enumerate(scores[:len(viable)]) if math.isfinite(score)),
+            key=lambda index: (-scores[index], viable[index].token_count, viable[index].spoken_start),
+        )
         if not ranked:
-            return None
-        best_index = ranked[0]
-        best = scores[best_index]
+            return []
+        best = scores[ranked[0]]
         second = scores[ranked[1]] if len(ranked) > 1 else 0.0
         margin = best - second
         accepted = (
-            (
-                semantic_used
-                and (
-                    best >= 0.80
-                    or (
-                        best >= self._MIN_SEMANTIC_SCORE
-                        and margin >= self._MIN_SEMANTIC_MARGIN
-                    )
-                )
-            )
-            or (
-                not semantic_used
-                and best >= self._MIN_LEXICAL_SCORE
-                and margin >= self._MIN_LEXICAL_MARGIN
-            )
-        )
+            semantic_used and (best >= 0.80 or (
+                best >= self._MIN_SEMANTIC_SCORE and margin >= self._MIN_SEMANTIC_MARGIN
+            ))
+        ) or (not semantic_used and best >= self._MIN_LEXICAL_SCORE
+              and margin >= self._MIN_LEXICAL_MARGIN)
         if not accepted:
-            return None
-
-        chosen = viable[best_index]
-        return AssetActivation(
-            asset_id=asset.id,
-            semantic_unit_id=entity.unit_id,
-            trigger_text=chosen.text,
-            trigger_char_start=chosen.char_start,
-            trigger_char_end=chosen.char_end,
-            spoken_start=chosen.spoken_start,
-            spoken_end=chosen.spoken_end,
-            confidence=max(0.0, min(1.0, best)),
-            source="multilingual_semantic_match" if semantic_used else "lexical_semantic_match",
-            policy="SEMANTIC",
-            evidence=[
-                f"score={best:.3f}",
-                f"margin={margin:.3f}",
-                f"query={query}",
-            ],
-        )
+            return []
+        result: list[AssetActivation] = []
+        for index in ranked:
+            score, chosen = scores[index], viable[index]
+            if result and (not semantic_used or score < max(0.80, best - 0.08)):
+                continue
+            activation = AssetActivation(
+                asset_id=asset.id, semantic_unit_id=entity.unit_id,
+                trigger_text=chosen.text, trigger_char_start=chosen.char_start,
+                trigger_char_end=chosen.char_end, spoken_start=chosen.spoken_start,
+                spoken_end=chosen.spoken_end, confidence=max(0.0, min(1.0, score)),
+                source="multilingual_semantic_match" if semantic_used else "lexical_semantic_match",
+                policy="SEMANTIC",
+                evidence=[f"score={score:.3f}", f"margin={margin:.3f}", f"query={query}",
+                          "scene_joint_assignment"],
+            )
+            # Prune overlapping variants of the same phrase before assignment.
+            if any(self._overlapping_anchors(activation, row) for row in result):
+                continue
+            result.append(activation)
+            if len(result) >= self._MAX_ASSIGNMENT_CANDIDATES:
+                break
+        return result
 
     def _explicit_activation(
         self,
@@ -592,7 +626,9 @@ class SemanticActivationPlanner:
                 continue
 
             start = span_words[0].start
-            if start < beat.start - 0.02 or start > beat.end - 0.025:
+            if (not math.isfinite(start) or not math.isfinite(span_words[-1].end)
+                    or start < beat.start or span_words[-1].end > beat.end
+                    or span_words[-1].end <= start):
                 continue
             return AssetActivation(
                 asset_id=asset.id,
@@ -649,12 +685,12 @@ class SemanticActivationPlanner:
         if not words:
             return []
         output: list[_PhraseCandidate] = []
-        seen: set[tuple[int | None, int | None, str]] = set()
+        seen: set[tuple[float, float, str]] = set()
         for start_index in range(len(words)):
             for length in range(1, min(self._MAX_NGRAM, len(words) - start_index) + 1):
                 rows = words[start_index:start_index + length]
                 text = self._text_for_words(rows, script)
-                key = (rows[0].char_start, rows[-1].char_end, text)
+                key = (rows[0].start, rows[-1].end, text)
                 if not text or key in seen:
                     continue
                 seen.add(key)
