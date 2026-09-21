@@ -52,3 +52,14 @@ def test_runtime_loads_once(monkeypatch):
     monkeypatch.setattr(scorer, "_load", lambda: calls.append(True))
     assert scorer.ensure_available() and scorer.ensure_available()
     assert calls == [True]
+
+
+def test_optional_missing_model_failure_is_reported_once(caplog):
+    scorer = HybridSemanticTextScorer(None, required=False)
+    assert scorer.ensure_available() is False
+    assert scorer.ensure_available() is False
+    assert scorer.ensure_available() is False
+    assert scorer.runtime_available is False
+    messages = [record.message for record in caplog.records
+                if "SEMANTIC_RUNTIME_UNAVAILABLE" in record.message]
+    assert len(messages) == 1

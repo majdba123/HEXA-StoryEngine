@@ -109,9 +109,6 @@ class HybridSemanticTextScorer:
     def ensure_available(self) -> bool:
         if self.runtime_available is True:
             return True
-        if not self.model_name:
-            self._runtime_failure(RuntimeError("semantic_model_not_configured"))
-            return False
         if self._disabled:
             if self.required:
                 raise DependencyUnavailableError(
@@ -120,6 +117,9 @@ class HybridSemanticTextScorer:
                         "code": "SEMANTIC_RUNTIME_UNAVAILABLE",
                     },
                 )
+            return False
+        if not self.model_name:
+            self._runtime_failure(RuntimeError("semantic_model_not_configured"))
             return False
         try:
             self._load()
