@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from math import isfinite
 
 from app.models import MotionCue, StoryBeat
 from app.shared.errors import StageFailedError
@@ -20,6 +21,11 @@ class StorySyncEntry:
     spoken_start: float | None
     motion_settle: float | None
     settle_delta_seconds: float | None
+    activation_policy: str | None = None
+    reveal_start: float | None = None
+    semantic_peak: float | None = None
+    settle_target: float | None = None
+    actual_visual_settle: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +57,9 @@ class StorySyncQA:
         story: list[StoryBeat],
         motion: list[MotionCue],
     ) -> StorySyncReport:
+        from app.motion.models import MotionKeyframe, MotionProgram
+        from app.motion.timing import story_activation_window
+
         cues = {(cue.beat_id, cue.asset_id): cue for cue in motion}
         anchored = 0
         semantic = 0
@@ -65,7 +74,12 @@ class StorySyncQA:
         for beat in story:
             previous_anchor: float | None = None
             for activation in beat.asset_activations:
-                if activation.policy == "FALLBACK":
+                has_v2, window = story_activation_window(activation, beat)
+                activation_policy = (
+                    window.activation_policy if window is not None
+                    else "SAFE_ABSTENTION" if has_v2 else None
+                )
+                if (has_v2 and window is None) or (not has_v2 and activation.policy == "FALLBACK"):
                     fallback += 1
                     entries.append(StorySyncEntry(
                         beat_id=beat.id,
@@ -78,12 +92,14 @@ class StorySyncQA:
                         spoken_start=activation.spoken_start,
                         motion_settle=None,
                         settle_delta_seconds=None,
+                        activation_policy=activation_policy,
                     ))
                     continue
-                if activation.policy not in self._ANCHORED_POLICIES:
+                if not has_v2 and activation.policy not in self._ANCHORED_POLICIES:
                     unbound += 1
                     continue
-                if activation.spoken_start is None:
+                target = window.settle_at if window is not None else activation.spoken_start
+                if target is None or not isfinite(target):
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:anchored_without_spoken_time"
                     )
@@ -100,6 +116,7 @@ class StorySyncQA:
                 if (
                     previous_anchor is not None
                     and activation.policy != "GROUP"
+                    and activation.spoken_start is not None
                     and activation.spoken_start + 1e-9 < previous_anchor
                 ):
                     violations.append(
@@ -118,13 +135,38 @@ class StorySyncQA:
                 raw_settle = cue.params.get("semantic_settle_time")
                 try:
                     settle = float(raw_settle)
+                    if not isfinite(settle):
+                        raise ValueError("nonfinite semantic settle")
                 except (TypeError, ValueError):
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:missing_semantic_settle"
                     )
                     continue
 
-                delta = abs(settle - activation.spoken_start)
+                actual = None
+                if window is not None:
+                    try:
+                        payload = cue.params["program"]
+                        program = MotionProgram(
+                            name=payload["name"],
+                            settle_progress=float(payload["settle_progress"]),
+                            keyframes=tuple(MotionKeyframe(**row) for row in payload["keyframes"]),
+                        )
+                        if not (isfinite(cue.start) and isfinite(cue.end)
+                                and beat.start <= cue.start < cue.end <= beat.end):
+                            raise ValueError("invalid cue bounds")
+                        # Same effective duration as the renderer, including short windows.
+                        actual = cue.start + max(0.05, cue.end - cue.start) * program.settle_progress
+                        if any(abs(row.dx) > 1e-9 or abs(row.dy) > 1e-9 or abs(row.scale - 1) > 1e-9
+                               for row in program.keyframes if row.progress >= program.settle_progress):
+                            raise ValueError("motion does not hold final composition state")
+                    except (KeyError, TypeError, ValueError, OverflowError):
+                        violations.append(f"{beat.id}:{activation.asset_id}:invalid_visual_settle")
+                        actual = None
+                    if abs(cue.start - window.reveal_start) > self._SYNC_TOLERANCE_SECONDS + 1e-9:
+                        violations.append(f"{beat.id}:{activation.asset_id}:reveal_start_mismatch")
+
+                delta = max(abs(settle - target), abs(actual - target) if actual is not None else 0.0)
                 max_delta = max(max_delta, delta)
                 entries.append(StorySyncEntry(
                     beat_id=beat.id,
@@ -134,11 +176,17 @@ class StorySyncQA:
                     policy=activation.policy,
                     source=activation.source,
                     confidence=activation.confidence,
-                    spoken_start=round(activation.spoken_start, 6),
+                    spoken_start=(round(activation.spoken_start, 6)
+                                  if activation.spoken_start is not None else None),
                     motion_settle=round(settle, 6),
                     settle_delta_seconds=round(delta, 6),
+                    activation_policy=activation_policy,
+                    reveal_start=window.reveal_start if window else None,
+                    semantic_peak=window.semantic_peak if window else None,
+                    settle_target=target,
+                    actual_visual_settle=round(actual, 6) if actual is not None else None,
                 ))
-                if delta > self._SYNC_TOLERANCE_SECONDS:
+                if delta > self._SYNC_TOLERANCE_SECONDS + 1e-9:
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:settle_delta={delta:.3f}"
                     )

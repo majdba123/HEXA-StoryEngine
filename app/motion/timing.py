@@ -1,8 +1,46 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
+from typing import TYPE_CHECKING
 
 from app.models import AssetActivation, StoryBeat
+
+if TYPE_CHECKING:
+    from app.story.windows import StoryAssetActivation
+
+
+def story_activation_window(
+    activation: AssetActivation | None, beat: StoryBeat,
+) -> tuple[bool, StoryAssetActivation | None]:
+    """Distinguish absent V2 (legacy) from V2 abstention/invalid data.
+
+    Read the versioned evidence too: base-typed serialized Story containers omit
+    subclass fields. Invalid V2 must never silently become a spoken_start anchor.
+    """
+    if activation is None:
+        return False, None
+    has_v2 = hasattr(activation, "activation_policy") or any(
+        row.startswith("story_activation_v2:") for row in activation.evidence
+    )
+    if not has_v2:
+        return False, None
+    from app.story.windows import StoryAssetActivation
+
+    try:
+        window = (
+            StoryAssetActivation.model_validate(activation.model_dump())
+            if hasattr(activation, "activation_policy")
+            else StoryAssetActivation.from_legacy(activation)
+        )
+        if window.activation_policy not in {"OWN_WINDOW", "INHERITED_WINDOW"}:
+            return True, None
+        if not (isfinite(beat.start) and isfinite(beat.end)
+                and beat.start <= window.reveal_start < window.settle_at <= beat.end):
+            return True, None
+    except (ValueError, TypeError, OverflowError):
+        return True, None
+    return True, window
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +49,7 @@ class MotionWindow:
     end: float
     semantic_settle: float
     pace_tier: str
+    story_v2: bool = False
 
     @property
     def duration(self) -> float:
@@ -308,6 +347,17 @@ class MotionTimingPolicy:
         settle_progress: float,
         pace_tier: str,
     ) -> MotionWindow | None:
+        has_v2, story_window = story_activation_window(activation, beat)
+        if has_v2:
+            if story_window is None:
+                return None
+            return MotionWindow(
+                start=story_window.reveal_start,
+                end=story_window.settle_at,
+                semantic_settle=story_window.settle_at,
+                pace_tier=pace_tier,
+                story_v2=True,
+            )
         if (
             activation is None
             or activation.spoken_start is None

@@ -49,6 +49,22 @@ class MotionCompiler:
         }
         if render_constraints:
             params["render_constraints"] = render_constraints
+        if window.story_v2:
+            # The renderer maps normalized progress through max(0.05, duration).
+            # Retiming the existing entry (not its easing/transforms) is necessary:
+            # otherwise its original 78% settle frame arrives before Story's time.
+            payload = params["program"]
+            settle_progress = (window.semantic_settle - window.start) / max(0.05, window.duration)
+            frames = []
+            for frame in payload["keyframes"]:
+                if frame["progress"] <= program.settle_progress:
+                    frames.append({**frame, "progress": (
+                        frame["progress"] / program.settle_progress * settle_progress
+                    )})
+            if settle_progress < 1.0:
+                frames.append({**payload["keyframes"][-1], "progress": 1.0})
+            payload["keyframes"] = frames
+            payload["settle_progress"] = settle_progress
         return MotionCue(
             beat_id=beat.id,
             asset_id=asset_id,
