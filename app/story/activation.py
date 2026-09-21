@@ -231,21 +231,12 @@ class SemanticActivationPlanner:
         words = self._beat_words(transcript, scene, beat)
         candidates = self._phrase_candidates(words, package.script)
         asset_by_id = {asset.id: asset for asset in assets}
-        visual_matches = self._visual_matches(
-            scene=scene,
-            assets=assets,
-            entities=entities,
-            candidates=candidates,
-            beat=beat,
-        )
         activations: list[AssetActivation] = []
         previous_anchor = beat.start
+        visual_matches: dict[str, _VisualSemanticMatch] | None = None
 
         for entity in entities:
-            visual_match = visual_matches.get(entity.unit_id)
             asset_id = semantic_map.get(entity.unit_id)
-            if visual_match is not None and visual_match.confidence >= 0.82:
-                asset_id = visual_match.asset_id
             asset = asset_by_id.get(asset_id or "")
             if asset is None:
                 continue
@@ -264,23 +255,43 @@ class SemanticActivationPlanner:
                     previous_anchor = max(previous_anchor, explicit.spoken_start)
                 continue
 
-            activation = self._visual_activation(
+            activation = self._semantic_activation(
                 entity=entity,
                 asset=asset,
-                match=visual_match,
+                query=self._semantic_query(entity, asset),
                 candidates=candidates,
                 beat=beat,
                 previous_anchor=previous_anchor,
             )
-            if activation is None:
-                activation = self._semantic_activation(
+
+            # Multimodal inference is deliberately a fallback. It is much more
+            # expensive than the multilingual text matcher, so a dense scene must not
+            # trigger one VLM request per asset. The first unresolved entity causes one
+            # joint scene request; every later unresolved entity reuses that result.
+            if activation is None and self.visual_backend is not None:
+                if visual_matches is None:
+                    visual_matches = self._visual_matches(
+                        scene=scene,
+                        assets=assets,
+                        entities=entities,
+                        candidates=candidates,
+                        beat=beat,
+                    )
+                visual_match = visual_matches.get(entity.unit_id)
+                visual_asset = asset
+                if visual_match is not None and visual_match.confidence >= 0.82:
+                    visual_asset = asset_by_id.get(visual_match.asset_id) or asset
+                activation = self._visual_activation(
                     entity=entity,
-                    asset=asset,
-                    query=self._semantic_query(entity, asset),
+                    asset=visual_asset,
+                    match=visual_match,
                     candidates=candidates,
                     beat=beat,
                     previous_anchor=previous_anchor,
                 )
+                if activation is not None:
+                    asset = visual_asset
+
             if activation is not None:
                 activations.append(activation)
                 if activation.spoken_start is not None:
