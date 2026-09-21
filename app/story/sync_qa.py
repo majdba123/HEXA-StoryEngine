@@ -9,6 +9,20 @@ from app.shared.errors import StageFailedError
 
 
 @dataclass(frozen=True, slots=True)
+class StorySyncEntry:
+    beat_id: str
+    asset_id: str
+    semantic_unit_id: str | None
+    trigger_text: str | None
+    policy: str
+    source: str
+    confidence: float
+    spoken_start: float | None
+    motion_settle: float | None
+    settle_delta_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class StorySyncReport:
     anchored_assets: int
     semantic_assets: int
@@ -17,6 +31,7 @@ class StorySyncReport:
     fallback_assets: int
     unbound_assets: int
     max_settle_delta_seconds: float
+    entries: tuple[StorySyncEntry, ...]
     violations: tuple[str, ...]
 
     @property
@@ -44,6 +59,7 @@ class StorySyncQA:
         fallback = 0
         unbound = 0
         max_delta = 0.0
+        entries: list[StorySyncEntry] = []
         violations: list[str] = []
 
         for beat in story:
@@ -51,6 +67,18 @@ class StorySyncQA:
             for activation in beat.asset_activations:
                 if activation.policy == "FALLBACK":
                     fallback += 1
+                    entries.append(StorySyncEntry(
+                        beat_id=beat.id,
+                        asset_id=activation.asset_id,
+                        semantic_unit_id=activation.semantic_unit_id,
+                        trigger_text=activation.trigger_text,
+                        policy=activation.policy,
+                        source=activation.source,
+                        confidence=activation.confidence,
+                        spoken_start=activation.spoken_start,
+                        motion_settle=None,
+                        settle_delta_seconds=None,
+                    ))
                     continue
                 if activation.policy not in self._ANCHORED_POLICIES:
                     unbound += 1
@@ -98,6 +126,18 @@ class StorySyncQA:
 
                 delta = abs(settle - activation.spoken_start)
                 max_delta = max(max_delta, delta)
+                entries.append(StorySyncEntry(
+                    beat_id=beat.id,
+                    asset_id=activation.asset_id,
+                    semantic_unit_id=activation.semantic_unit_id,
+                    trigger_text=activation.trigger_text,
+                    policy=activation.policy,
+                    source=activation.source,
+                    confidence=activation.confidence,
+                    spoken_start=round(activation.spoken_start, 6),
+                    motion_settle=round(settle, 6),
+                    settle_delta_seconds=round(delta, 6),
+                ))
                 if delta > self._SYNC_TOLERANCE_SECONDS:
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:settle_delta={delta:.3f}"
@@ -111,6 +151,7 @@ class StorySyncQA:
             fallback_assets=fallback,
             unbound_assets=unbound,
             max_settle_delta_seconds=round(max_delta, 6),
+            entries=tuple(entries),
             violations=tuple(violations),
         )
 

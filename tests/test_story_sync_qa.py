@@ -53,6 +53,10 @@ def test_story_sync_qa_accepts_exact_semantic_settle() -> None:
     assert report.semantic_assets == 1
     assert report.fallback_assets == 0
     assert report.max_settle_delta_seconds == pytest.approx(0.0)
+    assert len(report.entries) == 1
+    assert report.entries[0].trigger_text == "يفكر"
+    assert report.entries[0].motion_settle == pytest.approx(1.2)
+    assert report.entries[0].settle_delta_seconds == pytest.approx(0.0)
 
 
 def test_story_sync_qa_rejects_late_motion_settle() -> None:

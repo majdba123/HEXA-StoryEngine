@@ -143,6 +143,8 @@ class BuildReportSession:
                 "ffmpeg_bin": self.settings.ffmpeg_bin,
                 "ffprobe_bin": self.settings.ffprobe_bin,
                 "whisper_model": self.settings.whisper_model,
+                "semantic_text_model": self.settings.semantic_text_model,
+                "qwen3_vl_model": self.settings.qwen3_vl_model,
                 "allow_scene_fallback": self.settings.allow_scene_fallback,
             },
             "stage_events": self.stage_events,
