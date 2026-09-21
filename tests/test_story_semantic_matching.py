@@ -1,0 +1,111 @@
+import json
+
+from app.models import StoryEntity, StoryTrigger, TranscriptWord
+from app.story.activation import HybridSemanticTextScorer, SemanticActivationPlanner
+from app.story.binding import SemanticAssetBinder
+from test_story_activation_windows import Scorer, scene_case
+
+
+def test_cross_language_meaning_uses_semantic_interface_and_aligned_timing(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    beat.semantic_context.entities = [StoryEntity(
+        unit_id=assets[0].id, package_metadata={"description": "security vulnerability"},
+    )]
+    transcript.words[0].text = "نقاط الضعف"
+    scorer = Scorer({"security vulnerability": {"نقاط الضعف": 0.93}})
+    planner = SemanticActivationPlanner(scorer=scorer)
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    row = result.asset_activations[0]
+    assert scorer.calls == 1
+    assert row.trigger_text == "نقاط الضعف"
+    assert row.spoken_start == transcript.words[0].start
+    assert row.spoken_end == transcript.words[0].end
+    assert row.source == "multilingual_semantic_match"
+    diag = planner.diagnostics["assets"][0]
+    assert diag["semantic_text"] == "security vulnerability"
+    assert diag["source"] == "E5" and diag["score"] == 0.93
+    assert diag["margin"] > 0.015 and diag["phrase_index"] == 0
+    assert planner.diagnostics["trusted_count"] == 1
+    persisted = next(s for s in row.evidence if s.startswith("semantic_match_diagnostic:"))
+    assert json.loads(persisted.split(":", 1)[1]) == diag
+
+
+def test_high_score_cannot_bypass_ambiguity_margin(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    scorer = Scorer({"concept00": {"concept00": 0.96, "concept01": 0.955}, "concept01": {}})
+    planner = SemanticActivationPlanner(scorer=scorer)
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    assert all(r.activation_policy == "SAFE_ABSTENTION" for r in result.asset_activations)
+    assert planner.diagnostics["assets"][0]["reason"] == "ambiguous_phrase_candidates"
+
+
+def test_overlapping_ngram_variant_does_not_hide_clear_margin(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    scorer = Scorer({"concept00": {"concept00": 0.9, "concept00 concept01": 0.899},
+                     "concept01": {}})
+    result = SemanticActivationPlanner(scorer=scorer).enrich(package, transcript, assets, [beat])[0]
+    assert result.asset_activations[0].trigger_text == "concept00"
+
+
+def test_missing_meaning_does_not_use_filename_or_generic_role(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    beat.semantic_context.entities[0] = StoryEntity(unit_id=assets[0].id, entity_type="ICON")
+    scorer = Scorer()
+    planner = SemanticActivationPlanner(scorer=scorer)
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    assert scorer.calls == 0
+    assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
+    assert planner.diagnostics["assets"][0]["reason"] == "missing_semantic_metadata"
+
+
+def test_repeated_phrase_occurrences_are_ambiguous_without_explicit_trigger(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 3)
+    transcript.words[2].text = "concept00"
+    planner = SemanticActivationPlanner(scorer=Scorer())
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    row = next(r for r in result.asset_activations if r.asset_id == "concept00")
+    assert row.activation_policy == "SAFE_ABSTENTION"
+    diag = next(d for d in planner.diagnostics["assets"] if d["asset_id"] == row.asset_id)
+    assert diag["margin"] == 0
+
+
+def test_explicit_occurrence_selects_second_aligned_phrase(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 3)
+    package.script = "again next again"
+    transcript.words = [
+        TranscriptWord(text="again", start=0, end=1, char_start=0, char_end=5),
+        TranscriptWord(text="next", start=4, end=5, char_start=6, char_end=10),
+        TranscriptWord(text="again", start=8, end=9, char_start=11, char_end=16),
+    ]
+    beat.semantic_context.entities[0].appear_trigger = StoryTrigger(phrase="again", occurrence_in_scene=2)
+    planner = SemanticActivationPlanner(scorer=Scorer())
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    row = next(r for r in result.asset_activations if r.asset_id == "concept00")
+    assert row.policy == "EXPLICIT" and row.spoken_start == 8
+
+
+def test_explicit_asset_identity_outranks_geometry(tmp_path):
+    package, _, assets, beat = scene_case(tmp_path, 2)
+    package.scenes[0].units[0]["asset_id"] = assets[1].id
+    package.scenes[0].units[1]["asset_id"] = assets[0].id
+    binding = SemanticAssetBinder().bind(scene=package.scenes[0], assets=assets,
+                                        beat=beat, action=beat.action)
+    assert dict(binding.semantic_asset_map) == {"concept00": "concept01", "concept01": "concept00"}
+
+
+def test_query_extracts_nested_metadata_without_structural_labels():
+    entity = StoryEntity(unit_id="UNIT_42", entity_type="ICON", role="SUPPORTING",
+                         package_metadata={"semantic_context": {"description": "an open book"}})
+    assert SemanticActivationPlanner._semantic_query(entity, None) == "an open book"
+
+
+def test_e5_scoring_path_is_primary_and_not_lexical(monkeypatch):
+    scorer = HybridSemanticTextScorer("intfloat/multilingual-e5-small")
+    calls = []
+    def embeddings(query, candidates):
+        calls.append((query, candidates))
+        return [0.95, 0.50]
+    monkeypatch.setattr(scorer, "_embedding_scores", embeddings)
+    scores, used = scorer.score("security vulnerability", ["نقاط الضعف", "عبارة أخرى"])
+    assert used and scores[0] > scores[1]
+    assert calls == [("security vulnerability", ["نقاط الضعف", "عبارة أخرى"])]

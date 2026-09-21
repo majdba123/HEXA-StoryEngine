@@ -106,8 +106,19 @@ class SemanticAssetBinder:
         mapping: dict[str, str] = {}
         used: set[str] = set()
 
+        # Authored unit identity outranks area/role heuristics. Never derive meaning
+        # from image filenames or silently swap an explicitly bound asset.
+        for unit in units:
+            unit_id = str(unit["unit_id"])
+            declared = str(unit.get("asset_id") or unit_id)
+            if declared in asset_by_id and declared not in used:
+                mapping[unit_id] = declared
+                used.add(declared)
+
         # Declared character units are the most reliable semantic->asset class mapping.
         for unit, asset_id in zip(self._character_units(scene), actor_ids):
+            if str(unit["unit_id"]) in mapping or asset_id in used:
+                continue
             mapping[str(unit["unit_id"])] = asset_id
             used.add(asset_id)
 

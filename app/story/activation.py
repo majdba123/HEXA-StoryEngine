@@ -92,7 +92,10 @@ class HybridSemanticTextScorer:
                 [self._prefix(value, query=False) for value in candidates]
             )
             scores = self._torch.matmul(candidate_vectors, query_vector)
-            return [max(0.0, min(1.0, float(value))) for value in scores.tolist()]
+            values = [float(value) for value in scores.tolist()]
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError("semantic model produced nonfinite scores")
+            return [max(0.0, min(1.0, value)) for value in values]
         except Exception as exc:
             self._runtime_failure(exc)
             return None
@@ -231,6 +234,7 @@ class SemanticActivationPlanner:
         self.visual_backend = visual_backend
         self._visual_cache: dict[str, dict[str, _VisualSemanticMatch]] = {}
         self.diagnostics: dict[str, Any] = {}
+        self._decisions: dict[tuple[str, str], dict[str, Any]] = {}
 
     def enrich(
         self,
@@ -239,6 +243,7 @@ class SemanticActivationPlanner:
         assets: list[VisualAsset],
         beats: list[StoryBeat],
     ) -> list[StoryBeat]:
+        self._decisions.clear()
         self.diagnostics = {
             "semantic_runtime_available": None, "trusted_count": 0,
             "inherited_count": 0, "abstained_count": 0, "runtime_failure_count": 0,
@@ -279,6 +284,7 @@ class SemanticActivationPlanner:
                 key = {"OWN_WINDOW": "trusted_count", "INHERITED_WINDOW": "inherited_count",
                        "SAFE_ABSTENTION": "abstained_count"}[row.activation_policy]
                 self.diagnostics[key] += 1
+                self._record_diagnostic(beat, row)
         self._runtime_diagnostics()
         _LOG.info("Story semantic summary: %s", json.dumps(
             {k: v for k, v in self.diagnostics.items() if k != "assets"}, ensure_ascii=False,
@@ -292,6 +298,46 @@ class SemanticActivationPlanner:
                 semantic_runtime_error=self.scorer.runtime_error,
                 runtime_failure_count=int(self.scorer.runtime_available is False),
             )
+
+    def _record_diagnostic(self, beat: StoryBeat, row: AssetActivation) -> None:
+        decision = dict(self._decisions.get((beat.id, row.semantic_unit_id or ""), {}))
+        entities = self._ordered_entities(beat)
+        entity = next((e for e in entities if e.unit_id == row.semantic_unit_id), None)
+        source = (
+            "inherited" if row.policy == "GROUP" else
+            "explicit" if row.policy == "EXPLICIT" else
+            "E5" if row.source == "multilingual_semantic_match" else
+            "VLM" if row.source == "vlm_joint_scene_match" else
+            "lexical" if row.source == "lexical_semantic_match" else "abstention"
+        )
+        chosen = row.policy != "FALLBACK"
+        reason = None if chosen else decision.get("reason") or "no_semantic_binding"
+        if not chosen and reason == "accepted":
+            reason = "joint_assignment_collision_or_invalid_window"
+        if not chosen and self.diagnostics.get("runtime_failure_count"):
+            reason = "semantic_runtime_unavailable"
+        details = {
+            **decision, "beat_id": beat.id, "asset_id": row.asset_id,
+            "semantic_unit_id": row.semantic_unit_id,
+            "semantic_text": decision.get("semantic_text") or (
+                self._semantic_query(entity, None) if entity else ""
+            ),
+            "chosen_phrase": row.trigger_text if chosen else None,
+            "source": source, "reason": reason,
+            "spoken_start": row.spoken_start, "spoken_end": row.spoken_end,
+        }
+        for name in ("score", "runner_up_score", "margin", "phrase_index"):
+            details.setdefault(name, None)
+        if chosen:
+            details["score"] = row.confidence
+            for evidence in row.evidence:
+                if evidence.startswith("phrase_index="):
+                    details["phrase_index"] = int(evidence.split("=", 1)[1])
+        self.diagnostics["assets"].append(details)
+        row.evidence.append("semantic_match_diagnostic:" + json.dumps(
+            details, ensure_ascii=False, sort_keys=True, allow_nan=False,
+        ))
+        _LOG.info("Story semantic asset: %s", json.dumps(details, ensure_ascii=False))
 
     def _activations_for_beat(
         self,
@@ -607,6 +653,9 @@ class SemanticActivationPlanner:
         self, *, entity: StoryEntity, asset: VisualAsset, query: str,
         candidates: list[_PhraseCandidate], beat: StoryBeat,
     ) -> list[AssetActivation]:
+        decision = {"semantic_text": query, "reason": "missing_semantic_metadata",
+                    "score": None, "runner_up_score": None, "margin": None, "phrase_index": None}
+        self._decisions[(beat.id, entity.unit_id)] = decision
         if not query:
             return []
         upper = min(beat.end, beat.audio_end if beat.audio_end is not None else beat.end)
@@ -614,23 +663,42 @@ class SemanticActivationPlanner:
                   if math.isfinite(row.spoken_start) and math.isfinite(row.spoken_end)
                   and beat.start <= row.spoken_start < row.spoken_end <= upper]
         if not viable:
+            decision["reason"] = "no_aligned_phrase_candidates"
             return []
-        scores, semantic_used = self.scorer.score(query, [row.text for row in viable])
+        try:
+            scores, semantic_used = self.scorer.score(query, [row.text for row in viable])
+        finally:
+            self._runtime_diagnostics()
         ranked = sorted(
             (index for index, score in enumerate(scores[:len(viable)]) if math.isfinite(score)),
             key=lambda index: (-scores[index], viable[index].token_count, viable[index].spoken_start),
         )
         if not ranked:
+            decision["reason"] = "nonfinite_or_missing_scores"
             return []
         best = scores[ranked[0]]
-        second = scores[ranked[1]] if len(ranked) > 1 else 0.0
+        top = viable[ranked[0]]
+        # Nested ngrams are variants of one spoken occurrence, not independent
+        # competing meanings. A repeated phrase elsewhere remains a competitor.
+        def distinct(row):
+            overlap = min(row.spoken_end, top.spoken_end) - max(row.spoken_start, top.spoken_start)
+            shortest = min(row.spoken_end - row.spoken_start, top.spoken_end - top.spoken_start)
+            return overlap <= shortest * 0.5
+        runner = next((i for i in ranked[1:] if distinct(viable[i])), None)
+        second = scores[runner] if runner is not None else 0.0
         margin = best - second
+        decision.update(score=best, runner_up_score=second, margin=margin,
+                        phrase_index=candidates.index(top), candidate_phrase=top.text)
         accepted = (
-            semantic_used and (best >= 0.80 or (
-                best >= self._MIN_SEMANTIC_SCORE and margin >= self._MIN_SEMANTIC_MARGIN
-            ))
+            semantic_used and best >= self._MIN_SEMANTIC_SCORE
+            and margin >= self._MIN_SEMANTIC_MARGIN
         ) or (not semantic_used and best >= self._MIN_LEXICAL_SCORE
               and margin >= self._MIN_LEXICAL_MARGIN)
+        decision["reason"] = "accepted" if accepted else (
+            "ambiguous_phrase_candidates" if best >= (
+                self._MIN_SEMANTIC_SCORE if semantic_used else self._MIN_LEXICAL_SCORE
+            ) else "score_below_threshold"
+        )
         if not accepted:
             return []
         result: list[AssetActivation] = []
@@ -646,6 +714,7 @@ class SemanticActivationPlanner:
                 source="multilingual_semantic_match" if semantic_used else "lexical_semantic_match",
                 policy="SEMANTIC",
                 evidence=[f"score={score:.3f}", f"margin={margin:.3f}", f"query={query}",
+                          f"phrase_index={candidates.index(chosen)}",
                           "scene_joint_assignment"],
             )
             # Prune overlapping variants of the same phrase before assignment.
@@ -761,22 +830,27 @@ class SemanticActivationPlanner:
         return output
 
     @staticmethod
-    def _semantic_query(entity: StoryEntity, asset: VisualAsset) -> str:
-        values = [
-            value for value in (
-                entity.semantic_name,
-                entity.entity_type,
-                entity.narrative_function,
-                entity.semantic_intent,
-                asset.role,
-            )
-            if value
-        ]
-        for key in ("label", "description", "visual_label", "meaning", "concept"):
-            value = entity.package_metadata.get(key)
-            if isinstance(value, str) and value.strip():
-                values.append(value.strip())
-        return " ; ".join(dict.fromkeys(values))
+    def _semantic_query(entity: StoryEntity, asset: VisualAsset | None) -> str:
+        del asset  # Extraction role/filename is not evidence of semantic meaning.
+        values: list[str] = []
+        metadata = entity.package_metadata
+        for container in (metadata, metadata.get("semantic_context")):
+            if not isinstance(container, dict):
+                continue
+            for key in ("description", "label", "visual_label", "meaning", "concept"):
+                value = container.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.append(value.strip())
+        if entity.semantic_name:
+            values.append(entity.semantic_name.replace("_", " ").strip())
+        if not values and entity.narrative_function:
+            value = entity.narrative_function.replace("_", " ").strip()
+            if len(value.split()) > 1:
+                values.append(value)
+        structural = {(entity.entity_type or "").casefold(), (entity.role or "").casefold(),
+                      ""}
+        return " ; ".join(dict.fromkeys(value for value in values
+                                        if value and value.casefold() not in structural))
 
     @staticmethod
     def _ordered_entities(beat: StoryBeat) -> list[StoryEntity]:

@@ -131,8 +131,6 @@ def test_story_semantic_activation_anchors_visual_to_spoken_phrase(tmp_path: Pat
     scorer = QueryAwareScorer({
         "يفكر": 0.94,
         "يفكر بطريقة": 0.86,
-        "الهاكر": 0.90,
-        "الهاكر الأبيض": 0.93,
     })
     planner = SemanticActivationPlanner(scorer=scorer)
     result = planner.enrich(package, _transcript(), [character, bulb], [_beat()])[0]

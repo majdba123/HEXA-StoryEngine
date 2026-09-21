@@ -174,7 +174,7 @@ def test_metadata_order_does_not_hide_earlier_narration(tmp_path):
 
 def test_completion_uses_near_equivalent_late_phrase_only_when_supported(tmp_path):
     package, transcript, assets, beat = scene_case(tmp_path, 2, 11)
-    scorer = Scorer({"concept00": {"concept00": 0.95, "concept01": 0.94}, "concept01": {}})
+    scorer = Scorer({"concept00": {"concept00": 0.96, "concept01": 0.94}, "concept01": {}})
     result = SemanticActivationPlanner(scorer=scorer).enrich(package, transcript, assets, [beat])[0]
     matched = next(r for r in result.asset_activations if r.activation_policy == "OWN_WINDOW")
     assert matched.trigger_text == "concept01"
