@@ -733,6 +733,9 @@ class SemanticActivationPlanner:
         if cached is not None:
             return cached
 
+        phrase_shortlists = self._visual_phrase_shortlists(
+            inventory=inventory, candidates=candidates, beat=beat,
+        )
         phrase_rows = [
             {
                 "index": index,
@@ -740,8 +743,8 @@ class SemanticActivationPlanner:
                 "spoken_start": round(row.spoken_start, 3),
             }
             for index, row in enumerate(candidates)
-            if row.token_count <= 3
-        ][:72]
+            if row.token_count <= 5
+        ][:48]
         asset_rows = []
         for asset in assets:
             bbox = list(asset.source_bbox) if asset.source_bbox else None
@@ -780,7 +783,11 @@ class SemanticActivationPlanner:
             f"Narration: {beat.narration!r}. "
             f"Assets: {json.dumps(asset_rows, ensure_ascii=False)}. "
             f"Semantic units: {json.dumps(entity_rows, ensure_ascii=False)}. "
-            f"Phrase candidates: {json.dumps(phrase_rows, ensure_ascii=False)}."
+            f"Per-asset phrase choices from semantic retrieval: "
+            f"{json.dumps(phrase_shortlists, ensure_ascii=False)}. "
+            f"Fallback phrase candidates: {json.dumps(phrase_rows, ensure_ascii=False)}. "
+            "If an asset has per-asset phrase choices, choose only a phrase_index from "
+            "that asset's choices. Otherwise use the fallback list. Omit uncertain matches."
         )
         try:
             visual_input = (
@@ -796,6 +803,10 @@ class SemanticActivationPlanner:
         valid_assets = {asset.id for asset in assets}
         valid_entities = {entity.unit_id for entity in entities}
         valid_phrase_indices = {row["index"] for row in phrase_rows}
+        allowed_by_asset = {
+            asset_id: {row["index"] for row in rows}
+            for asset_id, rows in phrase_shortlists.items()
+        }
         if isinstance(payload, dict) and isinstance(payload.get("matches"), list):
             for row in payload["matches"]:
                 if not isinstance(row, dict):
@@ -810,7 +821,9 @@ class SemanticActivationPlanner:
                     continue
                 if (
                     asset_id not in valid_assets
-                    or phrase_index not in valid_phrase_indices
+                    or (
+                        phrase_index not in allowed_by_asset.get(asset_id, valid_phrase_indices)
+                    )
                     or not 0.0 <= confidence <= 1.0
                     or confidence < 0.72
                     or (raw_unit_id not in (None, "") and unit_id not in valid_entities)
@@ -832,6 +845,66 @@ class SemanticActivationPlanner:
         parsed = _VisualSceneMatches(by_unit=parsed_units, by_asset=parsed_assets)
         self._visual_cache[cache_key] = parsed
         return parsed
+
+    def _visual_phrase_shortlists(
+        self,
+        *,
+        inventory: VisualSemanticInventory,
+        candidates: list[_PhraseCandidate],
+        beat: StoryBeat,
+    ) -> dict[str, list[dict[str, Any]]]:
+        speech_upper = beat.audio_end if beat.audio_end is not None else beat.end
+        viable = [
+            (index, row) for index, row in enumerate(candidates)
+            if math.isfinite(row.spoken_start) and math.isfinite(row.spoken_end)
+            and beat.start <= row.spoken_start < row.spoken_end <= speech_upper
+        ]
+        if not viable:
+            return {}
+        texts = [row.text for _, row in viable]
+        result: dict[str, list[dict[str, Any]]] = {}
+        for asset_id, visual in inventory.assets.items():
+            if not visual.semantic or visual.confidence < 0.62 or not visual.description.strip():
+                continue
+            try:
+                scores, semantic_used = self.scorer.score(visual.description, texts)
+            finally:
+                self._runtime_diagnostics()
+            if not semantic_used:
+                continue
+            ranked = sorted(
+                range(min(len(scores), len(viable))),
+                key=lambda pos: (-scores[pos], viable[pos][1].token_count,
+                                 viable[pos][1].spoken_start),
+            )
+            chosen: list[tuple[int, _PhraseCandidate, float]] = []
+            for pos in ranked:
+                score = scores[pos]
+                if not math.isfinite(score):
+                    continue
+                index, candidate = viable[pos]
+                if any(self._candidate_overlap(candidate, existing) for _, existing, _ in chosen):
+                    continue
+                chosen.append((index, candidate, score))
+                if len(chosen) >= 4:
+                    break
+            if chosen:
+                result[asset_id] = [
+                    {
+                        "index": index,
+                        "text": candidate.text,
+                        "score": round(float(score), 4),
+                        "spoken_start": round(candidate.spoken_start, 3),
+                    }
+                    for index, candidate, score in chosen
+                ]
+        return result
+
+    @staticmethod
+    def _candidate_overlap(left: _PhraseCandidate, right: _PhraseCandidate) -> bool:
+        overlap = min(left.spoken_end, right.spoken_end) - max(left.spoken_start, right.spoken_start)
+        shortest = min(left.spoken_end - left.spoken_start, right.spoken_end - right.spoken_start)
+        return overlap > max(0.0, shortest * 0.5)
 
     def _semantic_options(
         self, *, entity: StoryEntity, asset: VisualAsset, query: str,
