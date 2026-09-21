@@ -35,7 +35,6 @@ class MotionPlanner:
         cues: list[MotionCue] = []
         previous_pace_tier: str | None = None
         last_attention_reset = 0.0
-        previous_beat: StoryBeat | None = None
         previous_layout: CompositionBeat | None = None
 
         for beat_index, beat in enumerate(beats):
@@ -310,7 +309,6 @@ class MotionPlanner:
                         ),
                     )
                 )
-            previous_beat = beat
             previous_layout = layout
         return cues
 
