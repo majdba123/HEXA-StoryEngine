@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.models import StoryEntity, StoryTrigger, TranscriptWord
+from app.models import StoryBeat, StoryEntity, StorySemanticContext, StoryTrigger, TranscriptWord
 from app.story.activation import HybridSemanticTextScorer, SemanticActivationPlanner
 from app.story.binding import SemanticAssetBinder
 from test_story_activation_windows import Scorer, scene_case
@@ -139,3 +139,25 @@ def test_explicit_global_span_does_not_capture_next_word(tmp_path):
     assert row.policy == "EXPLICIT"
     assert row.trigger_text == "first"
     assert row.spoken_end == pytest.approx(0.8)
+
+
+def test_primary_group_query_uses_scene_visual_context_without_leaking_to_support():
+    context = StorySemanticContext(
+        scene_visual_concept="الباحث يكشف ثغرة صغيرة بعدسة أمنية",
+        scene_purpose="شرح اكتشاف نقطة ضعف",
+    )
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0, end=2, audio_start=0, audio_end=2,
+        narration="عشان يكتشف نقاط الضعف", action="EXPLAIN", semantic_context=context,
+    )
+    primary = StoryEntity(
+        unit_id="p", semantic_name="scene_003", entity_type="GROUP", role="PRIMARY",
+    )
+    support = StoryEntity(
+        unit_id="s", semantic_name="security analyst", entity_type="CHARACTER", role="SUPPORTING",
+    )
+    primary_query = SemanticActivationPlanner._semantic_query(primary, None, beat)
+    support_query = SemanticActivationPlanner._semantic_query(support, None, beat)
+    assert "الباحث يكشف ثغرة صغيرة بعدسة أمنية" in primary_query
+    assert "شرح اكتشاف نقطة ضعف" in primary_query
+    assert support_query == "security analyst"

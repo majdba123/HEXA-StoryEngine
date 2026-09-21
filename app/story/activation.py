@@ -320,7 +320,7 @@ class SemanticActivationPlanner:
             **decision, "beat_id": beat.id, "asset_id": row.asset_id,
             "semantic_unit_id": row.semantic_unit_id,
             "semantic_text": decision.get("semantic_text") or (
-                self._semantic_query(entity, None) if entity else ""
+                self._semantic_query(entity, None, beat) if entity else ""
             ),
             "chosen_phrase": row.trigger_text if chosen else None,
             "source": source, "reason": reason,
@@ -377,7 +377,7 @@ class SemanticActivationPlanner:
                 scene=scene, beat=beat,
             )
             ranked = [explicit] if explicit else self._semantic_options(
-                entity=entity, asset=asset, query=self._semantic_query(entity, asset),
+                entity=entity, asset=asset, query=self._semantic_query(entity, asset, beat),
                 candidates=candidates, beat=beat,
             )
             if not ranked and self.visual_backend is not None:
@@ -831,7 +831,9 @@ class SemanticActivationPlanner:
         return output
 
     @staticmethod
-    def _semantic_query(entity: StoryEntity, asset: VisualAsset | None) -> str:
+    def _semantic_query(
+        entity: StoryEntity, asset: VisualAsset | None, beat: StoryBeat | None = None,
+    ) -> str:
         del asset  # Extraction role/filename is not evidence of semantic meaning.
         values: list[str] = []
         metadata = entity.package_metadata
@@ -842,6 +844,19 @@ class SemanticActivationPlanner:
                 value = container.get(key)
                 if isinstance(value, str) and value.strip():
                     values.append(value.strip())
+
+        # A package may keep unit IDs structural while authoring the real visual
+        # meaning at scene level. Only the primary/group entity inherits that scene
+        # description so support assets do not all chase the same narration phrase.
+        context = beat.semantic_context if beat is not None else None
+        if context is not None and (
+            (entity.role or "").upper() == "PRIMARY"
+            or (entity.entity_type or "").upper() == "GROUP"
+        ):
+            for value in (context.scene_visual_concept, context.scene_purpose):
+                if isinstance(value, str) and value.strip():
+                    values.append(value.strip())
+
         if entity.semantic_name:
             values.append(entity.semantic_name.replace("_", " ").strip())
         if not values and entity.narrative_function:
