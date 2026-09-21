@@ -3,6 +3,7 @@ from app.story.activation import HybridSemanticTextScorer, SemanticActivationPla
 from app.story.graph import StoryGraph, StoryGraphBuilder, StoryGraphEdge, StoryGraphNode
 from app.story.planner import StoryPlanner
 from app.story.semantic import PackageStoryInterpreter
+from app.story.sync_qa import StorySyncQA, StorySyncReport
 
 __all__ = [
     "AssetBinding",
@@ -15,4 +16,6 @@ __all__ = [
     "StoryGraphEdge",
     "StoryGraphNode",
     "StoryPlanner",
+    "StorySyncQA",
+    "StorySyncReport",
 ]

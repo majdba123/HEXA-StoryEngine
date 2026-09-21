@@ -30,7 +30,7 @@ from app.shared.errors import (
     HexaError,
     StageFailedError,
 )
-from app.story import StoryPlanner
+from app.story import StoryPlanner, StorySyncQA
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
@@ -80,6 +80,7 @@ class StoryEnginePipeline:
         self.story = StoryPlanner(
             semantic_model_name=self.settings.semantic_text_model,
         )
+        self.story_sync_qa = StorySyncQA()
         self.reference = ReferenceAnalyzer().analyze()
         self.asset_manager = AssetManager()
         self.director = VisualDirector(Qwen3VLBackend(self.settings.qwen3_vl_model))
@@ -194,6 +195,13 @@ class StoryEnginePipeline:
             story, text.cues, text_composition, choreography
         )
 
+        sync_report = self.story_sync_qa.inspect(story=story, motion=motion)
+        self.story_sync_qa.write(
+            sync_report,
+            workspace / "diagnostics" / "story-sync-qa.json",
+        )
+        self.story_sync_qa.require(sync_report)
+
         authoring_report = StorytellingValidator.validate(
             package=package,
             story=story,
@@ -224,7 +232,12 @@ class StoryEnginePipeline:
             progress,
             Stage.motion,
             0.67,
-            "Authoring QA passed: 0 visual layout, 0 text layout, 0 short-motion violations",
+            (
+                "Authoring QA passed: "
+                f"{sync_report.anchored_assets} semantic sync anchors, "
+                f"{sync_report.fallback_assets} conservative fallbacks; "
+                "0 visual layout, 0 text layout, 0 short-motion violations"
+            ),
         )
 
         self._check_cancel(cancelled)
