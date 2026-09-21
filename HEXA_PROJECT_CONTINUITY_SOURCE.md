@@ -199,3 +199,77 @@ PROVEN status:
 - Real-package semantic visual synchronization: NOT YET VISUALLY PROVEN.
   The next acceptance step is to run multiple real Final Packages and inspect whether
   the chosen icon/phrase pairs are semantically correct, not merely time-correct.
+
+
+## MONTAGE13 TRANSFER CHECKPOINT — 2026-09-21
+
+Outgoing owner: Montage12.
+Incoming owner: Montage13.
+Development branch: `montage`.
+
+State handed off:
+- semantic synchronization implementation is committed on `montage`;
+- latest implementation/documentation checkpoint before this transfer:
+  `e90ac28784241225f1e7adabace06c4b007bc3c8`
+  `[continuity] Record final semantic sync diagnostics and VLM fallback`;
+- CI run `35602060137` on that checkpoint: SUCCESS;
+- Ruff: `All checks passed!`;
+- Pytest: `108 passed, 12 warnings in 6.31s`;
+- protected branches `majd` and `bayer` remain unchanged at
+  `d1c2ad87116238ed7c46e1b01f6e129a0d2cd5ed`.
+
+What is implemented and must be preserved:
+- Story owns per-asset semantic activation time through `AssetActivation`.
+- semantic-unit -> cutout binding lives under Story; Choreography reuses the same binder
+  through a compatibility export rather than maintaining a second mapping algorithm.
+- trusted explicit triggers are preferred; coarse whole-scene triggers are not treated
+  as fake word-level truth.
+- forced-aligned word/character spans are used to generate narration phrase candidates.
+- multilingual semantic matching is available, with conservative confidence/margin
+  gating and explicit abstention.
+- optional Qwen3-VL is only a fallback for unresolved semantic cases and its outputs are
+  strictly constrained to known assets/phrases.
+- family/sub-assets may inherit a trusted parent anchor instead of inventing independent
+  semantic timing.
+- Motion consumes trusted Story activation times and targets semantic settle at the
+  spoken anchor; the existing entry -> settle -> freeze motion contract stays intact.
+- Story synchronization QA writes `diagnostics/story-sync-qa.json` and rejects timing
+  drift greater than 50 ms for trusted semantic anchors.
+- the Final Package format, scene geometry, Pass1, Pass2, Composition authority and
+  protected baseline branches are not changed by this work.
+
+What is NOT proven yet:
+- semantic pairing quality on real diverse Final Packages is not visually accepted yet.
+- CI proves the contract and synthetic cases, not that every real icon is matched to the
+  correct narration phrase.
+- motion-style quality is intentionally deferred. First finish and prove synchronization;
+  only then start the separate motion-quality improvement problem.
+
+Mandatory next steps for Montage13:
+1. Verify live branch/HEAD/CI before editing; do not trust this file alone.
+2. Read the current `app/story/activation.py`, `app/story/sync_qa.py`,
+   `app/story/binding.py`, `app/motion/timing.py`, `app/motion/planner.py`,
+   `app/pipeline.py`, and semantic-sync tests before changing behavior.
+3. Run real-package validation on multiple materially different Final Packages.
+4. Inspect diagnostics per asset: asset ID, semantic unit, chosen phrase, spoken anchor,
+   confidence/source/policy, compiled settle time and delta.
+5. Measure semantic correctness separately from timing correctness. A 0 ms timing delta
+   to the wrong phrase is still a synchronization failure.
+6. Add regression cases for every real false match or unsafe abstention discovered.
+7. Prefer calibrated abstention over forced guesses. Never special-case scene numbers,
+   filenames, hacker vocabulary, banking vocabulary, or one current package.
+8. Mental-test every change against: no character; 20 assets; one asset; photos;
+   illustrations; long Arabic text; numbers; comparisons; timelines; motion-limited
+   assets; very fast/slow narration; 0.5 s/8 s scenes; repeated assets; re-entry.
+9. Keep `majd` and `bayer` untouched. All synchronization development stays on
+   `montage`.
+10. Do not begin motion-style redesign until real-package synchronization is proven or
+    the user explicitly changes priority.
+
+Acceptance target for the synchronization phase:
+- correct semantic phrase chosen for important movable assets on diverse real packages;
+- trusted Motion settle aligns to the chosen forced-aligned phrase within QA tolerance;
+- ambiguous/decorative assets abstain or group safely instead of receiving invented
+  word-level timing;
+- no Final Package geometry/layout regression;
+- green CI plus real visual review.
