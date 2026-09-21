@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
 
+from .activation import SemanticActivationPlanner
 from .graph import StoryGraph, StoryGraphBuilder
 from .semantic import PackageStoryInterpreter
 
@@ -20,9 +21,12 @@ class StoryPlanner:
     _MAX_VISUAL_LEAD = 0.30
     _MIN_VISUAL_BEAT = 0.08
 
-    def __init__(self) -> None:
+    def __init__(self, *, semantic_model_name: str | None = None) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
+        self.activation = SemanticActivationPlanner(
+            semantic_model_name=semantic_model_name,
+        )
 
     def build_graph(self, beats: list[StoryBeat]) -> StoryGraph:
         return self.graph_builder.build(beats)
@@ -107,7 +111,8 @@ class StoryPlanner:
             beat.audio_end if beat.audio_end is not None else beat.end,
             beat.id,
         ))
-        return self._assign_visual_timeline(beats, transcript.duration)
+        beats = self._assign_visual_timeline(beats, transcript.duration)
+        return self.activation.enrich(package, transcript, assets, beats)
 
     def _assign_visual_timeline(self, beats: list[StoryBeat], duration: float) -> list[StoryBeat]:
         if not beats:

@@ -77,7 +77,9 @@ class StoryEnginePipeline:
                 else None
             ),
         )
-        self.story = StoryPlanner()
+        self.story = StoryPlanner(
+            semantic_model_name=self.settings.semantic_text_model,
+        )
         self.reference = ReferenceAnalyzer().analyze()
         self.asset_manager = AssetManager()
         self.director = VisualDirector(Qwen3VLBackend(self.settings.qwen3_vl_model))

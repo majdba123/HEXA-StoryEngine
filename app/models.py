@@ -165,6 +165,27 @@ class StorySemanticContext(BaseModel):
     tension: float = Field(default=0.0, ge=0, le=1)
 
 
+class AssetActivation(BaseModel):
+    """Narration anchor chosen by Story for one extracted visual asset.
+
+    Story owns semantic timing. Motion consumes this record but never infers meaning.
+    The policy is explicit so low-confidence evidence can abstain instead of fabricating
+    a word-level synchronization.
+    """
+
+    asset_id: str
+    semantic_unit_id: str | None = None
+    trigger_text: str | None = None
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = Field(default=None, ge=0)
+    spoken_end: float | None = Field(default=None, ge=0)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    source: str = "none"
+    policy: str = "FALLBACK"
+    evidence: list[str] = Field(default_factory=list)
+
+
 class StoryBeat(BaseModel):
     id: str
     scene_id: str
@@ -179,6 +200,7 @@ class StoryBeat(BaseModel):
     handoff_from: str | None = None
     semantic_targets: list[str] = Field(default_factory=list)
     semantic_context: StorySemanticContext | None = None
+    asset_activations: list[AssetActivation] = Field(default_factory=list)
 
 
 class LayoutItem(BaseModel):

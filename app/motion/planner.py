@@ -42,6 +42,9 @@ class MotionPlanner:
             if layout is None or not layout.items:
                 continue
             directive = choreography.for_beat(beat.id) if choreography else None
+            activation_by_asset = {
+                row.asset_id: row for row in beat.asset_activations
+            }
             if directive is None and choreography is None:
                 visual_duration = max(0.08, beat.end - beat.start)
                 count = len(layout.items)
@@ -58,8 +61,13 @@ class MotionPlanner:
                     )
                     program = self._stable_entry_hold(program)
                     window = self.timing.legacy_window(
-                        beat=beat, distance=program.travel_distance, index=index, count=count,
+                        beat=beat,
+                        distance=program.travel_distance,
+                        index=index,
+                        count=count,
                         primary=index == 0,
+                        activation=activation_by_asset.get(item.asset_id),
+                        settle_progress=program.settle_progress,
                     )
                     cues.append(self.compiler.compile(
                         beat=beat, asset_id=item.asset_id, program=program, window=window,
@@ -217,6 +225,7 @@ class MotionPlanner:
                     settle_progress=program.settle_progress,
                     hook=hook,
                     pace_tier=pace_tier,
+                    activation=activation_by_asset.get(item.asset_id),
                 )
                 cues.append(
                     self.compiler.compile(

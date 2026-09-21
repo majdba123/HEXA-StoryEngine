@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.models import StoryBeat
+from app.models import AssetActivation, StoryBeat
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +45,7 @@ class MotionTimingPolicy:
         settle_progress: float = 0.58,
         hook: bool = False,
         pace_tier: str | None = None,
+        activation: AssetActivation | None = None,
     ) -> MotionWindow:
         visual_duration = max(0.08, beat.end - beat.start)
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -78,6 +79,15 @@ class MotionTimingPolicy:
                 self._MIN_DURATION,
                 min(self._MAX_PRIMARY_DURATION, max(self._MIN_DURATION, visual_duration)),
             )
+            anchored = self._activation_window(
+                beat=beat,
+                activation=activation,
+                preferred_duration=preferred,
+                settle_progress=settle_progress,
+                pace_tier=pace_tier,
+            )
+            if anchored is not None:
+                return anchored
             return self._primary_window(
                 beat=beat,
                 audio_start=audio_start,
@@ -100,6 +110,15 @@ class MotionTimingPolicy:
             self._MIN_DURATION,
             min(self._MAX_SUPPORT_DURATION, max(self._MIN_DURATION, visual_duration)),
         )
+        anchored = self._activation_window(
+            beat=beat,
+            activation=activation,
+            preferred_duration=preferred,
+            settle_progress=settle_progress,
+            pace_tier=pace_tier,
+        )
+        if anchored is not None:
+            return anchored
         return self._support_window(
             beat=beat,
             audio_start=audio_start,
@@ -120,6 +139,8 @@ class MotionTimingPolicy:
         index: int,
         count: int,
         primary: bool,
+        activation: AssetActivation | None = None,
+        settle_progress: float = 0.58,
     ) -> MotionWindow:
         visual_duration = max(0.08, beat.end - beat.start)
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -140,6 +161,16 @@ class MotionTimingPolicy:
             0.12,
             min(cap, max(0.12, visual_duration - 0.04)),
         )
+        anchored = self._activation_window(
+            beat=beat,
+            activation=activation,
+            preferred_duration=preferred,
+            settle_progress=settle_progress,
+            pace_tier=self._pace_tier(words_per_second),
+        )
+        if anchored is not None:
+            return anchored
+
         if primary:
             start = beat.start
             settle_deadline = min(beat.end, audio_start + 0.04)
@@ -261,6 +292,48 @@ class MotionTimingPolicy:
             start=start,
             end=end,
             semantic_settle=min(end, semantic_settle),
+            pace_tier=pace_tier,
+        )
+
+    def _activation_window(
+        self,
+        *,
+        beat: StoryBeat,
+        activation: AssetActivation | None,
+        preferred_duration: float,
+        settle_progress: float,
+        pace_tier: str,
+    ) -> MotionWindow | None:
+        if (
+            activation is None
+            or activation.spoken_start is None
+            or activation.policy not in {"SEMANTIC", "EXPLICIT", "GROUP"}
+        ):
+            return None
+
+        anchor = float(activation.spoken_start)
+        if anchor < beat.start + 0.015 or anchor > beat.end - 0.015:
+            return None
+
+        settle_progress = self._clamp(settle_progress, 0.05, 1.0)
+        before_capacity = max(0.0, anchor - beat.start)
+        max_by_before = before_capacity / settle_progress
+        if settle_progress >= 1.0 - 1e-9:
+            max_by_after = float("inf")
+        else:
+            after_capacity = max(0.0, beat.end - anchor)
+            max_by_after = after_capacity / (1.0 - settle_progress)
+
+        duration = min(preferred_duration, max_by_before, max_by_after)
+        if duration < 0.025:
+            return None
+
+        start = anchor - settle_progress * duration
+        end = start + duration
+        return MotionWindow(
+            start=max(beat.start, start),
+            end=min(beat.end, end),
+            semantic_settle=anchor,
             pace_tier=pace_tier,
         )
 
