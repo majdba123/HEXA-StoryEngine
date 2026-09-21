@@ -144,7 +144,7 @@ def test_explicit_global_span_does_not_capture_next_word(tmp_path):
 def test_primary_group_query_uses_scene_visual_context_without_leaking_to_support():
     context = StorySemanticContext(
         scene_visual_concept="الباحث يكشف ثغرة صغيرة بعدسة أمنية",
-        scene_purpose="شرح اكتشاف نقطة ضعف",
+        scene_purpose="عشان يكتشف نقاط الضعف",
     )
     beat = StoryBeat(
         id="b", scene_id="s", start=0, end=2, audio_start=0, audio_end=2,
@@ -158,8 +158,9 @@ def test_primary_group_query_uses_scene_visual_context_without_leaking_to_suppor
     )
     primary_query = SemanticActivationPlanner._semantic_query(primary, None, beat)
     support_query = SemanticActivationPlanner._semantic_query(support, None, beat)
-    assert "الباحث يكشف ثغرة صغيرة بعدسة أمنية" in primary_query
-    assert "شرح اكتشاف نقطة ضعف" in primary_query
+    assert primary_query == "الباحث يكشف ثغرة صغيرة بعدسة أمنية"
+    assert "عشان يكتشف نقاط الضعف" not in primary_query
+    assert "scene 003" not in primary_query
     assert support_query == "security analyst"
 
 
@@ -217,3 +218,16 @@ def test_vlm_direct_asset_fallback_requires_high_confidence(tmp_path):
         package, transcript, assets, [beat],
     )[0]
     assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
+
+
+def test_runtime_failure_does_not_mask_missing_semantic_binding_reason(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    beat.semantic_context.entities = []
+    scorer = HybridSemanticTextScorer(None, required=False)
+    planner = SemanticActivationPlanner(scorer=scorer)
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
+    diag = planner.diagnostics["assets"][0]
+    assert planner.diagnostics["semantic_runtime_available"] is False
+    assert diag["semantic_text"] == ""
+    assert diag["reason"] == "no_semantic_binding"

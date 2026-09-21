@@ -321,7 +321,12 @@ class SemanticActivationPlanner:
         reason = None if chosen else decision.get("reason") or "no_semantic_binding"
         if not chosen and reason == "accepted":
             reason = "joint_assignment_collision_or_invalid_window"
-        if not chosen and self.diagnostics.get("runtime_failure_count"):
+        if (
+            not chosen
+            and self.diagnostics.get("runtime_failure_count")
+            and bool(decision.get("semantic_text"))
+            and reason not in {"missing_semantic_metadata", "no_semantic_binding"}
+        ):
             reason = "semantic_runtime_unavailable"
         details = {
             **decision, "beat_id": beat.id, "asset_id": row.asset_id,
@@ -944,11 +949,16 @@ class SemanticActivationPlanner:
             (entity.role or "").upper() == "PRIMARY"
             or (entity.entity_type or "").upper() == "GROUP"
         ):
-            for value in (context.scene_visual_concept, context.scene_purpose):
-                if isinstance(value, str) and value.strip():
-                    values.append(value.strip())
+            # Scene visual concept is authored visual evidence. Scene purpose may echo
+            # narration verbatim and would let E5 "match" text to itself rather than
+            # understand the visual meaning, so it is intentionally excluded here.
+            value = context.scene_visual_concept
+            if isinstance(value, str) and value.strip():
+                values.append(value.strip())
 
-        if entity.semantic_name:
+        # Structural semantic names are only a last resort. Rich visual metadata should
+        # not be diluted by identifiers such as scene_003 or white_hat_scene_004.
+        if not values and entity.semantic_name:
             values.append(entity.semantic_name.replace("_", " ").strip())
         if not values and entity.narrative_function:
             value = entity.narrative_function.replace("_", " ").strip()
