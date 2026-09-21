@@ -56,6 +56,7 @@ class MotionPlanner:
                             visual_duration=visual_duration,
                         )
                     )
+                    program = self._stable_entry_hold(program)
                     window = self.timing.legacy_window(
                         beat=beat, distance=program.travel_distance, index=index, count=count,
                         primary=index == 0,
@@ -195,6 +196,7 @@ class MotionPlanner:
                     primary=(item is primary_item),
                     geometry_locked=family_secondary,
                 )
+                program = self._stable_entry_hold(program)
 
                 # Choreography may promote a semantic support cutout (for example a card,
                 # wallet, or limit badge) to visual focus while Story keeps the authored
@@ -311,6 +313,48 @@ class MotionPlanner:
                 )
             previous_layout = layout
         return cues
+
+    @staticmethod
+    def _stable_entry_hold(program: MotionProgram) -> MotionProgram:
+        """Remove wobble/recoil after arrival and keep one clean entry trajectory.
+
+        Composition owns the final authored position. Motion may reveal an asset on the
+        way to that destination, but once the asset reaches settle_progress it must
+        remain completely still for the rest of the beat. Keeping only the first
+        transform plus the semantic settle point also removes tiny pre-settle oscillation
+        authored by reaction/bounce primitives while preserving the intended entrance.
+        """
+        first = program.keyframes[0]
+        settle = next(
+            frame
+            for frame in program.keyframes
+            if abs(frame.progress - program.settle_progress) <= 1e-9
+        )
+        frames = [
+            MotionKeyframe(
+                0.0,
+                first.dx,
+                first.dy,
+                first.scale,
+                first.easing,
+            ),
+        ]
+        if program.settle_progress < 1.0 - 1e-9:
+            frames.append(
+                MotionKeyframe(
+                    program.settle_progress,
+                    0.0,
+                    0.0,
+                    1.0,
+                    settle.easing,
+                )
+            )
+        frames.append(MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"))
+        return MotionProgram(
+            name=program.name,
+            keyframes=tuple(frames),
+            settle_progress=program.settle_progress,
+        )
 
     @staticmethod
     def _apply_density_budget(
