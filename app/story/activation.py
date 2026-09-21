@@ -50,6 +50,12 @@ class _VisualSemanticMatch:
     confidence: float
 
 
+@dataclass(frozen=True, slots=True)
+class _VisualSceneMatches:
+    by_unit: dict[str, _VisualSemanticMatch]
+    by_asset: dict[str, _VisualSemanticMatch]
+
+
 class HybridSemanticTextScorer:
     """Fuse deterministic lexical evidence with an optional multilingual encoder.
 
@@ -218,6 +224,7 @@ class SemanticActivationPlanner:
     _MIN_SEMANTIC_MARGIN = 0.015
     _MIN_LEXICAL_SCORE = 0.72
     _MIN_LEXICAL_MARGIN = 0.08
+    _MIN_DIRECT_VLM_CONFIDENCE = 0.88
 
     def __init__(
         self,
@@ -232,7 +239,7 @@ class SemanticActivationPlanner:
             semantic_model_name, required=semantic_model_required
         )
         self.visual_backend = visual_backend
-        self._visual_cache: dict[str, dict[str, _VisualSemanticMatch]] = {}
+        self._visual_cache: dict[str, _VisualSceneMatches] = {}
         self.diagnostics: dict[str, Any] = {}
         self._decisions: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -307,7 +314,7 @@ class SemanticActivationPlanner:
             "inherited" if row.policy == "GROUP" else
             "explicit" if row.policy == "EXPLICIT" else
             "E5" if row.source == "multilingual_semantic_match" else
-            "VLM" if row.source == "vlm_joint_scene_match" else
+            "VLM" if row.source in {"vlm_joint_scene_match", "vlm_direct_asset_phrase_match"} else
             "lexical" if row.source == "lexical_semantic_match" else "abstention"
         )
         chosen = row.policy != "FALLBACK"
@@ -361,7 +368,7 @@ class SemanticActivationPlanner:
         asset_by_id = {asset.id: asset for asset in assets}
         activations: list[AssetActivation] = []
         options: list[tuple[StoryEntity, VisualAsset, list[AssetActivation]]] = []
-        visual_matches: dict[str, _VisualSemanticMatch] | None = None
+        visual_matches: _VisualSceneMatches | None = None
 
         for entity in entities:
             asset = asset_by_id.get(semantic_map.get(entity.unit_id, ""))
@@ -386,7 +393,7 @@ class SemanticActivationPlanner:
                         scene=scene, assets=assets, entities=entities,
                         candidates=candidates, beat=beat,
                     )
-                match = visual_matches.get(entity.unit_id)
+                match = visual_matches.by_unit.get(entity.unit_id)
                 visual_asset = asset
                 if match is not None and match.confidence >= 0.82:
                     visual_asset = asset_by_id.get(match.asset_id) or asset
@@ -424,6 +431,42 @@ class SemanticActivationPlanner:
             used_assets.add(asset.id)
 
         self._repair_early_completion(activations, options, beat)
+
+        # Some extracted cutouts have no package semantic unit at all. A configured
+        # local VLM may bind only those unresolved visual assets directly to one of
+        # the already aligned phrase candidates. It never creates text/timestamps,
+        # and a high threshold plus scene-wide collision checks keep this a bounded
+        # fallback rather than a second Story authority.
+        unresolved = [asset for asset in assets if (
+            asset.id not in used_assets
+            and asset.can_animate_independently
+            and (asset.role or "").casefold() not in {"background", "decorative"}
+        )]
+        if unresolved and self.visual_backend is not None and candidates:
+            if visual_matches is None:
+                visual_matches = self._visual_matches(
+                    scene=scene, assets=assets, entities=entities,
+                    candidates=candidates, beat=beat,
+                )
+            for asset_id, match in sorted(
+                visual_matches.by_asset.items(),
+                key=lambda item: (-item[1].confidence, item[0]),
+            ):
+                if asset_id in used_assets or match.confidence < self._MIN_DIRECT_VLM_CONFIDENCE:
+                    continue
+                asset = asset_by_id.get(asset_id)
+                if asset is None or asset not in unresolved:
+                    continue
+                activation = self._visual_asset_activation(
+                    asset=asset, match=match, candidates=candidates, beat=beat,
+                )
+                if activation is None or any(
+                    self._overlapping_anchors(activation, chosen) for chosen in activations
+                ):
+                    continue
+                activations.append(activation)
+                used_assets.add(asset.id)
+
         by_asset = {row.asset_id: row for row in activations}
         # Resolve parent chains in bounded passes, independent of input ordering.
         pending = sorted(assets, key=lambda asset: asset.id)
@@ -544,6 +587,46 @@ class SemanticActivationPlanner:
             evidence=["joint_visual_asset_phrase_match"],
         )
 
+    def _visual_asset_activation(
+        self,
+        *,
+        asset: VisualAsset,
+        match: _VisualSemanticMatch,
+        candidates: list[_PhraseCandidate],
+        beat: StoryBeat,
+    ) -> AssetActivation | None:
+        if (
+            match.asset_id != asset.id
+            or not math.isfinite(match.confidence)
+            or match.confidence < self._MIN_DIRECT_VLM_CONFIDENCE
+            or match.phrase_index < 0
+            or match.phrase_index >= len(candidates)
+        ):
+            return None
+        chosen = candidates[match.phrase_index]
+        if (
+            chosen.spoken_start < beat.start - 0.02
+            or chosen.spoken_start >= beat.end
+            or chosen.spoken_end <= chosen.spoken_start
+        ):
+            return None
+        return AssetActivation(
+            asset_id=asset.id,
+            semantic_unit_id=None,
+            trigger_text=chosen.text,
+            trigger_char_start=chosen.char_start,
+            trigger_char_end=chosen.char_end,
+            spoken_start=chosen.spoken_start,
+            spoken_end=chosen.spoken_end,
+            confidence=match.confidence,
+            source="vlm_direct_asset_phrase_match",
+            policy="SEMANTIC",
+            evidence=[
+                "bounded_visual_asset_phrase_match",
+                f"phrase_index={match.phrase_index}",
+            ],
+        )
+
     def _visual_matches(
         self,
         *,
@@ -552,7 +635,7 @@ class SemanticActivationPlanner:
         entities: list[StoryEntity],
         candidates: list[_PhraseCandidate],
         beat: StoryBeat,
-    ) -> dict[str, _VisualSemanticMatch]:
+    ) -> _VisualSceneMatches:
         backend = self.visual_backend
         if (
             backend is None
@@ -561,7 +644,7 @@ class SemanticActivationPlanner:
             or not candidates
             or len(assets) < 2
         ):
-            return {}
+            return _VisualSceneMatches(by_unit={}, by_asset={})
 
         cache_key = beat.id
         cached = self._visual_cache.get(cache_key)
@@ -600,11 +683,12 @@ class SemanticActivationPlanner:
             "You are the semantic synchronization matcher for a production video editor. "
             "The image is the authored final scene. Do not redesign it. "
             "Return one JSON object only with key 'matches'. Each match must contain "
-            "unit_id, asset_id, phrase_index, confidence. Choose only IDs and phrase "
-            "indices supplied below. Match a semantic unit to the visible cutout that "
-            "actually represents it, then to the spoken phrase that introduces that "
-            "meaning. Preserve narration order. Do not force decorative or ambiguous "
-            "objects; omit uncertain matches. confidence must be 0..1. "
+            "asset_id, phrase_index, confidence and may include unit_id. Choose only IDs "
+            "and phrase indices supplied below. When a known semantic unit applies, include "
+            "its unit_id. For a meaningful extracted cutout with no semantic unit, omit "
+            "unit_id and match that visible asset directly to the spoken phrase introducing "
+            "it. Preserve narration order. Do not force decorative or ambiguous objects; "
+            "omit uncertain matches. confidence must be 0..1. "
             f"Narration: {beat.narration!r}. "
             f"Assets: {json.dumps(asset_rows, ensure_ascii=False)}. "
             f"Semantic units: {json.dumps(entity_rows, ensure_ascii=False)}. "
@@ -614,7 +698,8 @@ class SemanticActivationPlanner:
             payload = backend.decide(scene.image_path, prompt)
         except Exception:
             payload = None
-        parsed: dict[str, _VisualSemanticMatch] = {}
+        parsed_units: dict[str, _VisualSemanticMatch] = {}
+        parsed_assets: dict[str, _VisualSemanticMatch] = {}
         valid_assets = {asset.id for asset in assets}
         valid_entities = {entity.unit_id for entity in entities}
         valid_phrase_indices = {row["index"] for row in phrase_rows}
@@ -622,7 +707,8 @@ class SemanticActivationPlanner:
             for row in payload["matches"]:
                 if not isinstance(row, dict):
                     continue
-                unit_id = str(row.get("unit_id") or "")
+                raw_unit_id = row.get("unit_id")
+                unit_id = str(raw_unit_id or "")
                 asset_id = str(row.get("asset_id") or "")
                 try:
                     phrase_index = int(row.get("phrase_index"))
@@ -630,22 +716,27 @@ class SemanticActivationPlanner:
                 except (TypeError, ValueError):
                     continue
                 if (
-                    unit_id not in valid_entities
-                    or asset_id not in valid_assets
+                    asset_id not in valid_assets
                     or phrase_index not in valid_phrase_indices
                     or not 0.0 <= confidence <= 1.0
                     or confidence < 0.72
+                    or (raw_unit_id not in (None, "") and unit_id not in valid_entities)
                 ):
                     continue
-                current = parsed.get(unit_id)
                 candidate = _VisualSemanticMatch(
                     asset_id=asset_id,
                     phrase_index=phrase_index,
                     confidence=confidence,
                 )
-                if current is None or candidate.confidence > current.confidence:
-                    parsed[unit_id] = candidate
+                current_asset = parsed_assets.get(asset_id)
+                if current_asset is None or candidate.confidence > current_asset.confidence:
+                    parsed_assets[asset_id] = candidate
+                if unit_id:
+                    current_unit = parsed_units.get(unit_id)
+                    if current_unit is None or candidate.confidence > current_unit.confidence:
+                        parsed_units[unit_id] = candidate
 
+        parsed = _VisualSceneMatches(by_unit=parsed_units, by_asset=parsed_assets)
         self._visual_cache[cache_key] = parsed
         return parsed
 

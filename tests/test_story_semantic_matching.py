@@ -161,3 +161,59 @@ def test_primary_group_query_uses_scene_visual_context_without_leaking_to_suppor
     assert "الباحث يكشف ثغرة صغيرة بعدسة أمنية" in primary_query
     assert "شرح اكتشاف نقطة ضعف" in primary_query
     assert support_query == "security analyst"
+
+
+
+class _FakeVisualBackend:
+    enabled = True
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = 0
+
+    def decide(self, image_path, prompt):
+        self.calls += 1
+        return self.payload
+
+
+def test_vlm_can_bind_unresolved_asset_directly_but_only_to_supplied_phrase(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    scorer = Scorer({"concept00": {}, "concept01": {}})
+    backend = _FakeVisualBackend({"matches": [{
+        "asset_id": assets[1].id, "phrase_index": 0, "confidence": 0.93,
+    }]})
+    planner = SemanticActivationPlanner(scorer=scorer, visual_backend=backend)
+    result = planner.enrich(package, transcript, assets, [beat])[0]
+    row = next(r for r in result.asset_activations if r.asset_id == assets[1].id)
+    assert row.activation_policy == "OWN_WINDOW"
+    assert row.source == "vlm_direct_asset_phrase_match"
+    assert row.trigger_text == transcript.words[0].text
+    assert row.semantic_unit_id is None
+    assert backend.calls == 1
+
+
+def test_vlm_direct_asset_fallback_rejects_invented_ids_and_phrase_indices(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    scorer = Scorer({"concept00": {}, "concept01": {}})
+    backend = _FakeVisualBackend({"matches": [
+        {"asset_id": "invented", "phrase_index": 0, "confidence": 0.99},
+        {"asset_id": assets[0].id, "phrase_index": 999, "confidence": 0.99},
+        {"unit_id": "invented-unit", "asset_id": assets[1].id,
+         "phrase_index": 0, "confidence": 0.99},
+    ]})
+    result = SemanticActivationPlanner(scorer=scorer, visual_backend=backend).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    assert all(r.activation_policy == "SAFE_ABSTENTION" for r in result.asset_activations)
+
+
+def test_vlm_direct_asset_fallback_requires_high_confidence(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 1)
+    scorer = Scorer({"concept00": {}})
+    backend = _FakeVisualBackend({"matches": [{
+        "asset_id": assets[0].id, "phrase_index": 0, "confidence": 0.87,
+    }]})
+    result = SemanticActivationPlanner(scorer=scorer, visual_backend=backend).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
