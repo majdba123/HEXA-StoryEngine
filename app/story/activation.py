@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.models import (
     AssetActivation,
@@ -34,6 +35,13 @@ class _PhraseCandidate:
     spoken_start: float
     spoken_end: float
     token_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _VisualSemanticMatch:
+    asset_id: str
+    phrase_index: int
+    confidence: float
 
 
 class HybridSemanticTextScorer:
@@ -167,9 +175,12 @@ class SemanticActivationPlanner:
         *,
         semantic_model_name: str | None = None,
         scorer: HybridSemanticTextScorer | None = None,
+        visual_backend: Any | None = None,
     ) -> None:
         self.binder = SemanticAssetBinder()
         self.scorer = scorer or HybridSemanticTextScorer(semantic_model_name)
+        self.visual_backend = visual_backend
+        self._visual_cache: dict[str, dict[str, _VisualSemanticMatch]] = {}
 
     def enrich(
         self,
@@ -220,11 +231,21 @@ class SemanticActivationPlanner:
         words = self._beat_words(transcript, scene, beat)
         candidates = self._phrase_candidates(words, package.script)
         asset_by_id = {asset.id: asset for asset in assets}
+        visual_matches = self._visual_matches(
+            scene=scene,
+            assets=assets,
+            entities=entities,
+            candidates=candidates,
+            beat=beat,
+        )
         activations: list[AssetActivation] = []
         previous_anchor = beat.start
 
         for entity in entities:
+            visual_match = visual_matches.get(entity.unit_id)
             asset_id = semantic_map.get(entity.unit_id)
+            if visual_match is not None and visual_match.confidence >= 0.82:
+                asset_id = visual_match.asset_id
             asset = asset_by_id.get(asset_id or "")
             if asset is None:
                 continue
@@ -243,14 +264,23 @@ class SemanticActivationPlanner:
                     previous_anchor = max(previous_anchor, explicit.spoken_start)
                 continue
 
-            activation = self._semantic_activation(
+            activation = self._visual_activation(
                 entity=entity,
                 asset=asset,
-                query=self._semantic_query(entity, asset),
+                match=visual_match,
                 candidates=candidates,
                 beat=beat,
                 previous_anchor=previous_anchor,
             )
+            if activation is None:
+                activation = self._semantic_activation(
+                    entity=entity,
+                    asset=asset,
+                    query=self._semantic_query(entity, asset),
+                    candidates=candidates,
+                    beat=beat,
+                    previous_anchor=previous_anchor,
+                )
             if activation is not None:
                 activations.append(activation)
                 if activation.spoken_start is not None:
@@ -290,6 +320,150 @@ class SemanticActivationPlanner:
             by_asset[asset.id] = inherited
 
         return activations
+
+    def _visual_activation(
+        self,
+        *,
+        entity: StoryEntity,
+        asset: VisualAsset,
+        match: _VisualSemanticMatch | None,
+        candidates: list[_PhraseCandidate],
+        beat: StoryBeat,
+        previous_anchor: float,
+    ) -> AssetActivation | None:
+        if (
+            match is None
+            or match.asset_id != asset.id
+            or match.confidence < 0.78
+            or match.phrase_index < 0
+            or match.phrase_index >= len(candidates)
+        ):
+            return None
+        chosen = candidates[match.phrase_index]
+        if (
+            chosen.spoken_start < previous_anchor - 0.08
+            or chosen.spoken_start < beat.start - 0.02
+            or chosen.spoken_start > beat.end - 0.025
+        ):
+            return None
+        return AssetActivation(
+            asset_id=asset.id,
+            semantic_unit_id=entity.unit_id,
+            trigger_text=chosen.text,
+            trigger_char_start=chosen.char_start,
+            trigger_char_end=chosen.char_end,
+            spoken_start=chosen.spoken_start,
+            spoken_end=chosen.spoken_end,
+            confidence=match.confidence,
+            source="vlm_joint_scene_match",
+            policy="SEMANTIC",
+            evidence=["joint_visual_asset_phrase_match"],
+        )
+
+    def _visual_matches(
+        self,
+        *,
+        scene: SceneSource,
+        assets: list[VisualAsset],
+        entities: list[StoryEntity],
+        candidates: list[_PhraseCandidate],
+        beat: StoryBeat,
+    ) -> dict[str, _VisualSemanticMatch]:
+        backend = self.visual_backend
+        if (
+            backend is None
+            or not getattr(backend, "enabled", False)
+            or not entities
+            or not candidates
+            or len(assets) < 2
+        ):
+            return {}
+
+        cache_key = beat.id
+        cached = self._visual_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        phrase_rows = [
+            {
+                "index": index,
+                "text": row.text,
+                "spoken_start": round(row.spoken_start, 3),
+            }
+            for index, row in enumerate(candidates)
+            if row.token_count <= 3
+        ][:72]
+        asset_rows = []
+        for asset in assets:
+            bbox = list(asset.source_bbox) if asset.source_bbox else None
+            asset_rows.append({
+                "asset_id": asset.id,
+                "role": asset.role,
+                "bbox": bbox,
+                "independent": asset.can_animate_independently,
+                "parent_asset_id": asset.parent_asset_id,
+            })
+        entity_rows = [{
+            "unit_id": entity.unit_id,
+            "semantic_name": entity.semantic_name,
+            "entity_type": entity.entity_type,
+            "role": entity.role,
+            "narrative_function": entity.narrative_function,
+            "semantic_intent": entity.semantic_intent,
+        } for entity in entities]
+
+        prompt = (
+            "You are the semantic synchronization matcher for a production video editor. "
+            "The image is the authored final scene. Do not redesign it. "
+            "Return one JSON object only with key 'matches'. Each match must contain "
+            "unit_id, asset_id, phrase_index, confidence. Choose only IDs and phrase "
+            "indices supplied below. Match a semantic unit to the visible cutout that "
+            "actually represents it, then to the spoken phrase that introduces that "
+            "meaning. Preserve narration order. Do not force decorative or ambiguous "
+            "objects; omit uncertain matches. confidence must be 0..1. "
+            f"Narration: {beat.narration!r}. "
+            f"Assets: {json.dumps(asset_rows, ensure_ascii=False)}. "
+            f"Semantic units: {json.dumps(entity_rows, ensure_ascii=False)}. "
+            f"Phrase candidates: {json.dumps(phrase_rows, ensure_ascii=False)}."
+        )
+        try:
+            payload = backend.decide(scene.image_path, prompt)
+        except Exception:
+            payload = None
+        parsed: dict[str, _VisualSemanticMatch] = {}
+        valid_assets = {asset.id for asset in assets}
+        valid_entities = {entity.unit_id for entity in entities}
+        valid_phrase_indices = {row["index"] for row in phrase_rows}
+        if isinstance(payload, dict) and isinstance(payload.get("matches"), list):
+            for row in payload["matches"]:
+                if not isinstance(row, dict):
+                    continue
+                unit_id = str(row.get("unit_id") or "")
+                asset_id = str(row.get("asset_id") or "")
+                try:
+                    phrase_index = int(row.get("phrase_index"))
+                    confidence = float(row.get("confidence"))
+                except (TypeError, ValueError):
+                    continue
+                if (
+                    unit_id not in valid_entities
+                    or asset_id not in valid_assets
+                    or phrase_index not in valid_phrase_indices
+                    or not 0.0 <= confidence <= 1.0
+                    or confidence < 0.72
+                ):
+                    continue
+                current = parsed.get(unit_id)
+                candidate = _VisualSemanticMatch(
+                    asset_id=asset_id,
+                    phrase_index=phrase_index,
+                    confidence=confidence,
+                )
+                if current is None or candidate.confidence > current.confidence:
+                    parsed[unit_id] = candidate
+
+        self._visual_cache[cache_key] = parsed
+        return parsed
 
     def _semantic_activation(
         self,

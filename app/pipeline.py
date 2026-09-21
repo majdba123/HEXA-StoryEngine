@@ -77,13 +77,15 @@ class StoryEnginePipeline:
                 else None
             ),
         )
+        semantic_vlm = Qwen3VLBackend(self.settings.qwen3_vl_model)
         self.story = StoryPlanner(
             semantic_model_name=self.settings.semantic_text_model,
+            visual_backend=semantic_vlm,
         )
         self.story_sync_qa = StorySyncQA()
         self.reference = ReferenceAnalyzer().analyze()
         self.asset_manager = AssetManager()
-        self.director = VisualDirector(Qwen3VLBackend(self.settings.qwen3_vl_model))
+        self.director = VisualDirector(semantic_vlm)
         self.choreography = ChoreographyDirector()
         self.text = TextPlanner()
         self.composition = CompositionPlanner()

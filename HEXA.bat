@@ -19,13 +19,13 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-if not exist ".venv\.hexa-desktop-ready" (
+if not exist ".venv\.hexa-desktop-ready-v3" (
     echo [HEXA] Installing desktop requirements for the first run...
     ".venv\Scripts\python.exe" -m pip install --upgrade pip
     if errorlevel 1 goto :setup_failed
-    ".venv\Scripts\python.exe" -m pip install -e ".[desktop,transcription]"
+    ".venv\Scripts\python.exe" -m pip install -e ".[desktop,transcription,alignment,semantic]"
     if errorlevel 1 goto :setup_failed
-    type nul > ".venv\.hexa-desktop-ready"
+    type nul > ".venv\.hexa-desktop-ready-v3"
 )
 
 if exist ".venv\Scripts\pythonw.exe" (

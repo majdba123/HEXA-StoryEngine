@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Any
 
 from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
 
@@ -21,11 +22,17 @@ class StoryPlanner:
     _MAX_VISUAL_LEAD = 0.30
     _MIN_VISUAL_BEAT = 0.08
 
-    def __init__(self, *, semantic_model_name: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        semantic_model_name: str | None = None,
+        visual_backend: Any | None = None,
+    ) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
         self.activation = SemanticActivationPlanner(
             semantic_model_name=semantic_model_name,
+            visual_backend=visual_backend,
         )
 
     def build_graph(self, beats: list[StoryBeat]) -> StoryGraph:

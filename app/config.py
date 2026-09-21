@@ -48,5 +48,8 @@ class Settings:
             require_forced_alignment=os.getenv("HEXA_REQUIRE_FORCED_ALIGNMENT", "1") == "1",
             require_text_layer=os.getenv("HEXA_REQUIRE_TEXT_LAYER", "1") == "1",
             qwen3_vl_model=os.getenv("HEXA_QWEN3_VL_MODEL") or None,
-            semantic_text_model=os.getenv("HEXA_SEMANTIC_TEXT_MODEL") or None,
+            semantic_text_model=(
+                os.getenv("HEXA_SEMANTIC_TEXT_MODEL", "intfloat/multilingual-e5-small").strip()
+                or None
+            ),
         )

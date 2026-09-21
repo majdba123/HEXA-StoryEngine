@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import pytest
 
 from app.models import (
@@ -202,3 +204,55 @@ def test_low_confidence_semantics_abstain_instead_of_guessing(tmp_path: Path) ->
 
     assert by_asset["bulb"].policy == "FALLBACK"
     assert by_asset["bulb"].spoken_start is None
+
+
+class _FakeVisualBackend:
+    enabled = True
+
+    def decide(self, image_path: Path, prompt: str) -> dict:
+        del image_path
+        match = re.search(r'"index":\s*(\d+),\s*"text":\s*"يفكر"', prompt)
+        assert match is not None
+        return {
+            "matches": [{
+                "unit_id": "IDEA",
+                "asset_id": "bulb",
+                "phrase_index": int(match.group(1)),
+                "confidence": 0.91,
+            }]
+        }
+
+
+def test_story_uses_joint_visual_semantic_match_when_text_evidence_is_weak(
+    tmp_path: Path,
+) -> None:
+    script = "الهاكر الأبيض يحاول يفكر بطريقة مختلفة"
+    scene_image = tmp_path / "scene.png"
+    scene_image.write_bytes(b"x")
+    scene = SceneSource(
+        id="scene-1",
+        image_path=scene_image,
+        order=0,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+        units=[
+            {"unit_id": "HACKER", "type": "MAIN_CHARACTER", "role": "PRIMARY"},
+            {"unit_id": "IDEA", "type": "ICON", "role": "SUPPORTING"},
+        ],
+    )
+    package = PackageModel(root=tmp_path, package_id="test", scenes=[scene], script=script)
+    assets = [
+        _asset(tmp_path, "character", "character"),
+        _asset(tmp_path, "bulb", "generic_support"),
+    ]
+    planner = SemanticActivationPlanner(
+        scorer=_FakeSemanticScorer({"يفكر": 0.40}),
+        visual_backend=_FakeVisualBackend(),
+    )
+    result = planner.enrich(package, _transcript(), assets, [_beat()])[0]
+    by_asset = {row.asset_id: row for row in result.asset_activations}
+
+    assert by_asset["bulb"].source == "vlm_joint_scene_match"
+    assert by_asset["bulb"].trigger_text == "يفكر"
+    assert by_asset["bulb"].spoken_start == pytest.approx(1.70)
+    assert by_asset["bulb"].confidence == pytest.approx(0.91)
