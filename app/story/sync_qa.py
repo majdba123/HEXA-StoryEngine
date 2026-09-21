@@ -160,6 +160,14 @@ class StorySyncQA:
                         if any(abs(row.dx) > 1e-9 or abs(row.dy) > 1e-9 or abs(row.scale - 1) > 1e-9
                                for row in program.keyframes if row.progress >= program.settle_progress):
                             raise ValueError("motion does not hold final composition state")
+                        # A claimed settle_progress cannot conceal an earlier arrival.
+                        # Static/alpha-only programs have no spatial arrival to infer.
+                        moving = [i for i, row in enumerate(program.keyframes)
+                                  if abs(row.dx) > 1e-9 or abs(row.dy) > 1e-9
+                                  or abs(row.scale - 1) > 1e-9]
+                        if moving:
+                            arrival = program.keyframes[moving[-1] + 1].progress
+                            actual = cue.start + max(0.05, cue.end - cue.start) * arrival
                     except (KeyError, TypeError, ValueError, OverflowError):
                         violations.append(f"{beat.id}:{activation.asset_id}:invalid_visual_settle")
                         actual = None

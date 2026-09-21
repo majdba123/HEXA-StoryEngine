@@ -193,3 +193,26 @@ def test_timing_ignores_asset_index_and_preferred_duration_for_v2():
             window = method(beat=beat, distance=0.1, index=index, count=20,
                             primary=index == 0, activation=row, settle_progress=0.78)
             assert window.start == 4.8 and window.end == window.semantic_settle == 5.7
+
+
+def test_qa_rejects_early_final_keyframe_despite_matching_metadata():
+    beat, cues = plan(activation())
+    cue = deepcopy(cues[0])
+    frames = cue.params["program"]["keyframes"]
+    frames.insert(-1, {**frames[-1], "progress": 0.5})
+    report = StorySyncQA().inspect(story=[beat], motion=[cue])
+    assert not report.passed
+    assert report.entries[0].actual_visual_settle == pytest.approx(5.25)
+
+
+@pytest.mark.parametrize("damage", ["missing_program", "nonfinite_metadata", "wrong_reveal"])
+def test_qa_rejects_missing_actual_evidence_and_invalid_timing(damage):
+    beat, cues = plan(activation())
+    cue = deepcopy(cues[0])
+    if damage == "missing_program":
+        del cue.params["program"]
+    elif damage == "nonfinite_metadata":
+        cue.params["semantic_settle_time"] = float("nan")
+    else:
+        cue.start += 0.10
+    assert not StorySyncQA().inspect(story=[beat], motion=[cue]).passed
