@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import RenderPlan
+from app.motion.timing import story_activation_window
 from app.shared.errors import DependencyUnavailableError
 
 
@@ -74,37 +75,48 @@ class RecoveryDetector:
                     {"beat_id": cue.beat_id, "asset_id": cue.asset_id},
                 ))
             if beat and cue.asset_id in beat.primary_asset_ids:
-                audio_anchor = beat.audio_start if beat.audio_start is not None else beat.start
-                # Motion V3+ may continue a semantic reaction/follow-through after the
-                # object has already reached its readable Composition target. QA must
-                # judge semantic arrival, not the tail of the gesture. Legacy cues have
-                # no explicit settle marker, so cue.end remains the safe fallback.
-                semantic_settle = cue.params.get("semantic_settle_time", cue.end)
-                try:
-                    semantic_settle = float(semantic_settle)
-                except (TypeError, ValueError):
-                    semantic_settle = cue.end
-                peak_offset = semantic_settle - audio_anchor
-                if peak_offset > 0.12:
-                    issues.append(DetectedIssue(
-                        "ELEMENT_APPEARS_TOO_LATE",
-                        f"Primary motion settles after narration anchor: {cue.asset_id}",
-                        {
-                            "beat_id": cue.beat_id,
-                            "asset_id": cue.asset_id,
-                            "peak_offset": peak_offset,
-                        },
-                    ))
-                elif peak_offset < -0.18:
-                    issues.append(DetectedIssue(
-                        "ELEMENT_APPEARS_TOO_EARLY",
-                        f"Primary motion settles too far before narration anchor: {cue.asset_id}",
-                        {
-                            "beat_id": cue.beat_id,
-                            "asset_id": cue.asset_id,
-                            "peak_offset": peak_offset,
-                        },
-                    ))
+                activation = next(
+                    (row for row in beat.asset_activations if row.asset_id == cue.asset_id),
+                    None,
+                )
+                has_v2, trusted_v2 = story_activation_window(activation, beat)
+                # Story V2 owns semantic timing. StorySyncQA already validates the
+                # compiled visual settle against the trusted reveal/settle contract, so
+                # the legacy "near beat audio_start" heuristic must not reinterpret a
+                # later narration phrase as a recovery defect. Invalid/abstaining V2 is
+                # left to conservative fallback behavior.
+                if not (has_v2 and trusted_v2 is not None):
+                    audio_anchor = beat.audio_start if beat.audio_start is not None else beat.start
+                    # Motion V3+ may continue a semantic reaction/follow-through after the
+                    # object has already reached its readable Composition target. QA must
+                    # judge semantic arrival, not the tail of the gesture. Legacy cues have
+                    # no explicit settle marker, so cue.end remains the safe fallback.
+                    semantic_settle = cue.params.get("semantic_settle_time", cue.end)
+                    try:
+                        semantic_settle = float(semantic_settle)
+                    except (TypeError, ValueError):
+                        semantic_settle = cue.end
+                    peak_offset = semantic_settle - audio_anchor
+                    if peak_offset > 0.12:
+                        issues.append(DetectedIssue(
+                            "ELEMENT_APPEARS_TOO_LATE",
+                            f"Primary motion settles after narration anchor: {cue.asset_id}",
+                            {
+                                "beat_id": cue.beat_id,
+                                "asset_id": cue.asset_id,
+                                "peak_offset": peak_offset,
+                            },
+                        ))
+                    elif peak_offset < -0.18:
+                        issues.append(DetectedIssue(
+                            "ELEMENT_APPEARS_TOO_EARLY",
+                            f"Primary motion settles too far before narration anchor: {cue.asset_id}",
+                            {
+                                "beat_id": cue.beat_id,
+                                "asset_id": cue.asset_id,
+                                "peak_offset": peak_offset,
+                            },
+                        ))
         for beat_id, cues in by_beat.items():
             if len(cues) >= 3:
                 starts = sorted(cue.start for cue in cues)
