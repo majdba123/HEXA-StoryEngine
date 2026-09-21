@@ -243,6 +243,9 @@ class SemanticActivationPlanner:
         self.visual_resolver = VisualSemanticResolver(visual_backend)
         self._visual_cache: dict[str, _VisualSceneMatches] = {}
         self._inventory_counted_scenes: set[str] = set()
+        self._eligible_asset_ids: set[str] = set()
+        self._trusted_eligible_ids: set[str] = set()
+        self._inherited_eligible_ids: set[str] = set()
         self.diagnostics: dict[str, Any] = {}
         self._decisions: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -255,10 +258,15 @@ class SemanticActivationPlanner:
     ) -> list[StoryBeat]:
         self._decisions.clear()
         self._inventory_counted_scenes.clear()
+        self._eligible_asset_ids.clear()
+        self._trusted_eligible_ids.clear()
+        self._inherited_eligible_ids.clear()
         self.diagnostics = {
             "semantic_runtime_available": None, "trusted_count": 0,
             "inherited_count": 0, "abstained_count": 0, "runtime_failure_count": 0,
             "visual_inventory_count": 0, "visual_semantic_count": 0,
+            "eligible_asset_count": 0, "trusted_eligible_count": 0,
+            "inherited_eligible_count": 0, "eligible_coverage": 0.0,
             "assets": [],
         }
         if isinstance(self.scorer, HybridSemanticTextScorer):
@@ -296,7 +304,21 @@ class SemanticActivationPlanner:
                 key = {"OWN_WINDOW": "trusted_count", "INHERITED_WINDOW": "inherited_count",
                        "SAFE_ABSTENTION": "abstained_count"}[row.activation_policy]
                 self.diagnostics[key] += 1
+                if row.asset_id in self._eligible_asset_ids:
+                    if row.activation_policy == "OWN_WINDOW":
+                        self._trusted_eligible_ids.add(row.asset_id)
+                    elif row.activation_policy == "INHERITED_WINDOW":
+                        self._inherited_eligible_ids.add(row.asset_id)
                 self._record_diagnostic(beat, row)
+        eligible = len(self._eligible_asset_ids)
+        trusted = len(self._trusted_eligible_ids)
+        inherited = len(self._inherited_eligible_ids)
+        self.diagnostics.update(
+            eligible_asset_count=eligible,
+            trusted_eligible_count=trusted,
+            inherited_eligible_count=inherited,
+            eligible_coverage=((trusted + inherited) / eligible if eligible else 1.0),
+        )
         self._runtime_diagnostics()
         _LOG.info("Story semantic summary: %s", json.dumps(
             {k: v for k, v in self.diagnostics.items() if k != "assets"}, ensure_ascii=False,
@@ -383,6 +405,11 @@ class SemanticActivationPlanner:
             self.diagnostics["visual_semantic_count"] += sum(
                 1 for row in visual_inventory.assets.values() if row.semantic
             )
+        self._eligible_asset_ids.update(
+            asset.id for asset in assets
+            if asset.can_animate_independently
+            and (asset.role or "").casefold() not in {"background", "decorative"}
+        )
         asset_by_id = {asset.id: asset for asset in assets}
         activations: list[AssetActivation] = []
         options: list[tuple[StoryEntity, VisualAsset, list[AssetActivation]]] = []
