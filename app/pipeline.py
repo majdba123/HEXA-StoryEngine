@@ -32,6 +32,7 @@ from app.shared.errors import (
 )
 from app.story import StoryPlanner, StorySyncQA
 from app.story.smolvlm import SmolVLMBackend
+from app.story.florence import FlorenceVisualSemanticBackend
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
@@ -80,12 +81,18 @@ class StoryEnginePipeline:
         )
         semantic_vlm = Qwen3VLBackend(self.settings.qwen3_vl_model)
         backend_name = self.settings.visual_semantic_backend
-        if backend_name not in {"none", "smolvlm", "qwen"}:
+        if backend_name not in {"none", "smolvlm", "florence", "qwen"}:
             raise ValueError(f"Unknown Story visual semantic backend: {backend_name}")
-        inventory_backend = (
-            SmolVLMBackend(self.settings.smolvlm_model) if backend_name == "smolvlm"
-            else semantic_vlm if backend_name == "qwen" else None
-        )
+        if backend_name == "smolvlm":
+            inventory_backend = SmolVLMBackend(self.settings.smolvlm_model)
+        elif backend_name == "florence":
+            inventory_backend = FlorenceVisualSemanticBackend(
+                self.settings.story_florence_model,
+            )
+        elif backend_name == "qwen":
+            inventory_backend = semantic_vlm
+        else:
+            inventory_backend = None
         self.story = StoryPlanner(
             semantic_model_name=self.settings.semantic_text_model,
             semantic_model_required=self.settings.require_semantic_model,

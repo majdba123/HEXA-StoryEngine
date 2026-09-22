@@ -79,6 +79,8 @@ class VisualSemanticResolver:
         eligible = self._eligible_assets(assets)
         if not self.enabled or not eligible:
             return VisualSemanticInventory(scene_id=scene.id)
+        if getattr(self.backend, "inventory_mode", None) == "per_asset":
+            return self._resolve_per_asset(scene, eligible)
 
         limit = getattr(self.backend, "max_assets_per_request", self._MAX_ASSETS_PER_SHEET)
         if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
@@ -119,6 +121,63 @@ class VisualSemanticResolver:
         if contract is not None:
             identity["inventory_contract"] = contract
         return identity
+
+    def _resolve_per_asset(
+        self, scene: SceneSource, eligible: list[VisualAsset],
+    ) -> VisualSemanticInventory:
+        parsed: dict[str, VisualSemanticAsset] = {}
+        for asset in eligible:
+            key = self._asset_inventory_key(scene, asset)
+            cache_file = self.cache_root / "asset-inventory" / f"{key}.json"
+            disk = self._read_cache(cache_file, scene.id, [asset], asset.image_path)
+            if disk is not None:
+                cached = disk.for_asset(asset.id)
+                if cached is not None:
+                    parsed[asset.id] = cached
+                continue
+
+            try:
+                payload = self.backend.describe_asset(asset.image_path)
+            except Exception as exc:
+                _LOG.warning(
+                    "VISUAL_SEMANTIC_ASSET_RUNTIME_FAILED scene=%s asset=%s error=%s",
+                    scene.id,
+                    asset.id,
+                    exc,
+                )
+                self.runtime_error = str(exc)
+                payload = None
+
+            self.runtime_available = getattr(
+                self.backend, "runtime_available", isinstance(payload, dict),
+            )
+            self.runtime_error = getattr(self.backend, "runtime_error", self.runtime_error)
+            if not isinstance(payload, dict):
+                continue
+
+            row_payload = {"assets": [{"asset_id": asset.id, **payload}]}
+            rows = self._parse_inventory(
+                row_payload,
+                [asset],
+                evidence="vlm_asset_caption_inventory",
+            )
+            inventory = VisualSemanticInventory(
+                scene_id=scene.id,
+                assets=rows,
+                source="vlm_asset_caption" if rows else "none",
+            )
+            # Cache valid caption attempts, including conservative rejections. Cache
+            # identity includes backend/model/contract so later behavior changes invalidate it.
+            self._write_cache(cache_file, inventory)
+            if asset.id in rows:
+                parsed[asset.id] = rows[asset.id]
+
+        return VisualSemanticInventory(
+            scene_id=scene.id,
+            assets=parsed,
+            contact_sheet_path=None,
+            source="vlm_asset_captions" if parsed else "none",
+        )
 
     def _resolve_page(self, scene: SceneSource, eligible: list[VisualAsset]) -> VisualSemanticInventory:
         cache_key = self._inventory_key(scene, eligible)
@@ -188,6 +247,17 @@ class VisualSemanticResolver:
             asset.id,
         ))
         return rows
+
+    def _asset_inventory_key(self, scene: SceneSource, asset: VisualAsset) -> str:
+        digest = hashlib.sha256()
+        digest.update(json.dumps(self._backend_identity(), sort_keys=True).encode("utf-8"))
+        digest.update(scene.id.encode("utf-8"))
+        digest.update(asset.id.encode("utf-8"))
+        digest.update((asset.role or "").encode("utf-8"))
+        digest.update(self._file_digest(asset.image_path).encode("ascii"))
+        digest.update(str(asset.source_bbox).encode("ascii"))
+        digest.update(str(asset.parent_asset_id).encode("utf-8"))
+        return digest.hexdigest()
 
     def _inventory_key(self, scene: SceneSource, assets: list[VisualAsset]) -> str:
         digest = hashlib.sha256()
@@ -287,7 +357,11 @@ class VisualSemanticResolver:
         )
 
     def _parse_inventory(
-        self, payload: Any, assets: list[VisualAsset],
+        self,
+        payload: Any,
+        assets: list[VisualAsset],
+        *,
+        evidence: str = "vlm_contact_sheet_inventory",
     ) -> dict[str, VisualSemanticAsset]:
         if not isinstance(payload, dict) or not isinstance(payload.get("assets"), list):
             return {}
@@ -323,7 +397,7 @@ class VisualSemanticResolver:
                 category=category,
                 confidence=confidence,
                 semantic=semantic,
-                evidence=("vlm_contact_sheet_inventory",),
+                evidence=(evidence,),
             )
         return parsed
 
