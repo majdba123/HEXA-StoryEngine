@@ -28,6 +28,7 @@ class StoryPlanner:
         semantic_model_name: str | None = None,
         semantic_model_required: bool = False,
         visual_backend: Any | None = None,
+        inventory_backend: Any | None = None,
     ) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
@@ -35,6 +36,7 @@ class StoryPlanner:
             semantic_model_name=semantic_model_name,
             semantic_model_required=semantic_model_required,
             visual_backend=visual_backend,
+            inventory_backend=inventory_backend,
         )
 
     def build_graph(self, beats: list[StoryBeat]) -> StoryGraph:

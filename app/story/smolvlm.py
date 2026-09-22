@@ -1,0 +1,98 @@
+"""Local, narration-blind visual inventory backend. Never downloads weights."""
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from PIL import Image
+
+
+_LOG = logging.getLogger(__name__)
+
+
+class SmolVLMBackend:
+    backend_name = "smolvlm"
+
+    def __init__(self, model_path: str | None = None) -> None:
+        self.model_path = model_path
+        self._processor = None
+        self._model = None
+        self._failed = False
+        self._lock = threading.Lock()
+        self.runtime_available: bool | None = None if self.enabled else False
+        self.runtime_error: str | None = None
+        self.inference_seconds: float | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.model_path and self.model_path.strip())
+
+    def _load(self) -> None:
+        if self._model is not None:
+            return
+        path = Path(self.model_path).expanduser()
+        if not path.is_dir():
+            raise FileNotFoundError(f"SmolVLM local model directory not found: {path}")
+        import torch
+        from transformers import AutoModelForVision2Seq, AutoProcessor
+
+        processor = AutoProcessor.from_pretrained(str(path), local_files_only=True)
+        model = AutoModelForVision2Seq.from_pretrained(
+            str(path), local_files_only=True, torch_dtype=torch.float32,
+        )
+        model.to("cpu")
+        model.eval()
+        self._processor, self._model = processor, model
+
+    def decide(self, image_path: Path, prompt: str) -> dict[str, Any] | None:
+        if not self.enabled or self._failed:
+            return None
+        with self._lock:
+            if self._failed:
+                return None
+            started = time.perf_counter()
+            try:
+                self._load()
+                import torch
+
+                messages = [{"role": "user", "content": [
+                    {"type": "image"}, {"type": "text", "text": prompt},
+                ]}]
+                text = self._processor.apply_chat_template(messages, add_generation_prompt=True)
+                with Image.open(image_path) as source:
+                    image = source.convert("RGB")
+                try:
+                    image.thumbnail((1024, 1024))
+                    inputs = self._processor(
+                        text=text, images=[image], return_tensors="pt",
+                        do_image_splitting=False,
+                    )
+                finally:
+                    image.close()
+                with torch.inference_mode():
+                    generated = self._model.generate(
+                        **inputs, do_sample=False, num_beams=1, max_new_tokens=2048,
+                    )
+                trimmed = generated[:, inputs["input_ids"].shape[1]:]
+                response = self._processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+                self.runtime_available = True
+                self.runtime_error = None
+                try:
+                    parsed = json.loads(response.strip())
+                except (ValueError, TypeError):
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+            except Exception as exc:
+                self.runtime_available = False
+                self.runtime_error = f"{type(exc).__name__}: {exc}"
+                self._failed = True
+                self._model = self._processor = None
+                _LOG.warning("SMOLVLM_RUNTIME_UNAVAILABLE: %s", self.runtime_error)
+                return None
+            finally:
+                self.inference_seconds = time.perf_counter() - started
+                _LOG.info("SmolVLM inventory inference_seconds=%.3f", self.inference_seconds)

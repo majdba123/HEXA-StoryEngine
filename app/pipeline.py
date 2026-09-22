@@ -31,6 +31,7 @@ from app.shared.errors import (
     StageFailedError,
 )
 from app.story import StoryPlanner, StorySyncQA
+from app.story.smolvlm import SmolVLMBackend
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
@@ -78,10 +79,18 @@ class StoryEnginePipeline:
             ),
         )
         semantic_vlm = Qwen3VLBackend(self.settings.qwen3_vl_model)
+        backend_name = self.settings.visual_semantic_backend
+        if backend_name not in {"none", "smolvlm", "qwen"}:
+            raise ValueError(f"Unknown Story visual semantic backend: {backend_name}")
+        inventory_backend = (
+            SmolVLMBackend(self.settings.smolvlm_model) if backend_name == "smolvlm"
+            else semantic_vlm if backend_name == "qwen" else None
+        )
         self.story = StoryPlanner(
             semantic_model_name=self.settings.semantic_text_model,
             semantic_model_required=self.settings.require_semantic_model,
-            visual_backend=semantic_vlm,
+            visual_backend=semantic_vlm if backend_name == "qwen" else None,
+            inventory_backend=inventory_backend,
         )
         self.story_sync_qa = StorySyncQA()
         self.reference = ReferenceAnalyzer().analyze()

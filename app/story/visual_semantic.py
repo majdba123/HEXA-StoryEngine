@@ -45,6 +45,7 @@ class VisualSemanticResolver:
     forced-aligned narration.
     """
 
+    _CACHE_VERSION = 3
     _MIN_DESCRIPTION_CONFIDENCE = 0.62
     _MAX_ASSETS_PER_SHEET = 24
     _CONTACT_WIDTH = 1600
@@ -54,6 +55,8 @@ class VisualSemanticResolver:
 
     def __init__(self, backend: Any | None, *, cache_root: Path | None = None) -> None:
         self.backend = backend
+        self.runtime_available: bool | None = None if self.enabled else False
+        self.runtime_error: str | None = None
         if cache_root is None:
             configured = os.getenv("HEXA_SEMANTIC_CACHE_ROOT", "").strip()
             cache_root = (
@@ -77,6 +80,40 @@ class VisualSemanticResolver:
         if not self.enabled or not eligible:
             return VisualSemanticInventory(scene_id=scene.id)
 
+        pages = [self._resolve_page(scene, eligible[start:start + self._MAX_ASSETS_PER_SHEET])
+                 for start in range(0, len(eligible), self._MAX_ASSETS_PER_SHEET)]
+        return VisualSemanticInventory(
+            scene_id=scene.id,
+            assets={asset_id: row for page in pages for asset_id, row in page.assets.items()},
+            # A verifier must not mistake page one for a complete scene inventory.
+            contact_sheet_path=pages[0].contact_sheet_path if len(pages) == 1 else None,
+            source=pages[0].source if len(pages) == 1 else "vlm_contact_sheets",
+        )
+
+    @property
+    def backend_name(self) -> str:
+        if self.backend is None:
+            return "none"
+        return getattr(self.backend, "backend_name", (
+            "qwen" if type(self.backend).__name__ == "Qwen3VLBackend"
+            else type(self.backend).__name__
+        ))
+
+    def _backend_identity(self) -> dict:
+        model = str(getattr(self.backend, "model_path", "") or "")
+        path = Path(model).expanduser() if model else None
+        fingerprint = []
+        if path is not None and path.is_dir():
+            model = str(path.resolve())
+            for entry in sorted(path.iterdir()):
+                if entry.is_file() and entry.suffix in {".json", ".safetensors", ".bin"}:
+                    stat = entry.stat()
+                    fingerprint.append((entry.name, stat.st_size, stat.st_mtime_ns,
+                                        self._file_digest(entry) if entry.suffix == ".json" else None))
+        return {"schema": self._CACHE_VERSION, "backend": self.backend_name,
+                "model": model, "fingerprint": fingerprint}
+
+    def _resolve_page(self, scene: SceneSource, eligible: list[VisualAsset]) -> VisualSemanticInventory:
         cache_key = self._inventory_key(scene, eligible)
         cached = self._memory.get(cache_key)
         if cached is not None:
@@ -98,7 +135,7 @@ class VisualSemanticResolver:
                 "VISUAL_SEMANTIC_CONTACT_SHEET_FAILED scene=%s error=%s", scene.id, exc
             )
             inventory = VisualSemanticInventory(scene_id=scene.id)
-            self._memory[cache_key] = inventory
+            self.runtime_error = str(exc)
             return inventory
 
         prompt = self._inventory_prompt(eligible)
@@ -106,7 +143,10 @@ class VisualSemanticResolver:
             payload = self.backend.decide(sheet_path, prompt)
         except Exception as exc:
             _LOG.warning("VISUAL_SEMANTIC_RUNTIME_FAILED scene=%s error=%s", scene.id, exc)
+            self.runtime_error = str(exc)
             payload = None
+        self.runtime_available = getattr(self.backend, "runtime_available", isinstance(payload, dict))
+        self.runtime_error = getattr(self.backend, "runtime_error", self.runtime_error)
 
         parsed = self._parse_inventory(payload, eligible)
         inventory = VisualSemanticInventory(
@@ -115,8 +155,10 @@ class VisualSemanticResolver:
             contact_sheet_path=sheet_path,
             source="vlm_contact_sheet" if parsed else "none",
         )
-        self._write_cache(cache_file, inventory)
-        self._memory[cache_key] = inventory
+        # Do not persist a runtime failure or malformed response as a valid empty inventory.
+        if isinstance(payload, dict) and isinstance(payload.get("assets"), list):
+            self._write_cache(cache_file, inventory)
+            self._memory[cache_key] = inventory
         return inventory
 
     def _eligible_assets(self, assets: Iterable[VisualAsset]) -> list[VisualAsset]:
@@ -131,11 +173,11 @@ class VisualSemanticResolver:
             asset.parent_asset_id is not None,
             asset.id,
         ))
-        return rows[: self._MAX_ASSETS_PER_SHEET]
+        return rows
 
     def _inventory_key(self, scene: SceneSource, assets: list[VisualAsset]) -> str:
         digest = hashlib.sha256()
-        digest.update(b"visual-semantic-resolver-v2\0")
+        digest.update(json.dumps(self._backend_identity(), sort_keys=True).encode("utf-8"))
         digest.update(scene.id.encode("utf-8"))
         digest.update(self._file_digest(scene.image_path).encode("ascii"))
         for asset in assets:
@@ -252,6 +294,10 @@ class VisualSemanticResolver:
             if (
                 asset_id not in valid
                 or not 0.0 <= confidence <= 1.0
+                or not semantic
+                or (category or "").casefold() in {
+                    "shadow", "mask", "fragment", "decorative", "decoration", "ambiguous", "unknown",
+                }
                 or not description
                 or len(description) > 320
                 or confidence < self._MIN_DESCRIPTION_CONFIDENCE
@@ -267,10 +313,10 @@ class VisualSemanticResolver:
             )
         return parsed
 
-    @staticmethod
-    def _write_cache(path: Path, inventory: VisualSemanticInventory) -> None:
+    def _write_cache(self, path: Path, inventory: VisualSemanticInventory) -> None:
         payload = {
-            "version": 2,
+            "version": self._CACHE_VERSION,
+            "backend_identity": self._backend_identity(),
             "scene_id": inventory.scene_id,
             "source": inventory.source,
             "assets": [
@@ -300,7 +346,9 @@ class VisualSemanticResolver:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        if payload.get("version") != 2 or payload.get("scene_id") != scene_id:
+        identity = json.loads(json.dumps(self._backend_identity()))
+        if (not isinstance(payload, dict) or payload.get("version") != self._CACHE_VERSION
+                or payload.get("backend_identity") != identity or payload.get("scene_id") != scene_id):
             return None
         parsed = self._parse_inventory({"assets": payload.get("assets")}, assets)
         return VisualSemanticInventory(

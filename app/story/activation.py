@@ -234,13 +234,16 @@ class SemanticActivationPlanner:
         semantic_model_required: bool = False,
         scorer: HybridSemanticTextScorer | None = None,
         visual_backend: Any | None = None,
+        inventory_backend: Any | None = None,
     ) -> None:
         self.binder = SemanticAssetBinder()
         self.scorer = scorer or HybridSemanticTextScorer(
             semantic_model_name, required=semantic_model_required
         )
         self.visual_backend = visual_backend
-        self.visual_resolver = VisualSemanticResolver(visual_backend)
+        self.visual_resolver = VisualSemanticResolver(
+            inventory_backend if inventory_backend is not None else visual_backend
+        )
         self._visual_cache: dict[str, _VisualSceneMatches] = {}
         self._inventory_counted_scenes: set[str] = set()
         self._eligible_asset_ids: set[str] = set()
@@ -326,6 +329,11 @@ class SemanticActivationPlanner:
         return output
 
     def _runtime_diagnostics(self) -> None:
+        self.diagnostics.update(
+            visual_backend=self.visual_resolver.backend_name,
+            visual_runtime_available=self.visual_resolver.runtime_available,
+            visual_runtime_error=self.visual_resolver.runtime_error,
+        )
         if isinstance(self.scorer, HybridSemanticTextScorer):
             self.diagnostics.update(
                 semantic_runtime_available=self.scorer.runtime_available,
@@ -436,7 +444,10 @@ class SemanticActivationPlanner:
             )
             ranked = [explicit] if explicit else self._semantic_options(
                 entity=entity, asset=asset,
-                query=self._semantic_query(entity, asset, beat, visual_description),
+                query=self._semantic_query(
+                    entity, asset, beat,
+                    visual_description if self.visual_backend is not None else None,
+                ),
                 candidates=candidates, beat=beat,
             )
             if not ranked and self.visual_backend is not None:

@@ -23,6 +23,8 @@ class Settings:
     qwen3_vl_model: str | None = None
     semantic_text_model: str | None = None
     require_semantic_model: bool = False
+    visual_semantic_backend: str = "qwen"
+    smolvlm_model: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -49,6 +51,8 @@ class Settings:
             require_forced_alignment=os.getenv("HEXA_REQUIRE_FORCED_ALIGNMENT", "1") == "1",
             require_text_layer=os.getenv("HEXA_REQUIRE_TEXT_LAYER", "1") == "1",
             qwen3_vl_model=os.getenv("HEXA_QWEN3_VL_MODEL") or None,
+            visual_semantic_backend=os.getenv("HEXA_VISUAL_SEMANTIC_BACKEND", "qwen").strip().lower(),
+            smolvlm_model=os.getenv("HEXA_SMOLVLM_MODEL") or None,
             semantic_text_model=(
                 os.getenv("HEXA_SEMANTIC_TEXT_MODEL", "intfloat/multilingual-e5-small").strip()
                 or None
