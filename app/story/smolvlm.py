@@ -14,8 +14,37 @@ from PIL import Image
 _LOG = logging.getLogger(__name__)
 
 
+def parse_json_object(response: str) -> dict[str, Any] | None:
+    """Decode the first complete object, including nested/quoted braces."""
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(response):
+        if char != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(response, index)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
 class SmolVLMBackend:
     backend_name = "smolvlm"
+    max_assets_per_request = 6
+    inventory_contract_version = 2
+
+    @staticmethod
+    def inventory_prompt(assets) -> str:
+        ids = [asset.id for asset in assets]
+        return (
+            'Describe the labelled cutouts. JSON only, no markdown or explanation. '
+            'Use exact allowed asset IDs; never invent IDs. Short visual descriptions. '
+            'Return {"assets":[{"asset_id":"ID","description":"visible object/action",'
+            '"category":"object","semantic":true,"confidence":0.9}]}. '
+            'Use semantic=false for decorative or unclear cutouts. Confidence: 0 to 1. '
+            f'Allowed asset IDs: {json.dumps(ids)}'
+        )
 
     def __init__(self, model_path: str | None = None) -> None:
         self.model_path = model_path
@@ -26,6 +55,8 @@ class SmolVLMBackend:
         self.runtime_available: bool | None = None if self.enabled else False
         self.runtime_error: str | None = None
         self.inference_seconds: float | None = None
+        self.response_length = 0
+        self.response_preview = ""
 
     @property
     def enabled(self) -> bool:
@@ -57,6 +88,8 @@ class SmolVLMBackend:
         with self._lock:
             if self._failed:
                 return None
+            self.response_length = 0
+            self.response_preview = ""
             started = time.perf_counter()
             try:
                 self._load()
@@ -83,12 +116,10 @@ class SmolVLMBackend:
                 response = self._processor.batch_decode(trimmed, skip_special_tokens=True)[0]
                 self.runtime_available = True
                 self.runtime_error = None
-                try:
-                    parsed = json.loads(response.strip())
-                except (ValueError, TypeError):
-                    self.runtime_error = "invalid_json_response"
-                    return None
-                if not isinstance(parsed, dict):
+                self.response_length = len(response)
+                self.response_preview = response[:1500]
+                parsed = parse_json_object(response)
+                if parsed is None:
                     self.runtime_error = "invalid_json_response"
                     return None
                 return parsed

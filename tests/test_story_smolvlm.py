@@ -67,7 +67,9 @@ def test_smolvlm_disabled_and_missing_path(tmp_path):
 
 
 @pytest.mark.parametrize("response,accepted", [
-    ('{"assets": []}', True), ('explanation {"assets": []}', False),
+    ('{"assets": []}', True), ('explanation {"assets": []} suffix', True),
+    ('```json\n{"assets": []}\n```', True),
+    ('{"assets": [{"nested": {"text": "brace } {"}}]}', True),
     ('{"assets":', False), ('[]', False),
 ])
 def test_local_lazy_json_backend(monkeypatch, tmp_path, response, accepted):
@@ -80,6 +82,7 @@ def test_local_lazy_json_backend(monkeypatch, tmp_path, response, accepted):
         result = backend.decide(image, "inventory only")
         assert (result is not None) == accepted
     assert backend.runtime_available is True
+    assert backend.runtime_error == (None if accepted else "invalid_json_response")
     assert backend.inference_seconds is not None
     loads = [row for row in calls if row[0] in {"model", "processor"}]
     assert len(loads) == 2
@@ -221,3 +224,29 @@ def test_inventory_only_preserves_existing_e5_matches_and_diagnostics(tmp_path):
     assert planner.diagnostics["trusted_eligible_count"] == 5
     assert all(row["visual_description"] == "different visual meaning"
                for row in planner.diagnostics["assets"])
+
+
+@pytest.mark.parametrize("kind,limit", [("smolvlm", 6), ("qwen", 24), ("default", 24)])
+def test_backend_page_limit_and_blind_prompt(tmp_path, kind, limit):
+    scene, originals, beat = _case(tmp_path)
+    assets = [originals[0].model_copy(update={"id": f"asset-{i:03}"}) for i in range(55)]
+    backend = Backend({"assets": []})
+    if kind == "smolvlm":
+        backend.max_assets_per_request = SmolVLMBackend.max_assets_per_request
+        backend.inventory_prompt = SmolVLMBackend.inventory_prompt
+    backend.backend_name = kind
+    resolver = VisualSemanticResolver(backend, cache_root=tmp_path / "cache")
+    resolver.resolve(scene=scene, assets=assets, beat=beat)
+    seen = []
+    sizes = []
+    for _, prompt in backend.calls:
+        assert beat.narration not in prompt
+        assert "spoken_start" not in prompt and "Phrase candidates:" not in prompt
+        if kind == "smolvlm":
+            ids = json.loads(prompt.split("Allowed asset IDs: ")[1])
+        else:
+            ids = [row["asset_id"] for row in json.loads(prompt.split("Allowed assets: ")[1])]
+        seen.extend(ids)
+        sizes.append(len(ids))
+    assert seen == [a.id for a in assets]
+    assert sizes == [limit] * (55 // limit) + ([55 % limit] if 55 % limit else [])

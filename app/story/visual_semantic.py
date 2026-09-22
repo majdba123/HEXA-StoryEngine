@@ -80,8 +80,11 @@ class VisualSemanticResolver:
         if not self.enabled or not eligible:
             return VisualSemanticInventory(scene_id=scene.id)
 
-        pages = [self._resolve_page(scene, eligible[start:start + self._MAX_ASSETS_PER_SHEET])
-                 for start in range(0, len(eligible), self._MAX_ASSETS_PER_SHEET)]
+        limit = getattr(self.backend, "max_assets_per_request", self._MAX_ASSETS_PER_SHEET)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            limit = self._MAX_ASSETS_PER_SHEET
+        pages = [self._resolve_page(scene, eligible[start:start + limit])
+                 for start in range(0, len(eligible), limit)]
         return VisualSemanticInventory(
             scene_id=scene.id,
             assets={asset_id: row for page in pages for asset_id, row in page.assets.items()},
@@ -110,8 +113,12 @@ class VisualSemanticResolver:
                     stat = entry.stat()
                     fingerprint.append((entry.name, stat.st_size, stat.st_mtime_ns,
                                         self._file_digest(entry) if entry.suffix == ".json" else None))
-        return {"schema": self._CACHE_VERSION, "backend": self.backend_name,
-                "model": model, "fingerprint": fingerprint}
+        identity = {"schema": self._CACHE_VERSION, "backend": self.backend_name,
+                    "model": model, "fingerprint": fingerprint}
+        contract = getattr(self.backend, "inventory_contract_version", None)
+        if contract is not None:
+            identity["inventory_contract"] = contract
+        return identity
 
     def _resolve_page(self, scene: SceneSource, eligible: list[VisualAsset]) -> VisualSemanticInventory:
         cache_key = self._inventory_key(scene, eligible)
@@ -138,7 +145,8 @@ class VisualSemanticResolver:
             self.runtime_error = str(exc)
             return inventory
 
-        prompt = self._inventory_prompt(eligible)
+        prompt_builder = getattr(self.backend, "inventory_prompt", self._inventory_prompt)
+        prompt = prompt_builder(eligible)
         try:
             payload = self.backend.decide(sheet_path, prompt)
         except Exception as exc:
@@ -149,6 +157,12 @@ class VisualSemanticResolver:
         self.runtime_error = getattr(self.backend, "runtime_error", self.runtime_error)
 
         parsed = self._parse_inventory(payload, eligible)
+        if not parsed and hasattr(self.backend, "response_preview"):
+            _LOG.warning(
+                "SMOLVLM_INVENTORY_EMPTY scene=%s page_assets=%s response_length=%s preview=%r",
+                scene.id, [asset.id for asset in eligible],
+                self.backend.response_length, self.backend.response_preview[:1500],
+            )
         inventory = VisualSemanticInventory(
             scene_id=scene.id,
             assets=parsed,
