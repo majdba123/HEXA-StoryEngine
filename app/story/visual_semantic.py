@@ -168,6 +168,7 @@ class VisualSemanticResolver:
             )
             # Cache valid caption attempts, including conservative rejections. Cache
             # identity includes backend/model/contract so later behavior changes invalidate it.
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
             self._write_cache(cache_file, inventory)
             if asset.id in rows:
                 parsed[asset.id] = rows[asset.id]
