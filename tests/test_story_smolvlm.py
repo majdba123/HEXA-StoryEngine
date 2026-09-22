@@ -20,6 +20,8 @@ def fake_runtime(monkeypatch, response, *, fail=False):
         def __getitem__(self, key):
             return self
     class Processor:
+        def __init__(self):
+            self.image_processor = SimpleNamespace(do_image_splitting=True)
         @classmethod
         def from_pretrained(cls, path, **kwargs):
             calls.append(("processor", path, kwargs))
@@ -27,7 +29,7 @@ def fake_runtime(monkeypatch, response, *, fail=False):
         def apply_chat_template(self, messages, **kwargs):
             return messages[0]["content"][1]["text"]
         def __call__(self, **kwargs):
-            assert kwargs["do_image_splitting"] is False
+            assert self.image_processor.do_image_splitting is False
             return {"input_ids": Tokens()}
         def batch_decode(self, *args, **kwargs):
             return [response]
@@ -185,3 +187,37 @@ def test_failed_inventory_does_not_poison_cache(tmp_path):
     resolver.resolve(scene=scene, assets=assets, beat=beat)
     resolver.resolve(scene=scene, assets=assets, beat=beat)
     assert len(backend.calls) == 2
+
+
+def test_inventory_only_preserves_existing_e5_matches_and_diagnostics(tmp_path):
+    from app.story.activation import SemanticActivationPlanner
+    from test_story_activation_windows import Scorer, scene_case
+
+    package, transcript, assets, beat = scene_case(tmp_path, 5)
+    Image.new("RGB", (100, 100), "white").save(package.scenes[0].image_path)
+    for asset in assets:
+        Image.new("RGBA", (50, 50), "red").save(asset.image_path)
+    original = SemanticActivationPlanner(scorer=Scorer()).enrich(package, transcript, assets, [beat])[0]
+    backend = Backend({"assets": [
+        {"asset_id": asset.id, "description": "different visual meaning", "category": "object",
+         "semantic": True, "confidence": 0.95} for asset in assets
+    ]})
+    backend.backend_name = "smolvlm"
+    planner = SemanticActivationPlanner(scorer=Scorer(), inventory_backend=backend)
+    planner.visual_resolver.cache_root = tmp_path / "cache"
+    updated = planner.enrich(package, transcript, assets, [beat])[0]
+    assert planner.visual_backend is None
+    assert len(backend.calls) == 1
+    assert all("Phrase candidates:" not in prompt for _, prompt in backend.calls)
+    for before, after in zip(original.asset_activations, updated.asset_activations):
+        assert (before.trigger_text, before.reveal_start, before.settle_at) == (
+            after.trigger_text, after.reveal_start, after.settle_at,
+        )
+    assert planner.diagnostics["visual_backend"] == "smolvlm"
+    assert planner.diagnostics["visual_runtime_available"] is True
+    assert planner.diagnostics["visual_runtime_error"] is None
+    assert planner.diagnostics["visual_inventory_count"] == 5
+    assert planner.diagnostics["visual_semantic_count"] == 5
+    assert planner.diagnostics["trusted_eligible_count"] == 5
+    assert all(row["visual_description"] == "different visual meaning"
+               for row in planner.diagnostics["assets"])

@@ -41,6 +41,9 @@ class SmolVLMBackend:
         from transformers import AutoModelForVision2Seq, AutoProcessor
 
         processor = AutoProcessor.from_pretrained(str(path), local_files_only=True)
+        # Idefics3Processor in transformers 4.57 drops this kwarg when passed to
+        # __call__; configure the image processor itself to bound CPU image tokens.
+        processor.image_processor.do_image_splitting = False
         model = AutoModelForVision2Seq.from_pretrained(
             str(path), local_files_only=True, torch_dtype=torch.float32,
         )
@@ -69,7 +72,6 @@ class SmolVLMBackend:
                     image.thumbnail((1024, 1024))
                     inputs = self._processor(
                         text=text, images=[image], return_tensors="pt",
-                        do_image_splitting=False,
                     )
                 finally:
                     image.close()
@@ -84,8 +86,12 @@ class SmolVLMBackend:
                 try:
                     parsed = json.loads(response.strip())
                 except (ValueError, TypeError):
+                    self.runtime_error = "invalid_json_response"
                     return None
-                return parsed if isinstance(parsed, dict) else None
+                if not isinstance(parsed, dict):
+                    self.runtime_error = "invalid_json_response"
+                    return None
+                return parsed
             except Exception as exc:
                 self.runtime_available = False
                 self.runtime_error = f"{type(exc).__name__}: {exc}"

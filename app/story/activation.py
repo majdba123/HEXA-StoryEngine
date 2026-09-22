@@ -246,6 +246,7 @@ class SemanticActivationPlanner:
         )
         self._visual_cache: dict[str, _VisualSceneMatches] = {}
         self._inventory_counted_scenes: set[str] = set()
+        self._visual_inventory_by_scene: dict[str, VisualSemanticInventory] = {}
         self._eligible_asset_ids: set[str] = set()
         self._trusted_eligible_ids: set[str] = set()
         self._inherited_eligible_ids: set[str] = set()
@@ -261,6 +262,7 @@ class SemanticActivationPlanner:
     ) -> list[StoryBeat]:
         self._decisions.clear()
         self._inventory_counted_scenes.clear()
+        self._visual_inventory_by_scene.clear()
         self._eligible_asset_ids.clear()
         self._trusted_eligible_ids.clear()
         self._inherited_eligible_ids.clear()
@@ -343,6 +345,8 @@ class SemanticActivationPlanner:
 
     def _record_diagnostic(self, beat: StoryBeat, row: AssetActivation) -> None:
         decision = dict(self._decisions.get((beat.id, row.asset_id), {}))
+        inventory = self._visual_inventory_by_scene.get(beat.scene_id)
+        visual = inventory.for_asset(row.asset_id) if inventory else None
         entities = self._ordered_entities(beat)
         entity = next((e for e in entities if e.unit_id == row.semantic_unit_id), None)
         source = (
@@ -371,6 +375,8 @@ class SemanticActivationPlanner:
                 self._semantic_query(entity, None, beat, None) if entity else ""
             ),
             "chosen_phrase": row.trigger_text if chosen else None,
+            "visual_description": visual.description if visual else None,
+            "visual_confidence": visual.confidence if visual else None,
             "source": source, "reason": reason,
             "spoken_start": row.spoken_start, "spoken_end": row.spoken_end,
         }
@@ -407,6 +413,7 @@ class SemanticActivationPlanner:
         words = self._beat_words(transcript, scene, beat)
         candidates = self._phrase_candidates(words, package.script)
         visual_inventory = self.visual_resolver.resolve(scene=scene, assets=assets, beat=beat)
+        self._visual_inventory_by_scene[scene.id] = visual_inventory
         if scene.id not in self._inventory_counted_scenes:
             self._inventory_counted_scenes.add(scene.id)
             self.diagnostics["visual_inventory_count"] += len(visual_inventory.assets)
