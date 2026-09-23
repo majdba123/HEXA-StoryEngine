@@ -23,6 +23,9 @@ class FlorenceDetector:
             local_files_only=True,
             trust_remote_code=True,
             torch_dtype=dtype,
+            # Keep Florence on eager attention for compatibility with the
+            # remote-code implementation across supported Transformers 4.x.
+            attn_implementation="eager",
         ).to(self.device).eval()
 
     def detect(self, image_path: Path) -> list[tuple[str, tuple[int, int, int, int], float]]:

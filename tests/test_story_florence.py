@@ -93,6 +93,8 @@ def test_florence_backend_is_lazy_local_and_caption_only(monkeypatch, tmp_path):
     assert len(loads) == 2
     assert all(row[2]["local_files_only"] is True for row in loads)
     assert all(row[2]["trust_remote_code"] is True for row in loads)
+    model_load = next(row for row in loads if row[0] == "model")
+    assert model_load[2]["attn_implementation"] == "eager"
 
 
 def test_florence_rejects_generic_caption(monkeypatch, tmp_path):

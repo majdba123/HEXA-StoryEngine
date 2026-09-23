@@ -78,6 +78,11 @@ class FlorenceVisualSemanticBackend:
             local_files_only=True,
             trust_remote_code=True,
             torch_dtype=torch.float32,
+            # Florence-2 remote code in several 4.5x Transformers releases can
+            # fail during model init while auto-probing SDPA support before the
+            # language model exists. Eager attention avoids that incompatible
+            # probe and is the conservative choice for our CPU-only Story path.
+            attn_implementation="eager",
         )
         model.to("cpu")
         model.eval()
