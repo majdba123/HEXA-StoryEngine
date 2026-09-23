@@ -959,3 +959,40 @@ Expected next gate:
   - rerun the same Final Package + narration
   - expected Text stage: non-zero package-driven cues instead of 0
   - then review encoded render for text choice, negative-space placement, text timing, and asset sequential motion.
+
+
+## MONTAGE20 TEMPORAL TEXT QA RECOVERY — 2026-09-23
+
+- Real post-generalization diagnostic:
+  - Text extraction succeeded: 51 text cues were placed instead of 0.
+  - Authoring QA failed on 11 `text_text_overlap` rows.
+- Root cause:
+  - TextCompositionPlanner and TextMotionPlanner already use `TextVisibilityPolicy` and may intentionally reuse the same negative-space slot for cues that never coexist on screen.
+  - AuthoringVisualQA compared every text box within a beat spatially only, ignoring visibility timing.
+  - This produced false-positive layout failures for sequential cues occupying the same clean slot at different times.
+- General production fix:
+  - AuthoringVisualQA now receives Story timing from the pipeline.
+  - It uses the same shared `TextVisibilityPolicy` as TextComposition and TextMotion.
+  - Text/text collision is a hard failure only when BOTH:
+    1. spatial overlap exceeds the existing threshold, and
+    2. visibility windows overlap in time.
+  - Same spatial slot + non-overlapping visibility is explicitly valid.
+  - Same spatial slot + overlapping visibility remains a hard failure.
+  - Real collision diagnostics now include the overlapping time interval.
+  - QA API remains backward-compatible for controlled callers that omit Story timing.
+- No Final Package/video/topic special cases were added.
+- Regression coverage:
+  - sequential cues at identical coordinates pass
+  - simultaneous cues at identical coordinates fail
+- Final tested code HEAD:
+  - `8fa4dcba67955b1882524fdd1414850ce7847bb8`
+- GitHub Actions:
+  - Run `35827480901` SUCCESS
+  - Compile SUCCESS
+  - Ruff: All checks passed
+  - Pytest: 218 passed, 12 warnings
+- Next acceptance step:
+  - pull latest `montage`
+  - rerun the same Final Package + narration
+  - expected: sequential reuse of clean text regions no longer triggers `TEXT_LAYOUT_REFERENCE_VIOLATION`
+  - any truly simultaneous text collision is still blocked.
