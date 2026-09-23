@@ -375,6 +375,10 @@ class SemanticActivationPlanner:
             beat=beat,
         )
         semantic_map = dict(binding.semantic_asset_map)
+        asset_level_bindings = (
+            package.semantic_bindings.get("schema_name")
+            == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
+        )
         entities = self._ordered_entities(beat)
         words = self._beat_words(transcript, scene, beat)
         candidates = self._phrase_candidates(words, package.script)
@@ -384,60 +388,77 @@ class SemanticActivationPlanner:
             and (asset.role or "").casefold() not in {"background", "decorative"}
         )
         asset_by_id = {asset.id: asset for asset in assets}
-        activations = self._uniform_scene_binding_activations(
-            package=package,
-            transcript=transcript,
-            scene=scene,
-            assets=assets,
-            beat=beat,
-        )
+        if asset_level_bindings:
+            activations = self._asset_level_binding_activations(
+                package=package,
+                transcript=transcript,
+                scene=scene,
+                assets=assets,
+                beat=beat,
+                semantic_map=semantic_map,
+                binding_confidence=binding.binding_confidence,
+            )
+        else:
+            activations = self._uniform_scene_binding_activations(
+                package=package,
+                transcript=transcript,
+                scene=scene,
+                assets=assets,
+                beat=beat,
+            )
         used_assets: set[str] = {row.asset_id for row in activations}
         options: list[tuple[StoryEntity, VisualAsset, list[AssetActivation]]] = []
 
-        for entity in entities:
-            asset = asset_by_id.get(semantic_map.get(entity.unit_id, ""))
-            if asset is None:
-                continue
-            if asset.id in used_assets:
-                continue
-            if asset.parent_asset_id and not asset.can_animate_independently:
-                continue
-            if (entity.role or "").upper() in {"DECORATIVE", "BACKGROUND"}:
-                continue
-            explicit = self._explicit_activation(
-                entity=entity, asset=asset, words=words, script=package.script,
-                scene=scene, beat=beat,
-            )
-            ranked = [explicit] if explicit else self._semantic_options(
-                entity=entity,
-                asset=asset,
-                query=self._semantic_query(entity, asset, beat),
-                candidates=candidates,
-                beat=beat,
-            )
-            options.append((entity, asset, ranked))
+        # Asset-level Final Packages are the semantic authority. Once present, do not
+        # silently run a second semantic matcher for cutouts that the package did not
+        # bind. Unmapped cutouts remain conservative/family-inherited instead of being
+        # assigned a narration meaning by guesswork. Legacy packages keep the existing
+        # entity/E5/lexical path unchanged.
+        if not asset_level_bindings:
+            for entity in entities:
+                asset = asset_by_id.get(semantic_map.get(entity.unit_id, ""))
+                if asset is None:
+                    continue
+                if asset.id in used_assets:
+                    continue
+                if asset.parent_asset_id and not asset.can_animate_independently:
+                    continue
+                if (entity.role or "").upper() in {"DECORATIVE", "BACKGROUND"}:
+                    continue
+                explicit = self._explicit_activation(
+                    entity=entity, asset=asset, words=words, script=package.script,
+                    scene=scene, beat=beat,
+                )
+                ranked = [explicit] if explicit else self._semantic_options(
+                    entity=entity,
+                    asset=asset,
+                    query=self._semantic_query(entity, asset, beat),
+                    candidates=candidates,
+                    beat=beat,
+                )
+                options.append((entity, asset, ranked))
 
-        edges = []
-        for order, (entity, asset, ranked) in enumerate(options):
-            for row in ranked:
-                edges.append((row, entity, asset, order))
-        edges.sort(key=lambda item: (
-            item[0].policy != "EXPLICIT", -item[0].confidence,
-            (item[1].role or "").upper() != "PRIMARY",
-            item[0].spoken_start, len((item[0].trigger_text or "").split()),
-            item[3], item[2].id,
-        ))
-        used_units: set[str] = set()
-        for row, entity, asset, _order in edges:
-            if entity.unit_id in used_units or asset.id in used_assets:
-                continue
-            if any(self._overlapping_anchors(row, chosen) for chosen in activations):
-                continue
-            activations.append(row)
-            used_units.add(entity.unit_id)
-            used_assets.add(asset.id)
+            edges = []
+            for order, (entity, asset, ranked) in enumerate(options):
+                for row in ranked:
+                    edges.append((row, entity, asset, order))
+            edges.sort(key=lambda item: (
+                item[0].policy != "EXPLICIT", -item[0].confidence,
+                (item[1].role or "").upper() != "PRIMARY",
+                item[0].spoken_start, len((item[0].trigger_text or "").split()),
+                item[3], item[2].id,
+            ))
+            used_units: set[str] = set()
+            for row, entity, asset, _order in edges:
+                if entity.unit_id in used_units or asset.id in used_assets:
+                    continue
+                if any(self._overlapping_anchors(row, chosen) for chosen in activations):
+                    continue
+                activations.append(row)
+                used_units.add(entity.unit_id)
+                used_assets.add(asset.id)
 
-        self._repair_early_completion(activations, options, beat)
+            self._repair_early_completion(activations, options, beat)
 
         by_asset = {row.asset_id: row for row in activations}
         pending = sorted(assets, key=lambda asset: asset.id)
@@ -475,11 +496,27 @@ class SemanticActivationPlanner:
             if not changed:
                 break
 
+        if asset_level_bindings:
+            derived_support = self._single_group_support_activations(
+                package=package,
+                scene=scene,
+                assets=assets,
+                beat=beat,
+                already_bound=by_asset,
+            )
+            activations.extend(derived_support)
+            by_asset.update({row.asset_id: row for row in derived_support})
+
+        mapped_unit_by_asset = {asset_id: unit_id for unit_id, asset_id in semantic_map.items()}
         for asset in sorted(assets, key=lambda asset: asset.id):
             if asset.id not in by_asset:
-                unit_id = next(
-                    (entity.unit_id for entity, bound, _ in options if bound.id == asset.id),
-                    None,
+                unit_id = (
+                    mapped_unit_by_asset.get(asset.id)
+                    if asset_level_bindings
+                    else next(
+                        (entity.unit_id for entity, bound, _ in options if bound.id == asset.id),
+                        None,
+                    )
                 )
                 activations.append(AssetActivation(
                     asset_id=asset.id,
@@ -494,10 +531,299 @@ class SemanticActivationPlanner:
             activations,
             key=lambda row: (
                 row.spoken_start if row.spoken_start is not None else math.inf,
+                row.semantic_group_id or "",
+                row.sequence_order if row.sequence_order is not None else 10_000,
                 row.policy == "GROUP",
                 row.asset_id,
             ),
         )
+
+    def _asset_level_binding_activations(
+        self,
+        *,
+        package: PackageModel,
+        transcript: Transcript,
+        scene: SceneSource,
+        assets: list[VisualAsset],
+        beat: StoryBeat,
+        semantic_map: dict[str, str],
+        binding_confidence: float,
+    ) -> list[AssetActivation]:
+        scenes = package.semantic_bindings.get("scenes")
+        if not isinstance(scenes, list):
+            return []
+        scene_binding = next(
+            (
+                row for row in scenes
+                if isinstance(row, dict) and row.get("scene_id") == scene.id
+            ),
+            None,
+        )
+        if scene_binding is None:
+            return []
+        binding_assets = scene_binding.get("assets")
+        if not isinstance(binding_assets, list) or not binding_assets:
+            return []
+        groups = {
+            str(row.get("semantic_group_id")): row
+            for row in scene_binding.get("semantic_groups", [])
+            if isinstance(row, dict) and row.get("semantic_group_id")
+        }
+        asset_by_id = {asset.id: asset for asset in assets}
+        audio_start = beat.audio_start if beat.audio_start is not None else beat.start
+        audio_end = beat.audio_end if beat.audio_end is not None else beat.end
+        tolerance = 0.025
+        phrase_cache: dict[str, tuple[int, int, float, float] | None] = {}
+        candidates_by_real: dict[str, list[AssetActivation]] = {}
+
+        for row in binding_assets:
+            if not isinstance(row, dict):
+                continue
+            semantic_id = str(row.get("asset_id") or "").strip()
+            phrase = str(row.get("script_text") or "").strip()
+            binding_type = str(row.get("binding_type") or "").upper()
+            if not semantic_id or not phrase or binding_type == "AMBIGUOUS":
+                continue
+            real_id = semantic_map.get(semantic_id)
+            if real_id is None and semantic_id in asset_by_id:
+                real_id = semantic_id
+            asset = asset_by_id.get(real_id or "")
+            if (
+                asset is None
+                or not asset.can_animate_independently
+                or (asset.role or "").casefold() in {"background", "decorative"}
+            ):
+                continue
+
+            timing = phrase_cache.get(phrase)
+            if phrase not in phrase_cache:
+                span = self._binding_phrase_span(package.script, scene, phrase)
+                if span is None:
+                    phrase_cache[phrase] = None
+                    continue
+                char_start, char_end = span
+                phrase_words = [
+                    word for word in transcript.words
+                    if word.char_start is not None
+                    and word.char_end is not None
+                    and word.char_end > char_start
+                    and word.char_start < char_end
+                ]
+                if not phrase_words:
+                    phrase_cache[phrase] = None
+                    continue
+                spoken_start = phrase_words[0].start
+                spoken_end = phrase_words[-1].end
+                if (
+                    spoken_start < audio_start - tolerance
+                    or spoken_end > audio_end + tolerance
+                    or spoken_end <= spoken_start
+                ):
+                    phrase_cache[phrase] = None
+                    continue
+                timing = (char_start, char_end, spoken_start, spoken_end)
+                phrase_cache[phrase] = timing
+            if timing is None:
+                continue
+            char_start, char_end, spoken_start, spoken_end = timing
+            group_id = str(row.get("semantic_group_id") or "").strip() or None
+            group = groups.get(group_id or "", {})
+            group_policy = str(
+                group.get("animation_policy") or "SEQUENTIAL_WITHIN_PHRASE"
+            )
+            sequence_order = row.get("sequence_order")
+            confidence = min(float(row.get("confidence", 0.0)), max(0.0, binding_confidence))
+            policy = "EXPLICIT" if binding_type == "EXPLICIT" else "SEMANTIC"
+            activation = AssetActivation(
+                asset_id=asset.id,
+                semantic_unit_id=semantic_id,
+                trigger_text=phrase,
+                trigger_char_start=char_start,
+                trigger_char_end=char_end,
+                spoken_start=spoken_start,
+                spoken_end=spoken_end,
+                confidence=confidence,
+                source="final_package_semantic_binding",
+                policy=policy,
+                semantic_group_id=group_id,
+                sequence_order=int(sequence_order) if sequence_order is not None else None,
+                binding_type=binding_type,
+                semantic_parent_id=(
+                    str(row.get("parent_asset_id"))
+                    if row.get("parent_asset_id") is not None
+                    else None
+                ),
+                group_animation_policy=group_policy,
+                evidence=[
+                    "asset_level_final_package_binding",
+                    "exact_final_package_script_text",
+                    f"semantic_intent={semantic_id}",
+                    f"semantic_group={group_id}",
+                    f"sequence_order={sequence_order}",
+                    f"binding_type={binding_type}",
+                    f"binder_confidence={binding_confidence:.6f}",
+                ],
+            )
+            candidates_by_real.setdefault(asset.id, []).append(activation)
+
+        output: list[AssetActivation] = []
+        for real_id, rows in sorted(candidates_by_real.items()):
+            if len(rows) == 1:
+                chosen = rows[0]
+            else:
+                signatures = {
+                    (
+                        row.trigger_char_start, row.trigger_char_end,
+                        row.semantic_group_id, row.sequence_order,
+                    )
+                    for row in rows
+                }
+                if len(signatures) != 1:
+                    self._decisions[(beat.id, real_id)] = {
+                        "reason": "ambiguous_semantic_intent_mapping",
+                        "candidate_count": len(rows),
+                    }
+                    continue
+                chosen = max(rows, key=lambda row: (row.confidence, row.semantic_unit_id or ""))
+                chosen.evidence.append("coalesced_equivalent_semantic_intents")
+            self._decisions[(beat.id, real_id)] = {
+                "semantic_text": chosen.trigger_text,
+                "reason": "accepted_asset_level_final_package_binding",
+                "score": chosen.confidence,
+                "runner_up_score": None,
+                "margin": None,
+                "phrase_index": None,
+                "candidate_phrase": chosen.trigger_text,
+                "semantic_group_id": chosen.semantic_group_id,
+                "sequence_order": chosen.sequence_order,
+            }
+            output.append(chosen)
+        return output
+
+    def _single_group_support_activations(
+        self,
+        *,
+        package: PackageModel,
+        scene: SceneSource,
+        assets: list[VisualAsset],
+        beat: StoryBeat,
+        already_bound: dict[str, AssetActivation],
+    ) -> list[AssetActivation]:
+        """Bind extra real cutouts only when their scene-level group is unambiguous.
+
+        Asset-level metadata describes semantic intents, not segmentation cardinality.
+        A single intent or group may therefore correspond to several real cutouts. When
+        exactly one semantic group exists in the scene, extra independent cutouts can
+        safely inherit that group's spoken phrase without guessing between meanings.
+        They are appended after authored sequence orders in deterministic visual-weight
+        order. Multi-group scenes remain abstentions unless explicitly mapped.
+        """
+        scenes = package.semantic_bindings.get("scenes")
+        if not isinstance(scenes, list):
+            return []
+        scene_binding = next(
+            (
+                row for row in scenes
+                if isinstance(row, dict) and row.get("scene_id") == scene.id
+            ),
+            None,
+        )
+        if scene_binding is None:
+            return []
+        groups = [
+            row for row in scene_binding.get("semantic_groups", [])
+            if isinstance(row, dict)
+        ]
+        if len(groups) != 1:
+            return []
+        group = groups[0]
+        if group.get("animation_policy", "SEQUENTIAL_WITHIN_PHRASE") != (
+            "SEQUENTIAL_WITHIN_PHRASE"
+        ):
+            return []
+        group_id = str(group.get("semantic_group_id") or "").strip()
+        if not group_id:
+            return []
+        anchors = [
+            row for row in already_bound.values()
+            if row.semantic_group_id == group_id
+            and row.source == "final_package_semantic_binding"
+            and row.spoken_start is not None
+            and row.spoken_end is not None
+        ]
+        if not anchors:
+            return []
+        anchor = min(
+            anchors,
+            key=lambda row: (
+                row.sequence_order if row.sequence_order is not None else 10_000,
+                row.asset_id,
+            ),
+        )
+        max_order = max(
+            (row.sequence_order or 0)
+            for row in anchors
+        )
+        unbound = [
+            asset for asset in assets
+            if asset.id not in already_bound
+            and asset.can_animate_independently
+            and (asset.role or "").casefold() not in {"background", "decorative"}
+        ]
+        unbound.sort(key=lambda asset: (-self._asset_visual_weight(asset), asset.id))
+
+        output: list[AssetActivation] = []
+        for offset, asset in enumerate(unbound, start=1):
+            order = max_order + offset
+            semantic_unit_id = f"{group_id}:unbound-support:{offset}"
+            row = AssetActivation(
+                asset_id=asset.id,
+                semantic_unit_id=semantic_unit_id,
+                trigger_text=anchor.trigger_text,
+                trigger_char_start=anchor.trigger_char_start,
+                trigger_char_end=anchor.trigger_char_end,
+                spoken_start=anchor.spoken_start,
+                spoken_end=anchor.spoken_end,
+                confidence=min(0.55, anchor.confidence),
+                source="final_package_scene_support",
+                policy="SEMANTIC",
+                semantic_group_id=group_id,
+                sequence_order=order,
+                binding_type="SUPPORT",
+                group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+                evidence=[
+                    "single_unambiguous_semantic_group",
+                    "derived_unbound_cutout_support_tail",
+                    f"semantic_group={group_id}",
+                    f"sequence_order={order}",
+                ],
+            )
+            self._decisions[(beat.id, asset.id)] = {
+                "semantic_text": anchor.trigger_text,
+                "reason": "accepted_single_group_unbound_support",
+                "score": row.confidence,
+                "runner_up_score": None,
+                "margin": None,
+                "phrase_index": None,
+                "candidate_phrase": anchor.trigger_text,
+                "semantic_group_id": group_id,
+                "sequence_order": order,
+            }
+            output.append(row)
+        return output
+
+    @staticmethod
+    def _asset_visual_weight(asset: VisualAsset) -> float:
+        if asset.source_area_ratio is not None:
+            return float(asset.source_area_ratio)
+        if (
+            asset.source_bbox
+            and asset.source_canvas_width
+            and asset.source_canvas_height
+        ):
+            _x, _y, width, height = asset.source_bbox
+            return (width * height) / (asset.source_canvas_width * asset.source_canvas_height)
+        return 0.0
 
     def _uniform_scene_binding_activations(
         self,
