@@ -150,7 +150,7 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     assert "1000 ريال" in visible_text
     assert "لاير" not in visible_text
     assert "Noto Kufi Arabic Extra Bold" in payload
-    assert "\\an6\\fs188\\bord" in payload
+    assert "\\an6\\fscx100\\fscy100\\move(" in payload
     assert "\\pos(" in payload
     # Each reveal state is a complete logical phrase shaped as one bidi run. This avoids
     # the temporary word reversal caused by inline override spans inside Arabic text.
@@ -159,6 +159,7 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     assert "1000 ريال" in payload
     assert "&H00FFFFFF" in payload
     assert "&H00000000" in payload
+    assert "Style: Amount,Noto Kufi Arabic Extra Bold,188" in payload
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
