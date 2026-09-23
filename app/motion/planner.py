@@ -169,7 +169,13 @@ class MotionPlanner:
                     else "SUPPORT"
                 )
                 activation = activation_by_asset.get(item.asset_id)
-                momentary_focus, focus_role, focus_source = self._semantic_focus_profile(
+                (
+                    momentary_focus,
+                    focus_role,
+                    focus_source,
+                    focus_strength,
+                    semantic_role,
+                ) = self._semantic_focus_profile(
                     beat=beat,
                     activation=activation,
                     participant_role=participant_role,
@@ -240,6 +246,7 @@ class MotionPlanner:
                         primary=(item is primary_item),
                         momentary_focus=momentary_focus,
                         focus_role=focus_role,
+                        focus_strength=focus_strength,
                         state_target=state_target,
                         interaction_vector=interaction_vector,
                         energy=intensity,
@@ -293,6 +300,8 @@ class MotionPlanner:
                             "active": momentary_focus,
                             "role": focus_role,
                             "source": focus_source,
+                            "strength": round(focus_strength, 4),
+                            "semantic_role": semantic_role,
                             "visual_focus": (
                                 str(activation.visual_focus).upper()
                                 if activation is not None and activation.visual_focus
@@ -450,44 +459,92 @@ class MotionPlanner:
         activation: AssetActivation | None,
         participant_role: str,
         static_primary: bool,
-    ) -> tuple[bool, str, str]:
-        """Resolve temporary focus from Story's trusted activation window.
-
-        Final Package/Story owns WHICH semantic unit is active and WHEN. Motion only
-        translates that evidence into a stronger pre-settle gesture. CONTEXT remains
-        calm, and missing/abstained windows never gain invented focus.
-        """
+    ) -> tuple[bool, str, str, float, str]:
+        """Arbitrate attention instead of promoting every timed asset equally."""
         visual_focus = (
             str(activation.visual_focus).upper()
             if activation is not None and activation.visual_focus
             else None
         )
-        role = str(participant_role or "SUPPORT").upper()
-        if visual_focus == "RESULT" or role == "RESULT":
-            focus_role = "RESULT"
-        elif visual_focus == "CONTEXT":
-            focus_role = "CONTEXT"
-        elif role in {"SUBJECT", "OBJECT", "ACTOR"}:
-            focus_role = role
+        participant = str(participant_role or "SUPPORT").upper()
+        semantic_role = "UNKNOWN"
+        if activation is not None and activation.semantic_unit_id and beat.semantic_context:
+            entity = next(
+                (
+                    row
+                    for row in beat.semantic_context.entities
+                    if row.unit_id == activation.semantic_unit_id
+                ),
+                None,
+            )
+            if entity is not None and entity.role:
+                semantic_role = str(entity.role).upper()
+
+        if visual_focus == "CONTEXT":
+            return False, "CONTEXT", "authored_context", 0.0, semantic_role
+
+        if visual_focus == "RESULT":
+            focus_role, strength, source = "RESULT", 1.0, "authored_visual_focus"
+        elif visual_focus == "PRIMARY":
+            focus_role, strength, source = "PRIMARY", 0.95, "authored_visual_focus"
         elif visual_focus == "SUPPORT":
-            focus_role = "SUPPORT"
+            focus_role, strength, source = "SUPPORT", 0.30, "authored_visual_focus"
+        elif participant == "RESULT":
+            focus_role, strength, source = "RESULT", 0.90, "relation_result"
+        elif activation is not None and activation.visual_state:
+            focus_role, strength, source = "STATE", 0.88, "authored_visual_state"
+        elif semantic_role == "RESULT":
+            focus_role, strength, source = "RESULT", 0.82, "semantic_role"
+        elif participant in {"SUBJECT", "OBJECT"}:
+            focus_role, strength, source = participant, 0.74, "relation_participant"
+        elif semantic_role == "PRIMARY":
+            focus_role, strength, source = "PRIMARY", 0.72, "semantic_role"
+        elif semantic_role == "ACTION":
+            focus_role, strength, source = "ACTION", 0.68, "semantic_role"
+        elif semantic_role == "OBJECT":
+            focus_role, strength, source = "SUPPORT", 0.42, "semantic_role"
+        elif semantic_role == "SUPPORT":
+            focus_role, strength, source = "SUPPORT", 0.28, "semantic_role"
+        elif participant == "ACTOR":
+            focus_role, strength, source = "ACTOR", 0.52, "actor_context"
+        elif semantic_role == "CHARACTER":
+            focus_role, strength, source = "CHARACTER", 0.48, "semantic_role"
+        elif activation is not None and str(activation.binding_type or "").upper() == "SUPPORT":
+            focus_role, strength, source = "SUPPORT", 0.28, "support_binding"
         else:
-            focus_role = "ACTIVE_FOCUS" if static_primary else "SUPPORT"
+            focus_role, strength, source = "ACTIVE_FOCUS", 0.62, "ordered_semantic_step"
+
+        if (
+            activation is not None
+            and str(activation.binding_type or "").upper() == "SUPPORT"
+            and visual_focus is None
+            and participant != "RESULT"
+            and semantic_role != "RESULT"
+            and not activation.visual_state
+        ):
+            focus_role, strength, source = (
+                "SUPPORT",
+                min(strength, 0.35),
+                "support_binding",
+            )
+
+        if static_primary and visual_focus not in {"SUPPORT", "CONTEXT"}:
+            strength = max(strength, 0.72)
+            if focus_role in {"SUPPORT", "ACTIVE_FOCUS"}:
+                focus_role = "PRIMARY"
 
         has_v2, window = story_activation_window(activation, beat)
-        if (
+        active = bool(
             has_v2
             and window is not None
-            and visual_focus != "CONTEXT"
             and window.activation_policy in {"OWN_WINDOW", "INHERITED_WINDOW"}
-        ):
-            if focus_role == "SUPPORT":
-                focus_role = "ACTIVE_FOCUS"
-            return True, focus_role, "story_activation_window"
-
+            and strength >= 0.60
+        )
+        if active:
+            return True, focus_role, source, strength, semantic_role
         if static_primary:
-            return False, focus_role, "beat_primary"
-        return False, focus_role, "none"
+            return False, focus_role, "beat_primary", strength, semantic_role
+        return False, focus_role, source, strength, semantic_role
 
     @staticmethod
     def _apply_choreography_pattern(
@@ -498,6 +555,7 @@ class MotionPlanner:
         primary: bool,
         momentary_focus: bool,
         focus_role: str,
+        focus_strength: float,
         state_target: bool,
         interaction_vector: tuple[float, float],
         energy: float,
@@ -516,6 +574,7 @@ class MotionPlanner:
         accent_progress = max(0.42, min(settle - 0.10, settle * 0.67))
         role = str(participant_role or "SUPPORT").upper()
         focus_role = str(focus_role or role).upper()
+        focus_strength = max(0.0, min(1.0, float(focus_strength)))
         energy = max(0.35, min(1.0, energy))
         dx = 0.0
         dy = 0.0
@@ -526,12 +585,12 @@ class MotionPlanner:
         # own cue: once it settles, it returns to authored Composition and becomes
         # completely static while the next semantic unit takes focus.
         if pattern == ChoreographyPattern.STANDARD:
-            scale = 1.050
-            dy = -0.006
+            scale = 1.0 + 0.050 * focus_strength
+            dy = -0.006 * focus_strength
         elif pattern == ChoreographyPattern.PROGRESSIVE_BUILD:
             if momentary_focus:
-                scale = 1.072
-                dy = -0.010
+                scale = 1.0 + 0.078 * focus_strength
+                dy = -0.011 * focus_strength
             elif primary:
                 scale = 1.040
                 dy = -0.006
@@ -539,9 +598,12 @@ class MotionPlanner:
                 scale = 1.012
                 dy = -0.002
         elif pattern == ChoreographyPattern.FOCUS_TRANSFER:
-            if momentary_focus or primary:
-                scale = 1.082
-                dy = -0.011
+            if momentary_focus:
+                scale = 1.025 + 0.070 * focus_strength
+                dy = -0.012 * focus_strength
+            elif primary:
+                scale = 1.038
+                dy = -0.005
             else:
                 return program
         elif pattern == ChoreographyPattern.STATE_TRANSFORM:
@@ -549,8 +611,8 @@ class MotionPlanner:
                 scale = 1.095
                 dy = -0.013
             elif momentary_focus:
-                scale = 1.060
-                dy = -0.008
+                scale = 1.020 + 0.050 * focus_strength
+                dy = -0.009 * focus_strength
             elif primary:
                 scale = 1.030
             else:
@@ -560,21 +622,21 @@ class MotionPlanner:
             if role == "SUBJECT":
                 dx = vx * 0.12
                 dy = vy * 0.12
-                scale = 1.040 if momentary_focus else 1.026
+                scale = (1.026 + 0.020 * focus_strength) if momentary_focus else 1.026
             elif role == "OBJECT":
-                scale = 1.062 if momentary_focus else 1.045
+                scale = (1.045 + 0.022 * focus_strength) if momentary_focus else 1.045
                 dx = -vx * 0.025
                 dy = -vy * 0.025
             elif role == "RESULT" or focus_role == "RESULT":
                 scale = 1.105
                 dy = -0.014
             elif role == "ACTOR":
-                scale = 1.038 if momentary_focus else 1.025
+                scale = (1.025 + 0.018 * focus_strength) if momentary_focus else 1.025
                 dx = vx * 0.04
                 dy = vy * 0.04
             elif momentary_focus:
-                scale = 1.058
-                dy = -0.008
+                scale = 1.020 + 0.045 * focus_strength
+                dy = -0.009 * focus_strength
             elif primary:
                 scale = 1.038
             else:
