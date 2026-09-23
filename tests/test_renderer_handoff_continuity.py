@@ -352,3 +352,225 @@ def test_ordered_visual_unit_keeps_first_member_as_boundary_carrier(
 
     detector = RecoveryDetector("ffprobe", "ffmpeg")
     assert detector._white_flash_frames(output, duration=1.8) == []
+
+
+def test_visual_carrier_prefers_early_semantic_object_over_character_and_result() -> None:
+    beat = StoryBeat(
+        id="beat-semantic",
+        scene_id="scene-semantic",
+        start=0.0,
+        end=1.5,
+        audio_start=0.2,
+        audio_end=1.3,
+        narration="semantic",
+        primary_asset_ids=["result"],
+        support_asset_ids=["character", "object"],
+        action="REVEAL_DETAIL",
+    )
+    items = [
+        LayoutItem(asset_id="character", x=0.50, y=0.50, width=0.28, height=0.70, z=10),
+        LayoutItem(asset_id="object", x=0.20, y=0.50, width=0.30, height=0.55, z=20),
+        LayoutItem(asset_id="result", x=0.82, y=0.50, width=0.30, height=0.55, z=30),
+    ]
+    motion = {
+        (beat.id, "character"): MotionCue(
+            beat_id=beat.id,
+            asset_id="character",
+            kind="program_v3",
+            start=0.20,
+            end=0.55,
+            params={
+                "semantic_focus": {"semantic_role": "CHARACTER", "role": "CHARACTER"},
+                "motion_order": {"sequence_order": 1, "internal_index": 0},
+            },
+        ),
+        (beat.id, "object"): MotionCue(
+            beat_id=beat.id,
+            asset_id="object",
+            kind="program_v3",
+            start=0.20,
+            end=0.50,
+            params={
+                "semantic_focus": {"semantic_role": "OBJECT", "role": "OBJECT"},
+                "motion_order": {"sequence_order": 2, "internal_index": 0},
+            },
+        ),
+        (beat.id, "result"): MotionCue(
+            beat_id=beat.id,
+            asset_id="result",
+            kind="program_v3",
+            start=0.70,
+            end=1.00,
+            params={
+                "semantic_focus": {
+                    "semantic_role": "RESULT",
+                    "role": "RESULT",
+                    "visual_focus": "RESULT",
+                },
+                "motion_order": {"sequence_order": 3, "internal_index": 0},
+            },
+        ),
+    }
+
+    carrier = FFmpegRenderer._visual_carrier_asset_id(
+        beat=beat,
+        ordered_items=items,
+        motion=motion,
+        persistent_ids=frozenset(),
+        fps=30,
+    )
+
+    assert carrier == "object"
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="ffmpeg required",
+)
+def test_story_primary_cannot_leak_future_result_before_semantic_cue(tmp_path: Path) -> None:
+    context_path = tmp_path / "context.png"
+    result_path = tmp_path / "result.png"
+    _write_rgba_asset(context_path, (35, 170, 80, 255))
+    _write_rgba_asset(result_path, (225, 60, 55, 255))
+    assets = [
+        VisualAsset(
+            id="context",
+            scene_id="scene",
+            role="support",
+            image_path=context_path,
+            extraction_method="test",
+        ),
+        VisualAsset(
+            id="result",
+            scene_id="scene",
+            role="primary",
+            image_path=result_path,
+            extraction_method="test",
+        ),
+    ]
+    beat = StoryBeat(
+        id="beat",
+        scene_id="scene",
+        start=0.0,
+        end=1.2,
+        audio_start=0.0,
+        audio_end=1.2,
+        narration="context then result",
+        primary_asset_ids=["result"],
+        support_asset_ids=["context"],
+        action="REVEAL_DETAIL",
+    )
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="context", x=0.25, y=0.5, width=0.32, height=0.55, z=10),
+            LayoutItem(asset_id="result", x=0.75, y=0.5, width=0.32, height=0.55, z=20),
+        ],
+    )]
+    motion = [
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="context",
+            kind="reveal_in",
+            start=0.0,
+            end=0.20,
+            params={"semantic_focus": {"semantic_role": "CONTEXT", "role": "CONTEXT"}},
+        ),
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="result",
+            kind="reveal_in",
+            start=0.70,
+            end=0.90,
+            params={
+                "semantic_focus": {
+                    "semantic_role": "RESULT",
+                    "role": "RESULT",
+                    "visual_focus": "RESULT",
+                }
+            },
+        ),
+    ]
+    plan = RenderPlan(
+        width=640,
+        height=360,
+        fps=30,
+        duration=1.2,
+        story=[beat],
+        composition=composition,
+        motion=motion,
+        assets=assets,
+    )
+    output = tmp_path / "semantic-visibility.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+    frames = _read_frames(output)
+
+    before = frames[12]
+    result_pixel = before[180, 480]
+    assert min(int(value) for value in result_pixel) > 235
+    context_pixel = before[180, 160]
+    assert int(context_pixel[1]) > int(context_pixel[2]) + 30
+
+    after = frames[25]
+    result_pixel = after[180, 480]
+    assert int(result_pixel[2]) > int(result_pixel[1]) + 50
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_family_canvas_semantic_reveal_is_crisp_not_alpha_ghost(tmp_path: Path) -> None:
+    asset_path = tmp_path / "family.png"
+    _write_rgba_asset(asset_path, (40, 90, 220, 255))
+    beat = StoryBeat(
+        id="beat-family",
+        scene_id="scene-family",
+        start=0.0,
+        end=1.0,
+        audio_start=0.0,
+        audio_end=1.0,
+        narration="family reveal",
+        primary_asset_ids=[],
+        support_asset_ids=["family"],
+        action="REVEAL_DETAIL",
+    )
+    plan = RenderPlan(
+        width=640,
+        height=360,
+        fps=30,
+        duration=1.0,
+        story=[beat],
+        composition=[CompositionBeat(
+            beat_id=beat.id,
+            items=[LayoutItem(asset_id="family", x=0.5, y=0.5, width=0.40, height=0.60)],
+        )],
+        motion=[MotionCue(
+            beat_id=beat.id,
+            asset_id="family",
+            kind="program_v3",
+            start=0.50,
+            end=0.72,
+            params={
+                "render_constraints": {
+                    "geometry_lock": "authored_footprint",
+                    "reveal_mode": "alpha_only",
+                },
+                "semantic_focus": {"semantic_role": "SUPPORT", "role": "SUPPORT"},
+            },
+        )],
+        assets=[VisualAsset(
+            id="family",
+            scene_id="scene-family",
+            role="support",
+            image_path=asset_path,
+            extraction_method="test",
+        )],
+    )
+    output = tmp_path / "family-hard-reveal.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+    frames = _read_frames(output)
+
+    center_samples = [frame[180, 320] for frame in frames]
+    nonwhite = [pixel for pixel in center_samples if min(int(v) for v in pixel) < 235]
+    assert nonwhite
+    for pixel in nonwhite[:5]:
+        assert int(pixel[0]) > int(pixel[1]) + 45
+        assert int(pixel[0]) > int(pixel[2]) + 45
