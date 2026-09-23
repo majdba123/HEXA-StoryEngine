@@ -874,3 +874,40 @@ Expected next gate:
   - rerun the same Black-Hat Final Package + narration
   - expected: previous `REFERENCE_VISUAL_GRAMMAR` blocker for sequence-013 is gone
   - then verify actual sequential asset entrances in encoded render.
+
+
+## MONTAGE20 OPTIONAL TEXT LAYER RECOVERY — 2026-09-23
+
+- Third real Black-Hat run diagnostic job: `21e6f7222ad844a2bbd0a1db80545d77`.
+- Pipeline reached Motion with:
+  - Pass1: 157 authored assets / 40 scenes
+  - Pass2: 179 assets (+22)
+  - Story: 40 beats; densest scene 12 assets
+  - Composition: geometry locked; 0 text cues
+- Failure:
+  - `StageFailedError: required text layer produced no narration-locked cues`
+  - code: `TEXT_LAYER_MISSING`.
+- Root cause:
+  - `Settings` dataclass default was `require_text_layer=False`, but `Settings.from_env()` silently made production default mandatory using `HEXA_REQUIRE_TEXT_LAYER=1`.
+  - Desktop launchers did not explicitly set the variable.
+  - Therefore a valid sparse-text decision of zero cues became a hard failure even though Text is an independent optional layer.
+- General fix:
+  - production/default `HEXA_REQUIRE_TEXT_LAYER` is now opt-in (`0` by default).
+  - operators can still explicitly require text via `HEXA_REQUIRE_TEXT_LAYER=1`.
+  - no Text Planner semantics were weakened; no fake keywords are generated to satisfy QA.
+  - diagnostics now record `require_text_layer` explicitly in report settings.
+- Regression coverage:
+  - default text layer policy is optional
+  - explicit `HEXA_REQUIRE_TEXT_LAYER=1` remains mandatory
+- Final tested code HEAD before continuity commit:
+  - `7a584353a67e09261b954ff24392477d59b844b9`
+- GitHub Actions:
+  - Run `35824023603` SUCCESS
+  - Compile SUCCESS
+  - Ruff: All checks passed
+  - Pytest: 212 passed, 12 warnings
+- Next acceptance step:
+  - pull latest `montage`
+  - rerun same Black-Hat package + narration
+  - expected: zero text cues no longer blocks render under normal desktop defaults
+  - then inspect encoded render for sequential narration-locked asset entrances.
