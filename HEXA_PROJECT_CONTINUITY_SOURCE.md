@@ -643,3 +643,61 @@ Do NOT run another Florence probe.
 Wait for the user's updated Final Package containing additive `semantic_bindings.json`.
 Then inspect the real ZIP/JSON, compare package semantic elements with actual Pass1/Pass2 cutouts, design the general resolver from observed data, preserve backward compatibility, add diagnostics/tests, and render only after semantic mapping is proven.
 
+---
+
+## MONTAGE16 SEMANTIC BINDING STORY SYNC CHECKPOINT — 2026-09-23
+
+### INPUT CONTRACT PROVEN
+
+The updated White-Hat Final Package includes additive `semantic_bindings.json` with schema `HEXA_SEMANTIC_BINDINGS` v1.0.
+The inspected package contains 35 scenes and 145 semantic binding assets.
+For the current White-Hat package, every semantic asset inside a scene uses the same declared `script_text` as the other semantic assets in that scene.
+
+### HARD SAFETY DECISION
+
+Pass1 and Pass2 are unchanged.
+`semantic_bindings.json` never creates a cutout and never forces extraction.
+Only cutouts actually produced by Pass1/Pass2 may receive Story/Motion activation.
+
+### NEW STORY BEHAVIOR
+
+When one scene has exactly one unambiguous declared semantic-binding phrase:
+- every independently animatable non-background/non-decorative cutout produced for that scene receives an explicit Final Package semantic activation;
+- Story resolves the exact canonical-script character span;
+- WhisperX word alignment supplies the spoken start/end;
+- `reveal_start == phrase_start`;
+- `settle_at == phrase_end` when the visual beat has capacity;
+- source is `final_package_semantic_binding`;
+- E5 is not needed for that exact case.
+
+If a scene contains multiple different binding phrases and there is no safe cutout mapping, Story does not guess. It falls back to the pre-existing legacy semantic path.
+
+### MOTION CONTRACT
+
+No new Motion style algorithm was added. Existing Motion V2/V3 already consumes Story activation windows and retimes the smooth authored motion program.
+For exact Final Package bindings, motion begins at phrase start and reaches the Composition-authored resting position at phrase end.
+The semantic-bound package visual timeline no longer hands off a scene before the previous spoken phrase finishes when the audio spans do not overlap.
+
+### VERIFIED COMMITS
+
+- `8490438541923fae67c3c1dfaae216c80f4dc904` — PackageModel semantic bindings field.
+- `eb7e7217bb6db3a262928bcb81d15a11774f99c0` — semantic bindings loader/validation.
+- `0c394c496d9209ff283d9df565696dd7810ecf49` — preserve spoken completion for semantic-bound packages.
+- `ed1890277d23c31a93e542c8f8cb8b291f0559f0` — exact phrase Story window.
+- `378272ed807536d9e4940cbcc38b7d65d4e97814` — apply semantic binding timing to real cutouts.
+- `e15d52526140a311218bd82032a1781f3b2db377` — binding phrase normalization fix.
+- `c4be3b45fa6878135f1418ed376a6e1b0721d8d0` — loader tests.
+- `13c45b2fd4368248f911b7e727c42696a6cbe262` — Story binding/timeline tests.
+- `15eb541e760b1e392ace8531e3a843d2275783b1` — Motion settle timing test.
+
+### CI
+
+GitHub Actions run `35813476202`: SUCCESS.
+Compile: SUCCESS.
+Lint: SUCCESS.
+Tests: `193 passed, 12 warnings`.
+
+### NEXT
+
+Pull `montage`, run `HEXA.bat` with the updated White-Hat Final Package containing `semantic_bindings.json` and the existing White-Hat audio, then review the full render and Story sync diagnostics.
+
