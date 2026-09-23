@@ -49,6 +49,13 @@ class TranscriptionService:
                 # Controlled fallback for tests/diagnostics only. Product Settings use
                 # strict forced alignment so unsafe timing never silently drives render.
                 pass
+            finally:
+                # Forced alignment is a completed stage once the Transcript is materialized.
+                # Do not keep its heavy CTC model resident while later visual models
+                # (Florence/E5) run on low-memory production machines.
+                release = getattr(self.forced_aligner, "release", None)
+                if callable(release):
+                    release()
 
         try:
             return self._faster_whisper(audio, script)

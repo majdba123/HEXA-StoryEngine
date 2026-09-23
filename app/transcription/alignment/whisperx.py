@@ -128,6 +128,23 @@ class WhisperXForcedAligner:
         self._loaded[language] = (model, metadata)
         return model, metadata
 
+    def release(self) -> None:
+        """Release cached alignment models after a completed transcription stage."""
+        self._loaded.clear()
+
+        # Clearing Python references is sufficient for correctness, but explicitly
+        # collecting here prevents a multi-model pipeline from carrying large CPU
+        # tensor graphs into Story/Florence on memory-constrained machines.
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+        except (ImportError, ModuleNotFoundError):
+            return
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def _build_transcript(
         self,
         *,

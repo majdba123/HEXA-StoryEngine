@@ -97,10 +97,14 @@ class _FakeForcedAligner:
     def __init__(self, transcript: Transcript) -> None:
         self.transcript = transcript
         self.calls: list[tuple[Path, str, float]] = []
+        self.release_calls = 0
 
     def align(self, audio: Path, script: str, duration: float) -> Transcript:
         self.calls.append((audio, script, duration))
         return self.transcript
+
+    def release(self) -> None:
+        self.release_calls += 1
 
 
 def test_transcription_prefers_forced_alignment_when_script_is_known(
@@ -125,3 +129,14 @@ def test_transcription_prefers_forced_alignment_when_script_is_known(
     assert result is expected
     assert len(fake.calls) == 1
     assert fake.calls[0][1] == "known script"
+    assert fake.release_calls == 1
+
+
+def test_whisperx_release_drops_cached_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    aligner = WhisperXForcedAligner()
+    aligner._loaded["ar"] = (object(), {"language": "ar"})
+
+    monkeypatch.setattr("gc.collect", lambda: 0)
+    aligner.release()
+
+    assert aligner._loaded == {}
