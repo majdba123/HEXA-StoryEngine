@@ -53,6 +53,8 @@ class SemanticAssetBinder:
             candidates = [asset for asset in ranked if self._is_character_candidate(asset)]
             actor_ids = tuple(asset.id for asset in candidates[:character_count])
 
+        authored_actor_ids = self._authored_character_assets(beat, assets)
+        actor_ids = tuple(dict.fromkeys((*authored_actor_ids, *actor_ids)))
         actor_set = set(actor_ids)
         independent = [asset for asset in assets if asset.can_animate_independently]
         focus_pool = [asset for asset in independent if asset.id not in actor_set]
@@ -175,6 +177,36 @@ class SemanticAssetBinder:
         # not identify the actor, do not fake the mapping. Leaving it unresolved lets
         # InteractionIntent become non-executable while preserving the semantic evidence.
         return {unit_id: asset_id for unit_id, asset_id in mapping.items() if asset_id in asset_by_id}
+
+    @staticmethod
+    def _authored_character_assets(
+        beat: StoryBeat | None,
+        assets: list[VisualAsset],
+    ) -> tuple[str, ...]:
+        """Resolve semantic CHARACTER/ACTOR roles through Story-proven identity.
+
+        Final Package 1.1 often represents units as VISUAL_ASSET_INTENT, so scene-unit
+        type alone cannot identify people. Story activations already map semantic units
+        to real cutouts; reuse that evidence so a large character does not become focus
+        merely because it occupies more pixels than the actual concept.
+        """
+        if beat is None or beat.semantic_context is None:
+            return ()
+        valid_assets = {asset.id for asset in assets}
+        actor_units = {
+            entity.unit_id
+            for entity in beat.semantic_context.entities
+            if str(entity.role or "").upper() in {"CHARACTER", "ACTOR"}
+            or str(entity.entity_type or "").upper()
+            in {"MAIN_CHARACTER", "SECONDARY_CHARACTER", "CHARACTER", "PERSON"}
+        }
+        if not actor_units:
+            return ()
+        return tuple(dict.fromkeys(
+            row.asset_id
+            for row in beat.asset_activations
+            if row.semantic_unit_id in actor_units and row.asset_id in valid_assets
+        ))
 
     @staticmethod
     def _authored_focus_asset(
