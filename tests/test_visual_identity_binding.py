@@ -409,7 +409,12 @@ def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: 
 
     result = SemanticActivationPlanner().enrich(package, transcript, assets, [beat])[0]
 
-    own = [row for row in result.asset_activations if row.policy in {"EXPLICIT", "SEMANTIC"}]
+    own = [
+        row
+        for row in result.asset_activations
+        if row.source == "final_package_semantic_binding"
+        and row.policy in {"EXPLICIT", "SEMANTIC"}
+    ]
     assert len(own) == 1
     assert own[0].semantic_unit_id == "intent-a"
     assert own[0].asset_id == "left-small"
