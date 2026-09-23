@@ -44,7 +44,7 @@ class TextPlanner:
             directive = choreography.for_beat(beat.id) if choreography else None
             context = beat.semantic_context
             scene = scene_by_id.get(beat.scene_id)
-            candidates = self.semantic.select(beat, transcript)
+            candidates = self.semantic.select(beat, transcript, package=package)
             for candidate in candidates:
                 timed = self.timing.align(candidate, transcript)
                 if timed is None:
