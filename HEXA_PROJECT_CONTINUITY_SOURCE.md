@@ -1893,3 +1893,230 @@ GitHub Actions:
 - Visual Locator remains identity metadata only; never crop/layout/motion authority.
 - The 22 assets without locator in this real package remain valid and use the legacy
   semantic path; do not invent locators for them in StoryEngine.
+
+
+## MONTAGE20 FINAL PACKAGE → MOTION ORDER AUTHORITY — 2026-09-23
+
+This checkpoint makes Final Package semantic ordering an explicit Motion authority and
+closes the observed 1→2→3 becoming 3→2→1 / layout-order problem.
+
+### Root cause
+
+Motion was deterministic, but it was not always semantically authoritative.
+
+Story already preserved Final Package:
+- `semantic_group_id`
+- `sequence_order`
+- `group_animation_policy`
+- aligned phrase timing
+
+and Story V2 already allocated ordered windows for distinct `sequence_order` values.
+
+However MotionPlanner still iterated raw Composition `layout.items` and passed that
+layout index into motion/timing decisions. Extraction/layout order is not guaranteed to
+equal semantic Final Package order.
+
+A second gap existed for Visual Locator one-to-many bindings:
+one semantic intent may map to several real cutouts. Those cutouts correctly share one
+Story semantic window, but Motion had no explicit internal ordering authority.
+
+### Authority hierarchy
+
+The production rule is now:
+
+```
+Final Package sequence_order
+        ↓
+Story preserves semantic order + owns outer timing window
+        ↓
+MotionOrderResolver
+        ↓
+Motion executes semantic order
+        ↓
+Internal visual-unit order only when one semantic intent has multiple cutouts
+```
+
+Final Package `sequence_order` is authoritative over:
+- extraction order
+- cutout ID ordering
+- Composition item list ordering
+- incidental layout index
+- asset size
+
+Motion MUST NOT reverse an authored semantic order.
+
+### New MotionOrderResolver
+
+New file:
+`app/motion/order.py`
+
+For every Composition item it creates an explicit Motion ordering slot.
+
+If an AssetActivation comes from:
+`source = final_package_semantic_binding`
+
+and carries:
+- semantic_group_id
+- sequence_order
+
+then ordering source becomes:
+`final_package_sequence_order`
+
+Otherwise legacy/layout order remains the conservative fallback.
+
+No scene IDs, Black Hat terms, cybersecurity vocabulary, fixed asset counts, or package-
+specific rules are used.
+
+### Multi-cutout internal ordering
+
+When Visual Identity proves:
+one semantic intent -> multiple real cutouts
+
+through evidence:
+`visual_identity_multi_cutout_member`
+
+Motion may derive an internal reveal order WITHOUT changing Story's outer semantic order
+or Composition geometry.
+
+Generic internal rule:
+1. If previous and next semantic steps exist, follow the authored spatial direction from
+   previous-step centroid toward next-step centroid.
+2. If only next exists, flow from current-group centroid toward next.
+3. If only previous exists, flow away from previous toward current-group centroid.
+4. If neither exists, follow the dominant authored spatial axis.
+5. If members occupy effectively the same position and differ materially in visual size,
+   use small -> large only as a deterministic tie-breaker.
+6. Original layout order is the final stable tie-breaker.
+
+This is a generic geometry rule, NOT a special rule for cards.
+
+### Story timing remains authority
+
+Motion does not invent a new semantic time window.
+
+For a multi-cutout visual unit:
+- first member begins at the Story-owned reveal boundary;
+- members are staggered only inside that Story window;
+- final member completes at Story-owned settle;
+- if the window is too short to stagger safely, the unit remains simultaneous.
+
+The outer phrase timing remains WhisperX / Story authority.
+
+### Simultaneous visual units
+
+If:
+`group_animation_policy = SIMULTANEOUS_VISUAL_UNIT`
+
+Motion does NOT internally stagger the members.
+
+### Pass2 family protection
+
+If several members share the same Pass2 `asset_family_id` and are rendered as family
+canvases, Motion does NOT split their reveal timing.
+
+Reason:
+family-main / family-secondary layers may jointly reconstruct one authored visual. A
+stagger must never expose a temporary hole, missing child, or parent reconstruction
+artifact.
+
+Pass1 / Pass2 behavior is unchanged.
+
+### Renderer protection
+
+The renderer historically kept primary artwork visible from beat start to prevent a
+blank canvas. That behavior could defeat a deliberately ordered multi-cutout reveal.
+
+Renderer now preserves that primary-beat protection for normal assets, but does NOT
+force early visibility for an explicitly staggered internal visual unit.
+
+Final authored Composition position remains unchanged.
+
+### Motion diagnostics
+
+Each MotionCue now records:
+`params.motion_order`
+
+including:
+- source
+- semantic_group_id
+- semantic_unit_id
+- sequence_order
+- internal_index
+- internal_count
+- stagger_applied
+
+This makes ordering explainable and testable in production diagnostics.
+
+### QA contract
+
+StorySyncQA now rejects:
+- reversed Final Package semantic order;
+- collapsed explicitly scheduled sequence steps;
+- incomplete internal visual-unit ranks;
+- reversed internal visual-unit order;
+- collapsed internal stagger when stagger was declared;
+- final internal member missing the Story-owned settle target;
+- internal member starting before or settling after its Story outer window.
+
+QA allows earlier members in one internal visual unit to settle before the outer final
+settle, because that is intentional choreography. The final member must close the Story
+window.
+
+### Tests
+
+New:
+`tests/test_motion_final_package_ordering.py`
+
+Regression coverage proves:
+1. input layout deliberately 3,2,1 -> Motion outputs Final Package 1,2,3;
+2. locator-backed multi-cutout units receive deterministic internal geometry-flow order;
+3. same-position visual members can use small->large only as a tie-breaker;
+4. SIMULTANEOUS_VISUAL_UNIT stays simultaneous;
+5. Pass2 family-canvas members are never split.
+
+Existing Motion / Story / Render tests continue to pass.
+
+### Real Final Package adversarial validation
+
+Package:
+`HEXA_BLACK_HAT_HACKER_AR`
+
+Validation used the actual current 40-scene Final Package and deliberately reversed the
+input semantic layout order before running the tested MotionOrderResolver.
+
+Result:
+- scenes checked: 40
+- scenes preserving Final Package sequence authority: 40
+- failures: 0
+- result: PASS
+
+This verifies the implementation against the current real package while remaining
+topic-agnostic.
+
+### Tested checkpoint
+
+Behavior HEAD:
+`d96fd8dcb40eadc788cf065bbc936614bcad336d`
+
+GitHub Actions:
+- Run: `35896640956`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **238 passed, 11 warnings in 5.33s**
+
+### Do not regress
+
+- Final Package sequence_order outranks layout/extraction/index ordering.
+- Motion must never silently reverse a trusted Final Package order.
+- Story/WhisperX retain outer timing authority.
+- Motion only owns internal HOW/order execution inside the allowed Story window.
+- Internal one-to-many ordering must be deterministic and generic.
+- Do not hardcode cards, hackers, finance, medicine, scene IDs, or asset counts.
+- Do not apply small->large globally; it is only a geometric tie-breaker.
+- SIMULTANEOUS_VISUAL_UNIT must remain simultaneous.
+- Pass2 family-canvas reconstruction must remain simultaneous.
+- Do not change Composition final positions to solve ordering.
+- Do not modify Pass1/Pass2 to solve ordering.
+- Do not touch text behavior for Motion ordering work.
+- If reliable Final Package order is absent, preserve conservative legacy/layout fallback.
