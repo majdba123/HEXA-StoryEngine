@@ -26,7 +26,14 @@ class ReferenceGrammarPlanner:
         stages: list[VisualGrammarStage] = []
         if index == 0:
             stages.extend((VisualGrammarStage.ENTER, VisualGrammarStage.READ))
-        elif phase in {SequencePhase.ACTION, SequencePhase.SETUP}:
+        elif phase in {
+            SequencePhase.ACTION,
+            SequencePhase.SETUP,
+            SequencePhase.HANDOFF,
+        }:
+            # A handoff still introduces the next visual/narrative unit. Treating it
+            # as RELEASE-only makes valid two-beat sequences fail the progressive
+            # grammar contract even though the second beat clearly adds meaning.
             stages.append(VisualGrammarStage.ADD)
 
         if (
