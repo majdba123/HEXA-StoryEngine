@@ -303,7 +303,6 @@ class TextLayoutItem(BaseModel):
     y: float
     max_width: float
     font_scale: float = Field(default=1.0, ge=0.55, le=1.0)
-    font_size_ratio: float | None = Field(default=None, ge=0.05, le=0.30)
     z: int = 50
     anchor_asset_id: str | None = None
     placement: str = "safe_top"
