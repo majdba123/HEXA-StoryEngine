@@ -128,7 +128,34 @@ class RecoveryDetector:
                     else None
                 )
                 narration_locked = False
-                if audio_anchor is not None:
+                if beat is not None:
+                    activations = {row.asset_id: row for row in beat.asset_activations}
+                    trusted_windows = []
+                    for cue in cues:
+                        has_v2, window = story_activation_window(
+                            activations.get(cue.asset_id), beat
+                        )
+                        if not has_v2 or window is None:
+                            trusted_windows = []
+                            break
+                        trusted_windows.append(window)
+
+                    # A semantic-binding scene may intentionally reveal several real
+                    # cutouts on the exact same spoken phrase. That is Story V2's
+                    # explicit WHAT+WHEN contract, not an accidental multi-element pop.
+                    # Require every cue to match its trusted Story window so malformed
+                    # or partially-bound groups still fall through to recovery.
+                    if trusted_windows:
+                        narration_locked = all(
+                            abs(cue.start - window.reveal_start) <= 0.05
+                            and abs(
+                                float(cue.params.get("semantic_settle_time", cue.end))
+                                - window.settle_at
+                            ) <= 0.05
+                            for cue, window in zip(cues, trusted_windows, strict=True)
+                        )
+
+                if not narration_locked and audio_anchor is not None:
                     settle_offsets = [cue.end - audio_anchor for cue in cues]
                     narration_locked = all(-0.18 <= offset <= 0.14 for offset in settle_offsets)
 
