@@ -187,3 +187,11 @@ def test_authoring_qa_checks_text_against_locked_visual_geometry(tmp_path) -> No
         assets=[asset],
     )
     assert report.text_layout_violations
+
+
+def test_arabic_kufi_measurement_reserves_real_glyph_width_and_entry_motion() -> None:
+    cue = _cue("text-wide", "يكتب وبسرعة", 0.2, 0.8)
+    width, height = TextPlacementDirector.estimated_box(cue, scale=1.0)
+
+    assert width > 0.60
+    assert height > 0.14
