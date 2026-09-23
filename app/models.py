@@ -51,6 +51,7 @@ class PackageModel(BaseModel):
     script: str | None = None
     manifest: dict[str, Any] = Field(default_factory=dict)
     scene_plan: dict[str, Any] = Field(default_factory=dict)
+    semantic_bindings: dict[str, Any] = Field(default_factory=dict)
 
 
 class TranscriptWord(BaseModel):
