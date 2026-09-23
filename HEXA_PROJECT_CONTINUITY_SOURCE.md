@@ -2468,3 +2468,477 @@ GitHub Actions:
 - Do not restore post-settle oscillation.
 - Do not lower locator thresholds to improve coverage.
 - Do not animate an unresolved semantic intent as an independent cutout.
+
+
+## MONTAGE20 → MONTAGE17 HANDOFF — REFERENCE-GRADE MOTION / FOCUS / TEXT SYNC — 2026-09-23
+
+This is the official takeover checkpoint for the next conversation, named `Montage17`.
+
+### Live repository state at handoff
+
+Repository:
+`majdba123/HEXA-StoryEngine`
+
+Working branch:
+`montage` ONLY.
+
+Live HEAD verified:
+`02eb19cce9c8c571be8f2f33258110f1a33995a9`
+
+HEAD message:
+`[continuity] Record Final Package semantic choreography integration`
+
+Draft PR:
+- #1
+- base: `majd`
+- head: `montage`
+- do NOT merge unless the user explicitly asks.
+
+Latest CI:
+- Run: `35912434619`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **249 passed, 11 warnings in 6.20s**
+
+All previously accepted behavior commits are present under this HEAD, including:
+- `f0e1d30b4d2518b71c2f7f08e6abd25a7d4f40f1`
+  `[story] Consume precise Final Package semantic contract`
+- `1c24cecd3282b44def5c681c9594f811a1f0dc3a`
+  `[tests] Correct precise semantic span fixture`
+- `920d3146b1031328d27b2b89c18f8bdf3b9f009d`
+  `[motion] Drive choreography from Final Package semantics`
+- `2821728e57baca0c252f48d7f07ec2cea82ab96e`
+  `[story] Reconcile precise phrase timing with authored sequence order`
+- `7506db711949f8b9fd23e9f36a9cd6e9e6ebc872`
+  `[motion] Bound semantic interaction displacement`
+- `8080367aeecff53233dfba0d1abe3af679df4d48`
+  `[continuity] Record ordered-motion white-flash fix`
+
+No stronger-motion/focus/text-sync implementation was committed after the above continuity checkpoint.
+The user's latest request is the NEXT PHASE, not already-completed behavior.
+
+### Immutable architecture / do not regress
+
+- Pass1 + Pass2 only.
+- NEVER reintroduce Layer3 / Pass3.
+- Final Package is semantic authority.
+- WhisperX / forced alignment remains actual speech timing authority.
+- Story owns WHAT + semantic WHEN.
+- Choreography owns semantic visual relationship / progression.
+- Motion owns HOW.
+- Composition owns final authored geometry.
+- Visual Locator is WHICH VISUAL only, never crop/segmentation/motion/target position.
+- No scene/topic/count hardcoding.
+- No post-settle wobble/recoil.
+- No collision/relayout.
+- Final positions must remain exactly authored.
+- No white rectangles / pre-shadows / ghost alpha crossfades / early reveal regressions.
+- If ambiguous, abstain/fallback conservatively.
+- Text wording/selection behavior remains the restored OLD behavior.
+- Text visual style/size remains the accepted current renderer style.
+- Do NOT redesign text selection, typography, size, or composition unless the user explicitly asks.
+
+### New Final Package 1.1 is considered CLOSED
+
+The user explicitly wants the new Final Package semantic contract treated as complete.
+
+The uploaded current 1.1 package already proved:
+- 35 scenes
+- 145 semantic assets
+- 145 precise asset script spans
+- 14 relations
+- 12 visual_focus
+- 4 visual_state
+- 0 continuity by intentional omission
+- package validation PASS.
+
+Story/Choreography integration for this contract is already implemented and CI-proven.
+
+Do NOT respond to future visual problems by inventing more Final Package metadata.
+First inspect Story/Choreography/Motion/Text Motion consumption.
+
+### IMPORTANT: current reviewed video is from the OLD Black-Hat package
+
+User uploaded for review:
+`HEXA_BLACK_HAT_HACKER_AR(4).mp4`
+
+Media:
+- duration: ~97.07 s
+- 1920x1080
+- 30 fps
+- H.264
+- AAC mono 44.1 kHz.
+
+The matching Black-Hat Final Package available during review uses the OLD semantic contract:
+- 40 scenes
+- 129 semantic assets
+- 107 visual locators in the locator-enabled variant
+- **0 precise asset script_span**
+- **0 visual_focus**
+- **0 visual_state**
+- **0 scene relations**
+
+Its assets generally share the whole semantic-group phrase.
+
+Example:
+SCENE_003:
+- decision_compass
+- protected_shield
+- open_lock
+
+All three are bound to:
+`لكن الهدف مختلف تمامًا.`
+
+Therefore this video CANNOT fully demonstrate the new 1.1 package's exact word→asset synchronization or authored focus/state/relations.
+Some apparent early reveal / weak hierarchy in this video is caused by the old coarse phrase-level contract, not by the new Final Package.
+
+Do not use this fact as an excuse to leave Motion weak. It is a diagnostic boundary:
+- exact word identity improves with the new package;
+- reference-grade hierarchy/choreography still needs stronger Motion/Text Motion execution.
+
+### Visual review of HEXA_BLACK_HAT_HACKER_AR(4).mp4
+
+Overall:
+- clear improvement over older broken/collision versions;
+- element identity/order is much more coherent;
+- composition is clean;
+- no obvious catastrophic collisions;
+- progressive sequencing exists in several places;
+- BUT it still feels like `elements appear into a composed scene` more than `the idea happens visually in front of the viewer`.
+
+Primary remaining gap is NOT extraction.
+Primary remaining gap is NOT Final Package metadata.
+Primary remaining gap is **Motion hierarchy + semantic focus transfer + visual/text synchronization strength**.
+
+#### 0.0–4.0 s
+
+Observed:
+- main black-hat character, broken lock, warning shield;
+- next scene character + laptop;
+- readable, but multiple saturated objects quickly reach equal visual importance;
+- text arrives as a separate overlay rather than feeling like the same attention event.
+
+Diagnosis:
+- hierarchy is too flat;
+- one beat-level primary is not enough;
+- the currently spoken semantic unit needs temporary focal authority.
+
+#### 5.5–9.5 s
+
+Observed:
+- compass scene then shield/open-lock progression;
+- `الهدف` appears after some related visuals are already visible;
+- then researcher/cracked-shield scene.
+
+Important:
+Because old SCENE_003 binds all three assets to the same full phrase
+`لكن الهدف مختلف تمامًا.`, Story cannot know exact per-word identity in this old package.
+
+Still, Motion should:
+- make one semantic step focal at a time;
+- avoid making future result/support artwork equally readable too early;
+- keep exact sequence while increasing focus transfer.
+
+This is the clearest example of apparent visual semantic lead.
+
+#### 12.5–16.5 s
+
+Observed:
+- hourglass -> eye -> broken device/shield -> identity cards -> character/bag;
+- sequencing works, but cards/support objects become visible with nearly the same visual authority;
+- `حسابات` text appears after the cards are already visually established.
+
+Diagnosis:
+- progressive build exists but does not transfer focus strongly enough;
+- later ordered members should receive their own momentary focal hit when their phrase is active.
+
+#### 18.2–23.2 s
+
+Observed:
+- character/company -> shields -> hacker/device -> laptop/phone/camera -> malware targeting composition.
+
+Diagnosis:
+- semantic order is understandable;
+- motion is still primarily `entry -> settle -> hold`;
+- relationships are represented by static layout more than by cause/effect choreography.
+
+#### 50.2–57.2 s
+
+Observed:
+- server/folder/identity/lock sequence;
+- many blue/gold elements share similar saturation/visual mass.
+
+Diagnosis:
+- scene can be semantically correct while eye priority stays ambiguous;
+- focal asset needs stronger readable motion than contextual/support assets.
+
+#### 59.3–65.5 s
+
+Observed:
+- door/key/broken shield/hacker progression;
+- calendar sequence around ~64–65 s is one of the better progressive-build examples.
+
+Diagnosis:
+- ordering is good;
+- each calendar/step still needs a clearer micro-focus handoff instead of all members becoming equal after reveal.
+
+#### 90.3–97.0 s
+
+Observed:
+- hacker + stolen account/profile cards -> money/data bag;
+- progressive card reveal is coherent.
+
+Diagnosis:
+- this is structurally close to the desired behavior;
+- final/result bag needs a stronger payoff/focus hit;
+- supports should stop competing once the result is established.
+
+### What the reference videos do better
+
+Reference videos reviewed:
+- `تأثير المتفرج2.mp4`
+- `انحياز 2.mp4`
+
+The important difference is NOT simply `more movement everywhere`.
+
+References concentrate movement into semantic attention events:
+
+1. **Progressive visual construction**
+   - arrows/icons/results build one after another;
+   - each addition changes meaning.
+
+2. **Focus transfer**
+   - the eye clearly moves from A -> B -> C;
+   - prior context becomes visually secondary;
+   - the new focal object is unmistakable.
+
+3. **Cause/effect staging**
+   - source action -> target reaction -> result;
+   - not just three independent reveals.
+
+4. **State/payoff hits**
+   - result/check/x/large arrow/change receives a decisive visual beat.
+
+5. **Text and visual feel like one event**
+   - keyword arrives at the semantic moment;
+   - it reinforces the currently focused object/result;
+   - text does not feel like a parallel independent layer.
+
+6. **Selective energy**
+   - references are not uniformly hyperactive;
+   - important moments are stronger while context stays calm.
+
+Do NOT solve this by globally increasing every amplitude.
+That would create collisions and destroy hierarchy.
+
+### Current code-level gaps that Montage17 must inspect first
+
+#### 1. One fixed primary item per whole beat is too coarse
+
+Current `MotionPlanner` computes one `primary_item` for the beat.
+
+Problem:
+In a progressive semantic group 1 -> 2 -> 3, item 2 and item 3 can remain `support` for the whole beat even when their own spoken semantic window becomes active.
+
+Current PROGRESSIVE_BUILD accent is also restrained:
+- primary scale ~1.035
+- support scale ~1.018 before energy/density scaling.
+
+Result:
+ordered assets appear correctly but do not each become visually dominant at their own semantic moment.
+
+Required direction:
+derive **momentary semantic focus per activation/window**, not only one static beat-level primary.
+
+#### 2. Pattern strength is still below reference readability
+
+Current patterns:
+- PROGRESSIVE_BUILD
+- FOCUS_TRANSFER
+- STATE_TRANSFORM
+- CAUSE_EFFECT_CHAIN
+
+Architecture is correct.
+Strength/readability still needs calibration.
+
+Increase semantic distinction, not random movement:
+- focal/primary/result: stronger pre-settle scale/translation;
+- support: restrained;
+- context: calm;
+- result: strongest payoff when justified;
+- dense scenes: stricter caps;
+- short beats: conservative fallback.
+
+Always:
+`meaning-bearing movement -> settle at authored Composition geometry -> total hold`.
+
+No post-settle bounce.
+
+#### 3. Progressive Build must create a real hierarchy wave
+
+Every ordered semantic step should be allowed a short focal moment during its own Story window.
+
+Do NOT animate all items equally.
+
+Desired:
+`context stays readable -> step 1 focus -> step 2 focus -> step 3/result focus`.
+
+#### 4. Cause/effect role differentiation must be more visible
+
+For explicit relations:
+- SUBJECT: approaches/directs attention toward object;
+- OBJECT: reacts;
+- RESULT: lands last with strongest readable payoff.
+
+Keep displacement bounded.
+Do not physically collide objects.
+
+#### 5. Text anchor selection is currently too beat-primary-oriented
+
+Current `TextPlanner` generally chooses:
+`directive.primary_asset_id`
+as `anchor_asset_id`.
+
+This is too coarse for precise Final Package 1.1.
+
+TextCue already has exact canonical source spans.
+AssetActivation already has exact trigger spans from Final Package.
+
+Recommended:
+resolve the text cue anchor by **overlap between TextCue source_char span and Story AssetActivation trigger_char span**, then use choreography primary only as fallback.
+
+This improves:
+`spoken phrase -> exact text -> exact visual asset`
+without changing text selection, wording, style, size, or placement system.
+
+#### 6. Text Motion and Visual Motion are not yet strongly coupled
+
+Pipeline already computes visual Motion before Text Motion.
+
+Current TextMotionPlanner:
+- starts cue at spoken_start;
+- starts token at token.spoken_start;
+- this is GOOD and must remain;
+- but it does not consume the visual motion cue of its anchor asset.
+
+Recommended:
+let TextMotionPlanner receive visual Motion (or a compact sync map).
+For the cue's resolved anchor asset:
+- preserve text/token spoken_start exactly;
+- coordinate its visual emphasis/entry completion with the anchor's semantic settle/Story semantic peak;
+- do NOT shift words earlier than speech.
+
+This is a synchronization-strength improvement, not a text-content redesign.
+
+#### 7. Text renderer entry is fixed and semantically flat
+
+Current first-line ASS gesture is roughly:
+- 14 px horizontal move
+- 10 px vertical move
+- 165 ms
+- 65 ms fade
+
+for all semantic importance.
+
+Do NOT change font/style/size.
+But Montage17 may make entry-strength parameters driven by TextMotionCue semantic role/focus:
+- stronger result/warning/emphasis entry;
+- calmer support keyword;
+- same final x/y/font/size/style.
+
+No bounce after arrival.
+
+#### 8. Audit anti-white-flash visual carrier for semantic lead
+
+The renderer's visual-carrier fix is necessary and must NOT be removed.
+
+But a carrier can make the first incoming semantic asset visible from beat boundary before its authored cue motion begins.
+
+Audit:
+- prefer safe CONTEXT/actor/background-like real asset as boundary carrier when available;
+- do not use a future RESULT/semantic step as early carrier merely to avoid white;
+- later ordered members must stay hidden;
+- no unrelated previous-scene carry;
+- no ghost crossfade;
+- if no better carrier exists, keep the proven conservative behavior and document the limitation.
+
+Do NOT reintroduce VISUAL_WHITE_FLASH.
+
+### Required acceptance behavior for next phase
+
+The target is:
+**at minimum the same semantic-motion clarity / attention hierarchy spirit as the two references**, while preserving HEXA's authored illustration style and current architecture.
+
+For every significant scene, viewer should understand without narration alone:
+- what to look at first;
+- what appeared because of what;
+- what changed;
+- what is the result;
+- where attention moved next.
+
+Text should reinforce the same focal event.
+
+### Strict tests Montage17 should add
+
+Must stay generic:
+- 1 asset;
+- 3 ordered assets;
+- 20 dense assets;
+- 0.5 s beat;
+- 8 s beat;
+- fast narration;
+- slow narration;
+- real-photo-like geometry;
+- illustration geometry;
+- comparison scene;
+- relation scene;
+- state transform;
+- same visual intent -> multiple real cutouts;
+- family-canvas Pass2 asset;
+- unresolved semantic intent;
+- text cue overlapping exact asset script_span;
+- duplicate phrase with distinct script spans.
+
+Assertions:
+- sequence order never reverses;
+- focal step has stronger readable pre-settle motion than support/context;
+- result emphasis > support when authored/derived;
+- no post-settle drift;
+- no final geometry changes;
+- dense-scene displacement caps hold;
+- family-canvas stays footprint-locked;
+- text start == spoken_start;
+- token start == token spoken_start;
+- text anchor maps to matching activation span when available;
+- text does not start before speech;
+- visual semantic step does not lead its Story window beyond tolerance;
+- no white-flash regression.
+
+### Real validation required
+
+After code tests:
+1. run CI;
+2. run the NEW Final Package 1.1 with real narration audio;
+3. produce a full render;
+4. compare representative strips against both references;
+5. visually inspect:
+   - focus hierarchy;
+   - exact semantic reveal timing;
+   - text/visual coupling;
+   - cause/effect readability;
+   - state/result payoff;
+   - collision/ghost/white-flash regressions.
+
+Do not claim `reference-grade` from unit tests alone.
+
+### Next-owner startup behavior
+
+Montage17 must:
+1. read this continuity file fully;
+2. verify live repo / branch / HEAD / CI;
+3. inspect current code before editing;
+4. confirm that Final Package 1.1 integration is already complete;
+5. state clearly that the next work is **Motion hierarchy/focus + Text Motion synchronization**, not extraction and not Final Package redesign;
+6. include a concise visual review of `HEXA_BLACK_HAT_HACKER_AR(4).mp4` in its first response;
+7. then implement conservatively on `montage`.
