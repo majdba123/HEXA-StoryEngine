@@ -228,3 +228,25 @@ def test_rejects_invalid_scene_unit_visual_locator(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidPackageError, match="size must be normalized"):
         FinalPackageLoader().load(package, tmp_path / "work-bad-unit-locator")
+
+
+def test_rejects_incompatible_asset_level_cutout_mapping_cardinality(tmp_path: Path) -> None:
+    package = tmp_path / "package-bad-cardinality"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",'
+        '"cutout_mapping_cardinality":"EXACTLY_ONE",'
+        '"scenes":[{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
+        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
+        '"confidence":1.0}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="cutout_mapping_cardinality"):
+        FinalPackageLoader().load(package, tmp_path / "work-bad-cardinality")
