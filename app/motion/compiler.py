@@ -26,6 +26,7 @@ class MotionCompiler:
         variant: int,
         intensity: float,
         choreography: dict | None = None,
+        semantic_focus: dict | None = None,
         motion_order: dict | None = None,
         render_constraints: dict | None = None,
     ) -> MotionCue:
@@ -48,6 +49,8 @@ class MotionCompiler:
             "choreography": choreography or {},
             "program": program.to_payload(),
         }
+        if semantic_focus:
+            params["semantic_focus"] = semantic_focus
         if motion_order:
             params["motion_order"] = {
                 **motion_order,
