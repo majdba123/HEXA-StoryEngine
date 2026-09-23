@@ -25,13 +25,15 @@ class TranscriptionService:
         self,
         *,
         model_name: str,
+        ffmpeg_bin: str = "ffmpeg",
         ffprobe_bin: str = "ffprobe",
         forced_aligner: ForcedAligner | None = None,
         require_forced_alignment: bool = False,
     ) -> None:
         self.model_name = model_name
+        self.ffmpeg_bin = ffmpeg_bin
         self.ffprobe_bin = ffprobe_bin
-        self.forced_aligner = forced_aligner or WhisperXForcedAligner()
+        self.forced_aligner = forced_aligner or WhisperXForcedAligner(ffmpeg_bin=ffmpeg_bin)
         self.require_forced_alignment = require_forced_alignment
 
     def transcribe(self, audio: Path, script: str | None = None) -> Transcript:
@@ -172,7 +174,7 @@ class TranscriptionService:
     def _speech_intervals(self, audio: Path, duration: float) -> list[tuple[float, float]]:
         """Return speech-active intervals from FFmpeg silence detection."""
         command = [
-            "ffmpeg",
+            self.ffmpeg_bin,
             "-hide_banner",
             "-nostats",
             "-i",
