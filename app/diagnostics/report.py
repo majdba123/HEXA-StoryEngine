@@ -147,6 +147,7 @@ class BuildReportSession:
                 "semantic_text_model": self.settings.semantic_text_model,
                 "qwen3_vl_model": self.settings.qwen3_vl_model,
                 "allow_scene_fallback": self.settings.allow_scene_fallback,
+                "require_text_layer": self.settings.require_text_layer,
             },
             "stage_events": self.stage_events,
             "log_file": self._path_metadata(self.log_path),
