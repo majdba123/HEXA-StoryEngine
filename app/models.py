@@ -184,6 +184,11 @@ class AssetActivation(BaseModel):
     confidence: float = Field(default=0.0, ge=0, le=1)
     source: str = "none"
     policy: str = "FALLBACK"
+    semantic_group_id: str | None = None
+    sequence_order: int | None = Field(default=None, ge=1)
+    binding_type: str | None = None
+    semantic_parent_id: str | None = None
+    group_animation_policy: str | None = None
     evidence: list[str] = Field(default_factory=list)
 
 
