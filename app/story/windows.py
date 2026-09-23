@@ -96,12 +96,29 @@ def _semantic_sequence_windows(
         orders = sorted({row.sequence_order for row in rows if row.sequence_order is not None})
         if len(orders) <= 1:
             continue
-        starts = {round(float(row.spoken_start), 6) for row in rows}
-        ends = {round(float(row.spoken_end), 6) for row in rows}
-        if len(starts) != 1 or len(ends) != 1:
+        # Exact asset phrases may legitimately differ inside one semantic group.
+        # Final Package sequence_order still owns visual progression, so reconcile only
+        # when those exact speech anchors would collapse or reverse the declared order.
+        by_order: dict[int, list[AssetActivation]] = {
+            order: [row for row in rows if row.sequence_order == order]
+            for order in orders
+        }
+        natural_starts = [
+            min(float(row.spoken_start) for row in by_order[order])
+            for order in orders
+        ]
+        needs_reconciliation = any(
+            right <= left + 1e-9
+            for left, right in zip(natural_starts, natural_starts[1:])
+        )
+        if not needs_reconciliation:
             continue
-        phrase_start = float(rows[0].spoken_start)
-        phrase_end = min(float(rows[0].spoken_end), visual_upper)
+
+        phrase_start = min(float(row.spoken_start) for row in rows)
+        phrase_end = min(
+            max(float(row.spoken_end) for row in rows),
+            visual_upper,
+        )
         if (
             not math.isfinite(phrase_start)
             or not math.isfinite(phrase_end)

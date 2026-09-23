@@ -642,3 +642,47 @@ def test_unmapped_cutout_does_not_guess_between_multiple_semantic_groups(tmp_pat
 
     assert extra.activation_policy == "SAFE_ABSTENTION"
     assert extra.source == "semantic_abstention"
+
+
+
+def test_precise_asset_phrases_cannot_reverse_final_package_sequence() -> None:
+    """Exact phrase identity is preferred timing evidence, not permission to reverse order."""
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.0, audio_end=2.0, narration="a later a", action="INTRODUCE",
+    )
+    rows = [
+        AssetActivation(
+            asset_id="a1", spoken_start=0.10, spoken_end=0.55,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=1,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        ),
+        AssetActivation(
+            asset_id="a2", spoken_start=0.90, spoken_end=1.35,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=2,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        ),
+        # Precise trigger points back to the early phrase, but Final Package explicitly
+        # places this visual third. Story must reconcile timing inside the group envelope.
+        AssetActivation(
+            asset_id="a3", spoken_start=0.10, spoken_end=0.55,
+            policy="SEMANTIC", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=3,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        ),
+    ]
+
+    scheduled = schedule_windows(rows, beat, 2.0, set())
+    by_order = {
+        row.sequence_order: row
+        for row in scheduled
+    }
+
+    assert by_order[1].reveal_start < by_order[2].reveal_start < by_order[3].reveal_start
+    assert by_order[3].settle_at == pytest.approx(1.35)
+    assert all(
+        "semantic_group_sequential_window" in row.evidence
+        for row in scheduled
+    )
