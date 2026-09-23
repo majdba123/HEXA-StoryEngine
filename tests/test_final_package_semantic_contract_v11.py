@@ -115,7 +115,7 @@ def test_group_phrase_may_be_wider_than_precise_asset_trigger(tmp_path: Path) ->
             {
                 "asset_id": "warning",
                 "script_text": "ما تم تحديثه",
-                "script_span": {"char_start": 12, "char_end": 23},
+                "script_span": {"char_start": 12, "char_end": 24},
                 "binding_type": "EXPLICIT",
                 "semantic_group_id": "g",
                 "sequence_order": 2,
@@ -126,7 +126,7 @@ def test_group_phrase_may_be_wider_than_precise_asset_trigger(tmp_path: Path) ->
             {
                 "asset_id": "years",
                 "script_text": "من سنوات",
-                "script_span": {"char_start": 24, "char_end": 32},
+                "script_span": {"char_start": 25, "char_end": 33},
                 "binding_type": "SEMANTIC",
                 "semantic_group_id": "g",
                 "sequence_order": 3,
@@ -141,7 +141,7 @@ def test_group_phrase_may_be_wider_than_precise_asset_trigger(tmp_path: Path) ->
                 "object_asset_id": "warning",
                 "result_asset_id": "years",
                 "script_text": "ما تم تحديثه من سنوات",
-                "script_span": {"char_start": 12, "char_end": 32},
+                "script_span": {"char_start": 12, "char_end": 33},
                 "confidence": 0.98,
             }
         ],
