@@ -231,6 +231,13 @@ class MotionPlanner:
                         participant_role=participant_role,
                     )
                 program = self._stable_entry_hold(program)
+                program = self._apply_attention_budget(
+                    program,
+                    focus_strength=focus_strength,
+                    focus_role=focus_role,
+                    momentary_focus=momentary_focus,
+                    primary=(item is primary_item),
+                )
                 state_target = bool(
                     directive is not None
                     and any(
@@ -501,6 +508,11 @@ class MotionPlanner:
             focus_role, strength, source = "PRIMARY", 0.72, "semantic_role"
         elif semantic_role == "ACTION":
             focus_role, strength, source = "ACTION", 0.68, "semantic_role"
+        elif semantic_role == "OBJECT" and (
+            activation is not None
+            and str(activation.binding_type or "").upper() == "EXPLICIT"
+        ):
+            focus_role, strength, source = "OBJECT", 0.66, "explicit_semantic_object"
         elif semantic_role == "OBJECT":
             focus_role, strength, source = "SUPPORT", 0.42, "semantic_role"
         elif semantic_role == "SUPPORT":
@@ -545,6 +557,58 @@ class MotionPlanner:
         if static_primary:
             return False, focus_role, "beat_primary", strength, semantic_role
         return False, focus_role, source, strength, semantic_role
+
+    @staticmethod
+    def _apply_attention_budget(
+        program: MotionProgram,
+        *,
+        focus_strength: float,
+        focus_role: str,
+        momentary_focus: bool,
+        primary: bool,
+    ) -> MotionProgram:
+        """Dampen base entry energy for non-focal context before semantic accents.
+
+        Primitive selection can still produce a noticeable entrance even when an asset is
+        intentionally not the current semantic focus. Scale the pre-settle trajectory by
+        authored attention authority so a CHARACTER/SUPPORT can establish context without
+        stealing the eye from the precise OBJECT/ACTION/RESULT that follows. Final geometry
+        and settle timing are untouched.
+        """
+        role = str(focus_role or "SUPPORT").upper()
+        strength = max(0.0, min(1.0, float(focus_strength)))
+        if role == "CONTEXT":
+            factor = 0.16
+        elif role == "SUPPORT":
+            factor = min(0.42, 0.18 + strength * 0.55)
+        elif role in {"CHARACTER", "ACTOR"}:
+            factor = min(0.58, 0.22 + strength * 0.72)
+        else:
+            factor = 0.22 + strength * 0.78
+        if momentary_focus:
+            factor = max(factor, 0.72)
+        if primary and role not in {"CONTEXT", "SUPPORT", "CHARACTER", "ACTOR"}:
+            factor = max(factor, 0.80)
+
+        frames = []
+        for frame in program.keyframes:
+            if frame.progress >= program.settle_progress - 1e-9:
+                frames.append(frame)
+                continue
+            frames.append(
+                MotionKeyframe(
+                    frame.progress,
+                    frame.dx * factor,
+                    frame.dy * factor,
+                    1.0 + (frame.scale - 1.0) * factor,
+                    frame.easing,
+                )
+            )
+        return MotionProgram(
+            name=program.name,
+            keyframes=tuple(frames),
+            settle_progress=program.settle_progress,
+        )
 
     @staticmethod
     def _apply_choreography_pattern(
