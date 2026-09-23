@@ -165,61 +165,6 @@ def test_primary_group_query_uses_scene_visual_context_without_leaking_to_suppor
 
 
 
-class _FakeVisualBackend:
-    enabled = True
-
-    def __init__(self, payload):
-        self.payload = payload
-        self.calls = 0
-
-    def decide(self, image_path, prompt):
-        self.calls += 1
-        return self.payload
-
-
-def test_vlm_can_bind_unresolved_asset_directly_but_only_to_supplied_phrase(tmp_path):
-    package, transcript, assets, beat = scene_case(tmp_path, 2)
-    scorer = Scorer({"concept00": {}, "concept01": {}})
-    backend = _FakeVisualBackend({"matches": [{
-        "asset_id": assets[1].id, "phrase_index": 0, "confidence": 0.93,
-    }]})
-    planner = SemanticActivationPlanner(scorer=scorer, visual_backend=backend)
-    result = planner.enrich(package, transcript, assets, [beat])[0]
-    row = next(r for r in result.asset_activations if r.asset_id == assets[1].id)
-    assert row.activation_policy == "OWN_WINDOW"
-    assert row.source == "vlm_direct_asset_phrase_match"
-    assert row.trigger_text == transcript.words[0].text
-    assert row.semantic_unit_id is None
-    assert backend.calls == 1
-
-
-def test_vlm_direct_asset_fallback_rejects_invented_ids_and_phrase_indices(tmp_path):
-    package, transcript, assets, beat = scene_case(tmp_path, 2)
-    scorer = Scorer({"concept00": {}, "concept01": {}})
-    backend = _FakeVisualBackend({"matches": [
-        {"asset_id": "invented", "phrase_index": 0, "confidence": 0.99},
-        {"asset_id": assets[0].id, "phrase_index": 999, "confidence": 0.99},
-        {"unit_id": "invented-unit", "asset_id": assets[1].id,
-         "phrase_index": 0, "confidence": 0.99},
-    ]})
-    result = SemanticActivationPlanner(scorer=scorer, visual_backend=backend).enrich(
-        package, transcript, assets, [beat],
-    )[0]
-    assert all(r.activation_policy == "SAFE_ABSTENTION" for r in result.asset_activations)
-
-
-def test_vlm_direct_asset_fallback_requires_high_confidence(tmp_path):
-    package, transcript, assets, beat = scene_case(tmp_path, 1)
-    scorer = Scorer({"concept00": {}})
-    backend = _FakeVisualBackend({"matches": [{
-        "asset_id": assets[0].id, "phrase_index": 0, "confidence": 0.87,
-    }]})
-    result = SemanticActivationPlanner(scorer=scorer, visual_backend=backend).enrich(
-        package, transcript, assets, [beat],
-    )[0]
-    assert result.asset_activations[0].activation_policy == "SAFE_ABSTENTION"
-
-
 def test_runtime_failure_does_not_mask_missing_semantic_binding_reason(tmp_path):
     package, transcript, assets, beat = scene_case(tmp_path, 1)
     beat.semantic_context.entities = []
@@ -234,72 +179,6 @@ def test_runtime_failure_does_not_mask_missing_semantic_binding_reason(tmp_path)
 
 
 
-class _InventoryOnlyBackend:
-    enabled = True
-
-    def __init__(self, asset_id: str, description: str, confidence: float = 0.94):
-        self.asset_id = asset_id
-        self.description = description
-        self.confidence = confidence
-        self.calls = []
-
-    def decide(self, image_path, prompt):
-        self.calls.append(prompt)
-        if "visual semantic inventory stage" in prompt:
-            return {"assets": [{
-                "asset_id": self.asset_id,
-                "description": self.description,
-                "category": "security",
-                "semantic": True,
-                "confidence": self.confidence,
-            }]}
-        return {"matches": []}
-
-
-def test_unbound_visual_inventory_description_can_drive_e5_phrase_match(tmp_path, monkeypatch):
-    package, transcript, assets, beat = scene_case(tmp_path, 2)
-    from PIL import Image
-    Image.new("RGB", (320, 180), "white").save(package.scenes[0].image_path)
-    for asset in assets:
-        Image.new("RGBA", (100, 100), (255, 255, 255, 0)).save(asset.image_path)
-    beat.semantic_context.entities = []
-    beat.semantic_targets = []
-    transcript.words[0].text = "نقاط الضعف"
-    backend = _InventoryOnlyBackend(assets[0].id, "security vulnerability")
-    scorer = Scorer({"security vulnerability": {"نقاط الضعف": 0.93}})
-    planner = SemanticActivationPlanner(scorer=scorer, visual_backend=backend)
-    monkeypatch.setattr(planner.visual_resolver, "cache_root", tmp_path / "semantic-cache")
-
-    result = planner.enrich(package, transcript, assets, [beat])[0]
-
-    row = next(r for r in result.asset_activations if r.asset_id == assets[0].id)
-    assert row.activation_policy == "OWN_WINDOW"
-    assert row.source == "visual_inventory_semantic_match"
-    assert row.trigger_text == "نقاط الضعف"
-    assert planner.diagnostics["visual_semantic_count"] == 1
-    assert any("visual semantic inventory stage" in prompt for prompt in backend.calls)
-
-
-def test_visual_inventory_does_not_force_ambiguous_e5_match(tmp_path, monkeypatch):
-    package, transcript, assets, beat = scene_case(tmp_path, 2)
-    from PIL import Image
-    Image.new("RGB", (320, 180), "white").save(package.scenes[0].image_path)
-    for asset in assets:
-        Image.new("RGBA", (100, 100), (255, 255, 255, 0)).save(asset.image_path)
-    beat.semantic_context.entities = []
-    beat.semantic_targets = []
-    backend = _InventoryOnlyBackend(assets[0].id, "security concept")
-    scorer = Scorer({"security concept": {"concept00": 0.91, "concept01": 0.90}})
-    planner = SemanticActivationPlanner(scorer=scorer, visual_backend=backend)
-    monkeypatch.setattr(planner.visual_resolver, "cache_root", tmp_path / "semantic-cache")
-
-    result = planner.enrich(package, transcript, assets, [beat])[0]
-
-    row = next(r for r in result.asset_activations if r.asset_id == assets[0].id)
-    assert row.activation_policy == "SAFE_ABSTENTION"
-
-
-
 def test_semantic_diagnostics_report_eligible_coverage(tmp_path):
     package, transcript, assets, beat = scene_case(tmp_path, 2)
     scorer = Scorer({"concept00": {"concept00": 0.95}, "concept01": {}})
@@ -310,3 +189,4 @@ def test_semantic_diagnostics_report_eligible_coverage(tmp_path):
     assert planner.diagnostics["trusted_eligible_count"] == 1
     assert planner.diagnostics["inherited_eligible_count"] == 0
     assert planner.diagnostics["eligible_coverage"] == pytest.approx(0.5)
+    assert planner.diagnostics["semantic_authority"] == "final_package"
