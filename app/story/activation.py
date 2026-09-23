@@ -588,27 +588,37 @@ class SemanticActivationPlanner:
         if identity.has_incomplete_locator_binding:
             self._identity_incomplete_beats.add(beat.id)
         for semantic_id in sorted(identity.locator_semantic_ids):
-            match = identity.matches.get(semantic_id)
+            identity_matches = identity.matches_for(semantic_id)
+            primary_match = identity_matches[0] if identity_matches else None
             self.diagnostics["visual_identity"].append({
                 "beat_id": beat.id,
                 "scene_id": scene.id,
                 "semantic_asset_id": semantic_id,
-                "real_asset_id": match.real_asset_id if match is not None else None,
-                "source": match.source if match is not None else "abstention",
-                "score": match.score if match is not None else None,
-                "runner_up_score": match.runner_up_score if match is not None else None,
-                "margin": match.margin if match is not None else None,
+                "real_asset_id": (
+                    primary_match.real_asset_id
+                    if len(identity_matches) == 1
+                    else None
+                ),
+                "real_asset_ids": [row.real_asset_id for row in identity_matches],
+                "member_count": len(identity_matches),
+                "source": primary_match.source if primary_match is not None else "abstention",
+                "score": primary_match.score if primary_match is not None else None,
+                "runner_up_score": (
+                    primary_match.runner_up_score if primary_match is not None else None
+                ),
+                "margin": primary_match.margin if primary_match is not None else None,
                 "reason": (
-                    "accepted"
-                    if match is not None
+                    "accepted_multi_cutout_visual_unit"
+                    if len(identity_matches) > 1
+                    else "accepted"
+                    if primary_match is not None
                     else "ambiguous_or_missing_real_cutout_geometry"
                 ),
             })
-        identity_claimed_real = {
-            match.real_asset_id: semantic_id
-            for semantic_id, match in identity.matches.items()
-            if semantic_id in identity.locator_semantic_ids
-        }
+        identity_claimed_real: dict[str, str] = {}
+        for semantic_id in identity.locator_semantic_ids:
+            for match in identity.matches_for(semantic_id):
+                identity_claimed_real[match.real_asset_id] = semantic_id
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         tolerance = 0.025
@@ -623,14 +633,24 @@ class SemanticActivationPlanner:
             binding_type = str(row.get("binding_type") or "").upper()
             if not semantic_id or not phrase or binding_type == "AMBIGUOUS":
                 continue
-            identity_match = identity.matches.get(semantic_id)
+            identity_matches = identity.matches_for(semantic_id)
+            resolved_assets: list[tuple[VisualAsset, Any]] = []
             if semantic_id in identity.locator_semantic_ids:
-                # A visual locator is explicit identity evidence. If it is ambiguous or
-                # cannot be compared to real Pass1/Pass2 geometry, abstain instead of
-                # falling back to size/order heuristics that can swap icon meanings.
-                if identity_match is None:
+                # A visual locator is explicit identity evidence. It may describe one
+                # real cutout or one authored visual unit composed of several detached
+                # cutouts. If neither can be resolved conservatively, abstain instead
+                # of falling back to size/order heuristics that can swap meanings.
+                if not identity_matches:
                     continue
-                real_id = identity_match.real_asset_id
+                for identity_match in identity_matches:
+                    asset = asset_by_id.get(identity_match.real_asset_id)
+                    if (
+                        asset is None
+                        or not asset.can_animate_independently
+                        or (asset.role or "").casefold() in {"background", "decorative"}
+                    ):
+                        continue
+                    resolved_assets.append((asset, identity_match))
             else:
                 real_id = semantic_map.get(semantic_id)
                 if real_id is None and semantic_id in asset_by_id:
@@ -638,12 +658,15 @@ class SemanticActivationPlanner:
                 claimed_by = identity_claimed_real.get(real_id or "")
                 if claimed_by is not None and claimed_by != semantic_id:
                     continue
-            asset = asset_by_id.get(real_id or "")
-            if (
-                asset is None
-                or not asset.can_animate_independently
-                or (asset.role or "").casefold() in {"background", "decorative"}
-            ):
+                asset = asset_by_id.get(real_id or "")
+                if (
+                    asset is None
+                    or not asset.can_animate_independently
+                    or (asset.role or "").casefold() in {"background", "decorative"}
+                ):
+                    continue
+                resolved_assets.append((asset, None))
+            if not resolved_assets:
                 continue
 
             timing = phrase_cache.get(phrase)
@@ -684,54 +707,65 @@ class SemanticActivationPlanner:
             )
             sequence_order = row.get("sequence_order")
             semantic_confidence = float(row.get("confidence", 0.0))
-            if identity_match is not None and semantic_id in identity.locator_semantic_ids:
-                confidence = min(semantic_confidence, identity_match.score)
-            else:
-                confidence = min(semantic_confidence, max(0.0, binding_confidence))
             policy = "EXPLICIT" if binding_type == "EXPLICIT" else "SEMANTIC"
-            activation = AssetActivation(
-                asset_id=asset.id,
-                semantic_unit_id=semantic_id,
-                trigger_text=phrase,
-                trigger_char_start=char_start,
-                trigger_char_end=char_end,
-                spoken_start=spoken_start,
-                spoken_end=spoken_end,
-                confidence=confidence,
-                source="final_package_semantic_binding",
-                policy=policy,
-                semantic_group_id=group_id,
-                sequence_order=int(sequence_order) if sequence_order is not None else None,
-                binding_type=binding_type,
-                semantic_parent_id=(
-                    str(row.get("parent_asset_id"))
-                    if row.get("parent_asset_id") is not None
-                    else None
-                ),
-                group_animation_policy=group_policy,
-                evidence=[
-                    "asset_level_final_package_binding",
-                    "exact_final_package_script_text",
-                    f"semantic_intent={semantic_id}",
-                    f"semantic_group={group_id}",
-                    f"sequence_order={sequence_order}",
-                    f"binding_type={binding_type}",
-                    f"binder_confidence={binding_confidence:.6f}",
-                    *(
-                        [
-                            "visual_identity_binding",
-                            f"visual_identity_source={identity_match.source}",
-                            f"visual_identity_score={identity_match.score:.6f}",
-                            f"visual_identity_runner_up={identity_match.runner_up_score if identity_match.runner_up_score is not None else 'none'}",
-                            f"visual_identity_margin={identity_match.margin if identity_match.margin is not None else 'none'}",
-                        ]
-                        if identity_match is not None
-                        and semantic_id in identity.locator_semantic_ids
-                        else []
+
+            for asset, identity_match in resolved_assets:
+                if identity_match is not None:
+                    confidence = min(semantic_confidence, identity_match.score)
+                else:
+                    confidence = min(
+                        semantic_confidence, max(0.0, binding_confidence)
+                    )
+                activation = AssetActivation(
+                    asset_id=asset.id,
+                    semantic_unit_id=semantic_id,
+                    trigger_text=phrase,
+                    trigger_char_start=char_start,
+                    trigger_char_end=char_end,
+                    spoken_start=spoken_start,
+                    spoken_end=spoken_end,
+                    confidence=confidence,
+                    source="final_package_semantic_binding",
+                    policy=policy,
+                    semantic_group_id=group_id,
+                    sequence_order=(
+                        int(sequence_order) if sequence_order is not None else None
                     ),
-                ],
-            )
-            candidates_by_real.setdefault(asset.id, []).append(activation)
+                    binding_type=binding_type,
+                    semantic_parent_id=(
+                        str(row.get("parent_asset_id"))
+                        if row.get("parent_asset_id") is not None
+                        else None
+                    ),
+                    group_animation_policy=group_policy,
+                    evidence=[
+                        "asset_level_final_package_binding",
+                        "exact_final_package_script_text",
+                        f"semantic_intent={semantic_id}",
+                        f"semantic_group={group_id}",
+                        f"sequence_order={sequence_order}",
+                        f"binding_type={binding_type}",
+                        f"binder_confidence={binding_confidence:.6f}",
+                        *(
+                            [
+                                "visual_identity_binding",
+                                f"visual_identity_source={identity_match.source}",
+                                f"visual_identity_score={identity_match.score:.6f}",
+                                f"visual_identity_runner_up={identity_match.runner_up_score if identity_match.runner_up_score is not None else 'none'}",
+                                f"visual_identity_margin={identity_match.margin if identity_match.margin is not None else 'none'}",
+                                *(
+                                    ["visual_identity_multi_cutout_member"]
+                                    if identity_match.source == "visual_locator_multi"
+                                    else []
+                                ),
+                            ]
+                            if identity_match is not None
+                            and semantic_id in identity.locator_semantic_ids
+                            else []
+                        ),
+                    ],
+                )
+                candidates_by_real.setdefault(asset.id, []).append(activation)
 
         output: list[AssetActivation] = []
         for real_id, rows in sorted(candidates_by_real.items()):
