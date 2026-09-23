@@ -59,7 +59,9 @@ class SemanticAssetBinder:
         if not focus_pool:
             focus_pool = independent or list(assets)
         focus_pool.sort(key=self._visual_weight, reverse=True)
-        focus = focus_pool[0]
+
+        authored_focus = self._authored_focus_asset(beat, assets)
+        focus = authored_focus or focus_pool[0]
 
         interaction_pool = [asset for asset in focus_pool[1:] if self._meaningful_support(asset, focus)]
         if interaction_pool:
@@ -105,6 +107,22 @@ class SemanticAssetBinder:
         asset_by_id = {asset.id: asset for asset in assets}
         mapping: dict[str, str] = {}
         used: set[str] = set()
+
+        # Story's locator-proven semantic activations are the strongest semantic->real
+        # identity evidence available to Choreography. Reuse them before any geometry
+        # heuristic so Final Package relationships cannot be rebound to the wrong cutout.
+        if beat is not None:
+            for activation in beat.asset_activations:
+                unit_id = activation.semantic_unit_id
+                asset_id = activation.asset_id
+                if (
+                    unit_id
+                    and unit_id not in mapping
+                    and asset_id in asset_by_id
+                    and asset_id not in used
+                ):
+                    mapping[unit_id] = asset_id
+                    used.add(asset_id)
 
         # Authored unit identity outranks area/role heuristics. Never derive meaning
         # from image filenames or silently swap an explicitly bound asset.
@@ -157,6 +175,34 @@ class SemanticAssetBinder:
         # not identify the actor, do not fake the mapping. Leaving it unresolved lets
         # InteractionIntent become non-executable while preserving the semantic evidence.
         return {unit_id: asset_id for unit_id, asset_id in mapping.items() if asset_id in asset_by_id}
+
+    @staticmethod
+    def _authored_focus_asset(
+        beat: StoryBeat | None,
+        assets: list[VisualAsset],
+    ) -> VisualAsset | None:
+        if beat is None:
+            return None
+        by_id = {asset.id: asset for asset in assets}
+        rank = {
+            "PRIMARY": 0,
+            "RESULT": 1,
+            "CONTEXT": 2,
+            "SUPPORT": 3,
+        }
+        candidates = [
+            (
+                rank.get(str(row.visual_focus or "").upper(), 99),
+                row.sequence_order if row.sequence_order is not None else 10_000,
+                row.asset_id,
+            )
+            for row in beat.asset_activations
+            if row.visual_focus and row.asset_id in by_id
+        ]
+        if not candidates:
+            return None
+        _, _, asset_id = min(candidates)
+        return by_id[asset_id]
 
     @staticmethod
     def _binding_confidence(

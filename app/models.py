@@ -140,6 +140,10 @@ class StoryRelation(BaseModel):
     target_unit_id: str
     kind: str
     authority: str
+    result_unit_id: str | None = None
+    trigger_text: str | None = None
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
     causal: bool = False
 
@@ -158,6 +162,9 @@ class StorySemanticContext(BaseModel):
     subject_unit_ids: list[str] = Field(default_factory=list)
     object_unit_ids: list[str] = Field(default_factory=list)
     result_unit_ids: list[str] = Field(default_factory=list)
+    focus_unit_ids: list[str] = Field(default_factory=list)
+    visual_states: dict[str, dict[str, str]] = Field(default_factory=dict)
+    continuity_by_unit: dict[str, dict[str, Any]] = Field(default_factory=dict)
     narrative_functions: list[str] = Field(default_factory=list)
     semantic_intents: list[str] = Field(default_factory=list)
     continuity_relation: str | None = None
@@ -189,6 +196,9 @@ class AssetActivation(BaseModel):
     binding_type: str | None = None
     semantic_parent_id: str | None = None
     group_animation_policy: str | None = None
+    visual_focus: str | None = None
+    visual_state: dict[str, str] | None = None
+    continuity: dict[str, Any] | None = None
     evidence: list[str] = Field(default_factory=list)
 
 

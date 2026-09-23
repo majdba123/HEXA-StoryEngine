@@ -48,6 +48,12 @@ class StoryPlanner:
         for rows in assets_by_scene.values():
             rows.sort(key=lambda asset: (asset.source_area_ratio or 0.0), reverse=True)
 
+        semantic_binding_by_scene = {
+            str(row.get("scene_id")): row
+            for row in package.semantic_bindings.get("scenes", [])
+            if isinstance(row, dict) and row.get("scene_id")
+        }
+
         beats: list[StoryBeat] = []
         previous_primary: str | None = None
         beat_number = 1
@@ -91,6 +97,7 @@ class StoryPlanner:
                     scene,
                     event,
                     is_first_beat=(beat_number == 1),
+                    semantic_binding_scene=semantic_binding_by_scene.get(scene.id),
                 )
                 beats.append(StoryBeat(
                     id=f"beat-{beat_number:03d}",

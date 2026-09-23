@@ -122,6 +122,13 @@ class PackageStoryInterpreter:
             "reacts_to",
             "depends_on",
             "triggers",
+            "attacks",
+            "grants_access_to",
+            "creates",
+            "repairs",
+            "reports_to",
+            "authorizes",
+            "depends_on",
         }
     )
 
@@ -131,6 +138,7 @@ class PackageStoryInterpreter:
         event: dict,
         *,
         is_first_beat: bool,
+        semantic_binding_scene: dict | None = None,
     ) -> StorySemanticContext:
         target_ids = tuple(str(value) for value in event.get("targets", []) if value)
         units_by_id = {
@@ -141,9 +149,65 @@ class PackageStoryInterpreter:
 
         relevant_units = self._relevant_units(scene.units, target_ids)
         entities = [self._entity(unit) for unit in relevant_units if unit.get("unit_id")]
-        entity_ids = {entity.unit_id for entity in entities}
+        entity_by_id = {entity.unit_id: entity for entity in entities}
+
+        binding_assets = [
+            row
+            for row in (semantic_binding_scene or {}).get("assets", [])
+            if isinstance(row, dict) and row.get("asset_id")
+        ]
+        for asset in binding_assets:
+            unit_id = str(asset.get("asset_id"))
+            scene_unit = units_by_id.get(unit_id, {})
+            merged = {**scene_unit, **asset, "unit_id": unit_id}
+            merged["semantic_name"] = (
+                asset.get("semantic_meaning")
+                or scene_unit.get("semantic_name")
+                or asset.get("visual_concept")
+                or unit_id
+            )
+            merged["role"] = (
+                asset.get("semantic_role")
+                or asset.get("role")
+                or scene_unit.get("role")
+            )
+            entity_by_id[unit_id] = self._entity(merged)
+        entities = list(entity_by_id.values())
+        entity_ids = set(entity_by_id)
 
         relations: list[StoryRelation] = []
+        for relation in (semantic_binding_scene or {}).get("relations", []) or []:
+            if not isinstance(relation, dict):
+                continue
+            source = str(relation.get("subject_asset_id") or "")
+            target = str(relation.get("object_asset_id") or "")
+            relationship = str(relation.get("relationship") or "").strip()
+            if not source or not target or not relationship:
+                continue
+            span = relation.get("script_span")
+            relations.append(
+                StoryRelation(
+                    source_unit_id=source,
+                    target_unit_id=target,
+                    result_unit_id=self._string_or_none(relation.get("result_asset_id")),
+                    kind=relationship,
+                    authority="FINAL_PACKAGE_ASSET_RELATION",
+                    trigger_text=self._string_or_none(relation.get("script_text")),
+                    trigger_char_start=(
+                        self._int_or_none(span.get("char_start"))
+                        if isinstance(span, dict)
+                        else None
+                    ),
+                    trigger_char_end=(
+                        self._int_or_none(span.get("char_end"))
+                        if isinstance(span, dict)
+                        else None
+                    ),
+                    confidence=float(relation.get("confidence", 1.0)),
+                    causal=self._is_causal_relation(relationship),
+                )
+            )
+
         for unit in relevant_units:
             source = str(unit.get("unit_id") or "")
             target = str(unit.get("interaction_target") or "")
@@ -177,8 +241,14 @@ class PackageStoryInterpreter:
                     )
                 )
 
+        explicit_authorities = {
+            "FINAL_PACKAGE_ASSET_RELATION",
+            "FINAL_PACKAGE_INTERACTION_TARGET",
+        }
         subject_ids = self._unique(
-            relation.source_unit_id for relation in relations if relation.authority == "FINAL_PACKAGE_INTERACTION_TARGET"
+            relation.source_unit_id
+            for relation in relations
+            if relation.authority in explicit_authorities
         )
         if not subject_ids:
             subject_ids = self._unique(
@@ -186,14 +256,21 @@ class PackageStoryInterpreter:
             )
 
         object_ids = self._unique(
-            relation.target_unit_id for relation in relations if relation.authority == "FINAL_PACKAGE_INTERACTION_TARGET"
+            relation.target_unit_id
+            for relation in relations
+            if relation.authority in explicit_authorities
         )
         explicit_reaction_sources = {
             relation.source_unit_id
             for relation in relations
             if self._normalize(relation.kind) in {"reacts_to", "reaction_to"}
         }
-        result_ids = self._unique(
+        explicit_result_ids = self._unique(
+            relation.result_unit_id
+            for relation in relations
+            if relation.authority in explicit_authorities and relation.result_unit_id
+        )
+        inferred_result_ids = self._unique(
             entity.unit_id
             for entity in entities
             if (
@@ -215,6 +292,28 @@ class PackageStoryInterpreter:
             or self._normalize(entity.semantic_intent) in {"reaction", "result"}
             or entity.unit_id in explicit_reaction_sources
         )
+        result_ids = self._unique([*explicit_result_ids, *inferred_result_ids])
+
+        focus_unit_ids = self._unique(
+            str(row.get("asset_id"))
+            for row in binding_assets
+            if row.get("visual_focus")
+        )
+        visual_states = {
+            str(row.get("asset_id")): {
+                "before": str(row["visual_state"]["before"]),
+                "after": str(row["visual_state"]["after"]),
+            }
+            for row in binding_assets
+            if isinstance(row.get("visual_state"), dict)
+            and row["visual_state"].get("before")
+            and row["visual_state"].get("after")
+        }
+        continuity_by_unit = {
+            str(row.get("asset_id")): dict(row["continuity"])
+            for row in binding_assets
+            if isinstance(row.get("continuity"), dict)
+        }
 
         narrative_functions = self._unique(
             entity.narrative_function for entity in entities if entity.narrative_function
@@ -256,6 +355,14 @@ class PackageStoryInterpreter:
         # the structural arc role from SETUP.
         tension = self._tension_for(latent_role if is_first_beat else story_role)
         evidence = self._evidence(scene, event, entities, relations)
+        if semantic_binding_scene is not None:
+            evidence.append("final_package_asset_level_semantics")
+            if relations:
+                evidence.append("final_package_asset_relations")
+            if focus_unit_ids:
+                evidence.append("final_package_visual_focus")
+            if visual_states:
+                evidence.append("final_package_visual_state")
         confidence = self._confidence(scene, entities, relations, target_ids)
 
         return StorySemanticContext(
@@ -278,6 +385,9 @@ class PackageStoryInterpreter:
             subject_unit_ids=subject_ids,
             object_unit_ids=object_ids,
             result_unit_ids=result_ids,
+            focus_unit_ids=focus_unit_ids,
+            visual_states=visual_states,
+            continuity_by_unit=continuity_by_unit,
             narrative_functions=narrative_functions,
             semantic_intents=semantic_intents,
             continuity_relation=scene.relation_to_previous,

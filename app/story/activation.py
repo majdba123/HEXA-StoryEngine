@@ -622,7 +622,7 @@ class SemanticActivationPlanner:
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         tolerance = 0.025
-        phrase_cache: dict[str, tuple[int, int, float, float] | None] = {}
+        phrase_cache: dict[tuple[str, int | None, int | None], tuple[int, int, float, float] | None] = {}
         candidates_by_real: dict[str, list[AssetActivation]] = {}
 
         for row in binding_assets:
@@ -669,11 +669,32 @@ class SemanticActivationPlanner:
             if not resolved_assets:
                 continue
 
-            timing = phrase_cache.get(phrase)
-            if phrase not in phrase_cache:
-                span = self._binding_phrase_span(package.script, scene, phrase)
+            authored_span = row.get("script_span")
+            authored_start = (
+                authored_span.get("char_start")
+                if isinstance(authored_span, dict)
+                else None
+            )
+            authored_end = (
+                authored_span.get("char_end")
+                if isinstance(authored_span, dict)
+                else None
+            )
+            cache_key = (
+                phrase,
+                int(authored_start) if isinstance(authored_start, int) and not isinstance(authored_start, bool) else None,
+                int(authored_end) if isinstance(authored_end, int) and not isinstance(authored_end, bool) else None,
+            )
+            timing = phrase_cache.get(cache_key)
+            if cache_key not in phrase_cache:
+                span = self._binding_authored_span(
+                    package.script,
+                    scene,
+                    phrase,
+                    authored_span,
+                )
                 if span is None:
-                    phrase_cache[phrase] = None
+                    phrase_cache[cache_key] = None
                     continue
                 char_start, char_end = span
                 phrase_words = [
@@ -684,7 +705,7 @@ class SemanticActivationPlanner:
                     and word.char_start < char_end
                 ]
                 if not phrase_words:
-                    phrase_cache[phrase] = None
+                    phrase_cache[cache_key] = None
                     continue
                 spoken_start = phrase_words[0].start
                 spoken_end = phrase_words[-1].end
@@ -693,10 +714,10 @@ class SemanticActivationPlanner:
                     or spoken_end > audio_end + tolerance
                     or spoken_end <= spoken_start
                 ):
-                    phrase_cache[phrase] = None
+                    phrase_cache[cache_key] = None
                     continue
                 timing = (char_start, char_end, spoken_start, spoken_end)
-                phrase_cache[phrase] = timing
+                phrase_cache[cache_key] = timing
             if timing is None:
                 continue
             char_start, char_end, spoken_start, spoken_end = timing
@@ -738,9 +759,49 @@ class SemanticActivationPlanner:
                         else None
                     ),
                     group_animation_policy=group_policy,
+                    visual_focus=(
+                        str(row.get("visual_focus")).upper()
+                        if row.get("visual_focus") is not None
+                        else None
+                    ),
+                    visual_state=(
+                        {
+                            "before": str(row["visual_state"]["before"]),
+                            "after": str(row["visual_state"]["after"]),
+                        }
+                        if isinstance(row.get("visual_state"), dict)
+                        and row["visual_state"].get("before")
+                        and row["visual_state"].get("after")
+                        else None
+                    ),
+                    continuity=(
+                        dict(row["continuity"])
+                        if isinstance(row.get("continuity"), dict)
+                        else None
+                    ),
                     evidence=[
                         "asset_level_final_package_binding",
                         "exact_final_package_script_text",
+                        *(
+                            ["exact_final_package_script_span"]
+                            if isinstance(authored_span, dict)
+                            else []
+                        ),
+                        *(
+                            [f"visual_focus={str(row.get('visual_focus')).upper()}"]
+                            if row.get("visual_focus") is not None
+                            else []
+                        ),
+                        *(
+                            ["final_package_visual_state"]
+                            if isinstance(row.get("visual_state"), dict)
+                            else []
+                        ),
+                        *(
+                            ["final_package_continuity"]
+                            if isinstance(row.get("continuity"), dict)
+                            else []
+                        ),
                         f"semantic_intent={semantic_id}",
                         f"semantic_group={group_id}",
                         f"sequence_order={sequence_order}",
@@ -1028,6 +1089,28 @@ class SemanticActivationPlanner:
             for phrase in phrases
         }
         return phrases[0] if len(normalized) == 1 else None
+
+    @staticmethod
+    def _binding_authored_span(
+        script: str | None,
+        scene: SceneSource,
+        phrase: str,
+        authored_span: object,
+    ) -> tuple[int, int] | None:
+        if isinstance(authored_span, dict) and script:
+            start = authored_span.get("char_start")
+            end = authored_span.get("char_end")
+            if (
+                isinstance(start, int)
+                and not isinstance(start, bool)
+                and isinstance(end, int)
+                and not isinstance(end, bool)
+                and 0 <= start < end <= len(script)
+                and script[start:end] == phrase
+            ):
+                return start, end
+            return None
+        return SemanticActivationPlanner._binding_phrase_span(script, scene, phrase)
 
     @staticmethod
     def _binding_phrase_span(

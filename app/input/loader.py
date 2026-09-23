@@ -13,6 +13,8 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _SEMANTIC_BINDING_SCHEMAS = {"HEXA_SEMANTIC_BINDINGS", "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"}
 _ASSET_LEVEL_BINDING_TYPES = {"EXPLICIT", "SEMANTIC", "SUPPORT", "PARENT", "AMBIGUOUS"}
 _SEMANTIC_GROUP_POLICIES = {"SEQUENTIAL_WITHIN_PHRASE", "SIMULTANEOUS_VISUAL_UNIT"}
+_VISUAL_FOCUS_VALUES = {"PRIMARY", "SUPPORT", "RESULT", "CONTEXT"}
+_CONTINUITY_MODES = {"PERSIST", "TRANSFORM_TO"}
 
 
 class FinalPackageLoader:
@@ -151,7 +153,6 @@ class FinalPackageLoader:
             seen_assets: set[str] = set()
             parent_by_asset: dict[str, str | None] = {}
             group_by_asset: dict[str, str] = {}
-            phrase_by_group: dict[str, str] = {}
             for asset in assets:
                 if not isinstance(asset, dict):
                     raise InvalidPackageError(
@@ -212,12 +213,58 @@ class FinalPackageLoader:
                         FinalPackageLoader._validate_visual_locator(
                             locator, scene_id=scene_id, asset_id=asset_id
                         )
-                    group_by_asset[asset_id] = group_id
-                    previous_phrase = phrase_by_group.setdefault(group_id, phrase.strip())
-                    if previous_phrase != phrase.strip():
+                    script_span = asset.get("script_span")
+                    if script_span is not None and not isinstance(script_span, dict):
                         raise InvalidPackageError(
-                            f"semantic group has inconsistent script_text: {scene_id}:{group_id}"
+                            f"script_span must be an object: {scene_id}:{asset_id}"
                         )
+                    visual_focus = asset.get("visual_focus")
+                    if visual_focus is not None:
+                        if (
+                            not isinstance(visual_focus, str)
+                            or visual_focus.upper() not in _VISUAL_FOCUS_VALUES
+                        ):
+                            raise InvalidPackageError(
+                                f"invalid visual_focus: {scene_id}:{asset_id}"
+                            )
+                    visual_state = asset.get("visual_state")
+                    if visual_state is not None:
+                        if not isinstance(visual_state, dict):
+                            raise InvalidPackageError(
+                                f"visual_state must be an object: {scene_id}:{asset_id}"
+                            )
+                        before = visual_state.get("before")
+                        after = visual_state.get("after")
+                        if (
+                            not isinstance(before, str)
+                            or not before.strip()
+                            or not isinstance(after, str)
+                            or not after.strip()
+                            or before.strip() == after.strip()
+                        ):
+                            raise InvalidPackageError(
+                                f"visual_state requires distinct before/after values: "
+                                f"{scene_id}:{asset_id}"
+                            )
+                    continuity = asset.get("continuity")
+                    if continuity is not None:
+                        if not isinstance(continuity, dict):
+                            raise InvalidPackageError(
+                                f"continuity must be an object: {scene_id}:{asset_id}"
+                            )
+                        mode = continuity.get("mode")
+                        if mode not in _CONTINUITY_MODES:
+                            raise InvalidPackageError(
+                                f"unsupported continuity mode: {scene_id}:{asset_id}"
+                            )
+                        if mode == "TRANSFORM_TO":
+                            target = continuity.get("target_asset_id")
+                            if not isinstance(target, str) or not target.strip():
+                                raise InvalidPackageError(
+                                    f"TRANSFORM_TO continuity requires target_asset_id: "
+                                    f"{scene_id}:{asset_id}"
+                                )
+                    group_by_asset[asset_id] = group_id
 
                 seen_assets.add(asset_id)
                 parent_by_asset[asset_id] = parent
@@ -286,18 +333,70 @@ class FinalPackageLoader:
                             )
                         referenced_assets.add(asset_id)
                     group_phrase = group.get("script_text")
-                    if (
-                        not isinstance(group_phrase, str)
-                        or group_phrase.strip() != phrase_by_group.get(group_id)
-                    ):
+                    if not isinstance(group_phrase, str) or not group_phrase.strip():
                         raise InvalidPackageError(
-                            f"semantic group script_text mismatch: {scene_id}:{group_id}"
+                            f"semantic group script_text is required: {scene_id}:{group_id}"
                         )
                     declared_groups[group_id] = group
                 if referenced_assets != seen_assets:
                     raise InvalidPackageError(
                         f"semantic groups must cover every semantic asset: {scene_id}"
                     )
+
+                relations = scene.get("relations", [])
+                if relations is not None and not isinstance(relations, list):
+                    raise InvalidPackageError(
+                        f"semantic relations must be a list: {scene_id}"
+                    )
+                seen_relations: set[str] = set()
+                for relation in relations or []:
+                    if not isinstance(relation, dict):
+                        raise InvalidPackageError(
+                            f"semantic relation must be an object: {scene_id}"
+                        )
+                    relation_id = relation.get("relation_id")
+                    if relation_id is not None:
+                        if not isinstance(relation_id, str) or not relation_id.strip():
+                            raise InvalidPackageError(
+                                f"semantic relation_id must be non-empty: {scene_id}"
+                            )
+                        if relation_id in seen_relations:
+                            raise InvalidPackageError(
+                                f"duplicate semantic relation: {scene_id}:{relation_id}"
+                            )
+                        seen_relations.add(relation_id)
+                    subject = relation.get("subject_asset_id")
+                    if not isinstance(subject, str) or subject not in seen_assets:
+                        raise InvalidPackageError(
+                            f"semantic relation subject is missing: {scene_id}"
+                        )
+                    relationship = relation.get("relationship")
+                    if not isinstance(relationship, str) or not relationship.strip():
+                        raise InvalidPackageError(
+                            f"semantic relation relationship is required: {scene_id}"
+                        )
+                    for field in ("object_asset_id", "result_asset_id"):
+                        target = relation.get(field)
+                        if target is not None and (
+                            not isinstance(target, str) or target not in seen_assets
+                        ):
+                            raise InvalidPackageError(
+                                f"semantic relation {field} is missing: {scene_id}"
+                            )
+                    confidence = relation.get("confidence")
+                    if confidence is not None and (
+                        isinstance(confidence, bool)
+                        or not isinstance(confidence, (int, float))
+                        or not 0.0 <= float(confidence) <= 1.0
+                    ):
+                        raise InvalidPackageError(
+                            f"semantic relation confidence must be between 0 and 1: {scene_id}"
+                        )
+                    relation_span = relation.get("script_span")
+                    if relation_span is not None and not isinstance(relation_span, dict):
+                        raise InvalidPackageError(
+                            f"semantic relation script_span must be an object: {scene_id}"
+                        )
 
     @staticmethod
     def _validate_visual_locator(locator: object, *, scene_id: str, asset_id: str) -> None:
@@ -355,7 +454,7 @@ class FinalPackageLoader:
 
     @staticmethod
     def _validate_semantic_binding_script(data: dict, script: str | None) -> None:
-        if not data or not script:
+        if not data:
             return
         for scene in data.get("scenes", []):
             if not isinstance(scene, dict):
@@ -365,11 +464,72 @@ class FinalPackageLoader:
                 if not isinstance(asset, dict):
                     continue
                 phrase = str(asset.get("script_text") or "").strip()
-                if phrase and phrase not in script:
+                if script and phrase and phrase not in script:
                     raise InvalidPackageError(
                         f"semantic binding script_text not found in canonical script: "
                         f"{scene_id}:{asset.get('asset_id')}"
                     )
+                FinalPackageLoader._validate_precise_script_span(
+                    script,
+                    asset.get("script_span"),
+                    phrase,
+                    context=f"{scene_id}:{asset.get('asset_id')}",
+                )
+            for group in scene.get("semantic_groups", []):
+                if not isinstance(group, dict):
+                    continue
+                phrase = str(group.get("script_text") or "").strip()
+                if script and phrase and phrase not in script:
+                    raise InvalidPackageError(
+                        f"semantic group script_text not found in canonical script: "
+                        f"{scene_id}:{group.get('semantic_group_id')}"
+                    )
+            for relation in scene.get("relations", []) or []:
+                if not isinstance(relation, dict):
+                    continue
+                phrase = str(relation.get("script_text") or "").strip()
+                if script and phrase and phrase not in script:
+                    raise InvalidPackageError(
+                        f"semantic relation script_text not found in canonical script: "
+                        f"{scene_id}:{relation.get('relation_id')}"
+                    )
+                FinalPackageLoader._validate_precise_script_span(
+                    script,
+                    relation.get("script_span"),
+                    phrase,
+                    context=f"{scene_id}:{relation.get('relation_id') or 'relation'}",
+                )
+
+    @staticmethod
+    def _validate_precise_script_span(
+        script: str | None,
+        span: object,
+        expected_text: str,
+        *,
+        context: str,
+    ) -> None:
+        if span is None:
+            return
+        if script is None:
+            raise InvalidPackageError(
+                f"script_span requires canonical script: {context}"
+            )
+        if not isinstance(span, dict):
+            raise InvalidPackageError(f"script_span must be an object: {context}")
+        start = span.get("char_start")
+        end = span.get("char_end")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or start < 0
+            or end <= start
+            or end > len(script)
+        ):
+            raise InvalidPackageError(f"invalid half-open script_span: {context}")
+        if script[start:end] != expected_text:
+            raise InvalidPackageError(f"script_span does not match script_text: {context}")
 
     @staticmethod
     def _validate_semantic_binding_units(data: dict, scenes: list[SceneSource]) -> None:
