@@ -2942,3 +2942,248 @@ Montage17 must:
 5. state clearly that the next work is **Motion hierarchy/focus + Text Motion synchronization**, not extraction and not Final Package redesign;
 6. include a concise visual review of `HEXA_BLACK_HAT_HACKER_AR(4).mp4` in its first response;
 7. then implement conservatively on `montage`.
+
+## MONTAGE17 MOMENTARY SEMANTIC FOCUS + TEXT/VISUAL SYNC — 2026-09-24
+
+Development branch: `montage`.
+
+### Real video review used for this implementation
+
+Reference videos were reviewed directly frame-by-frame:
+- `تأثير المتفرج2.mp4` — ~72.92 s / 854x480 / 25 fps.
+- `انحياز 2.mp4` — ~79.33 s / 854x480 / 30 fps.
+
+Current HEXA renders reviewed directly:
+- `HEXA_BLACK_HAT_HACKER_AR(5).mp4` — 97.066667 s / 1920x1080 / 30 fps.
+- `HEXA_WHITE_HAT_HACKER_AR(1).mp4` — 99.20 s / 1920x1080 / 30 fps.
+
+The references confirmed that the target is NOT globally stronger motion. Their readability comes from:
+- short semantic attention events;
+- one new focal element at a time;
+- previous context holding still;
+- progressive construction;
+- clear subject -> object -> result staging;
+- decisive result/payoff hits;
+- text and the focused visual feeling like the same event.
+
+Observed current HEXA behavior before this checkpoint:
+- both renders are much cleaner than older broken/collision versions;
+- order and authored composition are generally coherent;
+- White-Hat benefits from the newer semantic package contract and shows stronger semantic sequencing;
+- the main remaining gap is still hierarchy: after reveal, several elements quickly become equal in visual authority;
+- Black-Hat around ~12.8-16.4 s shows good ordered construction (hourglass -> eye -> broken device -> cards/bag) but weak focus handoff;
+- Black-Hat around ~63-65.5 s shows a useful calendar progression but each step needs a clearer focal moment;
+- Black-Hat ~93-97 s has coherent account-card progression into the bag, but the result/payoff is not visually dominant enough;
+- White-Hat ~22-24 s progressively builds multiple protected-company visuals correctly, but all members settle to similar weight;
+- White-Hat ~24.4-30.8 s correctly stages server/problem/breach concepts, but the semantic result is still not given enough visual priority;
+- White-Hat ~56-63 s contains clear semantic additions/state ideas, but the motion still reads mostly as reveal -> settle rather than attention transfer;
+- White-Hat ~84-99 s has a coherent concluding progression but still needs stronger selective focus.
+
+A few pale/ghost-like secondary reveal frames are visible in the existing Black-Hat render around the digital-footprint sequence. This checkpoint does NOT change Pass2/family extraction or the proven white-flash carrier without diagnostics proving the source. Do not overfit the Motion hierarchy fix to that separate issue.
+
+These uploaded renders predate the code below. They are diagnostic inputs, NOT proof of the new behavior.
+
+### Root cause
+
+`MotionPlanner` still used one beat-level `primary_item` as the main strength authority.
+
+Even when Story V2 already gave ordered assets separate trusted semantic windows, a later semantic step could remain visually treated as support for the whole beat.
+
+That meant:
+`1 enters -> settles -> 2 enters -> settles -> 3 enters -> settles`
+
+instead of the reference-style hierarchy wave:
+`1 active focus -> hold -> 2 active focus -> hold -> 3/result payoff -> hold`.
+
+Text had a related coarse link:
+- TextPlanner normally anchored to the choreography/beat primary;
+- TextMotion did not consume the visual MotionCue of its anchor;
+- renderer entry gesture was fixed regardless of semantic focus.
+
+### Motion implementation
+
+`app/motion/planner.py` now derives a temporary semantic focus profile from the trusted Story V2 activation window.
+
+Authority:
+- Story/Final Package still owns WHICH semantic unit and WHEN;
+- Motion only increases the pre-settle gesture during that unit's own trusted window;
+- SAFE_ABSTENTION/missing windows never gain invented focus;
+- `visual_focus=CONTEXT` remains calm;
+- explicit RESULT semantics remain the strongest payoff;
+- after settle every asset returns to exact authored Composition geometry and total hold.
+
+Focus metadata is exported on each MotionCue:
+- `active`
+- `role`
+- `source`
+- `visual_focus`
+- trigger character span
+
+Strength is role-aware:
+- active semantic focus > inactive support;
+- RESULT > support when explicitly authored/derived;
+- SUBJECT keeps bounded directional relationship motion;
+- OBJECT receives a clearer reaction;
+- ACTOR remains restrained;
+- CONTEXT remains calm.
+
+Pattern calibration was strengthened conservatively:
+- STANDARD can receive a restrained focus accent only when Story proves an active semantic window;
+- PROGRESSIVE_BUILD gives each active ordered step its own focal accent;
+- FOCUS_TRANSFER has a stronger focal hit;
+- STATE_TRANSFORM gives the authored state target the strongest state accent;
+- CAUSE_EFFECT_CHAIN differentiates subject/object/result more visibly.
+
+No post-settle bounce/recoil was added.
+
+### Density safety
+
+Motion strength remains density-bounded.
+
+Sparse scenes may use stronger focus/result scale accents.
+As density increases, offset and scale caps tighten.
+20-element scenes retain the existing <= 0.045 normalized displacement cap for focused items and stricter support bounds.
+
+Final authored geometry is unchanged.
+
+### Text exact semantic anchor
+
+`app/text/planner.py` now resolves `anchor_asset_id` using canonical character-span overlap:
+
+`TextCue source_char span -> AssetActivation trigger_char span -> real asset`
+
+Ranking uses:
+- cue-span overlap;
+- activation-span overlap;
+- activation confidence;
+- authored visual focus;
+- narrower matching activation.
+
+When several real cutouts share the same exact semantic span, choreography primary and Story primary are preferred before a deterministic stable fallback.
+
+If no exact overlap exists, old choreography/beat-primary behavior remains the fallback.
+
+Text selection/wording is unchanged.
+Forced-aligned spoken timing is unchanged.
+
+### Text Motion + visual Motion synchronization
+
+`TextMotionPlanner` now optionally consumes the already-compiled visual Motion list.
+
+For a text cue's resolved anchor:
+- text cue start remains exactly `spoken_start`;
+- every token still starts exactly at `token.spoken_start`;
+- visual semantic settle/focus role contributes only to bounded text entry strength/duration;
+- long visual windows cannot stretch a keyword into a slow subtitle gesture.
+
+TextMotionCue diagnostics now record:
+- `entry_strength`
+- `entry_duration_ms`
+- visual sync availability
+- anchor asset
+- visual semantic settle
+- focus role
+
+### Text renderer
+
+Typography behavior remains the user-approved restored OLD behavior.
+
+UNCHANGED:
+- word selection
+- font family
+- font sizes
+- white fill
+- black outline
+- placement architecture
+- final x/y
+- sequential-word reveal logic.
+
+Only the first entry gesture is now semantically bounded:
+- old/no-sync path preserves the historical ~14 px horizontal / 10 px vertical / 165 ms / 65 ms fade behavior;
+- focused/result text may use a somewhat stronger move, bounded to roughly 24 px horizontal / 15 px vertical and <=240 ms;
+- no bounce after arrival.
+
+### White-flash carrier
+
+The existing visual-carrier fix remains unchanged in this checkpoint.
+
+Reason:
+- current renders show no justification for risking a `VISUAL_WHITE_FLASH` regression merely to optimize carrier semantics;
+- future RESULT early-carrier cases should be fixed only with concrete diagnostics proving a safe CONTEXT/actor alternative.
+
+### Behavior commits
+
+- `bcbadfa0da2718aaed3afe1673b6dab177175d21`
+  `[motion] Add momentary semantic focus hierarchy`
+- `cfdc8d75bdee7439f31fbba9349be7d9577f7427`
+  `[motion] Expose semantic focus metadata to render pipeline`
+- `a2e8bbfb52c14c9e25c5f013dc018c748f57f0ac`
+  `[text] Anchor keywords to exact semantic asset spans`
+- `053189e300e9b12837ef8f32a55264a5ccd481e3`
+  `[text] Couple text motion to visual semantic focus`
+- `f040609dbd086167401207376af1f96c01cff049`
+  `[pipeline] Feed visual motion into text synchronization`
+- `bcc48ac77a5041819254956577bc8bf171dcee04`
+  `[render] Scale text entry gesture by semantic focus`
+- `7fa44fa59ae6abf68d0d4c75c7308ab40217de07`
+  `[tests] Cover exact text anchors and visual text sync`
+- `e715a41a225825a9439b4f330679c58f22a3e99f`
+  `[tests] Cover momentary focus hierarchy and result payoff`
+- `87d887331bcdd3d0f8b43e7d681d1862fb46850b`
+  `[tests] Cover focus-driven text entry rendering`
+
+Behavior HEAD before this continuity-only commit:
+`87d887331bcdd3d0f8b43e7d681d1862fb46850b`
+
+### CI proof
+
+GitHub Actions:
+- Run: `35926744734`
+- Workflow: `V2 CI`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **254 passed, 11 warnings in 4.91s**
+
+New regression coverage proves:
+- ordered Story semantic windows each gain temporary focus;
+- explicit RESULT payoff is stronger than non-result participants;
+- final geometry/post-settle hold remains exact;
+- exact text span maps to the matching asset instead of beat-primary;
+- Text Motion consumes visual focus without moving text/token starts before speech;
+- stronger text entry changes motion only, not font/style/size.
+
+All existing ordering, dense-scene, Pass2 family-canvas, renderer, Story sync, text timing and white-flash regression tests remain green.
+
+### Status
+
+PROVEN:
+- code architecture/CI for momentary semantic focus;
+- role-based focus/result hierarchy;
+- exact TextCue -> AssetActivation span anchoring;
+- visual Motion -> Text Motion sync metadata;
+- preserved text/token spoken_start authority;
+- preserved final Composition geometry and post-settle freeze.
+
+NOT YET PROVEN:
+- final reference-grade visual quality from a new encoded render produced by this code;
+- exact perceptual calibration of the stronger accents on the real Final Package 1.1;
+- whether the pale secondary reveal seen in the older Black-Hat render comes from family alpha reveal, extraction content, or another render path.
+
+### Next real acceptance gate
+
+Pull latest `montage`, then run the NEW Final Package 1.1 with its real narration audio.
+
+Review the new full render specifically for:
+- focus handoff step-by-step;
+- result/payoff visibility;
+- cause/effect readability;
+- exact narration/visual timing;
+- text/visual event coupling;
+- no collision;
+- no ghost/pre-shadow regression;
+- no white flash;
+- no post-settle drift.
+
+Do NOT claim reference-grade from CI alone.
+
