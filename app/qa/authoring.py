@@ -58,10 +58,10 @@ class AuthoringVisualQA:
         transcript: Transcript,
         composition: list[CompositionBeat],
         motion: list[MotionCue],
-        story: list[StoryBeat],
         text: TextPlan,
         assets: list[VisualAsset],
         text_composition: list[TextCompositionBeat] | None = None,
+        story: list[StoryBeat] | None = None,
         fps: int = 30,
     ) -> AuthoringQAReport:
         by_id = {asset.id: asset for asset in assets}
@@ -73,7 +73,7 @@ class AuthoringVisualQA:
 
         text_issues = self._inspect_text_layout(
             composition=composition,
-            story=story,
+            story=story or [],
             text=text,
             text_composition=text_composition or [],
             assets=by_id,
