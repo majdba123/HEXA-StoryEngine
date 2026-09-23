@@ -3187,3 +3187,135 @@ Review the new full render specifically for:
 
 Do NOT claim reference-grade from CI alone.
 
+## MONTAGE17 FOCUS ARBITRATION CORRECTION — PRECISE REV9 PACKAGES — 2026-09-24
+
+The user supplied the actual current precise Final Packages and a new White-Hat render:
+- `HEXA_WHITE_HAT_HACKER_AR_HEXA_V20_SCENE_PACKAGE_V1_REV9_PRECISE_FINAL.zip`
+- `HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_SCENE_PACKAGE_V1_REV9_PRECISE_FINAL.zip`
+- `HEXA_WHITE_HAT_HACKER_AR(2).mp4`
+
+### Package evidence — Final Package is NOT the blocker
+
+White-Hat semantic validation is PASS:
+- 35 scenes
+- 145 semantic assets
+- 145 / 145 precise script spans
+- 145 / 145 sequence orders
+- 14 relations
+- 12 visual_focus fields
+- 4 visual_state fields
+- 112 visual locators
+- 0 validation errors
+- 0 script-span mismatches
+- 0 relation-reference errors
+
+Black-Hat REV9 precise semantic validation is also PASS:
+- 40 scenes
+- 129 semantic assets
+- 129 / 129 precise script spans
+- 129 / 129 sequence orders
+- 14 relations
+- 12 visual_focus fields
+- 4 visual_state fields
+- 1 continuity field
+- 107 visual locators
+- 0 validation errors
+- 0 script-span mismatches
+- 0 relation-reference errors
+
+IMPORTANT CORRECTION:
+Earlier handoff analysis described an OLD Black-Hat package with coarse phrase bindings.
+That statement does NOT apply to the newly supplied REV9_PRECISE_FINAL Black-Hat package.
+The current Black-Hat package is precise and metadata-rich.
+
+Concrete White-Hat examples prove sufficient semantic authority:
+- SCENE_018: mutable URL action + RESULT profile; explicit REVEALS relation; result state PRIVATE -> EXPOSED.
+- SCENE_023: expected vs unexpected result; explicit COMPARES_WITH relation; unexpected container has visual_focus PRIMARY and EXPECTED -> UNEXPECTED state.
+- SCENE_031: report/company progression with bounty reward authored as RESULT + visual_focus RESULT.
+- SCENE_028: repaired shield authored as RESULT with VULNERABLE -> REPAIRED state and REPAIRS relation.
+
+Concrete Black-Hat example:
+- SCENE_026 infected_server is semantic RESULT, visual_focus RESULT, state SAFE -> INFECTED, anchored to the precise phrase `يثبت برنامج`.
+
+The new White-Hat render was visually matched against the supplied package scene artwork, confirming the reviewed render uses the same scene content.
+
+### Visual acceptance failure found in White-Hat render
+
+The package gives the correct distinctions, but Motion was flattening them.
+
+Example:
+- SCENE_023 metadata explicitly distinguishes PRIMARY unexpected-result focus/state.
+- Render still makes expected and unexpected containers visually similar in authority.
+
+Example:
+- SCENE_031 metadata explicitly marks bounty_reward as RESULT.
+- Render presents it mostly as the fourth added object instead of a decisive payoff.
+
+Therefore the blocker is code-side semantic focus consumption, not missing Final Package metadata.
+
+### Root cause in code
+
+The first Montage17 momentary-focus implementation treated nearly every trusted Story V2 activation window as strong `ACTIVE_FOCUS`.
+
+That conflated:
+- timing authority: “this asset is semantically active now”
+with
+- attention authority: “this asset should dominate the viewer’s eye now”.
+
+Because REV9 correctly provides many precise timed assets, the bug could make too many valid assets receive similar focal strength.
+
+### Fix
+
+Behavior commits:
+- `6c2a510a27af1af68059f0663d8a017dfea10ddc`
+  `[motion] Arbitrate semantic focus strength by authored role`
+- `fd50d544ca875800c3c4cc6ffb123fe42fbc1667`
+  `[text] Follow visual focus arbitration strength`
+- `1c6f6f825cd1381b8d667738e6d92ea73fedd742`
+  `[tests] Cover authored-role focus arbitration`
+
+Motion now separates trusted timing from visual dominance.
+
+Focus authority:
+- authored visual_focus RESULT: strongest
+- authored visual_focus PRIMARY: near-strongest
+- relation RESULT / authored state: strong
+- semantic RESULT: strong
+- SUBJECT / OBJECT relation participant: medium-strong
+- semantic PRIMARY / ACTION: medium
+- generic ordered semantic step: moderate
+- ACTOR / CHARACTER: calm
+- OBJECT/SUPPORT sub-elements: restrained
+- authored CONTEXT: no focal promotion
+- SUPPORT binding: capped unless stronger explicit evidence overrides it
+
+The exact Story timing remains unchanged.
+Sequence order remains unchanged.
+Composition/final geometry remains unchanged.
+Post-settle freeze remains unchanged.
+
+Text Motion now consumes the same numeric visual focus strength instead of treating every active anchor as equivalent.
+
+### CI proof
+
+Run: `35931793178`
+Workflow: `V2 CI`
+Result: SUCCESS
+Compile: SUCCESS
+Ruff: All checks passed
+Pytest: **255 passed, 11 warnings in 7.30s**
+
+### Next acceptance gate
+
+Render the same White-Hat REV9 precise package again from latest `montage`.
+The expected visible difference is NOT more global movement.
+It is:
+- fewer simultaneous “hero” objects;
+- clearer eye priority;
+- stronger authored RESULT/PRIMARY payoff;
+- calmer character/support/context elements;
+- text emphasis following the same focus strength;
+- preserved exact timing, ordering and final authored composition.
+
+Do not modify the Final Package contract to solve this issue.
+
