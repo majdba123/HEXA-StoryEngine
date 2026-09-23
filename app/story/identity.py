@@ -27,12 +27,19 @@ class VisualIdentityMatch:
 @dataclass(frozen=True, slots=True)
 class VisualIdentityBinding:
     matches: dict[str, VisualIdentityMatch]
+    multi_matches: dict[str, tuple[VisualIdentityMatch, ...]]
     locator_semantic_ids: frozenset[str]
     unresolved_locator_ids: frozenset[str]
 
     @property
     def has_incomplete_locator_binding(self) -> bool:
         return bool(self.unresolved_locator_ids)
+
+    def matches_for(self, semantic_asset_id: str) -> tuple[VisualIdentityMatch, ...]:
+        single = self.matches.get(semantic_asset_id)
+        if single is not None:
+            return (single,)
+        return self.multi_matches.get(semantic_asset_id, ())
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +49,16 @@ class _Proposal:
     score: float
     runner_up_score: float | None
     margin: float | None
+    locator: Box
+
+
+@dataclass(frozen=True, slots=True)
+class _MultiProposal:
+    semantic_asset_id: str
+    real_asset_ids: tuple[str, ...]
+    score: float
+    locator_coverage: float
+    union_score: float
     locator: Box
 
 
@@ -57,6 +74,20 @@ class VisualIdentityBinder:
     _MIN_SCORE = 0.60
     _MIN_MARGIN = 0.065
     _MIN_ALPHA = 10
+
+    # A locator may intentionally describe one visual unit made of several detached
+    # cutouts. This is only accepted after one-to-one matching abstains, and only when
+    # multiple distinct cutouts are strongly contained by the authored locator and
+    # their union reproduces the locator geometry. These guards prevent two nearly
+    # duplicate/overlapping candidates from being misread as a legitimate visual unit.
+    _MULTI_MIN_REAL_CONTAINMENT = 0.88
+    _MULTI_MIN_PRIMARY_LOCATOR_SHARE = 0.015
+    _MULTI_PRIMARY_SHARE_RATIO = 0.18
+    _MULTI_MIN_UNION_SCORE = 0.80
+    _MULTI_MIN_LOCATOR_COVERAGE = 0.18
+    _MULTI_MAX_PAIR_OVERLAP = 0.35
+    _MULTI_SATELLITE_MIN_AREA_RATIO = 0.05
+    _MULTI_SATELLITE_MIN_LOCATOR_SHARE = 0.0015
 
     def __init__(self) -> None:
         self._alpha_cache: dict[Path, Box | None] = {}
@@ -86,6 +117,7 @@ class VisualIdentityBinder:
         }
 
         matches: dict[str, VisualIdentityMatch] = {}
+        multi_matches: dict[str, tuple[VisualIdentityMatch, ...]] = {}
         reserved: set[str] = set()
         locator_rows: dict[str, tuple[dict[str, Any], Box]] = {}
 
@@ -173,11 +205,151 @@ class VisualIdentityBinder:
             reserved.add(chosen.real_asset_id)
             unresolved.remove(chosen.semantic_asset_id)
 
+        # Some semantic intents intentionally represent a visual unit composed of
+        # several detached cutouts (for example a row of cards or network nodes). The
+        # package contract explicitly permits ZERO_OR_ONE_OR_MANY real cutouts per
+        # semantic intent. Resolve that cardinality only after the stricter one-to-one
+        # path abstains; never lower the single-match ambiguity thresholds.
+        while unresolved:
+            proposals: list[_MultiProposal] = []
+            for semantic_id in sorted(unresolved):
+                _row, locator = locator_rows[semantic_id]
+                proposal = self._multi_candidate_proposal(
+                    semantic_asset_id=semantic_id,
+                    locator=locator,
+                    real_boxes=real_boxes,
+                    reserved=reserved,
+                )
+                if proposal is not None:
+                    proposals.append(proposal)
+            if not proposals:
+                break
+
+            chosen = max(
+                proposals,
+                key=lambda row: (
+                    row.score,
+                    row.union_score,
+                    row.locator_coverage,
+                    row.semantic_asset_id,
+                ),
+            )
+            members = tuple(
+                VisualIdentityMatch(
+                    semantic_asset_id=chosen.semantic_asset_id,
+                    real_asset_id=real_id,
+                    score=chosen.score,
+                    runner_up_score=None,
+                    margin=None,
+                    source="visual_locator_multi",
+                    locator=chosen.locator,
+                )
+                for real_id in chosen.real_asset_ids
+            )
+            multi_matches[chosen.semantic_asset_id] = members
+            reserved.update(chosen.real_asset_ids)
+            unresolved.remove(chosen.semantic_asset_id)
+
         locator_ids = frozenset(locator_rows)
+        resolved_locator_ids = set(matches) | set(multi_matches)
         return VisualIdentityBinding(
             matches=matches,
+            multi_matches=multi_matches,
             locator_semantic_ids=locator_ids,
-            unresolved_locator_ids=frozenset(locator_ids - matches.keys()),
+            unresolved_locator_ids=frozenset(locator_ids - resolved_locator_ids),
+        )
+
+    def _multi_candidate_proposal(
+        self,
+        *,
+        semantic_asset_id: str,
+        locator: Box,
+        real_boxes: dict[str, Box],
+        reserved: set[str],
+    ) -> _MultiProposal | None:
+        locator_area = self._area(locator)
+        if locator_area <= 0.0:
+            return None
+
+        contained: list[tuple[str, Box, float, float]] = []
+        for real_id, real_box in real_boxes.items():
+            if real_id in reserved:
+                continue
+            real_area = self._area(real_box)
+            if real_area <= 0.0:
+                continue
+            intersection = self._intersection(locator, real_box)
+            real_containment = intersection / real_area
+            locator_share = intersection / locator_area
+            if real_containment >= self._MULTI_MIN_REAL_CONTAINMENT:
+                contained.append((real_id, real_box, locator_share, real_area))
+        if len(contained) < 2:
+            return None
+
+        max_share = max(row[2] for row in contained)
+        minimum_primary_share = max(
+            self._MULTI_MIN_PRIMARY_LOCATOR_SHARE,
+            max_share * self._MULTI_PRIMARY_SHARE_RATIO,
+        )
+        primary = [row for row in contained if row[2] >= minimum_primary_share]
+        if len(primary) < 2 or self._has_heavy_pair_overlap(primary):
+            return None
+
+        union = self._union_box([row[1] for row in primary])
+        union_score = self._geometry_score(locator, union)
+        coverage = min(1.0, sum(row[2] for row in primary))
+        if (
+            union_score < self._MULTI_MIN_UNION_SCORE
+            or coverage < self._MULTI_MIN_LOCATOR_COVERAGE
+        ):
+            return None
+
+        ordered_areas = sorted(row[3] for row in primary)
+        median_area = ordered_areas[len(ordered_areas) // 2]
+        selected = list(primary)
+        selected_ids = {row[0] for row in selected}
+        for row in contained:
+            if row[0] in selected_ids:
+                continue
+            if (
+                row[3] >= median_area * self._MULTI_SATELLITE_MIN_AREA_RATIO
+                and row[2] >= self._MULTI_SATELLITE_MIN_LOCATOR_SHARE
+            ):
+                selected.append(row)
+
+        selected.sort(
+            key=lambda row: (self._center(row[1])[0], self._center(row[1])[1], row[0])
+        )
+        score = min(1.0, 0.78 * union_score + 0.22 * coverage)
+        return _MultiProposal(
+            semantic_asset_id=semantic_asset_id,
+            real_asset_ids=tuple(row[0] for row in selected),
+            score=score,
+            locator_coverage=coverage,
+            union_score=union_score,
+            locator=locator,
+        )
+
+    @classmethod
+    def _has_heavy_pair_overlap(
+        cls,
+        rows: list[tuple[str, Box, float, float]],
+    ) -> bool:
+        for index, left in enumerate(rows):
+            for right in rows[index + 1:]:
+                intersection = cls._intersection(left[1], right[1])
+                minimum_area = max(1e-9, min(left[3], right[3]))
+                if intersection / minimum_area > cls._MULTI_MAX_PAIR_OVERLAP:
+                    return True
+        return False
+
+    @staticmethod
+    def _union_box(boxes: list[Box]) -> Box:
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
         )
 
     def _rank_candidates(
