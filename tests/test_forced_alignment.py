@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from app.models import Transcript
@@ -140,3 +141,43 @@ def test_whisperx_release_drops_cached_models(monkeypatch: pytest.MonkeyPatch) -
     aligner.release()
 
     assert aligner._loaded == {}
+
+
+
+def test_forced_alignment_passes_predecoded_waveform_to_whisperx(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"fake")
+    waveform = np.asarray([0.0, 0.1, -0.1], dtype=np.float32)
+    captured: dict[str, object] = {}
+
+    def fake_decode(path: Path, ffmpeg_bin: str, *, sample_rate: int):
+        captured["decode"] = (path, ffmpeg_bin, sample_rate)
+        return waveform
+
+    def fake_load_model(language: str, device: str, **kwargs):
+        return object(), {"language": language, "dictionary": {}, "type": "huggingface"}
+
+    def fake_align(source, model, metadata, audio_input, device, **kwargs):
+        captured["audio_input"] = audio_input
+        return {
+            "word_segments": [
+                {"word": "one", "start": 0.10, "end": 0.30},
+                {"word": "two", "start": 0.40, "end": 0.70},
+            ]
+        }
+
+    aligner = WhisperXForcedAligner(device="cpu", ffmpeg_bin="custom-ffmpeg")
+    monkeypatch.setattr(
+        "app.transcription.alignment.whisperx.decode_audio_mono",
+        fake_decode,
+    )
+    monkeypatch.setattr(aligner, "_load_api", lambda: (fake_align, fake_load_model))
+
+    transcript = aligner.align(audio, "one two", 1.0)
+
+    assert captured["decode"] == (audio, "custom-ffmpeg", 16000)
+    assert captured["audio_input"] is waveform
+    assert [word.text for word in transcript.words] == ["one", "two"]
