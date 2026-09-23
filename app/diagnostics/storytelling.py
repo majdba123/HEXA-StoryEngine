@@ -198,10 +198,7 @@ class StorytellingValidator:
         grammar_compliant_sequences = 0
         incomplete_grammar_sequences: list[str] = []
         for sequence in choreography.sequences:
-            stages = {stage.value for stage in sequence.grammar_stages}
-            progressive = "ENTER" in stages and "READ" in stages and "RELEASE" in stages
-            meaning = bool(stages & {"ADD", "RELATE", "RESULT"})
-            if progressive and meaning:
+            if cls._grammar_sequence_is_compliant(sequence):
                 grammar_compliant_sequences += 1
             else:
                 ordered_stages = ",".join(stage.value for stage in sequence.grammar_stages)
@@ -281,6 +278,26 @@ class StorytellingValidator:
             forbidden_jitter_programs=tuple(sorted(set(forbidden))),
             warnings=tuple(warnings),
         )
+
+    @staticmethod
+    def _grammar_sequence_is_compliant(sequence) -> bool:
+        """Validate progressive grammar without inventing meaning stages.
+
+        A one-beat sequence has no later beat available to ADD/RELATE/RESULT. Requiring
+        one of those stages would reject a structurally complete standalone beat. For
+        multi-beat sequences the stronger progressive-meaning requirement remains.
+        """
+        stages = {stage.value for stage in sequence.grammar_stages}
+        progressive = (
+            "ENTER" in stages
+            and "READ" in stages
+            and "RELEASE" in stages
+        )
+        if not progressive:
+            return False
+        if len(sequence.beat_ids) == 1:
+            return True
+        return bool(stages & {"ADD", "RELATE", "RESULT"})
 
     @classmethod
     def validate(cls, **kwargs) -> StorytellingReport:
