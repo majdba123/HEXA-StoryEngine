@@ -4,6 +4,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.shared.process import run_hidden
+
 
 @dataclass(frozen=True, slots=True)
 class RenderedVisualReport:
@@ -26,7 +28,7 @@ class RenderedVisualQA:
             "-frames:v", "1", str(target),
         ]
         try:
-            subprocess.run(command, check=True, capture_output=True)
+            run_hidden(command, check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
             return RenderedVisualReport(contact_sheet=None, sampled=False)
         return RenderedVisualReport(contact_sheet=target if target.is_file() else None, sampled=target.is_file())
