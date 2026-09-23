@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue
+from app.text.typography import TypographyMetrics, TypographyProfile
 
 
 _RLI = "\u2067"
@@ -12,16 +13,16 @@ _PDI = "\u2069"
 
 @dataclass(frozen=True, slots=True)
 class TextRenderTheme:
-    """Premium high-contrast tokens for sparse keyword storytelling."""
+    """Heavy rounded high-contrast typography tokens."""
 
-    font_family: str = "Noto Kufi Arabic"
-    primary: str = "&H00351D0B"       # #0B1D35 deep navy, ASS AABBGGRR
-    accent: str = "&H00EB7A0A"        # #0A7AEB electric blue
-    gold: str = "&H001AA2F4"          # #F4A21A warm gold
-    warning: str = "&H003F4BE3"       # #E34B3F warm red
-    light_outline: str = "&H00FFF9F3" # warm white separation
-    dark_outline: str = "&H00351D0B"  # navy edge for coloured titles
-    shadow: str = "&H520B1526"        # translucent navy depth
+    font_family: str = "Noto Kufi Arabic ExtraBold"
+    primary: str = "&H00FFFFFF"       # white fill, ASS AABBGGRR
+    accent: str = "&H00FFFFFF"
+    gold: str = "&H00FFFFFF"
+    warning: str = "&H00FFFFFF"
+    light_outline: str = "&H00000000" # black edge
+    dark_outline: str = "&H00000000"
+    shadow: str = "&H36000000"        # restrained black depth
 
 
 class TextRenderer:
@@ -33,8 +34,12 @@ class TextRenderer:
     line grows into its final footprint without re-centering or reversing earlier words.
     """
 
-    def __init__(self, *, font_family: str = "Noto Kufi Arabic") -> None:
-        self.theme = TextRenderTheme(font_family=font_family)
+    def __init__(self, *, font_family: str | None = None) -> None:
+        self.typography_profile = TypographyProfile.production()
+        self.typography = TypographyMetrics(self.typography_profile)
+        self.theme = TextRenderTheme(
+            font_family=font_family or self.typography_profile.font_family
+        )
 
     def write_beat_ass(
         self,
@@ -107,6 +112,17 @@ class TextRenderer:
                 x = round(plan.width * min(0.97, item.x + item.max_width / 2))
             else:
                 x = round(plan.width * max(0.03, item.x - item.max_width / 2))
+            font_size_px = (
+                max(1, round(plan.height * item.font_size_ratio))
+                if item.font_size_ratio is not None
+                else max(1, round(self._legacy_style_size(style_name) * item.font_scale))
+            )
+            outline_px = self.typography.outline_pixels(
+                item.font_size_ratio
+                if item.font_size_ratio is not None
+                else font_size_px / max(1, plan.height),
+                output_height=plan.height,
+            )
             events.extend(self._cue_events(
                 cue_text=cue.text,
                 motion=motion,
@@ -115,6 +131,8 @@ class TextRenderer:
                 x=x,
                 y=y,
                 rtl=rtl,
+                font_size_px=font_size_px,
+                outline_px=outline_px,
                 segment_start=segment_start,
                 duration=duration,
             ))
@@ -130,10 +148,11 @@ class TextRenderer:
         x: int,
         y: int,
         rtl: bool,
+        font_size_px: int,
+        outline_px: float,
         segment_start: float,
         duration: float,
     ) -> list[str]:
-        font_scale = max(0.55, min(1.0, float(item.font_scale)))
         visible_end = float(motion.params.get("visible_end", motion.end))
         event_global_start = max(motion.start, segment_start)
         local_end = min(duration, visible_end - segment_start)
@@ -145,7 +164,11 @@ class TextRenderer:
             start = max(0.0, event_global_start - segment_start)
             if local_end <= start + 0.04:
                 return []
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=True, font_scale=font_scale)
+            tags = self._line_tags(
+                x=x, y=y, rtl=rtl, first=True,
+                font_size_px=font_size_px, outline_px=outline_px,
+                motion_kind=motion.kind,
+            )
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
         events: list[str] = []
@@ -166,7 +189,11 @@ class TextRenderer:
             state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
             if not state_text:
                 continue
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=index == 0, font_scale=font_scale)
+            tags = self._line_tags(
+                x=x, y=y, rtl=rtl, first=index == 0,
+                font_size_px=font_size_px, outline_px=outline_px,
+                motion_kind=motion.kind,
+            )
             events.append(self._dialogue(
                 start,
                 end,
@@ -177,46 +204,67 @@ class TextRenderer:
         return events
 
     @staticmethod
-    def _line_tags(*, x: int, y: int, rtl: bool, first: bool, font_scale: float = 1.0) -> str:
-        alignment = 6 if rtl else 4  # middle-right for RTL, middle-left for LTR
-        scale = max(55, min(100, round(font_scale * 100)))
-        size_tag = f"\\fscx{scale}\\fscy{scale}"
-        if first:
-            # One restrained entry gesture for the phrase. Later word states hold the
-            # exact anchor so the line does not bounce or re-center.
-            direction = 14 if rtl else -14
+    def _line_tags(
+        *,
+        x: int,
+        y: int,
+        rtl: bool,
+        first: bool,
+        font_size_px: int,
+        outline_px: float,
+        motion_kind: str,
+    ) -> str:
+        alignment = 6 if rtl else 4
+        common = (
+            f"\\an{alignment}\\fs{font_size_px}"
+            f"\\bord{outline_px:.1f}\\shad1.2"
+        )
+        if not first:
+            return f"{common}\\pos({x},{y})\\blur0.18"
+
+        if motion_kind in {
+            "text_warning_in",
+            "text_number_in",
+            "text_emphasis_in",
+            "text_result_hit_in",
+            "text_story_reveal_in",
+        }:
             return (
-                f"\\an{alignment}{size_tag}\\move({x + direction},{y + 10},{x},{y},0,165)"
-                "\\fad(65,0)\\blur0.35"
+                f"{common}\\pos({x},{y})\\fscx88\\fscy88"
+                "\\t(0,145,\\fscx100\\fscy100)\\fad(45,0)\\blur0.22"
             )
-        return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur0.25"
+        direction = 12 if rtl else -12
+        return (
+            f"{common}\\move({x + direction},{y + 7},{x},{y},0,150)"
+            "\\fad(50,0)\\blur0.20"
+        )
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme
         styles = [
             self._style_line(
-                "Keyword", theme.primary, 112, outline_color=theme.light_outline,
-                outline=3.2, shadow=2.2,
+                "Keyword", theme.primary, 158, outline_color=theme.dark_outline,
+                outline=8.0, shadow=1.2,
             ),
             self._style_line(
-                "Number", theme.gold, 148, outline_color=theme.dark_outline,
-                outline=4.1, shadow=3.0,
+                "Number", theme.gold, 188, outline_color=theme.dark_outline,
+                outline=9.5, shadow=1.2,
             ),
             self._style_line(
-                "Amount", theme.accent, 136, outline_color=theme.dark_outline,
-                outline=3.8, shadow=2.8,
+                "Amount", theme.accent, 188, outline_color=theme.dark_outline,
+                outline=9.5, shadow=1.2,
             ),
             self._style_line(
-                "WarningAmount", theme.warning, 138, outline_color=theme.dark_outline,
-                outline=4.1, shadow=3.0,
+                "WarningAmount", theme.warning, 194, outline_color=theme.dark_outline,
+                outline=9.8, shadow=1.2,
             ),
             self._style_line(
-                "Warning", theme.warning, 126, outline_color=theme.dark_outline,
-                outline=3.7, shadow=2.8,
+                "Warning", theme.warning, 188, outline_color=theme.dark_outline,
+                outline=9.5, shadow=1.2,
             ),
             self._style_line(
-                "Emphasis", theme.accent, 122, outline_color=theme.dark_outline,
-                outline=3.6, shadow=2.6,
+                "Emphasis", theme.accent, 178, outline_color=theme.dark_outline,
+                outline=9.0, shadow=1.2,
             ),
         ]
         return "\n".join([
@@ -254,6 +302,16 @@ class TextRenderer:
             f"Style: {name},{self.theme.font_family},{size},{color},{color},{outline_color},"
             f"{self.theme.shadow},-1,0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},5,50,50,34,1"
         )
+
+    @staticmethod
+    def _legacy_style_size(style_name: str) -> int:
+        return {
+            "Number": 188,
+            "Amount": 188,
+            "WarningAmount": 194,
+            "Warning": 188,
+            "Emphasis": 178,
+        }.get(style_name, 158)
 
     @staticmethod
     def _ass_style_name(style_id: str) -> str:
