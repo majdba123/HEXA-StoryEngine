@@ -1113,3 +1113,257 @@ Future chats/engineers must NOT:
 - reduce semantic text cue quality merely to satisfy a minimum count
 
 Preserve this checkpoint unless a later change is proven by stronger general regression tests and real render QA.
+
+
+## MONTAGE20 VISUAL IDENTITY BINDING CHECKPOINT — 2026-09-23
+
+This checkpoint fixes the remaining semantic identity weakness between Final Package
+semantic intents and real Pass1/Pass2 cutouts. PRESERVE this architecture.
+
+### Root cause proven in live code
+
+Before this checkpoint, Asset-Level semantic timing could be correct while the wrong icon
+received that timing because `SemanticAssetBinder` eventually mapped unresolved semantic
+units using focus/interaction/visual-weight ordering. With several similarly sized icons,
+semantic meaning + phrase timing could therefore be correct while semantic intent -> real
+cutout identity was swapped.
+
+### Architecture
+
+No new extraction layer was added.
+
+```
+Final Package semantic intent
+        |
+        | optional authored visual_locator
+        v
+Visual Identity Binder
+        |
+        | matches only existing Pass1/Pass2 cutouts
+        v
+Story AssetActivation
+        |
+        v
+WhisperX timing -> Story windows -> Motion
+```
+
+Hard invariant remains:
+
+```
+Pass1 + Pass2 only
+```
+
+Visual Identity Binding never:
+- creates a cutout
+- requests a new segmentation
+- changes alpha extraction
+- changes Composition geometry
+- changes final positions
+- invents narration timing
+- changes Motion behavior
+
+It answers only:
+**WHICH existing real cutout corresponds to this semantic intent?**
+
+### Final Package visual locator contract
+
+Asset-Level Final Packages may optionally provide:
+
+```json
+"visual_locator": {
+  "coordinate_space": "normalized_scene",
+  "cx": 0.72,
+  "cy": 0.43,
+  "width": 0.14,
+  "height": 0.19
+}
+```
+
+Coordinates are normalized to the original scene image.
+
+The locator may live:
+1. directly on the semantic binding asset, or
+2. on the matching `scene_plan.units[]` row with the same `unit_id`.
+
+Semantic-binding asset locator takes precedence when both are present.
+
+The locator is source identity metadata only. It is NOT:
+- a target layout rectangle
+- a crop command
+- a motion path
+- an animation region
+- a new segmentation request
+
+### Validation
+
+Loader now validates every visual locator:
+- object type
+- `coordinate_space == normalized_scene`
+- numeric `cx/cy/width/height`
+- center in [0,1]
+- positive normalized size
+- full locator stays inside scene bounds
+
+Malformed locator => invalid Final Package instead of silent bad binding.
+
+### Binding evidence priority
+
+Identity authority is now:
+
+1. exact authored real asset id when genuinely available
+2. authored visual locator vs real Pass1/Pass2 source geometry
+3. Pass2 parent/family provenance
+4. geometry similarity
+5. legacy semantic-map heuristics only when NO locator was authored
+
+A locator-bearing semantic intent never falls back to visual-weight/order guessing when
+the locator cannot be resolved confidently.
+
+### Geometry score
+
+Visual locator candidates are ranked with deterministic evidence:
+- IoU
+- containment
+- center distance
+- relative size
+- aspect/shape similarity
+- parent/family bonus when semantic parent is already identified
+
+Current conservative acceptance thresholds:
+- minimum score: 0.60
+- minimum winner margin: 0.065
+
+If top candidates are too close, HEXA abstains rather than choosing the wrong icon.
+
+### Pass2 family-canvas protection
+
+Pass2 may intentionally preserve identical `source_bbox` for parent/main and secondary
+children so Composition can reassemble exact authored geometry.
+
+Visual Identity therefore does NOT rely only on the shared bbox for family-canvas assets.
+For `render_as_family_canvas=True` assets it reads the cutout alpha footprint and maps
+that visible alpha region back into the shared source bbox.
+
+This protects cases such as:
+- phone + screen icon
+- bubble + wallet
+- calendar + internal item
+- parent object + detached secondary visual
+
+without changing their extraction or Composition registration.
+
+### Heuristic collision protection
+
+A locator-proven real cutout is reserved.
+
+A semantic intent without a locator is not allowed to reuse that same real cutout merely
+because the legacy heuristic map selected it. This prevents a strong authored identity
+from being cancelled by a weaker heuristic assignment.
+
+### Conservative fallback
+
+If a locator is authored but:
+- real cutout geometry is unavailable,
+- two candidates have insufficient margin,
+- or evidence remains ambiguous,
+
+that semantic intent does not receive a guessed OWN_WINDOW.
+
+Additionally, when any authored locator in a beat is unresolved, the single-group
+unbound-support auto-fill is disabled for that beat so ambiguous identity is not silently
+reintroduced through support-tail guessing.
+
+This is intentionally conservative: missing independent motion is safer than moving the
+wrong icon with the correct spoken phrase.
+
+### Backward compatibility
+
+Final Packages with NO visual locators retain the pre-checkpoint behavior.
+
+No existing package is required to add the field merely to remain loadable.
+
+Therefore this change is additive:
+- old packages: existing semantic-map behavior
+- locator-aware packages: stronger geometry/provenance identity
+- ambiguous locator-aware packages: safe abstention
+
+### Diagnostics
+
+Story semantic diagnostics now record locator identity decisions:
+- beat_id
+- scene_id
+- semantic_asset_id
+- selected real_asset_id
+- source
+- score
+- runner_up_score
+- margin
+- accepted vs abstention reason
+
+Matched AssetActivation evidence also records:
+- `visual_identity_binding`
+- `visual_identity_source`
+- `visual_identity_score`
+- `visual_identity_runner_up`
+- `visual_identity_margin`
+
+Future semantic/icon mismatch investigation should inspect these values first.
+
+### Regression coverage
+
+New tests prove:
+- locator identity beats visual-weight ordering
+- ambiguous near-identical candidates abstain
+- packages without locators preserve legacy path
+- Story activation uses locator identity before heuristic semantic mapping
+- unresolved locator disables unsafe single-group support guessing
+- locator may be supplied through scene-plan unit metadata
+- Pass2 parent/child family canvases with identical source_bbox are distinguished through alpha
+- locator-proven cutout cannot be stolen by another heuristic semantic intent
+- valid locator package contract loads
+- out-of-bounds locator is rejected
+- invalid scene-unit locator is rejected
+
+All previous semantic timing, text, Pass1, Pass2, Composition, Motion, and QA tests remain green.
+
+### Proven checkpoint
+
+Tested code HEAD:
+`30cf824cb964695587e7ba6d88bef174fedacc03`
+
+GitHub Actions:
+- Run: `35831851624`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **229 passed, 12 warnings**
+
+### Final Package authoring requirement for maximum identity quality
+
+To benefit from this improvement, future Asset-Level Final Packages should emit a
+`visual_locator` for each semantic visual intent when the authoring/generation stage knows
+where that visual was placed in the original scene.
+
+Do NOT fabricate locators after the fact from semantic guesses.
+
+The producing stage that authored the visual arrangement is the correct authority because
+it already knows the intended visual's source position.
+
+If no reliable visual locator is available, omit it. The engine will retain the legacy
+path rather than accepting invented geometry.
+
+### Do-not-regress rules
+
+Future work must NOT:
+- add Pass3/Layer3 for this problem
+- use visual_locator to create cutouts
+- let locators alter Composition
+- let semantic meaning override real geometry without evidence
+- allow visual-weight/order heuristics to override a confident locator
+- lower ambiguity thresholds just to increase activation count
+- hard-code scene IDs, icon names, cybersecurity words, or package-specific counts
+- assume one semantic intent always equals exactly one segmentation component
+- break old Final Packages that do not contain locators
+
+Always ask:
+**What happens with a completely different Final Package?**
