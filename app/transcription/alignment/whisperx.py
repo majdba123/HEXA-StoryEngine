@@ -8,6 +8,7 @@ from typing import Any
 
 from app.models import Transcript, TranscriptSegment, TranscriptWord
 from app.shared.errors import DependencyUnavailableError
+from app.shared.media import decode_audio_mono
 
 _WORD_RE = re.compile(r"\S+")
 _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
@@ -48,11 +49,13 @@ class WhisperXForcedAligner:
         device: str | None = None,
         model_dir: Path | None = None,
         policy: AlignmentPolicy | None = None,
+        ffmpeg_bin: str = "ffmpeg",
     ) -> None:
         self.model_by_language = {**_DEFAULT_MODELS, **(model_by_language or {})}
         self.device = device
         self.model_dir = model_dir
         self.policy = policy or AlignmentPolicy()
+        self.ffmpeg_bin = ffmpeg_bin
         self._loaded: dict[str, tuple[Any, dict[str, Any]]] = {}
 
     def align(self, audio: Path, script: str, duration: float) -> Transcript:
@@ -70,12 +73,13 @@ class WhisperXForcedAligner:
             load_model=load_model,
         )
         source = [{"start": 0.0, "end": duration, "text": script}]
+        waveform = decode_audio_mono(audio, self.ffmpeg_bin, sample_rate=16000)
         try:
             result = align_fn(
                 source,
                 model,
                 metadata,
-                str(audio),
+                waveform,
                 device,
                 return_char_alignments=False,
                 print_progress=False,
