@@ -78,3 +78,61 @@ def test_rejects_broken_semantic_binding_parent(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidPackageError, match="parent is missing"):
         FinalPackageLoader().load(package, tmp_path / "work")
+
+
+def test_loads_asset_level_semantic_bindings_contract(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "scene_plan.json").write_text(
+        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
+        '"image":"scenes/SCENE_001.png","script_span":'
+        '{"global_char_start":0,"global_char_end":10,"text":"alpha beta"},'
+        '"units":[{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT"},'
+        '{"unit_id":"intent-b","type":"VISUAL_ASSET_INTENT"}]}]}',
+        encoding="utf-8",
+    )
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",'
+        '"asset_is_semantic_intent_not_cutout":true,"no_fixed_timing":true,'
+        '"scenes":[{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
+        '"asset_ids":["intent-a","intent-b"]}],"assets":['
+        '{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g",'
+        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null},'
+        '{"asset_id":"intent-b","script_text":"alpha beta",'
+        '"binding_type":"SEMANTIC","semantic_group_id":"g",'
+        '"sequence_order":2,"confidence":0.9,"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    loaded = FinalPackageLoader().load(package, tmp_path / "work")
+
+    assert loaded.semantic_bindings["schema_name"] == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
+    assert loaded.semantic_bindings["scenes"][0]["assets"][1]["sequence_order"] == 2
+
+
+def test_rejects_asset_level_group_membership_mismatch(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
+        '{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
+        '"asset_ids":["intent-a"]}],"assets":['
+        '{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"other",'
+        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="membership mismatch"):
+        FinalPackageLoader().load(package, tmp_path / "work")
