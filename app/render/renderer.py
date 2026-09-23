@@ -252,7 +252,21 @@ class FFmpegRenderer:
             # white canvas between beats. Keep it visible at the program's first offset
             # from the beat boundary and let the trajectory begin at the exact cue time.
             # Support layers still obey their staggered cue starts.
-            if not persistent and item.asset_id in beat.primary_asset_ids:
+            motion_order = (
+                cue.params.get("motion_order", {})
+                if cue is not None and isinstance(cue.params, dict)
+                else {}
+            )
+            ordered_visual_unit = bool(
+                isinstance(motion_order, dict)
+                and int(motion_order.get("internal_count", 1) or 1) > 1
+                and motion_order.get("stagger_applied")
+            )
+            if (
+                not persistent
+                and item.asset_id in beat.primary_asset_ids
+                and not ordered_visual_unit
+            ):
                 authored_start = max(0.0, beat.start - segment_start)
                 enable_start = (
                     0.0
