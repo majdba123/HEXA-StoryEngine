@@ -2235,3 +2235,236 @@ GitHub Actions:
 - Do not solve this with translucent crossfades that create ghost silhouettes.
 - Do not disable `VISUAL_WHITE_FLASH` QA.
 - Do not weaken Final Package sequence_order authority.
+
+
+## MONTAGE20 FINAL PACKAGE 1.1 → STORY/CHOREOGRAPHY/MOTION INTEGRATION — 2026-09-23
+
+This checkpoint consumes the user's new validated Final Package semantic contract as
+authoritative Story/Choreography input and strengthens Motion without reopening the
+previous collision/wobble regressions.
+
+### Real Final Package inspected
+
+Project:
+- `HEXA_WHITE_HAT_HACKER_AR`
+- scenes: 35
+- semantic assets: 145
+- semantic groups: 35
+- precise asset script spans: 145
+- authored visual locators: 112
+- relations: 14 across 13 scenes
+- visual_focus fields: 12
+- visual_state fields: 4
+- continuity fields: 0 (intentional omission under MINIMUM USEFUL METADATA)
+- package validation: PASS
+
+The package uses the intended additive 1.1 contract:
+- group phrase may be wider than asset phrase;
+- asset `script_text + script_span` identifies the smallest trusted visual phrase;
+- relations describe semantic interaction, never pixel motion;
+- focus/state/continuity are optional;
+- omission is valid;
+- timing remains WhisperX/Story-owned;
+- geometry remains Composition-owned;
+- Motion owns HOW.
+
+### Loader contract upgrade
+
+`app/input/loader.py` now:
+- allows semantic group phrase != precise asset phrase;
+- validates half-open `script_span` exactly against canonical script bytes/characters;
+- validates relation subjects/objects/results against real semantic assets in the scene;
+- validates relation confidence and optional relation span;
+- validates optional `visual_focus`;
+- validates optional semantic `visual_state`;
+- validates optional conservative continuity schema;
+- keeps all new metadata optional/backward compatible.
+
+It does NOT require optional metadata on simple scenes.
+
+### Story integration
+
+Story now consumes Final Package asset-level semantics rather than leaving them in JSON.
+
+`AssetActivation` carries:
+- precise phrase/span timing identity;
+- semantic group/order;
+- visual_focus;
+- visual_state;
+- continuity.
+
+`PackageStoryInterpreter` imports:
+- semantic asset entities;
+- `FINAL_PACKAGE_ASSET_RELATION`;
+- relation-specific result intent;
+- authored focus/state/continuity evidence.
+
+Visual binding reuses locator-proven Story activations before geometry heuristics.
+
+Exact `script_span` is used before phrase search, so repeated phrases resolve to the
+authored occurrence rather than whichever duplicate appears first.
+
+### Sequence-order reconciliation
+
+Real-package QA exposed four cases where precise phrase starts alone could reverse the
+authored visual sequence.
+
+Story now reconciles a sequential semantic group only when exact speech anchors would
+collapse or reverse `sequence_order`.
+
+Authority remains:
+1. exact phrases define trusted semantic/speech evidence;
+2. Final Package sequence_order defines visual progression;
+3. Story allocates ordered sub-windows inside the available semantic group envelope;
+4. WhisperX still provides actual spoken times.
+
+This is generic; no scene IDs or cybersecurity vocabulary are hardcoded.
+
+### Choreography patterns
+
+Added generic reference-style choreography patterns:
+- `PROGRESSIVE_BUILD`
+- `FOCUS_TRANSFER`
+- `STATE_TRANSFORM`
+- `CAUSE_EFFECT_CHAIN`
+- `STANDARD` fallback.
+
+Pattern priority is conservative:
+1. explicit meaningful Final Package visual_state -> STATE_TRANSFORM;
+2. executable explicit Final Package relation -> CAUSE_EFFECT_CHAIN
+   (comparison remains comparison/focus-oriented);
+3. authored visual_focus -> FOCUS_TRANSFER;
+4. >=3 ordered Final Package semantic steps -> PROGRESSIVE_BUILD;
+5. STANDARD.
+
+These are semantic staging patterns, NOT animation commands from the Final Package.
+
+### Relation support
+
+Explicit Final Package relationships now reach executable choreography, including:
+- REVEALS
+- PROTECTS
+- ATTACKS
+- GRANTS_ACCESS_TO
+- COMPARES_WITH
+- CREATES
+- RESULTS_IN
+- REPAIRS
+- REPORTS_TO
+- AUTHORIZES
+- DEPENDS_ON
+
+Relation-specific result assets are preserved instead of using only a global guessed result.
+
+### Visual focus / state authority
+
+- Final Package visual_focus outranks size/character geometry focus heuristics.
+- Locator-proven semantic activation outranks SemanticAssetBinder re-guessing.
+- Explicit Final Package visual_state outranks inferred action state.
+
+No state is invented merely because an asset appears.
+
+### Motion safety + reference-style strength
+
+Existing stability rule remains:
+`entry / semantic action -> settle -> complete hold`.
+
+The new patterns may add exactly ONE controlled meaning-bearing accent before settle.
+No post-settle wobble/recoil is restored.
+
+Examples:
+- Progressive Build: restrained one-time build accent plus Story sequencing.
+- Focus Transfer: focal asset receives the visual attention accent; supports remain calm.
+- State Transform: authored changed asset gets one controlled transform accent.
+- Cause/Effect: subject approaches, object reacts, result lands last according to role.
+
+All pattern motion:
+- returns to authored Composition geometry at settle;
+- stays fully static after settle;
+- preserves Story/WhisperX timing;
+- preserves Pass1/Pass2 family-canvas safety;
+- remains density-bounded;
+- caps semantic interaction displacement to +/-0.06 normalized units to avoid sparse-scene
+  collisions when relationship endpoints are far apart.
+
+### Real-package architectural QA
+
+The actual uploaded Final Package was run through the CI-tested source with synthetic
+forced-alignment timestamps preserving exact canonical character identity. This validates
+architecture/ordering independently of the user's narration audio.
+
+Observed:
+- package load: 35/35 scenes PASS
+- Vision detections: 118
+- Pass1 assets: 118
+- Pass2 assets: 133 (+15)
+- Story beats: 35
+- Motion cues: 133
+- Final Package relations imported into Story: 14/14
+- authored relation interactions reaching Choreography: 14/14
+- choreography patterns:
+  - PROGRESSIVE_BUILD: 19 beats
+  - CAUSE_EFFECT_CHAIN: 8 beats
+  - STATE_TRANSFORM: 4 beats
+  - FOCUS_TRANSFER: 3 beats
+  - STANDARD: 1 beat
+- StorySyncQA: PASS
+- sync violations: 0
+- max semantic settle delta: 0.0
+- post-settle drift: 0
+
+Visual Locator real-package check:
+- authored locators: 112
+- strict one-to-one resolved: 111
+- unresolved: 1
+- unresolved intent: `SCENE_026_evidence_photos`
+
+The unresolved locator is intentionally NOT force-bound. In SCENE_026 the evidence photos
+overlap/merge visually with the camera into one real Pass1/Pass2 cutout; there is no safe
+independent photos cutout. The camera+photos artwork remains present as the real visual
+block, but Story/Motion must not pretend the photos can animate independently.
+Do NOT lower identity thresholds or reopen extraction to force this intent.
+
+### Regression coverage
+
+New/extended tests cover:
+- wider group phrase + narrower precise asset triggers;
+- exact half-open script_span validation;
+- repeated phrase occurrence selected by authored span;
+- relation/focus/state import into Story;
+- locator-proven semantic identity reused by Choreography;
+- authored visual focus outranking visual-weight heuristic;
+- explicit state outranking inferred state;
+- relation-specific result preservation;
+- generic pattern selection;
+- controlled pattern accent + complete post-settle freeze;
+- precise phrases cannot reverse Final Package sequence_order.
+
+### Proven CI
+
+Behavior HEAD before continuity-only commit:
+`7506db711949f8b9fd23e9f36a9cd6e9e6ebc872`
+
+GitHub Actions:
+- Run: `35912228793`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **249 passed, 11 warnings in 6.83s**
+
+### Do not regress
+
+- Pass1 + Pass2 only. Never reintroduce Layer3.
+- Final Package is semantic authority.
+- WhisperX remains actual speech timing authority.
+- Composition remains final authored geometry authority.
+- Motion never invents semantic meaning absent Story/Final Package evidence.
+- visual_locator remains identity metadata only.
+- Do not require optional metadata on every asset.
+- Do not infer continuity when the package intentionally omits it.
+- Do not hardcode topic nouns, scene IDs, or fixed asset counts.
+- Do not let precise phrase timing reverse reliable sequence_order.
+- Do not let sequence_order erase precise phrase identity.
+- Do not restore post-settle oscillation.
+- Do not lower locator thresholds to improve coverage.
+- Do not animate an unresolved semantic intent as an independent cutout.
