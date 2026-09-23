@@ -434,7 +434,7 @@ def test_focus_arbitration_uses_final_package_roles_instead_of_equal_focus() -> 
 
     assert by_id["actor"].params["semantic_focus"]["active"] is False
     assert by_id["actor"].params["semantic_focus"]["strength"] == pytest.approx(
-        0.48
+        0.52
     )
     assert by_id["action"].params["semantic_focus"]["active"] is True
     assert (
@@ -460,3 +460,45 @@ def test_focus_arbitration_uses_final_package_roles_instead_of_equal_focus() -> 
     )
     assert result_scale > support_scale
 
+
+
+def test_character_context_entry_is_quieter_than_explicit_semantic_object_focus() -> None:
+    activations = [
+        _activation("character", 1).model_copy(update={"binding_type": "EXPLICIT"}),
+        _activation("object", 2).model_copy(update={"binding_type": "EXPLICIT"}),
+        _activation("result", 3).model_copy(update={"binding_type": "EXPLICIT"}),
+    ]
+    beat = _beat(activations=activations, result_ids=["result"])
+    beat.semantic_context.entities = [
+        StoryEntity(unit_id="character", role="CHARACTER"),
+        StoryEntity(unit_id="object", role="OBJECT"),
+        StoryEntity(unit_id="result", role="RESULT"),
+    ]
+    beat.asset_activations = schedule_windows(activations, beat, beat.end, set())
+    assets = [_asset("character"), _asset("object"), _asset("result")]
+    choreography = ChoreographyDirector().plan(
+        _package(["character", "object", "result"]),
+        [beat],
+        assets,
+    )
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="character", x=0.50, y=0.50, width=0.24, height=0.60),
+            LayoutItem(asset_id="object", x=0.20, y=0.50, width=0.26, height=0.42),
+            LayoutItem(asset_id="result", x=0.82, y=0.50, width=0.26, height=0.42),
+        ],
+    )]
+
+    cues = MotionPlanner().plan([beat], composition, choreography, assets=assets)
+    by_id = {cue.asset_id: cue for cue in cues}
+
+    assert by_id["character"].params["semantic_focus"]["active"] is False
+    assert by_id["object"].params["semantic_focus"]["active"] is True
+    assert by_id["object"].params["semantic_focus"]["role"] in {"OBJECT", "SUBJECT"}
+
+    def entry_energy(asset_id: str) -> float:
+        first = by_id[asset_id].params["program"]["keyframes"][0]
+        return abs(first["dx"]) + abs(first["dy"]) + abs(first["scale"] - 1.0)
+
+    assert entry_energy("character") < entry_energy("object")
