@@ -140,11 +140,7 @@ class AuthoringVisualQA:
                 cue = cue_by_id.get(item.text_cue_id)
                 if cue is None:
                     continue
-                _, height = TextPlacementDirector.estimated_box(
-                    cue,
-                    scale=item.font_scale,
-                    font_size_ratio=item.font_size_ratio,
-                )
+                _, height = TextPlacementDirector.estimated_box(cue, scale=item.font_scale)
                 box = (
                     item.x - item.max_width / 2,
                     item.y - height / 2,
