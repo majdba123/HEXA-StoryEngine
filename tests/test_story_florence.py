@@ -60,6 +60,7 @@ def fake_florence_runtime(monkeypatch, caption="a black shield with a padlock"):
             assert kwargs["do_sample"] is False
             assert kwargs["num_beams"] == 1
             assert kwargs["max_new_tokens"] <= 128
+            assert kwargs["use_cache"] is False
             calls.append(("generate",))
             return Token()
 

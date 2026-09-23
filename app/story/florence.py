@@ -130,6 +130,12 @@ class FlorenceVisualSemanticBackend:
                                 max_new_tokens=128,
                                 num_beams=1,
                                 do_sample=False,
+                                # Florence remote code before the upstream KV-cache
+                                # compatibility fix crashes on Transformers >=4.50 when
+                                # empty EncoderDecoderCache entries are still None.
+                                # Disabling cache is slower but deterministic and keeps
+                                # Story compatible with already-downloaded local weights.
+                                use_cache=False,
                             )
                         raw = self._processor.batch_decode(
                             generated, skip_special_tokens=False,

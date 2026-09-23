@@ -53,6 +53,9 @@ class FlorenceDetector:
                 max_new_tokens=1024,
                 num_beams=3,
                 do_sample=False,
+                # See Story Florence backend: avoid the pre-fix remote-code KV
+                # cache crash on Transformers >=4.50.
+                use_cache=False,
             )
         text = self.processor.batch_decode(generated, skip_special_tokens=False)[0]
         parsed = self.processor.post_process_generation(text, task=task, image_size=image.size)
