@@ -143,6 +143,7 @@ class FFmpegRenderer:
             ordered_items=ordered_items,
             motion=motion,
             persistent_ids=persistent_ids,
+            fps=plan.fps,
         )
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
@@ -164,7 +165,7 @@ class FFmpegRenderer:
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
-            start, end, fade_duration = self._cue_window(
+            start, end, _fade_duration = self._cue_window(
                 beat=beat,
                 cue=cue,
                 segment_start=segment_start,
@@ -178,8 +179,6 @@ class FFmpegRenderer:
                 else {}
             )
             geometry_locked = render_constraints.get("geometry_lock") == "authored_footprint"
-            alpha_only_reveal = render_constraints.get("reveal_mode") == "alpha_only"
-
             source_label = f"asset{layer_index}"
             base_source_label = f"asset{layer_index}base"
             # Keep cutout alpha exactly as authored. The transparent pad gives Motion a
@@ -192,14 +191,10 @@ class FFmpegRenderer:
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
                 f"[{base_source_label}]"
             )
+            # Keep authored alpha intact. Semantic visibility is controlled by the
+            # overlay enable window below; this avoids pale/ghost silhouettes from
+            # alpha-fading family-canvas members over a white background.
             transform_source_label = base_source_label
-            if alpha_only_reveal and not persistent and not visual_carrier:
-                reveal_label = f"asset{layer_index}reveal"
-                filters.append(
-                    f"[{transform_source_label}]fade=t=in:st={start:.6f}:"
-                    f"d={fade_duration:.6f}:alpha=1[{reveal_label}]"
-                )
-                transform_source_label = reveal_label
 
             scale_expr = "1"
             if (
@@ -252,34 +247,12 @@ class FFmpegRenderer:
                 y_expr = self._entry_expression(target_y, start, end, offset=30)
 
             next_label = f"mix{layer_index}"
+            # Semantic visibility is authoritative: every non-persistent asset stays
+            # hidden until its Motion/Story reveal window. The only exception is one
+            # deliberately selected boundary carrier, used solely to avoid a blank
+            # frame between beats. Story's legacy area-ranked primary must never make
+            # a future semantic result visible early.
             enable_start = 0.0 if (persistent or visual_carrier) else start
-            # Primary artwork must cover the entire authored visual beat. Motion may
-            # intentionally begin a few frames after beat.start (for anticipation or
-            # narration pacing), but hiding the primary until cue.start exposes the
-            # white canvas between beats. Keep it visible at the program's first offset
-            # from the beat boundary and let the trajectory begin at the exact cue time.
-            # Support layers still obey their staggered cue starts.
-            motion_order = (
-                cue.params.get("motion_order", {})
-                if cue is not None and isinstance(cue.params, dict)
-                else {}
-            )
-            ordered_visual_unit = bool(
-                isinstance(motion_order, dict)
-                and int(motion_order.get("internal_count", 1) or 1) > 1
-                and motion_order.get("stagger_applied")
-            )
-            if (
-                not persistent
-                and item.asset_id in beat.primary_asset_ids
-                and not ordered_visual_unit
-            ):
-                authored_start = max(0.0, beat.start - segment_start)
-                enable_start = (
-                    0.0
-                    if authored_start <= (1.0 / plan.fps) + 1e-6
-                    else authored_start
-                )
             filters.append(
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
                 f"enable='between(t,{enable_start:.6f},{duration:.6f})':eof_action=pass:shortest=0"
@@ -311,29 +284,34 @@ class FFmpegRenderer:
         ordered_items: list,
         motion: dict[tuple[str, str], MotionCue],
         persistent_ids: frozenset[str],
+        fps: int = 30,
     ) -> str | None:
-        """Choose one incoming layer to cover the beat boundary without reordering it.
+        """Choose one low-risk boundary carrier without leaking future semantics.
 
-        Persistent artwork already covers frame zero. Otherwise the earliest planned
-        incoming semantic layer becomes a static visual carrier before its cue starts.
-        Motion still begins at the authored cue time, and every later ordered member
-        keeps its own reveal start. This closes internal white handoff frames without
-        carrying unrelated outgoing artwork or exposing 2/3 before 1.
+        Only assets whose cue begins at (or very near) the earliest semantic reveal are
+        eligible. Within that cohort, authored CONTEXT/OBJECT/CHARACTER support is safer
+        than PRIMARY/ACTION and RESULT is deliberately last. This preserves the no-white
+        handoff guarantee while preventing a later result from being exposed just because
+        it is large or Story's legacy primary.
         """
         if persistent_ids or not ordered_items:
             return None
 
-        candidates: list[tuple[float, int, int, int, str]] = []
+        rows: list[dict[str, object]] = []
         for original_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             start = float(cue.start if cue is not None else beat.start)
-            order = (
-                cue.params.get("motion_order", {})
+            params = (
+                cue.params
                 if cue is not None and isinstance(cue.params, dict)
                 else {}
             )
+            order = params.get("motion_order", {})
             if not isinstance(order, dict):
                 order = {}
+            focus = params.get("semantic_focus", {})
+            if not isinstance(focus, dict):
+                focus = {}
             try:
                 sequence_order = int(order.get("sequence_order", 10_000) or 10_000)
             except (TypeError, ValueError):
@@ -342,16 +320,65 @@ class FFmpegRenderer:
                 internal_index = int(order.get("internal_index", 0) or 0)
             except (TypeError, ValueError):
                 internal_index = 0
-            candidates.append(
-                (
-                    start,
-                    sequence_order,
-                    internal_index,
-                    original_index,
-                    item.asset_id,
-                )
+            rows.append({
+                "start": start,
+                "sequence_order": sequence_order,
+                "internal_index": internal_index,
+                "original_index": original_index,
+                "asset_id": item.asset_id,
+                "semantic_role": str(
+                    focus.get("semantic_role") or "UNKNOWN"
+                ).upper(),
+                "focus_role": str(focus.get("role") or "SUPPORT").upper(),
+                "visual_focus": str(focus.get("visual_focus") or "").upper(),
+            })
+        if not rows:
+            return None
+
+        earliest = min(float(row["start"]) for row in rows)
+        tolerance = max(0.08, 2.0 / max(1, fps))
+        cohort = [
+            row for row in rows
+            if float(row["start"]) <= earliest + tolerance
+        ]
+
+        def safety_rank(
+            row: dict[str, object],
+        ) -> tuple[int, int, int, int]:
+            semantic_role = str(row["semantic_role"])
+            focus_role = str(row["focus_role"])
+            visual_focus = str(row["visual_focus"])
+            if visual_focus == "CONTEXT" or focus_role == "CONTEXT":
+                role_rank = 0
+            elif semantic_role == "OBJECT" and visual_focus != "RESULT":
+                role_rank = 1
+            elif (
+                semantic_role in {"CHARACTER", "ACTOR"}
+                or focus_role in {"CHARACTER", "ACTOR"}
+            ):
+                role_rank = 2
+            elif semantic_role == "SUPPORT" or focus_role == "SUPPORT":
+                role_rank = 3
+            elif semantic_role == "ACTION" or focus_role == "ACTION":
+                role_rank = 4
+            elif visual_focus == "PRIMARY" or focus_role == "PRIMARY":
+                role_rank = 5
+            elif (
+                semantic_role == "RESULT"
+                or visual_focus == "RESULT"
+                or focus_role == "RESULT"
+            ):
+                role_rank = 9
+            else:
+                role_rank = 6
+            return (
+                role_rank,
+                int(row["internal_index"]),
+                int(row["sequence_order"]),
+                int(row["original_index"]),
             )
-        return min(candidates)[-1]
+
+        return str(min(cohort, key=safety_rank)["asset_id"])
 
     @classmethod
     def _incoming_handoff_window(
