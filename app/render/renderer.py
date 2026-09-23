@@ -138,6 +138,12 @@ class FFmpegRenderer:
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
         transition = self.transition_policy.decide(previous_beat, previous_layout, layout)
         persistent_ids = transition.persistent_asset_ids
+        visual_carrier_id = self._visual_carrier_asset_id(
+            beat=beat,
+            ordered_items=ordered_items,
+            motion=motion,
+            persistent_ids=persistent_ids,
+        )
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
         for item in ordered_items:
@@ -165,6 +171,7 @@ class FFmpegRenderer:
                 duration=duration,
             )
             persistent = item.asset_id in persistent_ids
+            visual_carrier = item.asset_id == visual_carrier_id
             render_constraints = (
                 cue.params.get("render_constraints", {})
                 if cue is not None and isinstance(cue.params, dict)
@@ -186,7 +193,7 @@ class FFmpegRenderer:
                 f"[{base_source_label}]"
             )
             transform_source_label = base_source_label
-            if alpha_only_reveal and not persistent:
+            if alpha_only_reveal and not persistent and not visual_carrier:
                 reveal_label = f"asset{layer_index}reveal"
                 filters.append(
                     f"[{transform_source_label}]fade=t=in:st={start:.6f}:"
@@ -245,7 +252,7 @@ class FFmpegRenderer:
                 y_expr = self._entry_expression(target_y, start, end, offset=30)
 
             next_label = f"mix{layer_index}"
-            enable_start = 0.0 if persistent else start
+            enable_start = 0.0 if (persistent or visual_carrier) else start
             # Primary artwork must cover the entire authored visual beat. Motion may
             # intentionally begin a few frames after beat.start (for anticipation or
             # narration pacing), but hiding the primary until cue.start exposes the
@@ -295,6 +302,56 @@ class FFmpegRenderer:
         filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
+
+    @classmethod
+    def _visual_carrier_asset_id(
+        cls,
+        *,
+        beat: StoryBeat,
+        ordered_items: list,
+        motion: dict[tuple[str, str], MotionCue],
+        persistent_ids: frozenset[str],
+    ) -> str | None:
+        """Choose one incoming layer to cover the beat boundary without reordering it.
+
+        Persistent artwork already covers frame zero. Otherwise the earliest planned
+        incoming semantic layer becomes a static visual carrier before its cue starts.
+        Motion still begins at the authored cue time, and every later ordered member
+        keeps its own reveal start. This closes internal white handoff frames without
+        carrying unrelated outgoing artwork or exposing 2/3 before 1.
+        """
+        if persistent_ids or not ordered_items:
+            return None
+
+        candidates: list[tuple[float, int, int, int, str]] = []
+        for original_index, item in enumerate(ordered_items):
+            cue = motion.get((beat.id, item.asset_id))
+            start = float(cue.start if cue is not None else beat.start)
+            order = (
+                cue.params.get("motion_order", {})
+                if cue is not None and isinstance(cue.params, dict)
+                else {}
+            )
+            if not isinstance(order, dict):
+                order = {}
+            try:
+                sequence_order = int(order.get("sequence_order", 10_000) or 10_000)
+            except (TypeError, ValueError):
+                sequence_order = 10_000
+            try:
+                internal_index = int(order.get("internal_index", 0) or 0)
+            except (TypeError, ValueError):
+                internal_index = 0
+            candidates.append(
+                (
+                    start,
+                    sequence_order,
+                    internal_index,
+                    original_index,
+                    item.asset_id,
+                )
+            )
+        return min(candidates)[-1]
 
     @classmethod
     def _incoming_handoff_window(
