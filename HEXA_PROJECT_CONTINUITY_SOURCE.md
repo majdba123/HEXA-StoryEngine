@@ -838,3 +838,39 @@ Expected next gate:
   - rerun the same Black-Hat Final Package + audio
   - expect authoring QA to pass the previous 12/13 grammar blocker
   - then verify actual render for narration-locked sequential asset entrances.
+
+
+## MONTAGE20 SINGLE-BEAT GRAMMAR RECOVERY — 2026-09-23
+
+- Second real Black-Hat run diagnostic job: `2dc00ad32d7c4aac8d62218a5e5fd477`.
+- Pipeline again reached Motion after:
+  - Pass1: 157 authored assets / 40 scenes
+  - Pass2: 179 assets (+22)
+  - Story: 40 beats; densest scene 12 assets
+  - Motion semantic cues: 179 / 179 rich motion cues
+- Remaining authoring failure was isolated exactly by improved diagnostics:
+  - `sequence-013[beats=1;stages=ENTER,READ,RELEASE]`
+  - 13 sequences total, 12 compliant before fix.
+- Root cause:
+  - Storytelling validator required every sequence, including a single-beat standalone sequence, to contain `ADD/RELATE/RESULT`.
+  - A one-beat sequence has no later beat available to add/relate/result, so requiring that stage fabricated meaning and caused a false-positive QA failure.
+- General fix:
+  - Single-beat sequence is compliant when it has complete `ENTER + READ + RELEASE` grammar.
+  - Multi-beat sequences still require `ADD/RELATE/RESULT` in addition to `ENTER + READ + RELEASE`.
+  - No Final Package special case, no scene IDs, no Pass1/Pass2 change, no semantic timing relaxation.
+- Regression coverage:
+  - standalone single-beat grammar passes without fabricated ADD
+  - multi-beat grammar without meaning progression still fails
+  - multi-beat grammar with ADD passes
+- Code/test HEAD before this continuity commit:
+  - `3928f64563da73d80223be407e171d3116482ce7`
+- GitHub Actions:
+  - Run `35823220724` SUCCESS
+  - Compile SUCCESS
+  - Ruff: All checks passed
+  - Pytest: 210 passed, 12 warnings
+- Next acceptance step:
+  - pull latest `montage`
+  - rerun the same Black-Hat Final Package + narration
+  - expected: previous `REFERENCE_VISUAL_GRAMMAR` blocker for sequence-013 is gone
+  - then verify actual sequential asset entrances in encoded render.
