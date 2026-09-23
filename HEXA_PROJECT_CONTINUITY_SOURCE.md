@@ -802,3 +802,39 @@ Expected next gate:
 - generation stages remain visible only in the Dashboard log/progress UI;
 - no transient FFmpeg/FFprobe/WhisperX console windows;
 - then perform full visual sync QA on the completed render.
+
+
+## MONTAGE20 BLACK-HAT AUTHORING GRAMMAR RECOVERY — 2026-09-23
+
+- Real user run on asset-level Black-Hat Final Package reached Motion after:
+  - Pass1: 157 authored assets / 40 scenes
+  - Pass2: 179 assets (+22)
+  - Story: 40 beats; densest scene 12 assets
+  - Composition: geometry locked; 0 text cues
+- Diagnostic job: `f8e1717d9e8a41c29c8778ea9c953569`.
+- Failure was NOT Final Package loading, semantic asset timing, Pass1/Pass2, Composition, or Motion sequencing.
+- Storytelling authoring QA failed only on legacy `REFERENCE_VISUAL_GRAMMAR`:
+  - 13 choreography sequences
+  - 12 compliant
+  - 1 incomplete
+  - 179 semantic motion cues were already present.
+- Root cause: `ReferenceGrammarPlanner` gave generic final `HANDOFF` beats only `RELEASE`, so a valid two-beat sequence could become `ENTER + READ + RELEASE` with no `ADD/RELATE/RESULT` and be falsely rejected.
+- General fix:
+  - `HANDOFF` now counts as a progressive `ADD` stage for non-first beats.
+  - This preserves the intended grammar: the handoff introduces the next visual/narrative unit, then releases the sequence.
+  - No scene/package special cases; no Pass1/Pass2 changes.
+- Diagnostics improved:
+  - Storytelling report now records exact `incomplete_grammar_sequences` with sequence ID, beat count, and stages.
+- Regression test added for a generic two-beat handoff sequence.
+- Final live `montage` HEAD:
+  - `ceb749a23fd6f8c379187cd48e6f628b02b45408`
+- GitHub Actions:
+  - Run `35822102043` SUCCESS
+  - Compile SUCCESS
+  - Ruff: All checks passed
+  - Pytest: 208 passed, 12 warnings
+- Next acceptance step:
+  - pull `montage`
+  - rerun the same Black-Hat Final Package + audio
+  - expect authoring QA to pass the previous 12/13 grammar blocker
+  - then verify actual render for narration-locked sequential asset entrances.
