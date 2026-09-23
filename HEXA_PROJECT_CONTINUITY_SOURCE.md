@@ -996,3 +996,120 @@ Expected next gate:
   - rerun the same Final Package + narration
   - expected: sequential reuse of clean text regions no longer triggers `TEXT_LAYOUT_REFERENCE_VIOLATION`
   - any truly simultaneous text collision is still blocked.
+
+
+## MONTAGE20 PRESERVATION CHECKPOINT — FINAL-PACKAGE-DRIVEN TEXT + TEMPORAL QA — 2026-09-23
+
+This checkpoint is intentionally marked as a behavior to PRESERVE in future work.
+
+### General product invariant
+
+HEXA is a general Final Package tool. Every future implementation must pass the question:
+
+> What happens with a completely different Final Package?
+
+No production logic may depend on White-Hat/Black-Hat vocabulary, finance/payment vocabulary, specific scene IDs, specific asset counts, or one package's exact structure beyond the documented package contract.
+
+### Text semantic selection — preserve
+
+- Final Package semantic metadata is the topic/content authority for Text selection.
+- Text selection must learn meaningful words/short phrases from the current Final Package itself.
+- Primary evidence:
+  - canonical script
+  - semantic groups
+  - asset semantic meaning
+  - visual concept
+  - binding type
+  - semantic role
+  - exact script_text
+- Displayed wording must remain traceable to canonical-script spans.
+- Do NOT restore a topic-specific keyword dictionary as the primary path.
+- Do NOT fix future domains by adding domain words such as hacker/medical/automotive/finance terms.
+- Generic number/amount recognition is allowed because numbers are domain-independent.
+- Legacy/generic linguistic fallback is acceptable only when semantic package metadata is unavailable or unusable.
+- Weak filler/standalone verbs should not be selected merely to increase cue count.
+- Text remains sparse and meaningful, not subtitle-like.
+
+### Timing authority — preserve
+
+- WhisperX forced alignment remains the timing authority for selected text.
+- Text semantic selection decides WHAT wording is useful.
+- TextTiming decides WHEN from forced-aligned canonical-script spans.
+- TextMotion starts from the narration-locked spoken timing.
+- Do not invent independent text timestamps in Final Package metadata.
+- Do not weaken forced-alignment requirements to increase cue count.
+
+### Text composition / motion / QA contract — preserve
+
+All three must share the same TextVisibilityPolicy:
+
+1. TextComposition
+2. TextMotion
+3. AuthoringVisualQA
+
+Collision rule:
+
+- Spatial overlap + temporal overlap = real text collision => FAIL.
+- Spatial overlap + no temporal overlap = valid slot reuse => PASS.
+
+This permits sequential narration-locked cues to reuse the same clean negative-space region without falsely failing QA, while preserving hard blocking of true simultaneous collisions.
+
+### Real acceptance evidence at this checkpoint
+
+Final Package-driven text generalization was validated with:
+- cybersecurity semantics
+- medical semantics
+- automotive semantics
+- multiple semantic cues in a longer beat
+
+Real 40-scene package acceptance before encoded render review:
+- 43 semantic text cues in controlled acceptance
+- 40/40 beats covered by at least one text cue
+- 43 text motion cues
+- text motion retained spoken_start timing authority
+
+Real subsequent user run:
+- package-driven text selection produced 51 text cues
+- failure was NOT text extraction; it exposed a separate temporal QA false positive
+- temporal QA was then generalized and fixed.
+
+### Regression protection
+
+Tests now protect:
+- cross-domain package-driven semantic text selection
+- multiple meaningful cues
+- forced-alignment timing
+- text motion start timing
+- optional text-layer policy
+- same coordinates + non-overlapping visibility => PASS
+- same coordinates + overlapping visibility => FAIL
+- generic Final Package behavior without package/topic special cases
+
+### Current protected checkpoint
+
+- Branch: `montage`
+- HEAD at preservation checkpoint before this continuity commit:
+  `5b1c28ccda7a1091cc0cb0e97918fb86e96beeaa`
+- Temporal QA tested code HEAD:
+  `8fa4dcba67955b1882524fdd1414850ce7847bb8`
+- CI Run:
+  `35827480901`
+- Result:
+  - SUCCESS
+  - Compile SUCCESS
+  - Ruff: All checks passed
+  - Pytest: 218 passed, 12 warnings
+
+### Do-not-regress rules
+
+Future chats/engineers must NOT:
+- reintroduce topic-specific Text selection as the production authority
+- make Final Package semantic bindings create or force visual cutouts
+- break Pass1 + Pass2 extraction architecture
+- invent text timing outside forced alignment
+- treat sequential text cues as simultaneous spatial collisions
+- disable real simultaneous text collision protection
+- specialize fixes to this package's 40 scenes, 179 assets, or cybersecurity subject
+- reduce semantic text cue quality merely to satisfy a minimum count
+
+Preserve this checkpoint unless a later change is proven by stronger general regression tests and real render QA.
