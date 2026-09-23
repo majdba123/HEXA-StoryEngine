@@ -10,6 +10,9 @@ from app.models import PackageModel, SceneSource
 from app.shared.errors import InvalidPackageError
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_SEMANTIC_BINDING_SCHEMAS = {"HEXA_SEMANTIC_BINDINGS", "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"}
+_ASSET_LEVEL_BINDING_TYPES = {"EXPLICIT", "SEMANTIC", "SUPPORT", "PARENT", "AMBIGUOUS"}
+_SEMANTIC_GROUP_POLICIES = {"SEQUENTIAL_WITHIN_PHRASE", "SIMULTANEOUS_VISUAL_UNIT"}
 
 
 class FinalPackageLoader:
@@ -26,6 +29,8 @@ class FinalPackageLoader:
         scenes = self._discover_scenes(package_root, manifest, scene_plan)
         if not scenes:
             raise InvalidPackageError("Final Package contains no scene images")
+        self._validate_semantic_binding_script(semantic_bindings, script)
+        self._validate_semantic_binding_units(semantic_bindings, scenes)
         package_id = (
             manifest.get("package_id")
             or manifest.get("project_id")
@@ -101,8 +106,21 @@ class FinalPackageLoader:
     @staticmethod
     def _validate_semantic_bindings(data: dict) -> None:
         schema = data.get("schema_name")
-        if schema is not None and schema != "HEXA_SEMANTIC_BINDINGS":
+        if schema is not None and schema not in _SEMANTIC_BINDING_SCHEMAS:
             raise InvalidPackageError("unsupported semantic bindings schema")
+        asset_level = schema == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
+        if asset_level:
+            semantic_intent = data.get("asset_is_semantic_intent_not_cutout")
+            if semantic_intent is not None and semantic_intent is not True:
+                raise InvalidPackageError(
+                    "asset-level semantic bindings must describe semantic intent"
+                )
+            no_fixed_timing = data.get("no_fixed_timing")
+            if no_fixed_timing is not None and no_fixed_timing is not True:
+                raise InvalidPackageError(
+                    "asset-level semantic bindings cannot own fixed timing"
+                )
+
         scenes = data.get("scenes")
         if not isinstance(scenes, list):
             raise InvalidPackageError("semantic bindings scenes must be a list")
@@ -125,6 +143,8 @@ class FinalPackageLoader:
                 )
             seen_assets: set[str] = set()
             parent_by_asset: dict[str, str | None] = {}
+            group_by_asset: dict[str, str] = {}
+            phrase_by_group: dict[str, str] = {}
             for asset in assets:
                 if not isinstance(asset, dict):
                     raise InvalidPackageError(
@@ -154,6 +174,39 @@ class FinalPackageLoader:
                     raise InvalidPackageError(
                         f"semantic binding parent_asset_id must be a string: {scene_id}:{asset_id}"
                     )
+
+                if asset_level:
+                    binding_type = asset.get("binding_type")
+                    if binding_type not in _ASSET_LEVEL_BINDING_TYPES:
+                        raise InvalidPackageError(
+                            f"invalid semantic binding type: {scene_id}:{asset_id}"
+                        )
+                    group_id = asset.get("semantic_group_id")
+                    if not isinstance(group_id, str) or not group_id.strip():
+                        raise InvalidPackageError(
+                            f"semantic_group_id is required: {scene_id}:{asset_id}"
+                        )
+                    order = asset.get("sequence_order")
+                    if isinstance(order, bool) or not isinstance(order, int) or order < 1:
+                        raise InvalidPackageError(
+                            f"sequence_order must be a positive integer: {scene_id}:{asset_id}"
+                        )
+                    confidence = asset.get("confidence")
+                    if (
+                        isinstance(confidence, bool)
+                        or not isinstance(confidence, (int, float))
+                        or not 0.0 <= float(confidence) <= 1.0
+                    ):
+                        raise InvalidPackageError(
+                            f"confidence must be between 0 and 1: {scene_id}:{asset_id}"
+                        )
+                    group_by_asset[asset_id] = group_id
+                    previous_phrase = phrase_by_group.setdefault(group_id, phrase.strip())
+                    if previous_phrase != phrase.strip():
+                        raise InvalidPackageError(
+                            f"semantic group has inconsistent script_text: {scene_id}:{group_id}"
+                        )
+
                 seen_assets.add(asset_id)
                 parent_by_asset[asset_id] = parent
 
@@ -162,6 +215,123 @@ class FinalPackageLoader:
                     raise InvalidPackageError(
                         f"semantic binding parent is missing: {scene_id}:{asset_id}"
                     )
+
+            for asset_id in parent_by_asset:
+                chain: set[str] = set()
+                current: str | None = asset_id
+                while current is not None:
+                    if current in chain:
+                        raise InvalidPackageError(
+                            f"semantic binding parent cycle: {scene_id}:{asset_id}"
+                        )
+                    chain.add(current)
+                    current = parent_by_asset.get(current)
+
+            if asset_level:
+                groups = scene.get("semantic_groups")
+                if not isinstance(groups, list) or not groups:
+                    raise InvalidPackageError(
+                        f"asset-level semantic_groups are required: {scene_id}"
+                    )
+                declared_groups: dict[str, dict] = {}
+                referenced_assets: set[str] = set()
+                for group in groups:
+                    if not isinstance(group, dict):
+                        raise InvalidPackageError(
+                            f"semantic group must be an object: {scene_id}"
+                        )
+                    group_id = group.get("semantic_group_id")
+                    if not isinstance(group_id, str) or not group_id.strip():
+                        raise InvalidPackageError(
+                            f"semantic group id is required: {scene_id}"
+                        )
+                    if group_id in declared_groups:
+                        raise InvalidPackageError(
+                            f"duplicate semantic group: {scene_id}:{group_id}"
+                        )
+                    policy = group.get("animation_policy", "SEQUENTIAL_WITHIN_PHRASE")
+                    if policy not in _SEMANTIC_GROUP_POLICIES:
+                        raise InvalidPackageError(
+                            f"unsupported semantic group policy: {scene_id}:{group_id}"
+                        )
+                    group_assets = group.get("asset_ids")
+                    if not isinstance(group_assets, list) or not group_assets:
+                        raise InvalidPackageError(
+                            f"semantic group asset_ids are required: {scene_id}:{group_id}"
+                        )
+                    for asset_id in group_assets:
+                        if asset_id not in seen_assets:
+                            raise InvalidPackageError(
+                                f"semantic group references missing asset: {scene_id}:{group_id}"
+                            )
+                        if group_by_asset.get(asset_id) != group_id:
+                            raise InvalidPackageError(
+                                f"semantic group membership mismatch: {scene_id}:{asset_id}"
+                            )
+                        if asset_id in referenced_assets:
+                            raise InvalidPackageError(
+                                f"semantic asset appears in multiple groups: {scene_id}:{asset_id}"
+                            )
+                        referenced_assets.add(asset_id)
+                    group_phrase = group.get("script_text")
+                    if (
+                        not isinstance(group_phrase, str)
+                        or group_phrase.strip() != phrase_by_group.get(group_id)
+                    ):
+                        raise InvalidPackageError(
+                            f"semantic group script_text mismatch: {scene_id}:{group_id}"
+                        )
+                    declared_groups[group_id] = group
+                if referenced_assets != seen_assets:
+                    raise InvalidPackageError(
+                        f"semantic groups must cover every semantic asset: {scene_id}"
+                    )
+
+    @staticmethod
+    def _validate_semantic_binding_script(data: dict, script: str | None) -> None:
+        if not data or not script:
+            return
+        for scene in data.get("scenes", []):
+            if not isinstance(scene, dict):
+                continue
+            scene_id = str(scene.get("scene_id") or "")
+            for asset in scene.get("assets", []):
+                if not isinstance(asset, dict):
+                    continue
+                phrase = str(asset.get("script_text") or "").strip()
+                if phrase and phrase not in script:
+                    raise InvalidPackageError(
+                        f"semantic binding script_text not found in canonical script: "
+                        f"{scene_id}:{asset.get('asset_id')}"
+                    )
+
+    @staticmethod
+    def _validate_semantic_binding_units(data: dict, scenes: list[SceneSource]) -> None:
+        if data.get("schema_name") != "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS":
+            return
+        binding_scenes = {
+            str(row.get("scene_id")): row
+            for row in data.get("scenes", [])
+            if isinstance(row, dict)
+        }
+        for scene in scenes:
+            binding_scene = binding_scenes.get(scene.id)
+            if binding_scene is None or not scene.units:
+                continue
+            unit_ids = {
+                str(unit.get("unit_id"))
+                for unit in scene.units
+                if isinstance(unit, dict) and unit.get("unit_id")
+            }
+            missing = [
+                str(asset.get("asset_id"))
+                for asset in binding_scene.get("assets", [])
+                if isinstance(asset, dict) and str(asset.get("asset_id")) not in unit_ids
+            ]
+            if missing:
+                raise InvalidPackageError(
+                    f"semantic asset intent missing from scene plan: {scene.id}:{missing[0]}"
+                )
 
     def _load_scene_plan(self, root: Path, manifest: dict) -> dict:
         raw = manifest.get("scene_plan")
