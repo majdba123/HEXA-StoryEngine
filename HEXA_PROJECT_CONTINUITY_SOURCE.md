@@ -2120,3 +2120,118 @@ GitHub Actions:
 - Do not modify Pass1/Pass2 to solve ordering.
 - Do not touch text behavior for Motion ordering work.
 - If reliable Final Package order is absent, preserve conservative legacy/layout fallback.
+
+
+## MONTAGE20 ORDERED MOTION WHITE-FLASH FIX — 2026-09-23
+
+This checkpoint fixes the first production failure discovered after enabling strict Final
+Package motion ordering.
+
+### Production failure
+
+User Windows run:
+- job: `94c9b958d6e34c7e9ac189e0bca6a564`
+- build HEAD: `70ad5e67a0ca2d75f640a5c1c9ce9659a9d4559c`
+- package: `HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_SCENE_PACKAGE_V1_FINAL_SEMANTIC_ARCHITECTURE.zip`
+- Pass1: 157 assets
+- Pass2: 179 assets
+- Story: 40 beats
+- Motion/Authoring QA: PASS
+- Render: completed
+- Final Recovery failure: `VISUAL_WHITE_FLASH`
+
+Detected internal near-white frames:
+- frame 643 / 21.433333s
+- frame 704 / 23.466667s
+- frame 705 / 23.500000s
+
+### Root cause
+
+The strict Motion ordering checkpoint intentionally stopped the renderer from forcing every
+primary member of an ordered multi-cutout visual unit visible from beat start.
+
+That preserved 1→2→3 ordering, but created a new boundary case:
+
+```
+new beat starts
+white canvas exists
+first ordered incoming cue starts slightly later
+no persistent previous asset exists
+=> one or more pure/near-white frames
+```
+
+The previous renderer primary-visibility guard had prevented this for ordinary primary
+artwork. Ordered visual units bypassed that guard so later members could not appear before
+their authored stagger, but no replacement visual carrier had been selected.
+
+### Fix
+
+`app/render/renderer.py` now selects one `visual_carrier_id` whenever:
+
+- the current beat has visible layout items; and
+- no true persistent asset already spans the beat boundary.
+
+The carrier is the earliest planned incoming visual according to:
+1. Motion cue start;
+2. Final Package sequence_order;
+3. internal visual-unit rank;
+4. stable authored layer order.
+
+Only that ONE earliest incoming layer is visible from frame zero.
+
+Important:
+- its Motion cue does NOT start early;
+- its transform still begins at the authored cue time;
+- later ordered members remain hidden until their own reveal times;
+- 2/3 cannot become visible before 1;
+- unrelated outgoing artwork is still NOT carried across beats;
+- no alpha ghost crossfade is reintroduced;
+- Composition final geometry is unchanged;
+- Story / WhisperX timing is unchanged;
+- Pass1 / Pass2 are unchanged;
+- Visual Locator is unchanged.
+
+If the selected carrier is an alpha-only reveal layer, its boundary carrier visibility
+takes precedence over the alpha fade so a white frame cannot remain before its cue.
+
+### Regression test
+
+Extended:
+`tests/test_renderer_handoff_continuity.py`
+
+New FFmpeg integration regression creates:
+- previous beat artwork;
+- new ordered visual unit with two members;
+- first ordered member intentionally delayed by 0.20s after the beat boundary;
+- second member staggered later.
+
+Assertions prove:
+- encoded boundary frame is not white;
+- first semantic member is visible as the boundary carrier;
+- second member is still absent before its own reveal;
+- `RecoveryDetector._white_flash_frames()` returns no internal flashes.
+
+Therefore the fix preserves semantic ordering while removing the blank-frame failure.
+
+### Proven CI
+
+Behavior HEAD:
+`cf186ced587d1867762e45c68c20eb10c1d7b8e2`
+
+GitHub Actions:
+- Run: `35900113411`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **239 passed, 11 warnings in 6.82s**
+
+### Do not regress
+
+- Do not restore blanket early visibility for every member of an ordered visual unit.
+- Exactly one incoming carrier may cover an otherwise blank beat boundary.
+- Carrier selection must respect semantic/Motion order.
+- Later ordered members must keep their own reveal times.
+- Do not solve this by carrying unrelated previous-scene artwork.
+- Do not solve this with translucent crossfades that create ghost silhouettes.
+- Do not disable `VISUAL_WHITE_FLASH` QA.
+- Do not weaken Final Package sequence_order authority.
