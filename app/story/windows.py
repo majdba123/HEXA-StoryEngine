@@ -110,12 +110,17 @@ def schedule_windows(
             output.append(StoryAssetActivation(**data).with_legacy_evidence())
             continue
         importance = 1.0 if row.asset_id in primary_ids else 0.75
-        lead = min(duration * 0.5 * importance, capacity * 0.25,
-                   (visual_upper - lower) * 0.05, max(0.0, start - previous_peak))
+        exact_package_binding = row.source == "final_package_semantic_binding"
+        lead = 0.0 if exact_package_binding else min(
+            duration * 0.5 * importance,
+            capacity * 0.25,
+            (visual_upper - lower) * 0.05,
+            max(0.0, start - previous_peak),
+        )
         semantic_peak = min(start + duration * 0.5, settle_at)
         output.append(StoryAssetActivation(
             **data, phrase_start=start, phrase_end=end,
-            reveal_start=max(lower, start - lead),
+            reveal_start=start if exact_package_binding else max(lower, start - lead),
             semantic_peak=semantic_peak, settle_at=settle_at,
             activation_policy="INHERITED_WINDOW" if row.policy == "GROUP" else "OWN_WINDOW",
         ).with_legacy_evidence())
