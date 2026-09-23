@@ -62,10 +62,6 @@ class TextCompositionPlanner:
                     preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
                     assets_by_id=assets_by_id,
                 )
-                if result is None:
-                    # Semantic selection remains rich; only the unsafe visual instance
-                    # is suppressed. Never move authored artwork or retime narration.
-                    continue
                 items.append(result.item)
                 placed.append(
                     PlacedTextRegion(
@@ -84,7 +80,6 @@ class TextCompositionPlanner:
                         result.zone
                     )
 
-            if items:
-                output.append(TextCompositionBeat(beat_id=beat.id, items=items))
+            output.append(TextCompositionBeat(beat_id=beat.id, items=items))
 
         return output
