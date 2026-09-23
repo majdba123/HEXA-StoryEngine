@@ -1599,3 +1599,124 @@ Future work must NOT:
 
 Always test the change against a completely different Final Package before weakening these
 constraints.
+
+
+## MONTAGE20 TEXT BEHAVIOR ROLLBACK / STYLE-SIZE PRESERVATION — 2026-09-23
+
+This checkpoint SUPERSEDES the behavioral parts of the earlier Typography V2 checkpoint.
+
+User decision:
+Restore the text system completely to the pre-Typography-V2 behavior, while preserving
+ONLY the newest text visual style and large size.
+
+### Authoritative behavioral baseline
+
+Text behavior is restored to checkpoint:
+
+`814c5b521712f76dcbc767059a4c91f41e3cc6d5`
+
+The following were restored exactly from that baseline:
+- `app/composition/text.py`
+- `app/composition/text_director.py`
+- `app/models.py`
+- `app/motion/text.py`
+- `app/pipeline.py`
+- `app/qa/authoring.py`
+- `app/text/planner.py`
+- `app/text/semantic/selector.py`
+
+The Typography V2 behavior-only module and tests were removed:
+- `app/text/typography.py`
+- `tests/test_typography_v2.py`
+
+### What remains from the newer Typography change
+
+ONLY render-level visual style and size are preserved in `app/render/text.py`.
+
+Preserved visual changes:
+- font family target: `Noto Kufi Arabic Extra Bold`
+- white text fill
+- black outline
+- restrained black shadow
+- larger visual sizes:
+  - Keyword: 158
+  - Number: 188
+  - Amount: 188
+  - WarningAmount: 194
+  - Warning: 188
+  - Emphasis: 178
+- thick outline sized for the larger typography:
+  - Keyword 8.0
+  - Number / Amount / Warning 9.5
+  - WarningAmount 9.8
+  - Emphasis 9.0
+
+Everything else in text rendering behavior is the old implementation, including the old
+text motion/tag construction and old font_scale behavior.
+
+### Explicitly rolled back
+
+Do NOT treat the following previous Typography V2 behavior as current:
+- richer max-4 semantic cue budget
+- new semantic activation -> text anchor selection
+- new shaped TypographyMetrics placement authority
+- new hard-reject placement thresholds
+- new character-specific stronger protected halo logic
+- new safe-suppression behavior when no position exists
+- new adaptive `font_size_ratio` field
+- new center-screen rejection behavior
+- new Typography V2 placement zone logic
+- new short-beat text-motion capping changes
+- new placed-vs-suppressed pipeline count
+- Typography V2 A-J behavioral acceptance tests
+
+The old text selection, timing, placement, collision scoring, anchor behavior, and text
+motion are authoritative again.
+
+### Visual Locator remains untouched
+
+This rollback applies only to the text/Typography subsystem.
+
+The prior Visual Identity / Visual Locator checkpoint remains fully authoritative:
+- Pass1 + Pass2 only
+- `visual_locator` is source identity metadata
+- Visual Identity Binder remains active
+- semantic intent -> real cutout identity improvements remain active
+- Story asset activation improvements remain active
+- no Visual Locator code was reverted.
+
+### Proven structural check
+
+Comparison against pre-Typography-V2 baseline `814c5b...` showed the only code difference
+remaining is:
+- `app/render/text.py`
+- `tests/test_text_renderer.py`
+
+plus continuity documentation.
+
+Therefore text behavior has returned to the old code, while visual style/size alone remain
+new.
+
+### Proven CI
+
+Behavior/code checkpoint:
+`823196838358e841bda33ced395bd9896a915971`
+
+GitHub Actions:
+- Run: `35883010555`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **229 passed, 11 warnings in 7.18s**
+
+### Do not regress this decision
+
+Until the user explicitly requests otherwise:
+- keep old text behavior
+- do not reintroduce Typography V2 semantic selection changes
+- do not reintroduce Typography V2 placement redesign
+- do not reintroduce Typography V2 motion redesign
+- do not reintroduce TypographyMetrics or adaptive font-size layout fields
+- preserve the current new heavy visual style and larger font sizes
+- preserve forced alignment exactly as the old text system does
+- preserve Visual Locator / Visual Identity work independently
