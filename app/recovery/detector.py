@@ -10,6 +10,7 @@ from typing import Any
 from app.models import RenderPlan
 from app.motion.timing import story_activation_window
 from app.shared.errors import DependencyUnavailableError
+from app.shared.process import run_hidden
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,7 +267,7 @@ class RecoveryDetector:
             "null",
             "-",
         ]
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = run_hidden(command, check=True, capture_output=True, text=True)
         pattern = re.compile(r"frame:(\d+).*?t:([0-9.]+)")
         flashes: list[dict[str, float | int]] = []
         guard = min(0.12, duration / 4.0)
@@ -299,7 +300,7 @@ class RecoveryDetector:
             str(path),
         ]
         try:
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
+            result = run_hidden(command, check=True, capture_output=True, text=True)
         except FileNotFoundError as exc:
             raise DependencyUnavailableError("ffprobe is not available") from exc
         except subprocess.CalledProcessError as exc:
