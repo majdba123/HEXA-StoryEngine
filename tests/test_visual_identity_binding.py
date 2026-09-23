@@ -331,3 +331,89 @@ def test_pass2_family_canvas_uses_alpha_footprint_for_identity(tmp_path: Path) -
 
     assert result.matches["parent-intent"].real_asset_id == "family"
     assert result.matches["child-intent"].real_asset_id == "family:secondary-01"
+
+
+def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: Path) -> None:
+    script = "alpha beta"
+    scene = SceneSource(
+        id="s",
+        image_path=tmp_path / "scene.png",
+        order=0,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+        units=[
+            {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
+            {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
+        ],
+    )
+    package = PackageModel(
+        root=tmp_path,
+        package_id="locator-reservation",
+        scenes=[scene],
+        script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": "s",
+                "semantic_groups": [{
+                    "semantic_group_id": "g",
+                    "script_text": script,
+                    "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                    "asset_ids": ["intent-a", "intent-b"],
+                }],
+                "assets": [
+                    {
+                        "asset_id": "intent-a",
+                        "script_text": script,
+                        "binding_type": "EXPLICIT",
+                        "semantic_group_id": "g",
+                        "sequence_order": 1,
+                        "confidence": 1.0,
+                        "visual_locator": _locator(0.15, 0.25, 0.10, 0.10),
+                    },
+                    {
+                        "asset_id": "intent-b",
+                        "script_text": script,
+                        "binding_type": "SEMANTIC",
+                        "semantic_group_id": "g",
+                        "sequence_order": 2,
+                        "confidence": 0.9,
+                    },
+                ],
+            }],
+        },
+    )
+    transcript = Transcript(
+        language="en",
+        duration=2.0,
+        segments=[],
+        words=[
+            TranscriptWord(text="alpha", start=0.2, end=0.5, char_start=0, char_end=5),
+            TranscriptWord(text="beta", start=0.7, end=1.1, char_start=6, char_end=10),
+        ],
+    )
+    assets = [
+        _asset(tmp_path, "left-small", (100, 200, 100, 100), area=0.01),
+        _asset(tmp_path, "right-large", (650, 170, 260, 260), area=0.20),
+    ]
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=1.3,
+        audio_start=0.2,
+        audio_end=1.1,
+        narration=script,
+        action="INTRODUCE",
+    )
+
+    result = SemanticActivationPlanner().enrich(package, transcript, assets, [beat])[0]
+
+    own = [row for row in result.asset_activations if row.policy in {"EXPLICIT", "SEMANTIC"}]
+    assert len(own) == 1
+    assert own[0].semantic_unit_id == "intent-a"
+    assert own[0].asset_id == "left-small"
+    assert not any(
+        row.semantic_unit_id == "intent-b" and row.policy in {"EXPLICIT", "SEMANTIC"}
+        for row in result.asset_activations
+    )
