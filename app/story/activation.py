@@ -251,6 +251,7 @@ class SemanticActivationPlanner:
             "eligible_asset_count": 0, "trusted_eligible_count": 0,
             "inherited_eligible_count": 0, "eligible_coverage": 0.0,
             "assets": [],
+            "visual_identity": [],
         }
         if isinstance(self.scorer, HybridSemanticTextScorer):
             if not package.semantic_bindings:
@@ -306,7 +307,12 @@ class SemanticActivationPlanner:
         )
         self._runtime_diagnostics()
         _LOG.info("Story semantic summary: %s", json.dumps(
-            {k: v for k, v in self.diagnostics.items() if k != "assets"}, ensure_ascii=False,
+            {
+                k: v
+                for k, v in self.diagnostics.items()
+                if k not in {"assets", "visual_identity"}
+            },
+            ensure_ascii=False,
         ))
         return output
 
@@ -581,6 +587,23 @@ class SemanticActivationPlanner:
         )
         if identity.has_incomplete_locator_binding:
             self._identity_incomplete_beats.add(beat.id)
+        for semantic_id in sorted(identity.locator_semantic_ids):
+            match = identity.matches.get(semantic_id)
+            self.diagnostics["visual_identity"].append({
+                "beat_id": beat.id,
+                "scene_id": scene.id,
+                "semantic_asset_id": semantic_id,
+                "real_asset_id": match.real_asset_id if match is not None else None,
+                "source": match.source if match is not None else "abstention",
+                "score": match.score if match is not None else None,
+                "runner_up_score": match.runner_up_score if match is not None else None,
+                "margin": match.margin if match is not None else None,
+                "reason": (
+                    "accepted"
+                    if match is not None
+                    else "ambiguous_or_missing_real_cutout_geometry"
+                ),
+            })
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         tolerance = 0.025
