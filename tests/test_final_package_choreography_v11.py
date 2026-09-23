@@ -20,6 +20,7 @@ from app.models import (
     VisualAsset,
 )
 from app.motion import MotionPlanner
+from app.story.windows import schedule_windows
 
 
 def _asset(asset_id: str, area: float = 0.15) -> VisualAsset:
@@ -261,3 +262,113 @@ def test_pattern_motion_has_one_controlled_pre_settle_accent_then_freezes() -> N
         for frame in frames
         if frame["progress"] >= settle
     )
+
+def test_story_window_promotes_each_ordered_step_to_momentary_focus() -> None:
+    activations = [
+        _activation("a", 1),
+        _activation("b", 2),
+        _activation("c", 3),
+    ]
+    beat = _beat(activations=activations)
+    beat.asset_activations = schedule_windows(
+        activations,
+        beat,
+        beat.end,
+        set(),
+    )
+    assets = [_asset("a"), _asset("b"), _asset("c")]
+    choreography = ChoreographyDirector().plan(
+        _package(["a", "b", "c"]),
+        [beat],
+        assets,
+    )
+    composition = [
+        CompositionBeat(
+            beat_id=beat.id,
+            items=[
+                LayoutItem(asset_id="a", x=0.2, y=0.5, width=0.18, height=0.20),
+                LayoutItem(asset_id="b", x=0.5, y=0.5, width=0.18, height=0.20),
+                LayoutItem(asset_id="c", x=0.8, y=0.5, width=0.18, height=0.20),
+            ],
+        )
+    ]
+
+    cues = MotionPlanner().plan(
+        [beat],
+        composition,
+        choreography,
+        assets=assets,
+    )
+
+    assert [cue.asset_id for cue in cues] == ["a", "b", "c"]
+    assert all(cue.params["semantic_focus"]["active"] for cue in cues)
+    assert all(
+        cue.params["semantic_focus"]["source"] == "story_activation_window"
+        for cue in cues
+    )
+    for cue in cues:
+        scales = [frame["scale"] for frame in cue.params["program"]["keyframes"]]
+        assert max(scales) >= 1.04
+        settle = cue.params["program"]["settle_progress"]
+        assert all(
+            frame["dx"] == pytest.approx(0.0)
+            and frame["dy"] == pytest.approx(0.0)
+            and frame["scale"] == pytest.approx(1.0)
+            for frame in cue.params["program"]["keyframes"]
+            if frame["progress"] >= settle
+        )
+
+
+def test_explicit_result_payoff_is_stronger_than_non_result_participants() -> None:
+    activations = [
+        _activation("subject", 1),
+        _activation("object", 2),
+        _activation("result", 3, focus="RESULT"),
+    ]
+    relation = StoryRelation(
+        source_unit_id="subject",
+        target_unit_id="object",
+        result_unit_id="result",
+        kind="CREATES",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.98,
+        causal=True,
+    )
+    beat = _beat(
+        activations=activations,
+        relations=[relation],
+        result_ids=["result"],
+    )
+    beat.asset_activations = schedule_windows(
+        activations,
+        beat,
+        beat.end,
+        set(),
+    )
+    assets = [_asset("subject"), _asset("object"), _asset("result")]
+    choreography = ChoreographyDirector().plan(
+        _package(["subject", "object", "result"]),
+        [beat],
+        assets,
+    )
+    composition = [
+        CompositionBeat(
+            beat_id=beat.id,
+            items=[
+                LayoutItem(asset_id="subject", x=0.2, y=0.5, width=0.18, height=0.20),
+                LayoutItem(asset_id="object", x=0.5, y=0.5, width=0.18, height=0.20),
+                LayoutItem(asset_id="result", x=0.8, y=0.5, width=0.18, height=0.20),
+            ],
+        )
+    ]
+
+    cues = MotionPlanner().plan([beat], composition, choreography, assets=assets)
+    max_scale = {
+        cue.asset_id: max(frame["scale"] for frame in cue.params["program"]["keyframes"])
+        for cue in cues
+    }
+
+    assert max_scale["result"] > max_scale["object"]
+    assert max_scale["result"] > max_scale["subject"]
+    assert next(cue for cue in cues if cue.asset_id == "result").params["semantic_focus"]["role"] == "RESULT"
+
