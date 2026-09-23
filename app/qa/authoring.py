@@ -11,6 +11,7 @@ from app.layout.footprint import AlphaFootprintResolver
 from app.models import (
     CompositionBeat,
     MotionCue,
+    StoryBeat,
     TextCompositionBeat,
     TextPlan,
     Transcript,
@@ -18,6 +19,7 @@ from app.models import (
 )
 from app.reference import HexaVisualProfile
 from app.shared.errors import StageFailedError
+from app.text.timing.visibility import TextVisibilityPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,7 @@ class AuthoringVisualQA:
         self.layout = ConstraintLayoutSolver(self.profile)
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
+        self.text_visibility = TextVisibilityPolicy()
 
     def inspect(
         self,
@@ -55,6 +58,7 @@ class AuthoringVisualQA:
         transcript: Transcript,
         composition: list[CompositionBeat],
         motion: list[MotionCue],
+        story: list[StoryBeat],
         text: TextPlan,
         assets: list[VisualAsset],
         text_composition: list[TextCompositionBeat] | None = None,
@@ -69,6 +73,7 @@ class AuthoringVisualQA:
 
         text_issues = self._inspect_text_layout(
             composition=composition,
+            story=story,
             text=text,
             text_composition=text_composition or [],
             assets=by_id,
@@ -99,12 +104,19 @@ class AuthoringVisualQA:
         self,
         *,
         composition: list[CompositionBeat],
+        story: list[StoryBeat],
         text: TextPlan,
         text_composition: list[TextCompositionBeat],
         assets: dict[str, VisualAsset],
     ) -> list[str]:
         visual_by_beat = {row.beat_id: row for row in composition}
+        beat_by_id = {row.id: row for row in story}
         cue_by_id = {cue.id: cue for cue in text.cues}
+        cues_by_beat: dict[str, list] = {}
+        for cue in text.cues:
+            cues_by_beat.setdefault(cue.beat_id, []).append(cue)
+        for rows in cues_by_beat.values():
+            rows.sort(key=lambda cue: (cue.spoken_start, cue.id))
         issues: list[str] = []
 
         for text_beat in text_composition:
@@ -115,7 +127,15 @@ class AuthoringVisualQA:
                 else None
             )
 
-            text_boxes: list[tuple[str, tuple[float, float, float, float]]] = []
+            beat = beat_by_id.get(text_beat.beat_id)
+            text_boxes: list[
+                tuple[
+                    str,
+                    tuple[float, float, float, float],
+                    float,
+                    float,
+                ]
+            ] = []
             for item in text_beat.items:
                 cue = cue_by_id.get(item.text_cue_id)
                 if cue is None:
@@ -139,17 +159,42 @@ class AuthoringVisualQA:
                         f"{text_beat.beat_id}:text_visual_overlap:{item.text_cue_id}:"
                         f"{visual_overlap:.3f}"
                     )
-                text_boxes.append((item.text_cue_id, box))
+                visible_end = (
+                    self.text_visibility.visible_end(
+                        cue,
+                        beat,
+                        cues_by_beat.get(text_beat.beat_id, []),
+                    )
+                    if beat is not None
+                    else cue.spoken_end
+                )
+                text_boxes.append(
+                    (
+                        item.text_cue_id,
+                        box,
+                        cue.spoken_start,
+                        visible_end,
+                    )
+                )
 
-            for index, (left_id, left_box) in enumerate(text_boxes):
-                for right_id, right_box in text_boxes[index + 1:]:
+            for index, (left_id, left_box, left_start, left_end) in enumerate(text_boxes):
+                for right_id, right_box, right_start, right_end in text_boxes[index + 1:]:
+                    if not self.text_visibility.overlaps(
+                        left_start,
+                        left_end,
+                        right_start,
+                        right_end,
+                    ):
+                        continue
                     ratio = max(
                         self._intersection_ratio(left_box, right_box),
                         self._intersection_ratio(right_box, left_box),
                     )
                     if ratio > self._TEXT_TEXT_OVERLAP_LIMIT:
                         issues.append(
-                            f"{text_beat.beat_id}:text_text_overlap:{left_id}:{right_id}:{ratio:.3f}"
+                            f"{text_beat.beat_id}:text_text_overlap:{left_id}:{right_id}:"
+                            f"{ratio:.3f}:time={max(left_start, right_start):.3f}-"
+                            f"{min(left_end, right_end):.3f}"
                         )
         return issues
 
