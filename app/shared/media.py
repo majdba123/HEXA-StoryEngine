@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.shared.process import run_hidden
 
 
 def probe_duration(path: Path, ffprobe_bin: str = "ffprobe") -> float:
@@ -19,7 +20,7 @@ def probe_duration(path: Path, ffprobe_bin: str = "ffprobe") -> float:
         str(path),
     ]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = run_hidden(command, check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise DependencyUnavailableError("ffprobe is not available") from exc
     except subprocess.CalledProcessError as exc:
