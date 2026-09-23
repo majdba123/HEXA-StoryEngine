@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from app.choreography import ChoreographyPlan
+from app.choreography import ChoreographyDirective, ChoreographyPlan
 from app.models import PackageModel, StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
-from app.text.semantic import TextSemanticSelector
+from app.text.semantic import KeywordCandidate, TextSemanticSelector
 from app.text.style import TextStyleResolver
 from app.text.timing import TextTimingPlanner
 
@@ -51,10 +51,10 @@ class TextPlanner:
                     continue
                 style = self.style.resolve(timed)
                 styles[style.id] = style
-                anchor_asset_id = (
-                    directive.primary_asset_id
-                    if directive is not None and directive.primary_asset_id
-                    else (beat.primary_asset_ids or [None])[0]
+                anchor_asset_id = self._anchor_asset_id(
+                    beat=beat,
+                    candidate=candidate,
+                    directive=directive,
                 )
                 package_evidence = list(context.evidence) if context else []
                 if scene and scene.relation_to_previous:
@@ -96,6 +96,63 @@ class TextPlanner:
             cues=sorted(cues, key=lambda cue: (cue.spoken_start, -cue.priority, cue.id)),
             styles=sorted(styles.values(), key=lambda style: style.id),
         )
+
+    @staticmethod
+    def _anchor_asset_id(
+        *,
+        beat: StoryBeat,
+        candidate: KeywordCandidate,
+        directive: ChoreographyDirective | None,
+    ) -> str | None:
+        """Resolve text to the exact Story asset span before beat-level fallback.
+
+        Final Package/Story already owns canonical character spans for semantic assets.
+        Text wording and spoken timing stay untouched; this only chooses WHICH visual
+        receives the text relationship.
+        """
+        cue_start = int(candidate.source_char_start)
+        cue_end = int(candidate.source_char_end)
+        matches = []
+        for activation in beat.asset_activations:
+            start = activation.trigger_char_start
+            end = activation.trigger_char_end
+            if start is None or end is None or end <= start:
+                continue
+            overlap = max(0, min(cue_end, end) - max(cue_start, start))
+            if overlap <= 0:
+                continue
+            cue_len = max(1, cue_end - cue_start)
+            activation_len = max(1, end - start)
+            visual_focus = str(activation.visual_focus or "").upper()
+            focus_rank = {
+                "RESULT": 0,
+                "PRIMARY": 1,
+                "SUPPORT": 2,
+                "CONTEXT": 3,
+            }.get(visual_focus, 2)
+            matches.append((
+                overlap / cue_len,
+                overlap / activation_len,
+                float(activation.confidence),
+                -focus_rank,
+                -activation_len,
+                activation.asset_id,
+            ))
+
+        if matches:
+            best_prefix = max(row[:-1] for row in matches)
+            tied_ids = sorted(row[-1] for row in matches if row[:-1] == best_prefix)
+            preferred = directive.primary_asset_id if directive is not None else None
+            if preferred in tied_ids:
+                return preferred
+            for asset_id in beat.primary_asset_ids:
+                if asset_id in tied_ids:
+                    return asset_id
+            return tied_ids[0]
+
+        if directive is not None and directive.primary_asset_id:
+            return directive.primary_asset_id
+        return (beat.primary_asset_ids or [None])[0]
 
     @staticmethod
     def _priority(semantic_type: str) -> int:
