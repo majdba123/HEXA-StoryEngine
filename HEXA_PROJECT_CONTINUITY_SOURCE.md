@@ -1720,3 +1720,176 @@ Until the user explicitly requests otherwise:
 - preserve the current new heavy visual style and larger font sizes
 - preserve forced alignment exactly as the old text system does
 - preserve Visual Locator / Visual Identity work independently
+
+
+## MONTAGE20 FINAL PACKAGE VISUAL LOCATOR REAL-PACKAGE QA — 2026-09-23
+
+This checkpoint validates the new Final Package visual-locator contract against a real
+40-scene package and closes one remaining identity-cardinality gap.
+
+### Package inspected
+
+Real uploaded package:
+- project_id: `HEXA_BLACK_HAT_HACKER_AR`
+- 40 scene images
+- 129 semantic assets
+- 40 semantic groups
+- 107 authored `visual_locator` entries
+- 22 semantic assets intentionally omit locator under correctness-over-coverage policy
+- package semantic validation report: PASS
+- visual locator validation errors: 0
+
+The current `FinalPackageLoader` loaded the package successfully:
+- 40/40 scenes
+- canonical script loaded
+- scene_plan loaded
+- semantic_bindings loaded
+- all authored locators accepted
+
+### Important production discovery
+
+The initial VisualIdentityBinder correctly resolved 99/107 locators one-to-one, but
+8 locator intents remained unresolved.
+
+This was NOT a malformed-locator problem.
+
+Those 8 semantic intents intentionally described one visual unit composed of several
+detached real cutouts, for example:
+- network nodes
+- profile cards
+- protected file cases
+- infected devices
+- growing devices
+- installation path pieces
+- month calendars
+- digital footprints
+
+The Final Package already declared:
+
+`cutout_mapping_cardinality = ZERO_OR_ONE_OR_MANY`
+
+The engine architecture had documented that one semantic intent may correspond to
+zero/one/many real cutouts, but the visual-locator binder still returned only one real
+asset per semantic locator.
+
+### Fix: locator-backed multi-cutout visual units
+
+VisualIdentityBinder now preserves the original strict one-to-one path first.
+
+It does NOT lower:
+- `_MIN_SCORE = 0.60`
+- `_MIN_MARGIN = 0.065`
+
+Only after one-to-one matching abstains, a locator may resolve as a multi-cutout visual
+unit when all conservative geometry gates pass:
+
+- multiple unreserved real cutouts are strongly contained by the authored locator;
+- primary members each occupy meaningful locator area;
+- candidate members are spatially distinct rather than near-duplicate overlapping masks;
+- the union bbox strongly reproduces the locator geometry;
+- total locator coverage is meaningful;
+- tiny satellite pieces are included only relative to the visual unit's real member scale.
+
+The binder now exposes:
+- `matches` for one-to-one identity;
+- `multi_matches` for one semantic intent -> multiple real cutouts;
+- `matches_for(semantic_asset_id)` as the unified consumer API.
+
+Source for multi matches:
+`visual_locator_multi`
+
+### Conflict protection
+
+This extension remains conservative:
+
+- one-to-one proven locators reserve their real cutouts first;
+- a multi locator cannot steal a cutout already proven by another locator;
+- heavily overlapping/near-duplicate candidates do NOT become a visual unit;
+- ambiguous geometry still abstains;
+- locator matching still never creates/crops/segments/moves an asset.
+
+### Story activation
+
+One semantic intent can now generate AssetActivation for every real cutout in its proven
+visual unit.
+
+All members inherit the same authored:
+- semantic_unit_id
+- script_text
+- semantic_group_id
+- sequence_order
+- binding_type
+- forced-aligned phrase timing
+
+This is compatible with Story sequence windows because same-sequence-order members are
+already defined as one simultaneous visual unit.
+
+Evidence includes:
+`visual_identity_multi_cutout_member`
+
+Diagnostics now report:
+- `real_asset_ids`
+- `member_count`
+- reason `accepted_multi_cutout_visual_unit`
+
+### Loader contract hardening
+
+If an Asset-Level Semantic package declares `cutout_mapping_cardinality`, the loader
+now validates that it is:
+
+`ZERO_OR_ONE_OR_MANY`
+
+Omission remains backward compatible.
+
+### Real package extraction / identity QA
+
+Using the actual uploaded 40-scene package with the production code path:
+
+- Vision detections: 157
+- Pass1 cutouts: 157
+- Pass2 cutouts: 179
+- Pass2 additions: +22
+- authored visual locators: 107
+- one-to-one locator intents: 99
+- multi-cutout locator intents: 8
+- real cutouts assigned through those 8 visual units: 30
+- unresolved authored locators after fix: **0**
+- locator intent resolution coverage: **107/107 = 100%**
+
+This is identity QA only. No claim is made here that a full final video render/audio QA
+was run, because this checkpoint was performed from the uploaded Final Package without a
+new narration/audio render request.
+
+### Regression coverage
+
+Added tests prove:
+- one locator can resolve to several spatially distinct cutouts;
+- a multi locator cannot steal an individually proven cutout;
+- multiple real assets receive the same semantic intent/sequence/timing;
+- old ambiguous overlapping-candidate case still abstains;
+- incompatible cutout cardinality metadata is rejected.
+
+### Proven CI
+
+Tested code HEAD:
+`592c6d111a03d33f19ec17e3755677cae96900d8`
+
+GitHub Actions:
+- Run: `35888006842`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **233 passed, 11 warnings in 7.27s**
+
+### Do not regress
+
+- Preserve Pass1 + Pass2 only.
+- Do not lower one-to-one locator confidence/margin thresholds to gain coverage.
+- Multi-cutout matching must only run after strict one-to-one matching abstains.
+- Do not treat overlapping duplicate masks as a valid visual unit.
+- Do not let a multi locator steal a real cutout reserved by a stronger locator.
+- Same semantic intent may legally map to ZERO, ONE, OR MANY real cutouts.
+- Multi members must share the authored semantic intent and sequence order.
+- Visual Locator remains identity metadata only; never crop/layout/motion authority.
+- The 22 assets without locator in this real package remain valid and use the legacy
+  semantic path; do not invent locators for them in StoryEngine.
