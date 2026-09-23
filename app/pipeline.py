@@ -216,6 +216,7 @@ class StoryEnginePipeline:
             transcript=transcript,
             composition=composition,
             motion=motion,
+            story=story,
             text=text,
             text_composition=text_composition,
             assets=assets,
