@@ -5,7 +5,9 @@ from pathlib import Path
 
 from app.composition import TextCompositionPlanner
 from app.models import (
+    AssetActivation,
     CompositionBeat,
+    MotionCue,
     LayoutItem,
     PackageModel,
     SceneSource,
@@ -286,3 +288,96 @@ def test_semantic_final_package_can_surface_multiple_meaningful_cues() -> None:
     assert len(texts) >= 2
     assert "الخطر الحقيقي" in texts
     assert "يكتشف الضعف" in texts
+
+def test_text_anchor_uses_exact_asset_activation_span_before_beat_primary() -> None:
+    script = "الرصيد الظاهر 1000 ريال لكن 300 ريال محجوزة لعملية سابقة"
+    transcript = _transcript(script)
+    beat = _beat(transcript)
+    first_start = script.index("1000")
+    first_end = first_start + len("1000 ريال")
+    second_start = script.index("300")
+    second_end = second_start + len("300 ريال محجوزة")
+    beat.asset_activations = [
+        AssetActivation(
+            asset_id="wallet",
+            trigger_char_start=first_start,
+            trigger_char_end=first_end,
+            confidence=0.99,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            visual_focus="SUPPORT",
+        ),
+        AssetActivation(
+            asset_id="lock",
+            trigger_char_start=second_start,
+            trigger_char_end=second_end,
+            confidence=0.99,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            visual_focus="RESULT",
+        ),
+    ]
+
+    plan = TextPlanner().plan(
+        transcript=transcript,
+        story=[beat],
+        assets=_assets(),
+    )
+
+    assert [cue.text for cue in plan.cues] == ["1000 ريال", "300 ريال محجوزة"]
+    assert plan.cues[0].anchor_asset_id == "wallet"
+    assert plan.cues[1].anchor_asset_id == "lock"
+
+
+def test_text_motion_consumes_visual_focus_without_leading_speech() -> None:
+    script = "الرصيد الظاهر 1000 ريال لكن 300 ريال محجوزة لعملية سابقة"
+    transcript = _transcript(script)
+    beat = _beat(transcript)
+    text = TextPlanner().plan(transcript=transcript, story=[beat], assets=_assets())
+    visual = [
+        CompositionBeat(
+            beat_id=beat.id,
+            items=[LayoutItem(asset_id="wallet", x=0.5, y=0.5, width=0.4, height=0.5, z=20)],
+        )
+    ]
+    text_composition = TextCompositionPlanner().plan([beat], visual, text.cues)
+    first = text.cues[0]
+    visual_motion = [
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="wallet",
+            kind="program_v3",
+            start=first.spoken_start,
+            end=first.spoken_start + 0.7,
+            params={
+                "semantic_settle_time": first.spoken_start + 0.5,
+                "semantic_focus": {
+                    "active": True,
+                    "role": "ACTIVE_FOCUS",
+                    "source": "story_activation_window",
+                },
+            },
+        )
+    ]
+
+    cues = TextMotionPlanner().plan(
+        [beat],
+        text.cues,
+        text_composition,
+        visual_motion=visual_motion,
+    )
+
+    by_id = {cue.id: cue for cue in text.cues}
+    synced = next(row for row in cues if row.text_cue_id == first.id)
+    assert synced.start == first.spoken_start
+    assert synced.tokens[0].start == first.tokens[0].spoken_start
+    assert synced.params["visual_sync"]["available"] is True
+    assert synced.params["entry_strength"] > 0.8
+    assert 130 <= synced.params["entry_duration_ms"] <= 240
+    for row in cues:
+        source = by_id[row.text_cue_id]
+        assert row.start == source.spoken_start
+        assert [token.start for token in row.tokens] == [
+            token.spoken_start for token in source.tokens
+        ]
+
