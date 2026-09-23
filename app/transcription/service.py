@@ -13,6 +13,7 @@ from app.transcription.alignment import (
 )
 from app.shared.errors import DependencyUnavailableError
 from app.shared.media import probe_duration
+from app.shared.process import run_hidden
 
 _WORD_RE = re.compile(r"\S+")
 _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
@@ -183,7 +184,7 @@ class TranscriptionService:
             "-",
         ]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            result = run_hidden(command, capture_output=True, text=True, check=False)
         except FileNotFoundError:
             return [(0.0, duration)]
         log = result.stderr or ""
