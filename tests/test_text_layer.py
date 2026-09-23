@@ -1,10 +1,14 @@
 import re
+
+import pytest
 from pathlib import Path
 
 from app.composition import TextCompositionPlanner
 from app.models import (
     CompositionBeat,
     LayoutItem,
+    PackageModel,
+    SceneSource,
     StoryBeat,
     Transcript,
     TranscriptSegment,
@@ -157,3 +161,128 @@ def test_text_motion_is_separate_and_locked_to_spoken_start() -> None:
         assert motion.params["reveal_mode"] == "sequential_words"
         assert [token.text for token in motion.tokens] == [token.text for token in source.tokens]
         assert [token.start for token in motion.tokens] == [token.spoken_start for token in source.tokens]
+
+
+
+def _semantic_package(script: str, *, meanings: list[tuple[str, str]]) -> PackageModel:
+    scene = SceneSource(
+        id="scene-001",
+        image_path=Path("scene.png"),
+        order=1,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+    )
+    assets = []
+    asset_ids = []
+    for index, (binding_type, meaning) in enumerate(meanings, start=1):
+        asset_id = f"intent-{index}"
+        asset_ids.append(asset_id)
+        assets.append({
+            "scene_id": scene.id,
+            "asset_id": asset_id,
+            "semantic_meaning": meaning,
+            "visual_concept": meaning,
+            "semantic_role": "OBJECT" if index > 1 else "PRIMARY",
+            "binding_type": binding_type,
+            "script_text": script,
+            "semantic_group_id": "group-1",
+            "sequence_order": index,
+            "confidence": 0.98,
+        })
+    return PackageModel(
+        root=Path("/tmp"),
+        package_id="semantic-text",
+        scenes=[scene],
+        script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": scene.id,
+                "semantic_groups": [{
+                    "semantic_group_id": "group-1",
+                    "script_text": script,
+                    "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                    "asset_ids": asset_ids,
+                }],
+                "assets": assets,
+            }],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "script,meanings,expected",
+    [
+        (
+            "هذا النوع يستخدم نفس المعرفة التقنية تقريبًا،",
+            [("EXPLICIT", "معرفة برمجية"), ("SEMANTIC", "شبكة تقنية")],
+            "المعرفة التقنية",
+        ),
+        (
+            "ارتفاع ضغط الدم يحتاج متابعة مستمرة.",
+            [("EXPLICIT", "قياس ضغط الدم")],
+            "ضغط الدم",
+        ),
+        (
+            "ناقل الحركة يغير السرعات تلقائيًا.",
+            [("EXPLICIT", "ناقل الحركة")],
+            "ناقل الحركة",
+        ),
+    ],
+)
+def test_text_planner_learns_keywords_from_final_package_semantics(
+    script: str,
+    meanings: list[tuple[str, str]],
+    expected: str,
+) -> None:
+    transcript = _transcript(script)
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=transcript.duration,
+        audio_start=0.0,
+        audio_end=transcript.words[-1].end,
+        narration=script,
+        action="INTRODUCE",
+    )
+    package = _semantic_package(script, meanings=meanings)
+
+    plan = TextPlanner().plan(
+        transcript=transcript,
+        story=[beat],
+        package=package,
+        assets=_assets(),
+    )
+
+    assert expected in [cue.text for cue in plan.cues]
+    assert all(cue.spoken_end > cue.spoken_start for cue in plan.cues)
+
+
+def test_semantic_final_package_can_surface_multiple_meaningful_cues() -> None:
+    script = "الخطر الحقيقي يظهر عندما يكتشف الضعف"
+    transcript = _transcript(script)
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=transcript.duration,
+        audio_start=0.0,
+        audio_end=transcript.words[-1].end,
+        narration=script,
+        action="EMPHASIZE",
+    )
+    package = _semantic_package(
+        script,
+        meanings=[
+            ("EXPLICIT", "الخطر الحقيقي"),
+            ("EXPLICIT", "اكتشاف الضعف"),
+        ],
+    )
+
+    plan = TextPlanner().plan(transcript=transcript, story=[beat], package=package)
+    texts = [cue.text for cue in plan.cues]
+
+    assert len(texts) >= 2
+    assert "الخطر الحقيقي" in texts
+    assert "يكتشف الضعف" in texts
