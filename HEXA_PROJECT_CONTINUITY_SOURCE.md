@@ -1367,3 +1367,235 @@ Future work must NOT:
 
 Always ask:
 **What happens with a completely different Final Package?**
+
+
+## MONTAGE20 TYPOGRAPHY V2 CHECKPOINT — 2026-09-23
+
+This checkpoint implements the requested reference-oriented Typography V2 while preserving
+all existing Final Package, Story, Composition, Motion, extraction, and audio-sync authority.
+
+### Live starting point
+
+- Branch: `montage`
+- Starting HEAD: `814c5b521712f76dcbc767059a4c91f41e3cc6d5`
+- No Pass1/Pass2, Story asset timing, visual Composition geometry, or asset Motion redesign.
+
+### Ownership contract — preserve
+
+```
+Narration
+  -> Forced Alignment
+  -> Final-Package-driven semantic cue selection
+  -> TextCue
+  -> Text Composition / Typography feasibility
+  -> Text Motion
+  -> ASS/libass/FFmpeg render
+```
+
+Hard rule:
+`TEXT ADAPTS TO SCENE`, never `SCENE ADAPTS TO TEXT`.
+
+### Semantic candidate richness
+
+- Asset-Level Final Packages remain the primary semantic authority.
+- Semantic packages can now surface up to 4 strong cue candidates per beat where narration
+  density and semantic importance justify it.
+- Cue phrase windows may contain 1–4 words.
+- Legacy packages without semantic bindings keep the older conservative cue budget so
+  Typography V2 does not turn generic narration into subtitles.
+- Candidate generation remains separate from visual feasibility:
+  rich semantic candidates are selected first; unsafe display instances are suppressed
+  later by Text Composition.
+- Final Package semantic relevance contributes to cue priority rather than assigning every
+  cue of one semantic type the same priority.
+
+### Semantic anchor improvement
+
+TextPlanner now prefers the trusted Story AssetActivation whose canonical script span
+overlaps the TextCue source span.
+
+Therefore:
+- phrase tied to a specific semantic icon can place relative to that icon;
+- visual identity improvements from the prior checkpoint feed Typography placement;
+- forced-aligned spoken_start/spoken_end do not change;
+- fallback to the beat/directive primary asset remains when no trusted activation matches.
+
+### Typography profile
+
+New shared module: `app/text/typography.py`.
+
+Production visual target:
+- heavy Arabic display weight
+- default family: `Noto Kufi Arabic Extra Bold`
+- environment override: `HEXA_TEXT_FONT_FAMILY`
+- optional exact font file override for measurement: `HEXA_TEXT_FONT_FILE`
+- this is a visual-weight target close to the requested Baloo Bhaijaan 2 ExtraBold style,
+  not a claim that a reference uses that font.
+
+Adaptive 1080p-equivalent sizing:
+- normal keyword target around 158 px
+- emphasis around 178 px
+- number/amount/warning around 188–194 px
+- priority/length can raise/lower target
+- maximum 220 px
+- production readability floor 112 px
+- the system does NOT shrink below this floor merely to force text into a dense scene.
+
+### Shaped glyph measurement
+
+The previous character-count width estimate is no longer the primary placement authority.
+
+TypographyMetrics:
+- attempts actual Pillow FreeType measurement;
+- uses libraqm/HarfBuzz RTL shaping when available;
+- measures the chosen Extra Bold font and outline;
+- preserves actual Arabic ligature/RTL width behavior;
+- adds a small safety halo around measured glyph geometry;
+- falls back to a conservative script-aware measurement only when the target font cannot
+  be resolved on the runtime.
+
+Measurement is shared/cached for placement and QA to avoid repeated font filesystem scans.
+
+### Visual style / ASS rendering
+
+Renderer now emits:
+- heavy Extra Bold Arabic family
+- white fill
+- black outline
+- outline approximately 5.2% of font size
+- restrained shadow only
+- no gradients
+- no neon/glow
+- no subtitle rectangle
+- adaptive per-cue `\\fs` + `\\bord` tags derived from the chosen layout size.
+
+Text motion remains deliberately short:
+- strong semantic events: restrained 88% -> 100% scale settle
+- normal keywords: very short directional settle
+- no continuous bounce
+- no rotation
+- no motion redesign of visual assets.
+
+### Placement V2
+
+TextPlacementDirector now uses:
+- final/current CompositionBeat geometry
+- real visible alpha occupancy where available
+- shaped typography dimensions
+- 8 authored screen zones plus anchor-relative candidates
+- semantic anchor distance
+- scene-level soft lane continuity
+- visual balance / center cost
+- edge safety
+- protected visual regions
+- actual alpha clearance
+- temporal concurrent-text occupancy.
+
+Center screen is rejected as a normal solution when authored visual regions exist unless
+the cue is extremely high priority.
+
+### Protected regions / collision behavior
+
+Hard safety:
+- actual visual overlap above threshold -> reject candidate
+- concurrent text overlap above threshold -> reject candidate
+- frame overflow / unsafe edge -> reject candidate
+- insufficient visible-pixel clearance -> reject candidate
+- character/person/human/actor/narrator/customer assets receive the strongest protected halo
+- primary objects receive stronger protection than support/other objects.
+
+Protected-box overlap remains a weighted semantic halo in addition to actual alpha
+clearance. This avoids relying on bbox non-intersection alone.
+
+Temporal rule from the previous checkpoint remains:
+- spatial overlap + temporal overlap = collision
+- same slot + non-overlapping visibility = valid reuse.
+
+### Failure / fallback behavior
+
+If no professional safe location exists at the readability floor:
+- DO NOT move a character
+- DO NOT move an asset
+- DO NOT relayout the Final Package
+- DO NOT retime narration
+- DO NOT render off-screen
+- DO NOT shrink below the production floor
+- suppress only that TextCue from TextComposition/TextMotion.
+
+Pipeline progress now reports both:
+- placed text cue count
+- safely suppressed text cue count.
+
+### Short-beat timing protection
+
+TextMotion entrance/token end times are now capped by the shared visible window.
+A very short beat cannot cause an entrance animation to finish after the semantic/audio
+window has ended.
+
+`motion.start` remains exactly `TextCue.spoken_start`.
+
+### Render/RTL authority
+
+- ASS/libass remains the render mechanism.
+- Full logical phrase states are still shaped as whole RTL runs.
+- No Arabic string reversal was introduced.
+- Existing Unicode bidi isolate strategy remains.
+- Audio timestamps remain sourced only from forced alignment.
+
+### Regression / acceptance coverage
+
+New `tests/test_typography_v2.py` covers the requested production cases:
+
+A. character right + object left -> safe negative-space placement
+B. large center object -> text does not cover it
+C. 6-asset dense scene -> safe placement or safe suppression, assets unchanged
+D. long Arabic phrase -> shaped measurement; never rendered off-frame
+E. simultaneous text cues -> spatially separated
+F. semantic cue -> specific Story AssetActivation becomes anchor without timing change
+G. spoken_start remains forced-aligned (existing + new tests)
+H. very short beat -> entrance never extends past visible/beat window
+I. character role -> stronger protected region
+J. no safe location -> cue suppressed and scene geometry remains byte-for-byte/model-for-model unchanged
+
+Existing tests continue to protect:
+- temporal text QA
+- forced alignment
+- RTL rendering
+- Pass1/Pass2
+- Composition
+- Story semantic activation
+- Motion
+- Recovery
+- desktop/process behavior.
+
+### Proven code checkpoint
+
+Tested code HEAD:
+`351fa72f2b8b3ee4045d3df4c7d3305a59b3a3dd`
+
+GitHub Actions:
+- Run: `35879045983`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **238 passed, 28 warnings in 6.70s**
+
+Warnings are existing/dependency/Pillow-style warnings and are non-failing.
+
+### Do-not-regress rules
+
+Future work must NOT:
+- break forced alignment or independently shift typography timestamps
+- reduce Typography V2 to a font-only change
+- move Final Package visual assets to make room for text
+- reintroduce character-count-only Arabic measurement as primary geometry
+- place text over a character/primary object just to preserve cue count
+- shrink text below readability floor just to avoid suppression
+- treat all text cues in one beat as simultaneous when their visibility windows differ
+- make legacy/non-semantic packages subtitle-like
+- hard-code Black Hat, White Hat, finance, scene IDs, or package counts
+- redesign visual Motion merely because Typography changed
+- add Pass3/Layer3.
+
+Always test the change against a completely different Final Package before weakening these
+constraints.
