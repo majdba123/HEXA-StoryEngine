@@ -121,6 +121,12 @@ class FinalPackageLoader:
                 raise InvalidPackageError(
                     "asset-level semantic bindings cannot own fixed timing"
                 )
+            cardinality = data.get("cutout_mapping_cardinality")
+            if cardinality is not None and cardinality != "ZERO_OR_ONE_OR_MANY":
+                raise InvalidPackageError(
+                    "asset-level semantic cutout_mapping_cardinality must be "
+                    "ZERO_OR_ONE_OR_MANY"
+                )
 
         scenes = data.get("scenes")
         if not isinstance(scenes, list):
