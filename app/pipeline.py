@@ -189,7 +189,11 @@ class StoryEnginePipeline:
         self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
         motion = self.motion_reference.enforce(self.motion.plan(story, composition, choreography, assets=assets))
         text_motion = self.text_motion.plan(
-            story, text.cues, text_composition, choreography
+            story,
+            text.cues,
+            text_composition,
+            choreography,
+            visual_motion=motion,
         )
 
         sync_report = self.story_sync_qa.inspect(story=story, motion=motion)
@@ -398,7 +402,11 @@ class StoryEnginePipeline:
         if start <= 5:
             motion = self.motion_reference.enforce(self.motion.plan(story, composition, choreography, assets=assets))
             text_motion = self.text_motion.plan(
-                story, text.cues, text_composition, choreography
+                story,
+                text.cues,
+                text_composition,
+                choreography,
+                visual_motion=motion,
             )
         plan, _ = self.render_planner.compile(
             transcript,
