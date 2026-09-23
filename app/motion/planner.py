@@ -4,6 +4,7 @@ from app.choreography import ChoreographyPlan, HookKind
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
 from app.motion.models import MotionKeyframe, MotionProgram
+from app.motion.order import MotionOrderResolver
 from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
 from app.motion.timing import MotionTimingPolicy
@@ -21,6 +22,7 @@ class MotionPlanner:
         self.primitives = SemanticMotionPrimitiveLibrary()
         self.timing = MotionTimingPolicy()
         self.style = MotionStyleDirector()
+        self.ordering = MotionOrderResolver()
         self.compiler = MotionCompiler()
 
     def plan(
@@ -45,10 +47,17 @@ class MotionPlanner:
             activation_by_asset = {
                 row.asset_id: row for row in beat.asset_activations
             }
+            ordered_slots = self.ordering.resolve(
+                beat=beat,
+                items=layout.items,
+                assets_by_id=by_asset,
+            )
+            ordered_items = [slot.item for slot in ordered_slots]
             if directive is None and choreography is None:
                 visual_duration = max(0.08, beat.end - beat.start)
-                count = len(layout.items)
-                for index, item in enumerate(layout.items):
+                count = len(ordered_slots)
+                for index, slot in enumerate(ordered_slots):
+                    item = slot.item
                     asset = by_asset.get(item.asset_id)
                     family_secondary = self._is_family_secondary(asset)
                     program = (
@@ -65,14 +74,20 @@ class MotionPlanner:
                         distance=program.travel_distance,
                         index=index,
                         count=count,
-                        primary=index == 0,
+                        primary=(
+                            item.asset_id in beat.primary_asset_ids
+                            or (not beat.primary_asset_ids and index == 0)
+                        ),
                         activation=activation_by_asset.get(item.asset_id),
                         settle_progress=program.settle_progress,
+                        visual_unit_index=slot.internal_index,
+                        visual_unit_count=slot.internal_count,
                     )
                     cues.append(self.compiler.compile(
                         beat=beat, asset_id=item.asset_id, program=program, window=window,
                         index=index, count=count, hook=False, handoff=bool(beat.handoff_from),
                         attention_reset=False, variant=0, intensity=1.0, choreography=None,
+                        motion_order=slot.to_payload(),
                         render_constraints=(
                             {"geometry_lock": "authored_footprint", "reveal_mode": "alpha_only"}
                             if family_secondary else None
@@ -120,23 +135,24 @@ class MotionPlanner:
             previous_pace_tier = pace_tier
 
             visual_duration = max(0.08, beat.end - beat.start)
-            count = len(layout.items)
+            count = len(ordered_slots)
             preferred_primary_id = directive.primary_asset_id if directive is not None else None
             preferred_interaction_id = directive.interaction_asset_id if directive is not None else None
             primary_item = self._primary_item(
                 beat,
-                layout.items,
+                ordered_items,
                 preferred_asset_id=preferred_primary_id,
             )
             target_item = self._target_item(
                 beat,
-                layout.items,
+                ordered_items,
                 primary_item,
                 preferred_asset_id=preferred_interaction_id,
             )
             previous_items = {item.asset_id: item for item in previous_layout.items} if previous_layout else {}
 
-            for index, item in enumerate(layout.items):
+            for index, slot in enumerate(ordered_slots):
+                item = slot.item
                 asset = by_asset.get(item.asset_id)
                 family_secondary = self._is_family_secondary(asset)
                 interaction_vector = self._interaction_vector(
@@ -226,6 +242,8 @@ class MotionPlanner:
                     hook=hook,
                     pace_tier=pace_tier,
                     activation=activation_by_asset.get(item.asset_id),
+                    visual_unit_index=slot.internal_index,
+                    visual_unit_count=slot.internal_count,
                 )
                 cues.append(
                     self.compiler.compile(
@@ -240,6 +258,7 @@ class MotionPlanner:
                         attention_reset=attention_reset,
                         variant=variant,
                         intensity=intensity,
+                        motion_order=slot.to_payload(),
                         render_constraints=(
                             {"geometry_lock": "authored_footprint", "reveal_mode": "alpha_only"}
                             if family_secondary else None
