@@ -51,10 +51,16 @@ class TextPlanner:
                     continue
                 style = self.style.resolve(timed)
                 styles[style.id] = style
-                anchor_asset_id = (
+                default_anchor_asset_id = (
                     directive.primary_asset_id
                     if directive is not None and directive.primary_asset_id
                     else (beat.primary_asset_ids or [None])[0]
+                )
+                anchor_asset_id = self._semantic_anchor(
+                    beat,
+                    source_char_start=candidate.source_char_start,
+                    source_char_end=candidate.source_char_end,
+                    default=default_anchor_asset_id,
                 )
                 package_evidence = list(context.evidence) if context else []
                 if scene and scene.relation_to_previous:
@@ -71,7 +77,7 @@ class TextPlanner:
                     spoken_end=timed.spoken_end,
                     emphasis_time=timed.emphasis_time,
                     anchor_asset_id=anchor_asset_id,
-                    priority=self._priority(candidate.semantic_type),
+                    priority=self._priority(candidate.semantic_type, candidate.score),
                     style_id=style.id,
                     placement_hint="anchor",
                     story_role=context.story_role if context else None,
@@ -98,8 +104,41 @@ class TextPlanner:
         )
 
     @staticmethod
-    def _priority(semantic_type: str) -> int:
-        return {
+    def _semantic_anchor(
+        beat: StoryBeat,
+        *,
+        source_char_start: int,
+        source_char_end: int,
+        default: str | None,
+    ) -> str | None:
+        candidates = []
+        for activation in beat.asset_activations:
+            if activation.policy == "FALLBACK":
+                continue
+            if activation.trigger_char_start is None or activation.trigger_char_end is None:
+                continue
+            overlap = max(
+                0,
+                min(source_char_end, activation.trigger_char_end)
+                - max(source_char_start, activation.trigger_char_start),
+            )
+            if overlap <= 0:
+                continue
+            candidates.append((
+                overlap,
+                activation.policy == "EXPLICIT",
+                activation.confidence,
+                -(activation.sequence_order or 10_000),
+                activation.asset_id,
+            ))
+        if not candidates:
+            return default
+        candidates.sort(reverse=True)
+        return candidates[0][-1]
+
+    @staticmethod
+    def _priority(semantic_type: str, score: float = 0.74) -> int:
+        base = {
             "warning_amount": 100,
             "warning": 95,
             "amount": 90,
@@ -107,3 +146,5 @@ class TextPlanner:
             "emphasis": 75,
             "keyword": 60,
         }.get(semantic_type, 50)
+        semantic_bonus = round(max(-4.0, min(10.0, (score - 0.74) * 24.0)))
+        return max(1, min(100, base + semantic_bonus))
