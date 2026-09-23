@@ -36,6 +36,13 @@ _RELATION_ACTIONS = {
     "RECEIVES": "TRAVEL",
     "CONNECTS_TO": "CONNECT",
     "LINKS_TO": "CONNECT",
+    "ATTACKS": "TRAVEL",
+    "GRANTS_ACCESS_TO": "CONNECT",
+    "CREATES": "REVEAL",
+    "REPAIRS": "RESOLVE",
+    "REPORTS_TO": "TRAVEL",
+    "AUTHORIZES": "CONNECT",
+    "DEPENDS_ON": "CONNECT",
     # Descriptive package relations still carry interaction meaning, but they do not
     # override a stronger primary semantic action in SemanticActionResolver.
     "EXPLAINS": "REVEAL",
@@ -79,8 +86,11 @@ class InteractionCompiler:
     ) -> tuple[InteractionIntent, ...]:
         context = beat.semantic_context
         unit_map = dict(binding.semantic_asset_map)
-        result_unit = context.result_unit_ids[0] if context and context.result_unit_ids else None
-        result_asset = unit_map.get(result_unit) if result_unit else None
+        fallback_result_unit = (
+            context.result_unit_ids[0]
+            if context and context.result_unit_ids
+            else None
+        )
 
         relations = list(context.relations) if context else []
         relations.sort(
@@ -97,6 +107,8 @@ class InteractionCompiler:
         for relation in relations:
             subject_asset = unit_map.get(relation.source_unit_id)
             object_asset = unit_map.get(relation.target_unit_id)
+            result_unit = relation.result_unit_id or fallback_result_unit
+            result_asset = unit_map.get(result_unit) if result_unit else None
             canonical = self._canonical(relation.kind)
             relation_action = _RELATION_ACTIONS.get(canonical)
             action = (
@@ -129,6 +141,8 @@ class InteractionCompiler:
 
         if decision.action not in _MEANING_ACTIONS:
             return ()
+        result_unit = fallback_result_unit
+        result_asset = unit_map.get(result_unit) if result_unit else None
         subject_asset = binding.focus_asset_id
         object_asset = binding.interaction_asset_id
         if not subject_asset:
@@ -178,6 +192,7 @@ class InteractionCompiler:
             descriptive = canonical in _OBJECT_FOCUS_RELATIONS
             focal_participates = focus in row.participant_asset_ids if focus else False
             authority_rank = {
+                "FINAL_PACKAGE_ASSET_RELATION": 4,
                 "FINAL_PACKAGE_INTERACTION_TARGET": 3,
                 "CHOREOGRAPHY_ACTION_FALLBACK": 2,
                 "FINAL_PACKAGE_VISUAL_PROGRESSION": 1,

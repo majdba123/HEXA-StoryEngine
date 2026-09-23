@@ -54,6 +54,20 @@ class VisualGrammarStage(StrEnum):
     RELEASE = "RELEASE"
 
 
+class ChoreographyPattern(StrEnum):
+    """Generic reference-style visual construction patterns.
+
+    Patterns describe how meaning is progressively staged. They are not animation
+    presets and never own final geometry or speech timing.
+    """
+
+    STANDARD = "STANDARD"
+    PROGRESSIVE_BUILD = "PROGRESSIVE_BUILD"
+    FOCUS_TRANSFER = "FOCUS_TRANSFER"
+    STATE_TRANSFORM = "STATE_TRANSFORM"
+    CAUSE_EFFECT_CHAIN = "CAUSE_EFFECT_CHAIN"
+
+
 @dataclass(frozen=True, slots=True)
 class AssetRequirement:
     semantic_unit_id: str
@@ -74,6 +88,7 @@ class VisualStateTransition:
     semantic_unit_id: str | None = None
     confidence: float = 1.0
     meaningful: bool = True
+    authority: str = "INFERRED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +123,7 @@ class ChoreographyDirective:
     sequence_id: str
     phase: SequencePhase
     action: str
+    pattern: ChoreographyPattern = ChoreographyPattern.STANDARD
     hook: HookKind = HookKind.NONE
     hook_mechanism: HookMechanism = HookMechanism.NONE
     energy: float = 0.5

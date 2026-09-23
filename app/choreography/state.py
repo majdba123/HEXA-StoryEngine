@@ -50,12 +50,42 @@ class VisualStateCompiler:
     ) -> tuple[VisualStateTransition, ...]:
         context = beat.semantic_context
         output: list[VisualStateTransition] = []
+        authored_assets: set[str] = set()
+
+        for activation in beat.asset_activations:
+            visual_state = activation.visual_state
+            if (
+                not isinstance(visual_state, dict)
+                or not visual_state.get("before")
+                or not visual_state.get("after")
+            ):
+                continue
+            before = str(visual_state["before"])
+            after = str(visual_state["after"])
+            if before == after:
+                continue
+            output.append(
+                VisualStateTransition(
+                    asset_id=activation.asset_id,
+                    from_state=before,
+                    to_state=after,
+                    reason="FINAL_PACKAGE_VISUAL_STATE",
+                    semantic_unit_id=activation.semantic_unit_id,
+                    confidence=activation.confidence,
+                    meaningful=True,
+                    authority="FINAL_PACKAGE_VISUAL_STATE",
+                )
+            )
+            authored_assets.add(activation.asset_id)
 
         for interaction in interactions:
             if not interaction.requires_state_change:
                 continue
             semantic_action = interaction.semantic_action or action
-            if interaction.subject_asset_id:
+            if (
+                interaction.subject_asset_id
+                and interaction.subject_asset_id not in authored_assets
+            ):
                 before, after = self._SUBJECT_STATES.get(
                     semantic_action, ("CONTEXT", "FOCUSED")
                 )
@@ -70,7 +100,10 @@ class VisualStateCompiler:
                         meaningful=semantic_action in self._SUBJECT_STATES,
                     )
                 )
-            if interaction.object_asset_id:
+            if (
+                interaction.object_asset_id
+                and interaction.object_asset_id not in authored_assets
+            ):
                 before, after = self._OBJECT_STATES.get(
                     semantic_action, ("CONTEXT", "ENGAGED")
                 )
@@ -85,7 +118,10 @@ class VisualStateCompiler:
                         meaningful=semantic_action in self._OBJECT_STATES,
                     )
                 )
-            if interaction.result_asset_id:
+            if (
+                interaction.result_asset_id
+                and interaction.result_asset_id not in authored_assets
+            ):
                 output.append(
                     VisualStateTransition(
                         asset_id=interaction.result_asset_id,
@@ -130,8 +166,16 @@ class VisualStateCompiler:
             if previous is None:
                 by_asset[row.asset_id] = row
                 continue
-            previous_rank = (1 if previous.meaningful else 0, previous.confidence)
-            row_rank = (1 if row.meaningful else 0, row.confidence)
+            previous_rank = (
+                1 if previous.authority == "FINAL_PACKAGE_VISUAL_STATE" else 0,
+                1 if previous.meaningful else 0,
+                previous.confidence,
+            )
+            row_rank = (
+                1 if row.authority == "FINAL_PACKAGE_VISUAL_STATE" else 0,
+                1 if row.meaningful else 0,
+                row.confidence,
+            )
             if row_rank > previous_rank:
                 by_asset[row.asset_id] = row
         return tuple(by_asset.values())

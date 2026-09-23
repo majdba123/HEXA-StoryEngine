@@ -13,6 +13,7 @@ from .models import (
     ChoreographyDirective,
     ChoreographyPlan,
     ChoreographySequence,
+    ChoreographyPattern,
     HookKind,
     HookMechanism,
     InteractionIntent,
@@ -152,7 +153,15 @@ class ChoreographyDirector:
                 energy = min(1.0, decision.energy + phase_boost + hook_boost)
 
                 current_asset_ids = set(beat.primary_asset_ids + beat.support_asset_ids)
-                focus = self.interactions.preferred_focus(interaction_intent, binding)
+                has_authored_focus = any(
+                    row.visual_focus
+                    for row in beat.asset_activations
+                )
+                focus = (
+                    binding.focus_asset_id
+                    if has_authored_focus
+                    else self.interactions.preferred_focus(interaction_intent, binding)
+                )
                 if focus is None or focus not in current_asset_ids:
                     focus = binding.focus_asset_id
                 if focus is None or focus not in current_asset_ids:
@@ -173,6 +182,11 @@ class ChoreographyDirector:
                     interaction_asset = None
 
                 continuity = self.continuity.decide_focus(previous_focus, focus, current_asset_ids)
+                pattern = self._pattern_for(
+                    beat,
+                    all_interactions,
+                    state_changes,
+                )
                 context = beat.semantic_context
                 semantic_unit_ids = tuple(
                     entity.unit_id for entity in (context.entities if context else [])
@@ -184,6 +198,7 @@ class ChoreographyDirector:
                     sequence_id=sequence_id,
                     phase=phase,
                     action=decision.action,
+                    pattern=pattern,
                     hook=beat_hook,
                     hook_mechanism=beat_mechanism,
                     energy=energy,
@@ -376,6 +391,54 @@ class ChoreographyDirector:
         if sequence_hook == HookKind.PAYOFF:
             return HookKind.PAYOFF if index >= max(0, count - 2) else HookKind.NONE
         return HookKind.NONE
+
+    @staticmethod
+    def _pattern_for(
+        beat: StoryBeat,
+        interactions: tuple[InteractionIntent, ...],
+        transitions: tuple[VisualStateTransition, ...],
+    ) -> ChoreographyPattern:
+        # Explicit Final Package semantics outrank inferred choreography. The order here
+        # intentionally mirrors the minimum-useful-metadata contract: state changes are
+        # strongest, then executable relationships, then focus, then ordered build.
+        if any(
+            row.authority == "FINAL_PACKAGE_VISUAL_STATE" and row.meaningful
+            for row in transitions
+        ):
+            return ChoreographyPattern.STATE_TRANSFORM
+
+        authored_relations = [
+            row
+            for row in interactions
+            if row.authority == "FINAL_PACKAGE_ASSET_RELATION" and row.executable
+        ]
+        if authored_relations:
+            non_compare = [
+                row
+                for row in authored_relations
+                if str(row.relationship or "").upper() not in {
+                    "COMPARES_WITH",
+                    "CONTRASTS_WITH",
+                }
+            ]
+            if non_compare:
+                return ChoreographyPattern.CAUSE_EFFECT_CHAIN
+
+        if any(row.visual_focus for row in beat.asset_activations):
+            return ChoreographyPattern.FOCUS_TRANSFER
+
+        ordered = {
+            row.sequence_order
+            for row in beat.asset_activations
+            if (
+                row.source == "final_package_semantic_binding"
+                and row.sequence_order is not None
+            )
+        }
+        if len(ordered) >= 3:
+            return ChoreographyPattern.PROGRESSIVE_BUILD
+
+        return ChoreographyPattern.STANDARD
 
     @staticmethod
     def _story_role(beat: StoryBeat) -> str:

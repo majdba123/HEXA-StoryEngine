@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.choreography import ChoreographyPlan, HookKind
+from app.choreography import ChoreographyPattern, ChoreographyPlan, HookKind
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
 from app.motion.models import MotionKeyframe, MotionProgram
@@ -102,6 +102,7 @@ class MotionPlanner:
             )
 
             if directive is not None:
+                pattern = directive.pattern
                 hook = directive.hook != HookKind.NONE
                 attention_reset = directive.hook == HookKind.REHOOK
                 variant = beat_index % 4
@@ -112,6 +113,7 @@ class MotionPlanner:
                 hook_kind = directive.hook.value
                 hook_mechanism = directive.hook_mechanism.value
             else:
+                pattern = ChoreographyPattern.STANDARD
                 style = self.style.decide(
                     beat=beat,
                     beat_index=beat_index,
@@ -214,13 +216,30 @@ class MotionPlanner:
                         is_primary=item is primary_item,
                         participant_role=participant_role,
                     )
+                program = self._stable_entry_hold(program)
+                state_target = bool(
+                    directive is not None
+                    and any(
+                        row.asset_id == item.asset_id and row.meaningful
+                        for row in directive.state_transitions
+                    )
+                )
+                if not family_secondary:
+                    program = self._apply_choreography_pattern(
+                        program,
+                        pattern=pattern,
+                        participant_role=participant_role,
+                        primary=(item is primary_item),
+                        state_target=state_target,
+                        interaction_vector=interaction_vector,
+                        energy=intensity,
+                    )
                 program = self._apply_density_budget(
                     program,
                     count=count,
                     primary=(item is primary_item),
                     geometry_locked=family_secondary,
                 )
-                program = self._stable_entry_hold(program)
 
                 # Choreography may promote a semantic support cutout (for example a card,
                 # wallet, or limit badge) to visual focus while Story keeps the authored
@@ -268,6 +287,7 @@ class MotionPlanner:
                                 "sequence_id": directive.sequence_id,
                                 "phase": directive.phase.value,
                                 "action": directive.action,
+                                "pattern": directive.pattern.value,
                                 "hook": directive.hook.value,
                                 "hook_mechanism": directive.hook_mechanism.value,
                                 "tension": directive.tension,
@@ -393,6 +413,107 @@ class MotionPlanner:
             name=program.name,
             keyframes=tuple(frames),
             settle_progress=settle_progress,
+        )
+
+    @staticmethod
+    def _apply_choreography_pattern(
+        program: MotionProgram,
+        *,
+        pattern: ChoreographyPattern,
+        participant_role: str,
+        primary: bool,
+        state_target: bool,
+        interaction_vector: tuple[float, float],
+        energy: float,
+    ) -> MotionProgram:
+        """Add one meaning-bearing pre-settle accent without reintroducing wobble.
+
+        The accepted stability rule remains absolute: Composition owns the destination
+        and every asset is fully still from semantic settle through beat end. Stronger
+        reference-style choreography therefore happens once *before* settle.
+        """
+        if pattern == ChoreographyPattern.STANDARD:
+            return program
+
+        first = program.keyframes[0]
+        settle = max(0.78, program.settle_progress)
+        accent_progress = max(0.42, min(settle - 0.10, settle * 0.67))
+        role = str(participant_role or "SUPPORT").upper()
+        energy = max(0.35, min(1.0, energy))
+        dx = 0.0
+        dy = 0.0
+        scale = 1.0
+
+        if pattern == ChoreographyPattern.PROGRESSIVE_BUILD:
+            scale = 1.035 if primary else 1.018
+            dy = -0.006 if primary else -0.003
+        elif pattern == ChoreographyPattern.FOCUS_TRANSFER:
+            if primary:
+                scale = 1.055
+                dy = -0.008
+            else:
+                return program
+        elif pattern == ChoreographyPattern.STATE_TRANSFORM:
+            if state_target:
+                scale = 1.065
+                dy = -0.010
+            elif primary:
+                scale = 1.025
+            else:
+                return program
+        elif pattern == ChoreographyPattern.CAUSE_EFFECT_CHAIN:
+            vx, vy = interaction_vector
+            if role == "SUBJECT":
+                dx = vx * 0.12
+                dy = vy * 0.12
+                scale = 1.025
+            elif role == "OBJECT":
+                scale = 1.045
+                dx = -vx * 0.025
+                dy = -vy * 0.025
+            elif role == "RESULT":
+                scale = 1.075
+                dy = -0.012
+            elif role == "ACTOR":
+                scale = 1.025
+                dx = vx * 0.04
+                dy = vy * 0.04
+            elif primary:
+                scale = 1.035
+            else:
+                return program
+
+        strength = 0.72 + energy * 0.28
+        dx *= strength
+        dy *= strength
+        scale = 1.0 + (scale - 1.0) * strength
+        return MotionProgram(
+            name=f"{pattern.value.lower()}_{program.name}",
+            settle_progress=settle,
+            keyframes=(
+                MotionKeyframe(
+                    0.0,
+                    first.dx,
+                    first.dy,
+                    first.scale,
+                    first.easing,
+                ),
+                MotionKeyframe(
+                    accent_progress,
+                    dx,
+                    dy,
+                    scale,
+                    "ease_out_cubic",
+                ),
+                MotionKeyframe(
+                    settle,
+                    0.0,
+                    0.0,
+                    1.0,
+                    "ease_out_cubic",
+                ),
+                MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+            ),
         )
 
     @staticmethod

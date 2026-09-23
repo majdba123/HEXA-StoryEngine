@@ -52,6 +52,13 @@ class SemanticActionResolver:
         "triggers": "REVEAL",
         "connects_to": "CONNECT",
         "links_to": "CONNECT",
+        "attacks": "TRAVEL",
+        "grants_access_to": "CONNECT",
+        "creates": "REVEAL",
+        "repairs": "RESOLVE",
+        "reports_to": "TRAVEL",
+        "authorizes": "CONNECT",
+        "depends_on": "CONNECT",
     }
     _INTENT_ACTIONS = (
         ("REJECT", ("reject", "decline", "deny", "fail")),
