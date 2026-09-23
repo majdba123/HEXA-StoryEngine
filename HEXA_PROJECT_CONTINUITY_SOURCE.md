@@ -273,3 +273,303 @@ Acceptance target for the synchronization phase:
   word-level timing;
 - no Final Package geometry/layout regression;
 - green CI plus real visual review.
+
+
+## MONTAGE14 / MONTAGE15 VISUAL SEMANTIC UNDERSTANDING CHECKPOINT — 2026-09-23
+
+Development branch: `montage`.
+
+### Live source state before this handoff update
+
+- Live `montage` HEAD verified on GitHub:
+  `1fcf67ba6453b5fc7f8df56e4b972f9b07cc939d`
+  `[montage15] Force eager attention for Florence compatibility`
+- V2 CI run `35806303627`: SUCCESS.
+- Ruff: `All checks passed!`
+- Pytest: `221 passed, 12 warnings in 9.16s`.
+- Protected branches remain untouched:
+  - `majd` = `d1c2ad87116238ed7c46e1b01f6e129a0d2cd5ed`
+  - `bayer` = `d1c2ad87116238ed7c46e1b01f6e129a0d2cd5ed`
+
+### CURRENT TASK — MUST BE PRESERVED
+
+The active engineering problem is **visual semantic understanding for extracted assets**.
+
+The system already knows how to:
+- extract assets through Pass1 + Pass2,
+- preserve Final Package geometry,
+- align narration using forced alignment,
+- match semantic text to Arabic narration through multilingual E5,
+- create Story V2 activation windows,
+- execute those windows in Motion.
+
+The remaining problem is that many independently animatable cutouts have **no trustworthy semantic meaning** in metadata. Story therefore cannot know which narration phrase each icon/cutout represents.
+
+The target pipeline is:
+
+`Pass1 / Pass2 -> Visual Semantic Resolver -> visual description -> E5 phrase retrieval -> forced-aligned phrase -> Story V2 activation -> Motion`
+
+Hard responsibility boundaries:
+- Pass1 / Pass2 = WHAT VISUAL ASSET EXISTS / safe extraction.
+- Visual Semantic Resolver = WHAT THE EXTRACTED IMAGE MEANS visually.
+- E5 = WHICH narration phrase is semantically closest.
+- Forced alignment = EXACT spoken timestamps.
+- Story V2 = WHEN the asset reveals/peaks/settles.
+- Composition = WHERE the asset ends.
+- Motion = HOW it moves.
+- No visual model may invent timestamps.
+- No visual model may change extraction geometry.
+- No Pass3 / Layer3 may be reintroduced.
+
+### PROVEN TEXT-ONLY BASELINE
+
+Real White-Hat full package baseline with:
+- exact full Final Package: 35 scenes / 133 eligible assets after Pass2,
+- real WhisperX forced alignment,
+- `intfloat/multilingual-e5-small`,
+- visual VLM disabled.
+
+Measured Story result:
+- eligible assets: 133
+- trusted: 33
+- inherited: 6
+- total trusted + inherited: 39 / 133
+- eligible coverage: 29.32%
+- abstained: 94
+
+This `39 / 133 = 29.32%` result is the official E5/metadata baseline that future visual models must improve without regressing existing trusted anchors.
+
+### FAILED MODEL — SmolVLM-500M-Instruct
+
+Model tested:
+`HuggingFaceTB/SmolVLM-500M-Instruct`
+
+Purpose:
+- understand extracted White-Hat cutouts visually,
+- produce a short semantic description,
+- feed that description to E5 for narration phrase retrieval.
+
+Important implementation checkpoints:
+- `d512fb34913801b283d0dccbd4b16a9072a58421`
+  `[montage14] Remove accidental shell artifacts`
+- `f8210b301c99d85bbecef17f2111dab37667f371`
+  `[montage14] Add SmolVLM Story visual backend`
+- `8438d620d385665d2fb7a081fdb6ce24c287558f`
+  `[montage14] Bound SmolVLM CPU processing and diagnostics`
+- `f7d5eedef623360abffe412f4396c26e0517563d`
+  `[montage14] Harden SmolVLM inventory output parsing`
+
+What was tried:
+- narration-blind visual inventory,
+- exact allowed asset IDs,
+- deterministic JSON parser,
+- support for fenced/prefixed/suffixed JSON,
+- smaller page size: 6 assets for SmolVLM instead of 24,
+- compact prompt,
+- diagnostics for malformed/empty responses,
+- confidence threshold preserved at 0.62.
+
+Real 4-scene White-Hat probe:
+- scenes: 001, 008, 017, 028
+- visual runtime available: true
+- visual inventory count: 9
+- visual semantic count: 9
+- new `E5_VISUAL` matches: 0
+- OWN: 4
+- INHERITED: 1
+- abstained: 12
+
+Why SmolVLM is considered FAILED for this task:
+- accepted descriptions were copies of the prompt template such as:
+  `visible object/action`
+- it invented placeholder IDs such as:
+  `asset_id = "ID"`
+- scene 008 returned only an asset ID instead of structured semantic output,
+- scene 028 degenerated into repeated placeholder rows and took about 708 seconds,
+- no useful new visual meaning reached E5,
+- White-Hat coverage therefore remained the text-only baseline:
+  `39 / 133 = 29.32%`.
+
+Conclusion:
+**SmolVLM-500M is not accepted as the production visual-semantic model.**
+Do not spend further work lowering thresholds or prompt-tuning it for coverage.
+
+SmolVLM support still exists in code only as an optional backend for compatibility. It is not the active production choice.
+
+### ACTIVE MODEL — Florence-2-large-ft
+
+Active model:
+`microsoft/Florence-2-large-ft`
+
+Reason for choosing Florence:
+- its job in HEXA is much narrower than SmolVLM's previous contract,
+- Florence is not asked to produce JSON, asset IDs, phrase indexes, timing, or narration decisions,
+- Florence sees **one extracted asset image at a time** and produces only a visual caption,
+- asset identity stays deterministic in our code,
+- E5 remains responsible for matching the visual meaning to narration.
+
+Active pipeline:
+
+`one asset image -> Florence <MORE_DETAILED_CAPTION> -> visual description -> E5 -> narration phrase -> forced alignment -> Story V2 -> Motion`
+
+This architecture intentionally removes the two biggest failure modes seen with SmolVLM:
+1. multi-asset contact-sheet reasoning,
+2. model-generated asset IDs / structured inventory contracts.
+
+### Florence implementation checkpoints
+
+- `f023aad8858e3bb252fe570489947df100abbdaf`
+  `[montage15] Add Florence Story visual caption backend`
+- `39a973deaaf64dc230f533cd2b30570dbbda3981`
+  `[montage15] Fix Florence per-asset cache creation`
+- `1296b12c034ac68cd8ab1da93f2aa09006084e9f`
+  `[montage15] Add Florence timm runtime dependency`
+- `1fcf67ba6453b5fc7f8df56e4b972f9b07cc939d`
+  `[montage15] Force eager attention for Florence compatibility`
+
+Current production behavior:
+- Story backend name: `florence`
+- Story model env:
+  `HEXA_STORY_FLORENCE_MODEL`
+- visual backend selection:
+  `HEXA_VISUAL_SEMANTIC_BACKEND=florence`
+- Florence Story runtime is independent from the existing Pass2 variable:
+  `HEXA_FLORENCE_MODEL`
+- Qwen Director behavior remains unchanged.
+- Florence Story inference uses local model files only.
+- model is lazy-loaded.
+- CPU path uses float32.
+- each asset is captioned independently.
+- task: `<MORE_DETAILED_CAPTION>`
+- generic captions are rejected.
+- existing visual-semantic minimum confidence remains 0.62.
+- valid captions use conservative acceptance confidence 0.72 before E5 matching.
+- per-asset cache is backend/model/schema isolated.
+- valid rejected/accepted caption attempts are cached to avoid repeated CPU work.
+- no narration, phrase candidate, or timestamp is passed into Florence.
+
+### Florence runtime provisioning / compatibility
+
+The user downloaded the full local model to:
+
+`C:\Users\INTEL CENTER\HEXA-Models\Florence-2-large-ft`
+
+Large model weight:
+`model.safetensors` approximately 1.54 GB.
+
+The initial runtime exposed two environment compatibility issues, both now fixed in project code:
+
+1. Missing `timm`
+   - fixed by adding `timm>=1.0,<2` to the `vision` optional dependency.
+
+2. Florence remote-code / Transformers SDPA compatibility:
+   - runtime error:
+     `Florence2ForConditionalGeneration object has no attribute _supports_sdpa`
+   - fixed by forcing:
+     `attn_implementation="eager"`
+   - applied to both Story Florence and the existing Florence detector path to keep behavior consistent.
+
+The user then verified the real local model manually with:
+- local files only,
+- `trust_remote_code=True`,
+- `attn_implementation="eager"`.
+
+Observed result:
+`FLORENCE LOCAL READY`
+
+Therefore:
+**Florence model download + dependency/runtime loading is now locally PROVEN.**
+
+### What is NOT proven yet
+
+Florence semantic quality on the White-Hat package is **NOT YET PROVEN**.
+
+No Florence White-Hat Story probe has been accepted yet.
+No Florence-based full render has been visually reviewed yet.
+
+Do not claim that Florence improves the 29.32% baseline until a real probe proves:
+- meaningful non-generic visual descriptions,
+- new correct `E5_VISUAL` matches,
+- trusted/inherited total above the baseline without false semantic matches,
+- correct phrase-to-asset pairing on visual review.
+
+### NEXT OFFICIAL TEST
+
+Run the real White-Hat Story-only probe with:
+
+- `HEXA_VISUAL_SEMANTIC_BACKEND=florence`
+- `HEXA_STORY_FLORENCE_MODEL=C:\Users\INTEL CENTER\HEXA-Models\Florence-2-large-ft`
+- `HEXA_SEMANTIC_TEXT_MODEL=intfloat/multilingual-e5-small`
+- forced alignment enabled.
+
+Measure:
+- `eligible_asset_count`
+- `visual_inventory_count`
+- `visual_semantic_count`
+- `trusted_count`
+- `inherited_count`
+- `abstained_count`
+- `eligible_coverage`
+- `visual_runtime_available`
+- `visual_runtime_error`
+- sample visual descriptions and their chosen phrases.
+
+Acceptance comparison:
+- baseline = `39 / 133 = 29.32%`
+- Florence must add useful, semantically correct matches rather than merely increase the number.
+
+Only after the Story probe is semantically acceptable:
+1. run full White-Hat render,
+2. user shares rendered video / diagnostics,
+3. inspect whether assets enter on the correct narration idea,
+4. fix code on `montage` based on real visual/timing failures.
+
+### WORK SPLIT FROM THIS CHECKPOINT
+
+Because the assistant execution environment cannot reliably host/download the user's local visual model weights:
+- Assistant owns GitHub code changes, architecture, tests, CI, regression fixes and handoff updates.
+- User owns local model execution and final video rendering.
+- User sends render videos, logs, diagnostics and visual failure reports back.
+- Assistant analyzes root cause and patches `montage`.
+- Do not ask the user to use Codex for these code fixes unless the workflow changes explicitly.
+
+### CURRENT DECISION ON MODEL STRENGTH
+
+Florence is the current baseline visual model to prove first.
+
+Possible stronger future candidates such as MiniCPM-V / InternVL may be evaluated later, but they are **not active architecture decisions yet**.
+
+Before changing models:
+1. prove Florence on the same White-Hat assets,
+2. quantify semantic correctness and runtime cost,
+3. only replace or augment Florence if measured quality is insufficient.
+
+Potential Florence improvements if baseline quality is insufficient, before replacing the model:
+- compare `DETAILED_CAPTION` vs `MORE_DETAILED_CAPTION`,
+- asset-only caption + bounded scene-context caption,
+- semantic fusion of isolated/context descriptions before E5,
+- keep timing and IDs deterministic outside the visual model.
+
+### HARD STATUS SUMMARY
+
+PROVEN:
+- Pass1 + Pass2 only.
+- Final Package geometry authority.
+- forced-alignment timing contract.
+- Story V2 -> Motion integration.
+- multilingual E5 runtime.
+- White-Hat E5 baseline: 39/133 = 29.32%.
+- SmolVLM failure for useful visual semantic descriptions.
+- Florence integration code.
+- Florence local model download.
+- Florence real local load with timm + eager attention.
+- live GitHub CI green at `1fcf67ba...`.
+
+NOT PROVEN:
+- Florence visual-description quality on White-Hat.
+- Florence improvement over 39/133.
+- Florence-based final render visual quality.
+
+NEXT:
+**Run the White-Hat Florence Story-only probe. Do not redesign Motion or extraction before this semantic test is measured.**
+
