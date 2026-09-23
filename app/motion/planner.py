@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, HookKind
-from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
+from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
 from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
-from app.motion.timing import MotionTimingPolicy
+from app.motion.timing import MotionTimingPolicy, story_activation_window
 
 
 class MotionPlanner:
@@ -59,6 +59,7 @@ class MotionPlanner:
                 for index, slot in enumerate(ordered_slots):
                     item = slot.item
                     asset = by_asset.get(item.asset_id)
+                    activation = activation_by_asset.get(item.asset_id)
                     family_secondary = self._is_family_secondary(asset)
                     program = (
                         self.primitives.build_family_secondary()
@@ -78,7 +79,7 @@ class MotionPlanner:
                             item.asset_id in beat.primary_asset_ids
                             or (not beat.primary_asset_ids and index == 0)
                         ),
-                        activation=activation_by_asset.get(item.asset_id),
+                        activation=activation,
                         settle_progress=program.settle_progress,
                         visual_unit_index=slot.internal_index,
                         visual_unit_count=slot.internal_count,
@@ -167,6 +168,13 @@ class MotionPlanner:
                     if directive is not None
                     else "SUPPORT"
                 )
+                activation = activation_by_asset.get(item.asset_id)
+                momentary_focus, focus_role, focus_source = self._semantic_focus_profile(
+                    beat=beat,
+                    activation=activation,
+                    participant_role=participant_role,
+                    static_primary=(item is primary_item),
+                )
                 continuity_source = previous_items.get(item.asset_id)
                 # Continuity is allowed only for the exact same visual asset. A semantic
                 # handoff between unrelated illustrations must not start the new artwork
@@ -230,6 +238,8 @@ class MotionPlanner:
                         pattern=pattern,
                         participant_role=participant_role,
                         primary=(item is primary_item),
+                        momentary_focus=momentary_focus,
+                        focus_role=focus_role,
                         state_target=state_target,
                         interaction_vector=interaction_vector,
                         energy=intensity,
@@ -237,7 +247,8 @@ class MotionPlanner:
                 program = self._apply_density_budget(
                     program,
                     count=count,
-                    primary=(item is primary_item),
+                    primary=(item is primary_item or momentary_focus),
+                    focus_role=focus_role,
                     geometry_locked=family_secondary,
                 )
 
@@ -249,6 +260,7 @@ class MotionPlanner:
                 # contract so it cannot arrive late behind the spoken idea.
                 timing_primary = (
                     item is primary_item
+                    or momentary_focus
                     or item.asset_id in beat.primary_asset_ids
                 )
                 window = self.timing.window(
@@ -260,7 +272,7 @@ class MotionPlanner:
                     settle_progress=program.settle_progress,
                     hook=hook,
                     pace_tier=pace_tier,
-                    activation=activation_by_asset.get(item.asset_id),
+                    activation=activation,
                     visual_unit_index=slot.internal_index,
                     visual_unit_count=slot.internal_count,
                 )
@@ -277,6 +289,22 @@ class MotionPlanner:
                         attention_reset=attention_reset,
                         variant=variant,
                         intensity=intensity,
+                        semantic_focus={
+                            "active": momentary_focus,
+                            "role": focus_role,
+                            "source": focus_source,
+                            "visual_focus": (
+                                str(activation.visual_focus).upper()
+                                if activation is not None and activation.visual_focus
+                                else None
+                            ),
+                            "trigger_char_start": (
+                                activation.trigger_char_start if activation is not None else None
+                            ),
+                            "trigger_char_end": (
+                                activation.trigger_char_end if activation is not None else None
+                            ),
+                        },
                         motion_order=slot.to_payload(),
                         render_constraints=(
                             {"geometry_lock": "authored_footprint", "reveal_mode": "alpha_only"}
@@ -416,12 +444,60 @@ class MotionPlanner:
         )
 
     @staticmethod
+    def _semantic_focus_profile(
+        *,
+        beat: StoryBeat,
+        activation: AssetActivation | None,
+        participant_role: str,
+        static_primary: bool,
+    ) -> tuple[bool, str, str]:
+        """Resolve temporary focus from Story's trusted activation window.
+
+        Final Package/Story owns WHICH semantic unit is active and WHEN. Motion only
+        translates that evidence into a stronger pre-settle gesture. CONTEXT remains
+        calm, and missing/abstained windows never gain invented focus.
+        """
+        visual_focus = (
+            str(activation.visual_focus).upper()
+            if activation is not None and activation.visual_focus
+            else None
+        )
+        role = str(participant_role or "SUPPORT").upper()
+        if visual_focus == "RESULT" or role == "RESULT":
+            focus_role = "RESULT"
+        elif visual_focus == "CONTEXT":
+            focus_role = "CONTEXT"
+        elif role in {"SUBJECT", "OBJECT", "ACTOR"}:
+            focus_role = role
+        elif visual_focus == "SUPPORT":
+            focus_role = "SUPPORT"
+        else:
+            focus_role = "ACTIVE_FOCUS" if static_primary else "SUPPORT"
+
+        has_v2, window = story_activation_window(activation, beat)
+        if (
+            has_v2
+            and window is not None
+            and visual_focus != "CONTEXT"
+            and window.activation_policy in {"OWN_WINDOW", "INHERITED_WINDOW"}
+        ):
+            if focus_role == "SUPPORT":
+                focus_role = "ACTIVE_FOCUS"
+            return True, focus_role, "story_activation_window"
+
+        if static_primary:
+            return False, focus_role, "beat_primary"
+        return False, focus_role, "none"
+
+    @staticmethod
     def _apply_choreography_pattern(
         program: MotionProgram,
         *,
         pattern: ChoreographyPattern,
         participant_role: str,
         primary: bool,
+        momentary_focus: bool,
+        focus_role: str,
         state_target: bool,
         interaction_vector: tuple[float, float],
         energy: float,
@@ -432,33 +508,51 @@ class MotionPlanner:
         and every asset is fully still from semantic settle through beat end. Stronger
         reference-style choreography therefore happens once *before* settle.
         """
-        if pattern == ChoreographyPattern.STANDARD:
+        if pattern == ChoreographyPattern.STANDARD and not momentary_focus:
             return program
 
         first = program.keyframes[0]
         settle = max(0.78, program.settle_progress)
         accent_progress = max(0.42, min(settle - 0.10, settle * 0.67))
         role = str(participant_role or "SUPPORT").upper()
+        focus_role = str(focus_role or role).upper()
         energy = max(0.35, min(1.0, energy))
         dx = 0.0
         dy = 0.0
         scale = 1.0
 
-        if pattern == ChoreographyPattern.PROGRESSIVE_BUILD:
-            scale = 1.035 if primary else 1.018
-            dy = -0.006 if primary else -0.003
+        # A Story-owned activation window temporarily grants the currently spoken
+        # semantic unit visual authority. This is intentionally local to the unit's
+        # own cue: once it settles, it returns to authored Composition and becomes
+        # completely static while the next semantic unit takes focus.
+        if pattern == ChoreographyPattern.STANDARD:
+            scale = 1.050
+            dy = -0.006
+        elif pattern == ChoreographyPattern.PROGRESSIVE_BUILD:
+            if momentary_focus:
+                scale = 1.072
+                dy = -0.010
+            elif primary:
+                scale = 1.040
+                dy = -0.006
+            else:
+                scale = 1.012
+                dy = -0.002
         elif pattern == ChoreographyPattern.FOCUS_TRANSFER:
-            if primary:
-                scale = 1.055
-                dy = -0.008
+            if momentary_focus or primary:
+                scale = 1.082
+                dy = -0.011
             else:
                 return program
         elif pattern == ChoreographyPattern.STATE_TRANSFORM:
             if state_target:
-                scale = 1.065
-                dy = -0.010
+                scale = 1.095
+                dy = -0.013
+            elif momentary_focus:
+                scale = 1.060
+                dy = -0.008
             elif primary:
-                scale = 1.025
+                scale = 1.030
             else:
                 return program
         elif pattern == ChoreographyPattern.CAUSE_EFFECT_CHAIN:
@@ -466,24 +560,33 @@ class MotionPlanner:
             if role == "SUBJECT":
                 dx = vx * 0.12
                 dy = vy * 0.12
-                scale = 1.025
+                scale = 1.040 if momentary_focus else 1.026
             elif role == "OBJECT":
-                scale = 1.045
+                scale = 1.062 if momentary_focus else 1.045
                 dx = -vx * 0.025
                 dy = -vy * 0.025
-            elif role == "RESULT":
-                scale = 1.075
-                dy = -0.012
+            elif role == "RESULT" or focus_role == "RESULT":
+                scale = 1.105
+                dy = -0.014
             elif role == "ACTOR":
-                scale = 1.025
+                scale = 1.038 if momentary_focus else 1.025
                 dx = vx * 0.04
                 dy = vy * 0.04
+            elif momentary_focus:
+                scale = 1.058
+                dy = -0.008
             elif primary:
-                scale = 1.035
+                scale = 1.038
             else:
                 return program
 
-        strength = 0.72 + energy * 0.28
+        # Explicit result semantics are the strongest payoff. This never fabricates
+        # RESULT: it only reacts to Choreography/Final Package evidence already present.
+        if focus_role == "RESULT":
+            scale = max(scale, 1.105)
+            dy = min(dy, -0.014)
+
+        strength = 0.78 + energy * 0.22
         # Relationship motion may point across the whole canvas. Keep the semantic
         # direction, but cap one-shot displacement so sparse scenes cannot create a
         # collision just because subject/object authored positions are far apart.
@@ -525,27 +628,33 @@ class MotionPlanner:
         *,
         count: int,
         primary: bool,
+        focus_role: str = "SUPPORT",
         geometry_locked: bool = False,
     ) -> MotionProgram:
         """Bound global motion as scene density grows while preserving final geometry."""
         if geometry_locked:
             return program
+        role = str(focus_role or "SUPPORT").upper()
         if count <= 3:
             density = 1.0
             max_offset = 0.12 if primary else 0.075
             scale_factor = 1.0
+            max_scale = 1.11 if role == "RESULT" else (1.095 if primary else 1.055)
         elif count <= 6:
             density = 0.78
             max_offset = 0.085 if primary else 0.055
             scale_factor = 0.82
+            max_scale = 1.09 if role == "RESULT" else (1.08 if primary else 1.05)
         elif count <= 10:
             density = 0.60
             max_offset = 0.060 if primary else 0.040
             scale_factor = 0.65
+            max_scale = 1.07 if role == "RESULT" else (1.06 if primary else 1.045)
         else:
             density = 0.48
             max_offset = 0.045 if primary else 0.030
             scale_factor = 0.52
+            max_scale = 1.05 if role == "RESULT" else (1.045 if primary else 1.035)
 
         frames: list[MotionKeyframe] = []
         for frame in program.keyframes:
@@ -553,7 +662,7 @@ class MotionPlanner:
             dy = max(-max_offset, min(max_offset, frame.dy * density))
             scale = 1.0 + (frame.scale - 1.0) * scale_factor
             # Avoid dramatic zooms on dense scenes; Composition owns final size.
-            scale = max(0.92 if primary else 0.95, min(1.08 if primary else 1.055, scale))
+            scale = max(0.92 if primary else 0.95, min(max_scale, scale))
             if abs(frame.progress - program.settle_progress) <= 1e-9 or frame.progress >= 1.0 - 1e-9:
                 dx, dy, scale = 0.0, 0.0, 1.0
             frames.append(MotionKeyframe(frame.progress, dx, dy, scale, frame.easing))
