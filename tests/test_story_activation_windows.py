@@ -265,3 +265,118 @@ def test_phrase_start_after_visual_handoff_still_abstains(tmp_path):
     result = schedule_windows([row], beat, 2.0, {"x"})[0]
     assert result.activation_policy == "SAFE_ABSTENTION"
     assert "NO_VISUAL_SETTLE_CAPACITY" not in result.evidence
+
+
+def test_uniform_semantic_bindings_anchor_only_real_cutouts_exactly_to_phrase(tmp_path):
+    script = "alpha beta"
+    scene = SceneSource(
+        id="s",
+        image_path=tmp_path / "s.png",
+        order=0,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+    )
+    package = PackageModel(
+        root=tmp_path,
+        package_id="test",
+        scenes=[scene],
+        script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": "s",
+                "assets": [
+                    {"asset_id": "semantic-a", "script_text": script},
+                    {"asset_id": "semantic-b", "script_text": script},
+                ],
+            }],
+        },
+    )
+    transcript = Transcript(
+        language="en",
+        duration=3.0,
+        segments=[],
+        words=[
+            TranscriptWord(text="alpha", start=1.0, end=1.35, char_start=0, char_end=5),
+            TranscriptWord(text="beta", start=1.45, end=1.9, char_start=6, char_end=10),
+        ],
+    )
+    assets = [
+        VisualAsset(
+            id=f"cutout-{index}",
+            scene_id="s",
+            role="object",
+            image_path=tmp_path / f"cutout-{index}.png",
+            extraction_method="test",
+        )
+        for index in range(2)
+    ]
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.8,
+        end=2.2,
+        audio_start=1.0,
+        audio_end=1.9,
+        narration=script,
+        action="INTRODUCE",
+    )
+
+    class FailScorer:
+        def score(self, query, candidates):
+            raise AssertionError("semantic model must not run for uniform exact bindings")
+
+    result = SemanticActivationPlanner(scorer=FailScorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+
+    assert len(result.asset_activations) == 2
+    for row in result.asset_activations:
+        assert row.source == "final_package_semantic_binding"
+        assert row.activation_policy == "OWN_WINDOW"
+        assert row.reveal_start == pytest.approx(1.0)
+        assert row.phrase_start == pytest.approx(1.0)
+        assert row.settle_at == pytest.approx(1.9)
+        assert row.phrase_end == pytest.approx(1.9)
+
+
+def test_ambiguous_semantic_binding_phrases_fall_back_without_guessing(tmp_path):
+    package, transcript, assets, beat = scene_case(tmp_path, 2)
+    beat.semantic_context = None
+    package.semantic_bindings = {
+        "schema_name": "HEXA_SEMANTIC_BINDINGS",
+        "scenes": [{
+            "scene_id": "s",
+            "assets": [
+                {"asset_id": "a", "script_text": "first phrase"},
+                {"asset_id": "b", "script_text": "second phrase"},
+            ],
+        }],
+    }
+
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+
+    assert all(row.activation_policy == "SAFE_ABSTENTION" for row in result.asset_activations)
+
+
+def test_semantic_binding_visual_timeline_does_not_handoff_before_previous_phrase_end():
+    from app.story.planner import StoryPlanner
+
+    beats = [
+        StoryBeat(
+            id="b1", scene_id="s1", start=1.0, end=2.0,
+            audio_start=1.0, audio_end=2.0, narration="one", action="INTRODUCE",
+        ),
+        StoryBeat(
+            id="b2", scene_id="s2", start=2.2, end=3.0,
+            audio_start=2.2, audio_end=3.0, narration="two", action="INTRODUCE",
+        ),
+    ]
+    result = StoryPlanner()._assign_visual_timeline(
+        beats, 4.0, preserve_spoken_completion=True,
+    )
+
+    assert result[1].start >= 2.0
+    assert result[0].end == result[1].start
