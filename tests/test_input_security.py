@@ -44,3 +44,37 @@ def test_loads_canonical_script_declared_by_final_package(tmp_path: Path) -> Non
     loaded = FinalPackageLoader().load(package, tmp_path / "work")
 
     assert loaded.script == "نص الاختبار"
+
+
+def test_loads_and_validates_optional_semantic_bindings(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("hello world", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_SEMANTIC_BINDINGS","scenes":[{"scene_id":"SCENE_001",'
+        '"assets":[{"scene_id":"SCENE_001","asset_id":"icon","script_text":"hello world",'
+        '"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    loaded = FinalPackageLoader().load(package, tmp_path / "work")
+
+    assert loaded.semantic_bindings["schema_name"] == "HEXA_SEMANTIC_BINDINGS"
+    assert loaded.semantic_bindings["scenes"][0]["assets"][0]["asset_id"] == "icon"
+
+
+def test_rejects_broken_semantic_binding_parent(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_SEMANTIC_BINDINGS","scenes":[{"scene_id":"SCENE_001",'
+        '"assets":[{"asset_id":"child","script_text":"hello","parent_asset_id":"missing"}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="parent is missing"):
+        FinalPackageLoader().load(package, tmp_path / "work")
