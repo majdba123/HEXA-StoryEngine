@@ -26,6 +26,7 @@ class MotionCompiler:
         variant: int,
         intensity: float,
         choreography: dict | None = None,
+        motion_order: dict | None = None,
         render_constraints: dict | None = None,
     ) -> MotionCue:
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -47,6 +48,11 @@ class MotionCompiler:
             "choreography": choreography or {},
             "program": program.to_payload(),
         }
+        if motion_order:
+            params["motion_order"] = {
+                **motion_order,
+                "stagger_applied": window.sequence_staggered,
+            }
         if render_constraints:
             params["render_constraints"] = render_constraints
         if window.story_v2:
