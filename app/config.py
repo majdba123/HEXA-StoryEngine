@@ -47,7 +47,10 @@ class Settings:
             # Product runs fail closed on missing/unsafe alignment. Tests or controlled
             # offline fallbacks can opt out explicitly through Settings.
             require_forced_alignment=os.getenv("HEXA_REQUIRE_FORCED_ALIGNMENT", "1") == "1",
-            require_text_layer=os.getenv("HEXA_REQUIRE_TEXT_LAYER", "1") == "1",
+            # Text overlays are an optional authoring layer. A valid sparse-text
+            # decision (including zero cues) must not block video generation unless the
+            # operator explicitly opts into a mandatory text workflow.
+            require_text_layer=os.getenv("HEXA_REQUIRE_TEXT_LAYER", "0") == "1",
             qwen3_vl_model=os.getenv("HEXA_QWEN3_VL_MODEL") or None,
             semantic_text_model=(
                 os.getenv("HEXA_SEMANTIC_TEXT_MODEL", "intfloat/multilingual-e5-small").strip()
