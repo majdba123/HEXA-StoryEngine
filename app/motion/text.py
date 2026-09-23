@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.choreography import ChoreographyPlan
 from app.models import (
+    MotionCue,
     StoryBeat,
     TextCompositionBeat,
     TextCue,
@@ -23,8 +24,13 @@ class TextMotionPlanner:
         text_cues: list[TextCue],
         text_composition: list[TextCompositionBeat],
         choreography: ChoreographyPlan | None = None,
+        visual_motion: list[MotionCue] | None = None,
     ) -> list[TextMotionCue]:
         beat_by_id = {beat.id: beat for beat in beats}
+        visual_by_anchor = {
+            (cue.beat_id, cue.asset_id): cue
+            for cue in (visual_motion or [])
+        }
         laid_out_ids = {
             item.text_cue_id
             for beat in text_composition
@@ -43,13 +49,24 @@ class TextMotionPlanner:
                 continue
             directive = choreography.for_beat(cue.beat_id) if choreography else None
             action = directive.action if directive is not None else cue.choreography_action
+            anchor_motion = (
+                visual_by_anchor.get((cue.beat_id, cue.anchor_asset_id))
+                if cue.anchor_asset_id
+                else None
+            )
+            sync = self._visual_sync_profile(cue, anchor_motion)
 
             visible_end = self.visibility.visible_end(
                 cue,
                 beat,
                 cues_by_beat.get(cue.beat_id, []),
             )
-            tokens = self._token_motion(cue, visible_end, action)
+            tokens = self._token_motion(
+                cue,
+                visible_end,
+                action,
+                first_duration=sync["entry_duration"],
+            )
             entrance_end = tokens[0].end if tokens else min(
                 cue.spoken_end,
                 cue.spoken_start + self._entrance_duration(cue.semantic_type, 0),
@@ -75,6 +92,14 @@ class TextMotionPlanner:
                         "package_evidence": cue.package_evidence,
                         "hook": directive.hook.value if directive is not None else "NONE",
                         "hook_mechanism": directive.hook_mechanism.value if directive is not None else "NONE",
+                        "entry_strength": sync["entry_strength"],
+                        "entry_duration_ms": round(sync["entry_duration"] * 1000),
+                        "visual_sync": {
+                            "available": sync["available"],
+                            "asset_id": cue.anchor_asset_id,
+                            "semantic_settle": sync["semantic_settle"],
+                            "focus_role": sync["focus_role"],
+                        },
                     },
                     tokens=tokens,
                 )
@@ -86,6 +111,8 @@ class TextMotionPlanner:
         cue: TextCue,
         visible_end: float,
         action: str | None,
+        *,
+        first_duration: float | None = None,
     ) -> list[TextMotionToken]:
         source_tokens = cue.tokens
         if not source_tokens:
@@ -104,7 +131,11 @@ class TextMotionPlanner:
 
         output: list[TextMotionToken] = []
         for index, token in enumerate(source_tokens):
-            duration = self._entrance_duration(cue.semantic_type, index)
+            duration = (
+                first_duration
+                if index == 0 and first_duration is not None
+                else self._entrance_duration(cue.semantic_type, index)
+            )
             end = max(
                 token.spoken_start + 0.05,
                 min(token.spoken_start + duration, visible_end),
@@ -119,6 +150,60 @@ class TextMotionPlanner:
                 )
             )
         return output
+
+    @staticmethod
+    def _visual_sync_profile(
+        cue: TextCue,
+        anchor_motion: MotionCue | None,
+    ) -> dict[str, float | str | bool | None]:
+        """Couple text emphasis to its visual anchor without moving text before speech."""
+        default_duration = TextMotionPlanner._entrance_duration(cue.semantic_type, 0)
+        if anchor_motion is None or not isinstance(anchor_motion.params, dict):
+            return {
+                "available": False,
+                "entry_strength": 0.0,
+                "entry_duration": default_duration,
+                "semantic_settle": None,
+                "focus_role": None,
+            }
+
+        focus = anchor_motion.params.get("semantic_focus") or {}
+        if not isinstance(focus, dict):
+            focus = {}
+        role = str(focus.get("role") or "SUPPORT").upper()
+        active = bool(focus.get("active"))
+        if role == "RESULT":
+            strength = 1.0
+        elif active:
+            strength = 0.82
+        elif role in {"SUBJECT", "OBJECT", "ACTOR"}:
+            strength = 0.62
+        elif role == "CONTEXT":
+            strength = 0.20
+        else:
+            strength = 0.42
+
+        raw_settle = anchor_motion.params.get("semantic_settle_time")
+        try:
+            semantic_settle = float(raw_settle) if raw_settle is not None else None
+        except (TypeError, ValueError):
+            semantic_settle = None
+
+        duration = default_duration
+        if semantic_settle is not None:
+            delta = semantic_settle - cue.spoken_start
+            if delta > 0:
+                # The reference style is decisive rather than sluggish: use the anchor
+                # settle as a synchronization target, but bound the text gesture so a
+                # long spoken phrase never turns one keyword into a slow subtitle move.
+                duration = max(0.13, min(0.24, delta))
+        return {
+            "available": True,
+            "entry_strength": max(0.0, min(1.0, strength)),
+            "entry_duration": duration,
+            "semantic_settle": semantic_settle,
+            "focus_role": role,
+        }
 
     @staticmethod
     def _entrance_duration(semantic_type: str, index: int) -> float:
