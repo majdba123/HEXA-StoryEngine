@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
+from app.text.metrics import TextTypographyMetrics
 
 
 Box = tuple[float, float, float, float]
@@ -120,25 +121,33 @@ class TextPlacementDirector:
         )
 
     @staticmethod
-    def estimated_box(cue: TextCue, *, scale: float = 1.0) -> tuple[float, float]:
-        units = 0.0
-        for char in cue.text.strip():
-            if char.isspace():
-                units += 0.42
-            elif char.isdigit():
-                units += 0.78
-            elif char in ".,:;!?،؛؟-/":
-                units += 0.38
-            else:
-                units += 1.0
-        size_factor = 1.10 if cue.priority >= 85 else 1.0
-        # Deliberately conservative: libass shaping can make Arabic/mixed numeric
-        # phrases wider than a character-count estimate. Slight over-reservation is
-        # preferable to a title clipping into artwork.
-        width = 0.080 + units * 0.0235 * size_factor
-        width = max(0.22, min(0.58, width)) * scale
-        height = (0.155 if cue.priority >= 85 else 0.135) * scale
-        return width, height
+    def estimated_box(
+        cue: TextCue,
+        *,
+        scale: float = 1.0,
+        canvas_width: int = 1920,
+        canvas_height: int = 1080,
+    ) -> tuple[float, float]:
+        # Measure the shaped Arabic glyphs with the same production font geometry used
+        # by libass. Reserve the maximum entry excursion as well, so the first moving
+        # frame is safe instead of only the final resting position.
+        metrics = TextTypographyMetrics()
+        pixel_width, pixel_height = metrics.measure(
+            cue.text,
+            style_id=cue.style_id,
+            semantic_type=cue.semantic_type,
+            font_scale=scale,
+        )
+        entry_x = 28.0
+        entry_y = 18.0
+        width = (pixel_width + entry_x) / max(1, canvas_width)
+        height = (pixel_height + entry_y * 2.0) / max(1, canvas_height)
+        safe_width = 1.0 - TextPlacementDirector._SAFE_MARGIN_X * 2.0
+        safe_height = 1.0 - TextPlacementDirector._SAFE_MARGIN_Y * 2.0
+        return (
+            max(0.18, min(safe_width, width)),
+            max(0.11, min(safe_height, height)),
+        )
 
     @staticmethod
     def _font_scales(cue: TextCue) -> tuple[float, ...]:
