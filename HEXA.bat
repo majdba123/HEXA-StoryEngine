@@ -2,6 +2,7 @@
 setlocal
 cd /d "%~dp0"
 set PYTHONUTF8=1
+set "HEXA_READY_MARKER=.venv\\.hexa-desktop-ready-v4"
 
 if not exist ".venv\Scripts\python.exe" (
     echo [HEXA] Preparing local Python environment...
@@ -25,6 +26,16 @@ if not exist ".venv\.hexa-desktop-ready-v4" (
     if errorlevel 1 goto :setup_failed
     ".venv\Scripts\python.exe" -m pip install -e ".[desktop,transcription,alignment,semantic]"
     if errorlevel 1 goto :setup_failed
+    where ffmpeg >nul 2>nul
+    if errorlevel 1 (
+        echo [HEXA] FFmpeg was not found on PATH. Install FFmpeg and run HEXA.bat again.
+        goto :setup_failed
+    )
+    where ffprobe >nul 2>nul
+    if errorlevel 1 (
+        echo [HEXA] FFprobe was not found on PATH. Install FFmpeg and run HEXA.bat again.
+        goto :setup_failed
+    )
     echo [HEXA] Verifying synchronization runtime...
     ".venv\Scripts\python.exe" -c "import whisperx, torch, transformers, sentencepiece"
     if errorlevel 1 goto :setup_failed
