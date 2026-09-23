@@ -50,6 +50,7 @@ class MotionWindow:
     semantic_settle: float
     pace_tier: str
     story_v2: bool = False
+    sequence_staggered: bool = False
 
     @property
     def duration(self) -> float:
@@ -85,6 +86,8 @@ class MotionTimingPolicy:
         hook: bool = False,
         pace_tier: str | None = None,
         activation: AssetActivation | None = None,
+        visual_unit_index: int = 0,
+        visual_unit_count: int = 1,
     ) -> MotionWindow:
         visual_duration = max(0.08, beat.end - beat.start)
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -128,6 +131,8 @@ class MotionTimingPolicy:
                 preferred_duration=preferred,
                 settle_progress=settle_progress,
                 pace_tier=pace_tier,
+                visual_unit_index=visual_unit_index,
+                visual_unit_count=visual_unit_count,
             )
             if anchored is not None:
                 return anchored
@@ -159,6 +164,8 @@ class MotionTimingPolicy:
             preferred_duration=preferred,
             settle_progress=settle_progress,
             pace_tier=pace_tier,
+            visual_unit_index=visual_unit_index,
+            visual_unit_count=visual_unit_count,
         )
         if anchored is not None:
             return anchored
@@ -184,6 +191,8 @@ class MotionTimingPolicy:
         primary: bool,
         activation: AssetActivation | None = None,
         settle_progress: float = 0.58,
+        visual_unit_index: int = 0,
+        visual_unit_count: int = 1,
     ) -> MotionWindow:
         visual_duration = max(0.08, beat.end - beat.start)
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -210,6 +219,8 @@ class MotionTimingPolicy:
             preferred_duration=preferred,
             settle_progress=settle_progress,
             pace_tier=self._pace_tier(words_per_second),
+            visual_unit_index=visual_unit_index,
+            visual_unit_count=visual_unit_count,
         )
         if anchored is not None:
             return anchored
@@ -346,17 +357,24 @@ class MotionTimingPolicy:
         preferred_duration: float,
         settle_progress: float,
         pace_tier: str,
+        visual_unit_index: int = 0,
+        visual_unit_count: int = 1,
     ) -> MotionWindow | None:
         has_v2, story_window = story_activation_window(activation, beat)
         if has_v2:
             if story_window is None:
                 return None
-            return MotionWindow(
+            base = MotionWindow(
                 start=story_window.reveal_start,
                 end=story_window.settle_at,
                 semantic_settle=story_window.settle_at,
                 pace_tier=pace_tier,
                 story_v2=True,
+            )
+            return self._stagger_visual_unit_window(
+                base,
+                index=visual_unit_index,
+                count=visual_unit_count,
             )
         if (
             activation is None
@@ -384,11 +402,67 @@ class MotionTimingPolicy:
 
         start = anchor - settle_progress * duration
         end = start + duration
-        return MotionWindow(
+        base = MotionWindow(
             start=max(beat.start, start),
             end=min(beat.end, end),
             semantic_settle=anchor,
             pace_tier=pace_tier,
+        )
+        return self._stagger_visual_unit_window(
+            base,
+            index=visual_unit_index,
+            count=visual_unit_count,
+        )
+
+    @classmethod
+    def _stagger_visual_unit_window(
+        cls,
+        window: MotionWindow,
+        *,
+        index: int,
+        count: int,
+    ) -> MotionWindow:
+        """Subdivide one Story-owned window for locator-backed multi-cutout units.
+
+        Final Package/Story still own the outer semantic window. Motion only determines
+        the ordered reveal choreography inside that window. The first member starts at
+        the Story reveal boundary and the final member completes at Story settle.
+        """
+        if count <= 1:
+            return window
+        index = max(0, min(count - 1, int(index)))
+        span = max(0.0, window.end - window.start)
+        if span <= cls._MIN_EXECUTABLE_DURATION + 1e-9:
+            return window
+
+        preferred_motion = min(0.48, max(0.08, span * 0.56))
+        preferred_gap = 0.04
+        maximum_motion_for_gap = span - preferred_gap * (count - 1)
+        if maximum_motion_for_gap >= cls._MIN_EXECUTABLE_DURATION:
+            motion_duration = min(preferred_motion, maximum_motion_for_gap)
+        else:
+            motion_duration = max(cls._MIN_EXECUTABLE_DURATION, span * 0.45)
+            motion_duration = min(motion_duration, span)
+
+        if motion_duration >= span - 1e-9:
+            return window
+        step = (span - motion_duration) / (count - 1)
+        if step <= 1e-6:
+            return window
+
+        start = window.start + step * index
+        end = min(window.end, start + motion_duration)
+        if index == count - 1:
+            end = window.end
+        if end <= start:
+            return window
+        return MotionWindow(
+            start=start,
+            end=end,
+            semantic_settle=end,
+            pace_tier=window.pace_tier,
+            story_v2=window.story_v2,
+            sequence_staggered=True,
         )
 
     def pace_tier_for_beat(
