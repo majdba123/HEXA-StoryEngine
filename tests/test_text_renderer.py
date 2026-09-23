@@ -198,3 +198,44 @@ def test_text_renderer_semantic_entry_strength_changes_motion_only(tmp_path: Pat
     assert "&H00FFFFFF" in payload
     assert "&H00000000" in payload
 
+
+
+def test_text_renderer_clamps_real_arabic_glyphs_and_entry_inside_safe_area(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    cue = plan.text.cues[0].model_copy(update={
+        "text": "يكتب وبسرعة",
+        "semantic_type": "warning",
+        "style_id": "warning",
+    })
+    plan.text.cues = [cue]
+    plan.text_composition[0].items[0].text_cue_id = cue.id
+    plan.text_composition[0].items[0].x = 0.16
+    plan.text_composition[0].items[0].max_width = 0.30
+    plan.text_motion[0].text_cue_id = cue.id
+    plan.text_motion[0].params["entry_strength"] = 1.0
+
+    renderer = TextRenderer()
+    x, y, scale = renderer._safe_text_geometry(
+        plan=plan,
+        cue_text=cue.text,
+        semantic_type=cue.semantic_type,
+        style_id=cue.style_id,
+        item=plan.text_composition[0].items[0],
+        rtl=True,
+        entry_strength=1.0,
+    )
+    glyph_width, glyph_height = renderer.metrics.measure(
+        cue.text,
+        style_id=cue.style_id,
+        semantic_type=cue.semantic_type,
+        font_scale=scale,
+    )
+    margin_x = plan.width * 0.045
+    margin_y = plan.height * 0.055
+    entry_x = 24
+    entry_y = 15
+
+    assert x - glyph_width >= margin_x - 1.0
+    assert x + entry_x <= plan.width - margin_x + 1.0
+    assert y - glyph_height / 2 >= margin_y - 1.0
+    assert y + glyph_height / 2 + entry_y <= plan.height - margin_y + 1.0
