@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
+from app.text.typography import TypographyMetrics, TypographyProfile
 
 
 Box = tuple[float, float, float, float]
@@ -41,6 +42,7 @@ class _VisualRegion:
     box: Box
     protected_box: Box
     weight: float
+    hard_overlap_limit: float
 
 
 class TextPlacementDirector:
@@ -57,10 +59,15 @@ class TextPlacementDirector:
     _SAFE_MARGIN_Y = 0.055
     _GRID_STEP_X = 0.02
     _GRID_STEP_Y = 0.0225
+    _MAX_VISUAL_OVERLAP = 0.006
+    _MAX_TEXT_OVERLAP = 0.010
+    _MIN_CLEARANCE = 0.006
 
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
+        self.typography = TypographyMetrics()
+        self.typography_profile = self.typography.profile
 
     def place(
         self,
@@ -71,15 +78,23 @@ class TextPlacementDirector:
         concurrent_text: list[PlacedTextRegion],
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
-    ) -> PlacementResult:
+    ) -> PlacementResult | None:
         anchor = self._anchor(cue, visual)
         asset_map = assets_by_id or {}
         visual_regions = self._visual_regions(beat, visual, asset_map)
-        occupancy = self.occupancy.build(visual.items, asset_map) if visual is not None and asset_map else None
+        occupancy = (
+            self.occupancy.build(visual.items, asset_map)
+            if visual is not None and asset_map
+            else None
+        )
 
+        target_size = self.typography_profile.target_size_ratio(cue)
         scored = []
-        for font_scale in self._font_scales(cue):
-            width, height = self.estimated_box(cue, scale=font_scale)
+        for size_ratio in self.typography_profile.size_candidates(cue):
+            measurement = self.typography.measure(cue.text, size_ratio=size_ratio)
+            width, height = measurement.width, measurement.height
+            if width >= 1.0 - 2 * self._SAFE_MARGIN_X or height >= 1.0 - 2 * self._SAFE_MARGIN_Y:
+                continue
             candidates = self._candidate_field(width, height, anchor)
             for candidate in candidates:
                 score_row = self._score_candidate(
@@ -93,20 +108,33 @@ class TextPlacementDirector:
                     cue=cue,
                     occupancy=occupancy,
                 )
-                # Prefer the authored typography size whenever whitespace permits, but
-                # reducing text is always safer than moving the Final Package artwork.
-                scale_penalty = (1.0 - font_scale) * 1.6
-                scored.append((*score_row, font_scale, width))
-                scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
+                if score_row is None:
+                    continue
+                reduction = max(0.0, (target_size - size_ratio) / max(target_size, 1e-6))
+                score, candidate_row, box, overlap = score_row
+                scored.append((
+                    score + reduction * 2.0,
+                    candidate_row,
+                    box,
+                    overlap,
+                    size_ratio,
+                    width,
+                ))
 
-        best = min(scored, key=lambda row: (row[0], -row[4], row[1].prior, row[1].y, row[1].x))
-        score, candidate, box, overlap, font_scale, width = best
+        if not scored:
+            return None
+        best = min(
+            scored,
+            key=lambda row: (row[0], -row[4], row[1].prior, row[1].y, row[1].x),
+        )
+        score, candidate, box, overlap, size_ratio, width = best
         item = TextLayoutItem(
             text_cue_id=cue.id,
             x=candidate.x,
             y=candidate.y,
             max_width=width,
-            font_scale=font_scale,
+            font_scale=1.0,
+            font_size_ratio=size_ratio,
             z=50 + min(20, cue.priority // 5),
             anchor_asset_id=cue.anchor_asset_id,
             placement=candidate.zone,
@@ -119,32 +147,21 @@ class TextPlacementDirector:
             visual_overlap=overlap,
         )
 
-    @staticmethod
-    def estimated_box(cue: TextCue, *, scale: float = 1.0) -> tuple[float, float]:
-        units = 0.0
-        for char in cue.text.strip():
-            if char.isspace():
-                units += 0.42
-            elif char.isdigit():
-                units += 0.78
-            elif char in ".,:;!?،؛؟-/":
-                units += 0.38
-            else:
-                units += 1.0
-        size_factor = 1.10 if cue.priority >= 85 else 1.0
-        # Deliberately conservative: libass shaping can make Arabic/mixed numeric
-        # phrases wider than a character-count estimate. Slight over-reservation is
-        # preferable to a title clipping into artwork.
-        width = 0.080 + units * 0.0235 * size_factor
-        width = max(0.22, min(0.58, width)) * scale
-        height = (0.155 if cue.priority >= 85 else 0.135) * scale
-        return width, height
-
-    @staticmethod
-    def _font_scales(cue: TextCue) -> tuple[float, ...]:
-        # Sparse keywords remain large by default. Dense artwork may force a controlled
-        # reduction, but never below a readable production floor.
-        return (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56) if cue.priority >= 85 else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
+    @classmethod
+    def estimated_box(
+        cls,
+        cue: TextCue,
+        *,
+        scale: float = 1.0,
+        font_size_ratio: float | None = None,
+    ) -> tuple[float, float]:
+        metrics = TypographyMetrics()
+        target = font_size_ratio or metrics.profile.target_size_ratio(cue)
+        measurement = metrics.measure(
+            cue.text,
+            size_ratio=max(metrics.profile.min_size_ratio, target * scale),
+        )
+        return measurement.width, measurement.height
 
     def _candidate_field(
         self,
@@ -156,6 +173,9 @@ class TextPlacementDirector:
         x_high = 1.0 - self._SAFE_MARGIN_X - width / 2
         y_low = self._SAFE_MARGIN_Y + height / 2
         y_high = 1.0 - self._SAFE_MARGIN_Y - height / 2
+
+        if x_low > x_high or y_low > y_high:
+            return []
 
         candidates: list[_Candidate] = []
         y = y_low
@@ -224,13 +244,13 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         cue: TextCue,
         occupancy,
-    ) -> tuple[float, _Candidate, Box, float]:
+    ) -> tuple[float, _Candidate, Box, float] | None:
         box = self._box(candidate.x, candidate.y, width, height)
         score = candidate.prior
 
-        # Pixel occupancy is authoritative for visual collision. Bounding boxes are
-        # deliberately only a soft halo because irregular cutouts can contain large
-        # negative-space regions that are safe and visually intentional for text.
+        if candidate.zone == "middle_center" and visual_regions and cue.priority < 98:
+            return None
+
         actual_overlap = (
             self.occupancy.overlap(occupancy, box).ratio
             if occupancy is not None
@@ -239,27 +259,45 @@ class TextPlacementDirector:
                 default=0.0,
             )
         )
-        if actual_overlap > 0.002:
-            score += 180000.0 * actual_overlap
+        if actual_overlap > self._MAX_VISUAL_OVERLAP:
+            return None
         score += actual_overlap * 12000.0
+
         for region in visual_regions:
             protected = self._intersection_ratio(box, region.protected_box)
-            score += protected * 18.0 * region.weight
+            if protected > region.hard_overlap_limit:
+                return None
+            score += protected * 24.0 * region.weight
 
         for placed in concurrent_text:
-            score += self._intersection_ratio(box, placed.box) * 680.0
+            overlap = max(
+                self._intersection_ratio(box, placed.box),
+                self._intersection_ratio(placed.box, box),
+            )
+            if overlap > self._MAX_TEXT_OVERLAP:
+                return None
+            score += overlap * 900.0
 
         if anchor is not None:
             distance = self._center_distance(candidate.x, candidate.y, anchor.x, anchor.y)
-            score += distance * 0.46
+            score += distance * 0.52
 
         if preferred_zone is not None:
             score += 0.0 if self._zone_family(candidate.zone) == preferred_zone else 0.12
 
-        score += self._edge_penalty(box) * 110.0
-        score += self._center_penalty(candidate.x, candidate.y) * 0.18
-        clearance = (self.occupancy.clearance(occupancy, box) if occupancy is not None else self._clearance_bonus(box, visual_regions))
-        score -= clearance * 1.10
+        edge_penalty = self._edge_penalty(box)
+        if edge_penalty > 0.0:
+            return None
+        score += self._center_penalty(candidate.x, candidate.y) * 0.30
+
+        clearance = (
+            self.occupancy.clearance(occupancy, box)
+            if occupancy is not None
+            else self._clearance_bonus(box, visual_regions)
+        )
+        if visual_regions and clearance < self._MIN_CLEARANCE:
+            return None
+        score -= clearance * 1.35
 
         if cue.priority >= 85 and self._zone_family(candidate.zone) in {"top", "bottom"}:
             score -= 0.045
@@ -278,22 +316,36 @@ class TextPlacementDirector:
         support = set(beat.support_asset_ids)
         output: list[_VisualRegion] = []
         for item in visual.items:
-            if item.asset_id in primary:
-                weight = 1.65
-                pad_x, pad_y = 0.030, 0.035
+            asset = assets_by_id.get(item.asset_id)
+            role = (asset.role if asset is not None else "").casefold()
+            character = any(
+                token in role
+                for token in ("character", "person", "human", "actor", "narrator", "customer")
+            )
+            if character:
+                weight = 2.30
+                pad_x, pad_y = 0.050, 0.055
+                hard_overlap_limit = 0.002
+            elif item.asset_id in primary:
+                weight = 1.80
+                pad_x, pad_y = 0.032, 0.034
+                hard_overlap_limit = 0.12
             elif item.asset_id in support:
-                weight = 1.25
-                pad_x, pad_y = 0.022, 0.027
+                weight = 1.35
+                pad_x, pad_y = 0.024, 0.028
+                hard_overlap_limit = 0.18
             else:
-                weight = 1.0
-                pad_x, pad_y = 0.016, 0.020
-            footprint = self.footprints.resolve(item, assets_by_id.get(item.asset_id))
+                weight = 1.05
+                pad_x, pad_y = 0.018, 0.022
+                hard_overlap_limit = 0.24
+            footprint = self.footprints.resolve(item, asset)
             box = footprint.box
             output.append(
                 _VisualRegion(
                     box=box,
                     protected_box=self._expand(box, pad_x, pad_y),
                     weight=weight,
+                    hard_overlap_limit=hard_overlap_limit,
                 )
             )
         return output
@@ -306,28 +358,41 @@ class TextPlacementDirector:
 
     @staticmethod
     def _human_prior(x: float, y: float) -> float:
-        thirds = ((0.17, 0.16), (0.50, 0.14), (0.83, 0.16), (0.17, 0.84), (0.50, 0.86), (0.83, 0.84))
-        nearest = min(((x - tx) ** 2 + (y - ty) ** 2) ** 0.5 for tx, ty in thirds)
+        authored_zones = (
+            (0.17, 0.16), (0.50, 0.14), (0.83, 0.16),
+            (0.14, 0.50), (0.86, 0.50),
+            (0.17, 0.84), (0.50, 0.86), (0.83, 0.84),
+        )
+        nearest = min(((x - tx) ** 2 + (y - ty) ** 2) ** 0.5 for tx, ty in authored_zones)
         return nearest * 0.18
 
     @staticmethod
     def _zone_for(x: float, y: float) -> str:
-        if y <= 0.30:
-            return "top"
-        if y >= 0.70:
-            return "bottom"
-        return "left" if x < 0.5 else "right"
+        vertical = "top" if y <= 0.30 else "bottom" if y >= 0.70 else "middle"
+        horizontal = "left" if x <= 0.35 else "right" if x >= 0.65 else "center"
+        return f"{vertical}_{horizontal}"
 
     @staticmethod
     def _zone_family(zone: str) -> str:
-        if "top" in zone:
+        if zone.startswith("anchor_"):
+            if "top" in zone:
+                return "top"
+            if "bottom" in zone:
+                return "bottom"
+            if "left" in zone:
+                return "left"
+            if "right" in zone:
+                return "right"
+        if zone.startswith("top_"):
             return "top"
-        if "bottom" in zone:
+        if zone.startswith("bottom_"):
             return "bottom"
-        if "left" in zone:
+        if zone.endswith("_left"):
             return "left"
-        if "right" in zone:
+        if zone.endswith("_right"):
             return "right"
+        if zone.endswith("_center"):
+            return "center"
         return zone
 
     @staticmethod
@@ -340,7 +405,7 @@ class TextPlacementDirector:
     def _clearance_bonus(box: Box, regions: list[_VisualRegion]) -> float:
         if not regions:
             return 0.20
-        return min(TextPlacementDirector._box_distance(box, region.protected_box) for region in regions)
+        return min(TextPlacementDirector._box_distance(box, region.box) for region in regions)
 
     def _edge_penalty(self, box: Box) -> float:
         left = max(0.0, self._SAFE_MARGIN_X - box[0])
