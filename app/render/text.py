@@ -15,7 +15,7 @@ _PDI = "\u2069"
 class TextRenderTheme:
     """Heavy rounded high-contrast typography tokens."""
 
-    font_family: str = "Noto Kufi Arabic ExtraBold"
+    font_family: str = "Noto Kufi Arabic Extra Bold"
     primary: str = "&H00FFFFFF"       # white fill, ASS AABBGGRR
     accent: str = "&H00FFFFFF"
     gold: str = "&H00FFFFFF"
