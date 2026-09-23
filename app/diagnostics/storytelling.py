@@ -28,6 +28,7 @@ class StorytellingReport:
     semantic_hook_count: int
     grammar_sequence_count: int
     grammar_compliant_sequences: int
+    incomplete_grammar_sequences: tuple[str, ...]
     asset_requirement_count: int
     missing_asset_requirements: tuple[str, ...]
     neutral_hold_motion_count: int
@@ -195,12 +196,18 @@ class StorytellingValidator:
 
         grammar_sequence_count = len(choreography.sequences)
         grammar_compliant_sequences = 0
+        incomplete_grammar_sequences: list[str] = []
         for sequence in choreography.sequences:
             stages = {stage.value for stage in sequence.grammar_stages}
             progressive = "ENTER" in stages and "READ" in stages and "RELEASE" in stages
             meaning = bool(stages & {"ADD", "RELATE", "RESULT"})
             if progressive and meaning:
                 grammar_compliant_sequences += 1
+            else:
+                ordered_stages = ",".join(stage.value for stage in sequence.grammar_stages)
+                incomplete_grammar_sequences.append(
+                    f"{sequence.id}[beats={len(sequence.beat_ids)};stages={ordered_stages}]"
+                )
 
         asset_requirements = [
             requirement
@@ -266,6 +273,7 @@ class StorytellingValidator:
             semantic_hook_count=semantic_hook_count,
             grammar_sequence_count=grammar_sequence_count,
             grammar_compliant_sequences=grammar_compliant_sequences,
+            incomplete_grammar_sequences=tuple(incomplete_grammar_sequences),
             asset_requirement_count=len(asset_requirements),
             missing_asset_requirements=missing_asset_requirements,
             neutral_hold_motion_count=neutral_hold,
