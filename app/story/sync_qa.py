@@ -73,6 +73,11 @@ class StorySyncQA:
 
         for beat in story:
             previous_anchor: float | None = None
+            sequence_motion: dict[str, list[tuple[int, float, str, bool]]] = {}
+            internal_motion: dict[
+                tuple[str | None, int | None, str | None],
+                list[tuple[int, int, float, float | None, float, bool, str]],
+            ] = {}
             for activation in beat.asset_activations:
                 has_v2, window = story_activation_window(activation, beat)
                 activation_policy = (
@@ -132,6 +137,17 @@ class StorySyncQA:
                     )
                     continue
 
+                motion_order = cue.params.get("motion_order")
+                if not isinstance(motion_order, dict):
+                    motion_order = {}
+                try:
+                    internal_index = int(motion_order.get("internal_index", 0))
+                    internal_count = int(motion_order.get("internal_count", 1))
+                except (TypeError, ValueError):
+                    internal_index, internal_count = 0, 1
+                internal_stagger = bool(motion_order.get("stagger_applied"))
+                ordered_visual_unit = internal_count > 1
+
                 raw_settle = cue.params.get("semantic_settle_time")
                 try:
                     settle = float(raw_settle)
@@ -171,11 +187,68 @@ class StorySyncQA:
                     except (KeyError, TypeError, ValueError, OverflowError):
                         violations.append(f"{beat.id}:{activation.asset_id}:invalid_visual_settle")
                         actual = None
-                    if abs(cue.start - window.reveal_start) > self._SYNC_TOLERANCE_SECONDS + 1e-9:
+                    if ordered_visual_unit:
+                        if cue.start < window.reveal_start - self._SYNC_TOLERANCE_SECONDS - 1e-9:
+                            violations.append(
+                                f"{beat.id}:{activation.asset_id}:visual_unit_reveal_before_story_window"
+                            )
+                        if settle > target + self._SYNC_TOLERANCE_SECONDS + 1e-9:
+                            violations.append(
+                                f"{beat.id}:{activation.asset_id}:visual_unit_settle_after_story_window"
+                            )
+                        if (
+                            actual is not None
+                            and abs(actual - settle) > self._SYNC_TOLERANCE_SECONDS + 1e-9
+                        ):
+                            violations.append(
+                                f"{beat.id}:{activation.asset_id}:visual_unit_actual_settle_mismatch"
+                            )
+                    elif (
+                        abs(cue.start - window.reveal_start)
+                        > self._SYNC_TOLERANCE_SECONDS + 1e-9
+                    ):
                         violations.append(f"{beat.id}:{activation.asset_id}:reveal_start_mismatch")
 
-                delta = max(abs(settle - target), abs(actual - target) if actual is not None else 0.0)
+                if ordered_visual_unit and window is not None:
+                    delta = max(
+                        0.0,
+                        settle - target,
+                        (actual - target) if actual is not None else 0.0,
+                        window.reveal_start - cue.start,
+                    )
+                else:
+                    delta = max(
+                        abs(settle - target),
+                        abs(actual - target) if actual is not None else 0.0,
+                    )
                 max_delta = max(max_delta, delta)
+                if (
+                    activation.source == "final_package_semantic_binding"
+                    and activation.semantic_group_id
+                    and activation.sequence_order is not None
+                ):
+                    sequence_motion.setdefault(activation.semantic_group_id, []).append((
+                        activation.sequence_order,
+                        cue.start,
+                        activation.asset_id,
+                        "semantic_group_sequential_window" in activation.evidence,
+                    ))
+                if ordered_visual_unit:
+                    key = (
+                        activation.semantic_group_id,
+                        activation.sequence_order,
+                        activation.semantic_unit_id,
+                    )
+                    internal_motion.setdefault(key, []).append((
+                        internal_index,
+                        internal_count,
+                        cue.start,
+                        actual,
+                        target,
+                        internal_stagger,
+                        activation.asset_id,
+                    ))
+
                 entries.append(StorySyncEntry(
                     beat_id=beat.id,
                     asset_id=activation.asset_id,
@@ -197,6 +270,65 @@ class StorySyncQA:
                 if delta > self._SYNC_TOLERANCE_SECONDS + 1e-9:
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:settle_delta={delta:.3f}"
+                    )
+
+            for group_id, rows in sequence_motion.items():
+                by_order: dict[int, list[tuple[float, str, bool]]] = {}
+                for order, start, asset_id, scheduled in rows:
+                    by_order.setdefault(order, []).append((start, asset_id, scheduled))
+                ordered_starts = [
+                    (order, min(row[0] for row in by_order[order]))
+                    for order in sorted(by_order)
+                ]
+                for (left_order, left_start), (right_order, right_start) in zip(
+                    ordered_starts, ordered_starts[1:]
+                ):
+                    if right_start + 1e-9 < left_start:
+                        violations.append(
+                            f"{beat.id}:{group_id}:sequence_order_motion_reversed:"
+                            f"{left_order}>{right_order}"
+                        )
+                    explicitly_scheduled = any(
+                        row[2] for row in by_order[left_order] + by_order[right_order]
+                    )
+                    if explicitly_scheduled and right_start <= left_start + 1e-9:
+                        violations.append(
+                            f"{beat.id}:{group_id}:sequence_order_motion_collapsed:"
+                            f"{left_order}={right_order}"
+                        )
+
+            for key, rows in internal_motion.items():
+                group_id, sequence_order, semantic_unit_id = key
+                expected_count = max(row[1] for row in rows)
+                ranks = sorted(row[0] for row in rows)
+                if len(rows) != expected_count or ranks != list(range(expected_count)):
+                    violations.append(
+                        f"{beat.id}:{semantic_unit_id}:visual_unit_rank_incomplete"
+                    )
+                    continue
+                ordered_rows = sorted(rows, key=lambda row: row[0])
+                starts = [row[2] for row in ordered_rows]
+                if any(right + 1e-9 < left for left, right in zip(starts, starts[1:])):
+                    violations.append(
+                        f"{beat.id}:{semantic_unit_id}:visual_unit_order_reversed"
+                    )
+                if all(row[5] for row in ordered_rows) and any(
+                    right <= left + 1e-9 for left, right in zip(starts, starts[1:])
+                ):
+                    violations.append(
+                        f"{beat.id}:{semantic_unit_id}:visual_unit_stagger_collapsed"
+                    )
+                final_actual = ordered_rows[-1][3]
+                final_target = ordered_rows[-1][4]
+                if (
+                    all(row[5] for row in ordered_rows)
+                    and final_actual is not None
+                    and abs(final_actual - final_target)
+                    > self._SYNC_TOLERANCE_SECONDS + 1e-9
+                ):
+                    violations.append(
+                        f"{beat.id}:{group_id}:{sequence_order}:{semantic_unit_id}:"
+                        "visual_unit_final_member_missed_story_settle"
                     )
 
         return StorySyncReport(
