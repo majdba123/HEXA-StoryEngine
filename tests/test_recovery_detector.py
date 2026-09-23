@@ -106,3 +106,64 @@ def test_legacy_primary_still_uses_audio_start_recovery_heuristic() -> None:
     issues = RecoveryDetector().inspect_plan(plan)
 
     assert any(issue.code == "ELEMENT_APPEARS_TOO_LATE" for issue in issues)
+
+
+def test_semantic_binding_group_is_not_treated_as_multi_element_pop() -> None:
+    beat = StoryBeat(
+        id="beat-001", scene_id="SCENE_001", start=0.10, end=3.00,
+        audio_start=0.10, audio_end=3.00, narration="test", action="INTRODUCE",
+        asset_activations=[
+            StoryAssetActivation(
+                asset_id=f"a{index}", spoken_start=0.10, spoken_end=2.40,
+                phrase_start=0.10, phrase_end=2.40, reveal_start=0.10,
+                semantic_peak=1.25, settle_at=2.40, policy="EXPLICIT",
+                activation_policy="OWN_WINDOW", confidence=1.0,
+                source="final_package_semantic_binding",
+            )
+            for index in range(1, 5)
+        ],
+    )
+    cues = [
+        MotionCue(
+            beat_id="beat-001", asset_id=f"a{index}", kind="program_v3",
+            start=0.10, end=2.40, params={"semantic_settle_time": 2.40},
+        )
+        for index in range(1, 5)
+    ]
+    plan = RenderPlan(
+        width=854, height=480, fps=30, duration=3.0, story=[beat],
+        composition=[], motion=cues, assets=[],
+    )
+
+    issues = RecoveryDetector().inspect_plan(plan)
+
+    assert not any(issue.code == "MULTI_ELEMENT_POP" for issue in issues)
+
+
+def test_partial_semantic_binding_group_still_detects_multi_element_pop() -> None:
+    beat = StoryBeat(
+        id="beat-001", scene_id="SCENE_001", start=0.10, end=3.00,
+        audio_start=0.10, audio_end=3.00, narration="test", action="INTRODUCE",
+        asset_activations=[StoryAssetActivation(
+            asset_id="a1", spoken_start=0.10, spoken_end=2.40,
+            phrase_start=0.10, phrase_end=2.40, reveal_start=0.10,
+            semantic_peak=1.25, settle_at=2.40, policy="EXPLICIT",
+            activation_policy="OWN_WINDOW", confidence=1.0,
+            source="final_package_semantic_binding",
+        )],
+    )
+    cues = [
+        MotionCue(
+            beat_id="beat-001", asset_id=f"a{index}", kind="program_v3",
+            start=0.10, end=2.40, params={"semantic_settle_time": 2.40},
+        )
+        for index in range(1, 4)
+    ]
+    plan = RenderPlan(
+        width=854, height=480, fps=30, duration=3.0, story=[beat],
+        composition=[], motion=cues, assets=[],
+    )
+
+    issues = RecoveryDetector().inspect_plan(plan)
+
+    assert any(issue.code == "MULTI_ELEMENT_POP" for issue in issues)
