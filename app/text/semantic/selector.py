@@ -118,8 +118,8 @@ class TextSemanticSelector:
     def __init__(
         self,
         *,
-        max_keywords_per_beat: int = 4,
-        max_display_chars: int = 32,
+        max_keywords_per_beat: int = 3,
+        max_display_chars: int = 24,
         min_candidate_score: float = 0.74,
     ) -> None:
         self.max_keywords_per_beat = max(1, max_keywords_per_beat)
@@ -160,7 +160,7 @@ class TextSemanticSelector:
             if current is None or candidate.score > current.score:
                 deduped[key] = candidate
 
-        budget = self._budget(beat, rich=bool(package_candidates))
+        budget = self._budget(beat)
         ranked = sorted(
             deduped.values(),
             key=lambda item: (-item.score, item.source_char_start, item.display_text),
@@ -446,7 +446,7 @@ class TextSemanticSelector:
         role_bonus = 0.035 if roles & {"PRIMARY", "RESULT", "ACTION", "OBJECT"} else 0.0
         action_bonus = 0.035 if action in {"EMPHASIZE", "RESULT", "HANDOFF"} else 0.0
 
-        max_window = min(4, len(words))
+        max_window = min(3, len(words))
         for size in range(1, max_window + 1):
             for start in range(0, len(words) - size + 1):
                 window = words[start:start + size]
@@ -758,36 +758,15 @@ class TextSemanticSelector:
             and word.start < audio_end
         ]
 
-    def _budget(self, beat: StoryBeat, *, rich: bool) -> int:
+    def _budget(self, beat: StoryBeat) -> int:
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         duration = max(0.0, audio_end - audio_start)
-
-        if not rich:
-            # Preserve conservative behavior for legacy packages that have no semantic
-            # contract. Typography V2 richness is driven by the Final Package, not by
-            # making generic narration look like subtitles.
-            if duration >= 5.0:
-                return min(self.max_keywords_per_beat, 3)
-            if duration >= 2.2:
-                return min(self.max_keywords_per_beat, 2)
-            return 1
-
-        # Semantic packages can provide richer candidates based on content density,
-        # not a fixed "one cue every N seconds" cadence. Duration is only a hard safety
-        # cap for extremely short narration windows. Visual feasibility happens later.
-        word_count = len([row for row in beat.narration.split() if row.strip()])
-        if duration < 0.75 or word_count <= 4:
-            return 1
-        if word_count <= 8:
-            budget = 2
-        elif word_count <= 14:
-            budget = 3
-        else:
-            budget = 4
-        if beat.action in {"EMPHASIZE", "RESULT", "COMPARE", "HANDOFF"} and word_count >= 6:
-            budget += 1
-        return min(self.max_keywords_per_beat, budget)
+        if duration >= 5.0:
+            return min(self.max_keywords_per_beat, 3)
+        if duration >= 2.2:
+            return min(self.max_keywords_per_beat, 2)
+        return 1
 
     @classmethod
     def _is_number_token(cls, value: str) -> bool:
