@@ -604,6 +604,11 @@ class SemanticActivationPlanner:
                     else "ambiguous_or_missing_real_cutout_geometry"
                 ),
             })
+        identity_claimed_real = {
+            match.real_asset_id: semantic_id
+            for semantic_id, match in identity.matches.items()
+            if semantic_id in identity.locator_semantic_ids
+        }
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         tolerance = 0.025
@@ -630,6 +635,9 @@ class SemanticActivationPlanner:
                 real_id = semantic_map.get(semantic_id)
                 if real_id is None and semantic_id in asset_by_id:
                     real_id = semantic_id
+                claimed_by = identity_claimed_real.get(real_id or "")
+                if claimed_by is not None and claimed_by != semantic_id:
+                    continue
             asset = asset_by_id.get(real_id or "")
             if (
                 asset is None
