@@ -185,3 +185,170 @@ def test_white_flash_detector_rejects_real_internal_blank_frame(tmp_path: Path) 
 
     flashes = RecoveryDetector("ffprobe", "ffmpeg")._white_flash_frames(output, duration=1.0)
     assert any(entry["frame"] == 15 for entry in flashes), flashes
+
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="ffmpeg required",
+)
+def test_ordered_visual_unit_keeps_first_member_as_boundary_carrier(
+    tmp_path: Path,
+) -> None:
+    previous_path = tmp_path / "previous.png"
+    first_path = tmp_path / "ordered-first.png"
+    second_path = tmp_path / "ordered-second.png"
+    _write_rgba_asset(previous_path, (35, 70, 180, 255))
+    _write_rgba_asset(first_path, (220, 55, 55, 255))
+    _write_rgba_asset(second_path, (55, 180, 80, 255))
+
+    assets = [
+        VisualAsset(
+            id="previous",
+            scene_id="scene-1",
+            role="primary",
+            image_path=previous_path,
+            extraction_method="test",
+        ),
+        VisualAsset(
+            id="ordered-first",
+            scene_id="scene-2",
+            role="primary",
+            image_path=first_path,
+            extraction_method="test",
+        ),
+        VisualAsset(
+            id="ordered-second",
+            scene_id="scene-2",
+            role="support",
+            image_path=second_path,
+            extraction_method="test",
+        ),
+    ]
+    story = [
+        StoryBeat(
+            id="beat-1",
+            scene_id="scene-1",
+            start=0.0,
+            end=0.8,
+            audio_start=0.0,
+            audio_end=0.8,
+            narration="previous",
+            primary_asset_ids=["previous"],
+            action="INTRODUCE",
+        ),
+        StoryBeat(
+            id="beat-2",
+            scene_id="scene-2",
+            start=0.8,
+            end=1.8,
+            audio_start=1.0,
+            audio_end=1.7,
+            narration="ordered",
+            primary_asset_ids=["ordered-first"],
+            support_asset_ids=["ordered-second"],
+            action="HANDOFF",
+            handoff_from="beat-1",
+        ),
+    ]
+    composition = [
+        CompositionBeat(
+            beat_id="beat-1",
+            items=[
+                LayoutItem(
+                    asset_id="previous",
+                    x=0.5,
+                    y=0.5,
+                    width=0.62,
+                    height=0.62,
+                )
+            ],
+        ),
+        CompositionBeat(
+            beat_id="beat-2",
+            items=[
+                LayoutItem(
+                    asset_id="ordered-first",
+                    x=0.35,
+                    y=0.5,
+                    width=0.34,
+                    height=0.50,
+                    z=10,
+                ),
+                LayoutItem(
+                    asset_id="ordered-second",
+                    x=0.70,
+                    y=0.5,
+                    width=0.34,
+                    height=0.50,
+                    z=20,
+                ),
+            ],
+        ),
+    ]
+    motion = [
+        MotionCue(
+            beat_id="beat-1",
+            asset_id="previous",
+            kind="reveal_in",
+            start=0.0,
+            end=0.18,
+        ),
+        MotionCue(
+            beat_id="beat-2",
+            asset_id="ordered-first",
+            kind="reveal_in",
+            start=1.0,
+            end=1.22,
+            params={
+                "motion_order": {
+                    "sequence_order": 1,
+                    "internal_index": 0,
+                    "internal_count": 2,
+                    "stagger_applied": True,
+                }
+            },
+        ),
+        MotionCue(
+            beat_id="beat-2",
+            asset_id="ordered-second",
+            kind="reveal_in",
+            start=1.18,
+            end=1.40,
+            params={
+                "motion_order": {
+                    "sequence_order": 1,
+                    "internal_index": 1,
+                    "internal_count": 2,
+                    "stagger_applied": True,
+                }
+            },
+        ),
+    ]
+    plan = RenderPlan(
+        width=640,
+        height=360,
+        fps=30,
+        duration=1.8,
+        story=story,
+        composition=composition,
+        motion=motion,
+        assets=assets,
+    )
+
+    output = tmp_path / "ordered-carrier.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+
+    frames = _read_frames(output)
+    # beat-2 begins at encoded frame 24, while its first Motion cue intentionally
+    # starts 0.20s later. The first ordered member must already cover the white canvas.
+    boundary = frames[24]
+    assert _mean_white_distance(boundary) > 5.0
+    first_pixel = boundary[210, 224]  # BGR, first member at pre-motion offset.
+    assert int(first_pixel[2]) > int(first_pixel[1]) + 50
+    # The second member must still respect its own later reveal.
+    second_pixel = boundary[210, 448]
+    assert min(int(value) for value in second_pixel) > 235
+
+    detector = RecoveryDetector("ffprobe", "ffmpeg")
+    assert detector._white_flash_frames(output, duration=1.8) == []
