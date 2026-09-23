@@ -145,7 +145,15 @@ class TextRenderer:
             start = max(0.0, event_global_start - segment_start)
             if local_end <= start + 0.04:
                 return []
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=True, font_scale=font_scale)
+            tags = self._line_tags(
+                x=x,
+                y=y,
+                rtl=rtl,
+                first=True,
+                font_scale=font_scale,
+                entry_strength=float(motion.params.get("entry_strength", 0.0)),
+                entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
+            )
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
         events: list[str] = []
@@ -166,7 +174,15 @@ class TextRenderer:
             state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
             if not state_text:
                 continue
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=index == 0, font_scale=font_scale)
+            tags = self._line_tags(
+                x=x,
+                y=y,
+                rtl=rtl,
+                first=index == 0,
+                font_scale=font_scale,
+                entry_strength=float(motion.params.get("entry_strength", 0.0)),
+                entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
+            )
             events.append(self._dialogue(
                 start,
                 end,
@@ -177,17 +193,33 @@ class TextRenderer:
         return events
 
     @staticmethod
-    def _line_tags(*, x: int, y: int, rtl: bool, first: bool, font_scale: float = 1.0) -> str:
+    def _line_tags(
+        *,
+        x: int,
+        y: int,
+        rtl: bool,
+        first: bool,
+        font_scale: float = 1.0,
+        entry_strength: float = 0.0,
+        entry_duration_ms: int = 165,
+    ) -> str:
         alignment = 6 if rtl else 4  # middle-right for RTL, middle-left for LTR
         scale = max(55, min(100, round(font_scale * 100)))
         size_tag = f"\\fscx{scale}\\fscy{scale}"
         if first:
-            # One restrained entry gesture for the phrase. Later word states hold the
-            # exact anchor so the line does not bounce or re-center.
-            direction = 14 if rtl else -14
+            # One bounded entry gesture for the phrase. Semantic focus may make the
+            # gesture more decisive, but the final anchor/font/style stay unchanged and
+            # there is never a post-arrival bounce.
+            strength = max(0.0, min(1.0, float(entry_strength)))
+            horizontal = 14 + round(10 * strength)
+            vertical = 10 + round(5 * strength)
+            direction = horizontal if rtl else -horizontal
+            duration = max(130, min(240, int(entry_duration_ms)))
+            fade = max(45, min(65, round(65 - 15 * strength)))
             return (
-                f"\\an{alignment}{size_tag}\\move({x + direction},{y + 10},{x},{y},0,165)"
-                "\\fad(65,0)\\blur0.35"
+                f"\\an{alignment}{size_tag}\\move("
+                f"{x + direction},{y + vertical},{x},{y},0,{duration})"
+                f"\\fad({fade},0)\\blur0.35"
             )
         return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur0.25"
 
