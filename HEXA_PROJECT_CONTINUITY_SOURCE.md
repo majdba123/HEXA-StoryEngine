@@ -911,3 +911,51 @@ Expected next gate:
   - rerun same Black-Hat package + narration
   - expected: zero text cues no longer blocks render under normal desktop defaults
   - then inspect encoded render for sequential narration-locked asset entrances.
+
+
+## MONTAGE20 FINAL-PACKAGE-DRIVEN TEXT GENERALIZATION — 2026-09-23
+
+- Root cause of zero-text behavior:
+  - Text timing/motion were healthy.
+  - `TextSemanticSelector` still relied primarily on a historical finance/payment importance lexicon, so unrelated Final Packages could produce zero meaningful keyword candidates.
+- Architectural fix:
+  - Final Package semantic metadata is now the primary topic authority for Text.
+  - `TextPlanner` passes the full `PackageModel` into `TextSemanticSelector`.
+  - Selector consumes per-scene `semantic_groups`, asset `semantic_meaning`, `visual_concept`, `binding_type`, and exact `script_text`.
+  - Display text is selected from canonical-script spans; no topic-specific replacement wording is invented.
+  - WhisperX/forced-alignment remains the sole timing authority after selection.
+  - Numeric/amount detection remains generic and can coexist with package semantics.
+  - Generic linguistic fallback is used only when a package has no usable semantic bindings.
+  - Legacy finance lexicon is no longer required by semantic Final Packages.
+- Quality/generalization rules:
+  - compact 1–3 word semantic windows
+  - no cross-clause phrase joins
+  - Arabic light morphology matching is ranking-only and never changes timing spans
+  - weak standalone verbs are suppressed
+  - SUPPORT/PARENT/AMBIGUOUS assets do not independently force text
+  - 1–3 text cues per beat depending on spoken duration, while avoiding filler text
+- Cross-domain regression coverage:
+  - cybersecurity: `المعرفة التقنية`
+  - medical: `ضغط الدم`
+  - automotive: `ناقل الحركة`
+  - long semantic beat can surface multiple meaningful cues while keeping forced timing
+- Real Final Package acceptance test:
+  - package: user-provided 40-scene Black-Hat asset-level semantic package
+  - 40 scenes
+  - 43 text cues
+  - 40/40 beats contain at least one meaningful text cue
+  - 43 text motion cues
+  - every text motion cue starts at its forced-aligned cue `spoken_start`
+  - no timing contract changes
+- Final tested code HEAD:
+  - `1710f5e4b45a846b8cbb3f1b69747ae16010b159`
+- GitHub Actions:
+  - Run `35826385729` SUCCESS
+  - Compile SUCCESS
+  - Ruff: All checks passed
+  - Pytest: 216 passed, 12 warnings
+- Next acceptance step:
+  - pull latest `montage`
+  - rerun the same Final Package + narration
+  - expected Text stage: non-zero package-driven cues instead of 0
+  - then review encoded render for text choice, negative-space placement, text timing, and asset sequential motion.
