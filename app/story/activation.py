@@ -336,7 +336,7 @@ class SemanticActivationPlanner:
             **decision, "beat_id": beat.id, "asset_id": row.asset_id,
             "semantic_unit_id": row.semantic_unit_id,
             "semantic_text": decision.get("semantic_text") or (
-                self._semantic_query(entity, None, beat, None) if entity else ""
+                self._semantic_query(entity, None, beat) if entity else ""
             ),
             "chosen_phrase": row.trigger_text if chosen else None,
             "source": source, "reason": reason,
