@@ -20,7 +20,7 @@ class GlyphMeasurement:
 class TypographyProfile:
     """Resolution-independent typography tokens for the 16:9 HEXA canvas."""
 
-    font_family: str = "Noto Kufi Arabic ExtraBold"
+    font_family: str = "Noto Kufi Arabic Extra Bold"
     reference_width: int = 1920
     reference_height: int = 1080
     min_size_ratio: float = 112 / 1080
@@ -32,7 +32,7 @@ class TypographyProfile:
         return cls(
             font_family=(
                 os.getenv("HEXA_TEXT_FONT_FAMILY")
-                or "Noto Kufi Arabic ExtraBold"
+                or "Noto Kufi Arabic Extra Bold"
             ).strip()
         )
 
