@@ -225,3 +225,24 @@ def test_story_primary_keeps_narration_locked_timing_when_choreography_focus_is_
     assert authored.params["semantic_settle_time"] <= beat.audio_start + 0.12
     assert semantic.params["semantic_settle_time"] <= beat.audio_start + 0.12
     assert semantic.params["program"]["name"] != authored.params["program"]["name"]
+
+
+
+def test_two_beat_handoff_counts_as_progressive_visual_addition() -> None:
+    package = PackageModel(
+        root=Path("/tmp"),
+        package_id="generic-two-beat",
+        scenes=[
+            _scene("scene-1", "plain_alpha"),
+            _scene("scene-2", "plain_beta"),
+        ],
+        script="x",
+    )
+    beats = [_beat(1, "plain alpha"), _beat(2, "plain beta")]
+
+    plan = ChoreographyDirector().plan(package, beats, [])
+
+    assert len(plan.sequences) == 1
+    assert plan.directives[1].phase == SequencePhase.HANDOFF
+    stages = {stage.value for stage in plan.sequences[0].grammar_stages}
+    assert {"ENTER", "READ", "ADD", "RELEASE"} <= stages
