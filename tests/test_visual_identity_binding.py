@@ -422,3 +422,147 @@ def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: 
         row.semantic_unit_id == "intent-b" and row.policy in {"EXPLICIT", "SEMANTIC"}
         for row in result.asset_activations
     )
+
+
+def test_visual_locator_can_resolve_one_semantic_intent_to_multiple_cutouts(
+    tmp_path: Path,
+) -> None:
+    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    assets = [
+        _asset(tmp_path, "left-card", (110, 520, 180, 180), area=0.04),
+        _asset(tmp_path, "middle-card", (390, 520, 180, 180), area=0.04),
+        _asset(tmp_path, "right-card", (670, 520, 180, 180), area=0.04),
+    ]
+
+    result = VisualIdentityBinder().bind(
+        scene=scene,
+        semantic_assets=[{
+            "asset_id": "profile-cards",
+            "visual_locator": _locator(0.48, 0.61, 0.76, 0.22),
+        }],
+        assets=assets,
+    )
+
+    assert "profile-cards" not in result.matches
+    members = result.matches_for("profile-cards")
+    assert {row.real_asset_id for row in members} == {
+        "left-card", "middle-card", "right-card",
+    }
+    assert all(row.source == "visual_locator_multi" for row in members)
+    assert result.unresolved_locator_ids == frozenset()
+    assert result.has_incomplete_locator_binding is False
+
+
+def test_multi_cutout_locator_does_not_steal_individually_proven_cutout(
+    tmp_path: Path,
+) -> None:
+    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    assets = [
+        _asset(tmp_path, "left", (100, 500, 180, 180), area=0.04),
+        _asset(tmp_path, "center-target", (410, 500, 180, 180), area=0.04),
+        _asset(tmp_path, "right", (720, 500, 180, 180), area=0.04),
+    ]
+
+    result = VisualIdentityBinder().bind(
+        scene=scene,
+        semantic_assets=[
+            {
+                "asset_id": "target",
+                "visual_locator": _locator(0.50, 0.59, 0.18, 0.18),
+            },
+            {
+                "asset_id": "surrounding-unit",
+                "visual_locator": _locator(0.50, 0.59, 0.82, 0.24),
+            },
+        ],
+        assets=assets,
+    )
+
+    assert result.matches["target"].real_asset_id == "center-target"
+    assert {row.real_asset_id for row in result.matches_for("surrounding-unit")} == {
+        "left", "right",
+    }
+
+
+def test_multi_cutout_locator_creates_multiple_asset_activations_for_one_intent(
+    tmp_path: Path,
+) -> None:
+    script = "alpha beta"
+    scene = SceneSource(
+        id="s",
+        image_path=tmp_path / "scene.png",
+        order=0,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+        units=[{
+            "unit_id": "cards",
+            "type": "VISUAL_ASSET_INTENT",
+            "role": "OBJECT",
+        }],
+    )
+    package = PackageModel(
+        root=tmp_path,
+        package_id="multi-locator",
+        scenes=[scene],
+        script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "cutout_mapping_cardinality": "ZERO_OR_ONE_OR_MANY",
+            "scenes": [{
+                "scene_id": "s",
+                "semantic_groups": [{
+                    "semantic_group_id": "g",
+                    "script_text": script,
+                    "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                    "asset_ids": ["cards"],
+                }],
+                "assets": [{
+                    "asset_id": "cards",
+                    "script_text": script,
+                    "binding_type": "EXPLICIT",
+                    "semantic_group_id": "g",
+                    "sequence_order": 1,
+                    "confidence": 0.98,
+                    "visual_locator": _locator(0.48, 0.61, 0.76, 0.22),
+                }],
+            }],
+        },
+    )
+    transcript = Transcript(
+        language="en",
+        duration=1.5,
+        segments=[],
+        words=[
+            TranscriptWord(text="alpha", start=0.2, end=0.5, char_start=0, char_end=5),
+            TranscriptWord(text="beta", start=0.6, end=0.9, char_start=6, char_end=10),
+        ],
+    )
+    assets = [
+        _asset(tmp_path, "left-card", (110, 520, 180, 180), area=0.04),
+        _asset(tmp_path, "middle-card", (390, 520, 180, 180), area=0.04),
+        _asset(tmp_path, "right-card", (670, 520, 180, 180), area=0.04),
+    ]
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=1.1,
+        audio_start=0.2,
+        audio_end=0.9,
+        narration=script,
+        action="INTRODUCE",
+    )
+
+    result = SemanticActivationPlanner().enrich(package, transcript, assets, [beat])[0]
+    own = [
+        row for row in result.asset_activations
+        if row.source == "final_package_semantic_binding"
+        and row.semantic_unit_id == "cards"
+    ]
+
+    assert {row.asset_id for row in own} == {
+        "left-card", "middle-card", "right-card",
+    }
+    assert {row.sequence_order for row in own} == {1}
+    assert {row.spoken_start for row in own} == {0.2}
+    assert all("visual_identity_multi_cutout_member" in row.evidence for row in own)
