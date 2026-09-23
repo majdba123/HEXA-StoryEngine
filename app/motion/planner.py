@@ -484,8 +484,11 @@ class MotionPlanner:
                 return program
 
         strength = 0.72 + energy * 0.28
-        dx *= strength
-        dy *= strength
+        # Relationship motion may point across the whole canvas. Keep the semantic
+        # direction, but cap one-shot displacement so sparse scenes cannot create a
+        # collision just because subject/object authored positions are far apart.
+        dx = max(-0.06, min(0.06, dx * strength))
+        dy = max(-0.06, min(0.06, dy * strength))
         scale = 1.0 + (scale - 1.0) * strength
         return MotionProgram(
             name=f"{pattern.value.lower()}_{program.name}",
