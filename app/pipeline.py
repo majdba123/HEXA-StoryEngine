@@ -20,7 +20,6 @@ from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
-from app.cutout.pass2.semantic import FlorenceSemanticBackend
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.recovery.manager import RecoveryManager
 from app.render import RenderPlanner
@@ -31,8 +30,6 @@ from app.shared.errors import (
     StageFailedError,
 )
 from app.story import StoryPlanner, StorySyncQA
-from app.story.smolvlm import SmolVLMBackend
-from app.story.florence import FlorenceVisualSemanticBackend
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
@@ -62,14 +59,8 @@ class StoryEnginePipeline:
         self.vision = VisionService()
         self.cutout = CutoutService(allow_scene_fallback=self.settings.allow_scene_fallback)
         self.refinement = RefinementService()
-        florence_raw = os.getenv("HEXA_FLORENCE_MODEL")
         sam_raw = os.getenv("HEXA_SAM2_CHECKPOINT")
         self.cutout_pass2 = Pass2CutoutService(
-            semantic_backend=(
-                FlorenceSemanticBackend(Path(florence_raw).expanduser().resolve())
-                if florence_raw
-                else None
-            ),
             mask_backend=(
                 SAM2MaskBackend(
                     Path(sam_raw).expanduser().resolve(),
@@ -80,24 +71,9 @@ class StoryEnginePipeline:
             ),
         )
         semantic_vlm = Qwen3VLBackend(self.settings.qwen3_vl_model)
-        backend_name = self.settings.visual_semantic_backend
-        if backend_name not in {"none", "smolvlm", "florence", "qwen"}:
-            raise ValueError(f"Unknown Story visual semantic backend: {backend_name}")
-        if backend_name == "smolvlm":
-            inventory_backend = SmolVLMBackend(self.settings.smolvlm_model)
-        elif backend_name == "florence":
-            inventory_backend = FlorenceVisualSemanticBackend(
-                self.settings.story_florence_model,
-            )
-        elif backend_name == "qwen":
-            inventory_backend = semantic_vlm
-        else:
-            inventory_backend = None
         self.story = StoryPlanner(
             semantic_model_name=self.settings.semantic_text_model,
             semantic_model_required=self.settings.require_semantic_model,
-            visual_backend=semantic_vlm if backend_name == "qwen" else None,
-            inventory_backend=inventory_backend,
         )
         self.story_sync_qa = StorySyncQA()
         self.reference = ReferenceAnalyzer().analyze()

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
-
 from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
 
 from .activation import SemanticActivationPlanner
@@ -27,16 +25,12 @@ class StoryPlanner:
         *,
         semantic_model_name: str | None = None,
         semantic_model_required: bool = False,
-        visual_backend: Any | None = None,
-        inventory_backend: Any | None = None,
     ) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
         self.activation = SemanticActivationPlanner(
             semantic_model_name=semantic_model_name,
             semantic_model_required=semantic_model_required,
-            visual_backend=visual_backend,
-            inventory_backend=inventory_backend,
         )
 
     def build_graph(self, beats: list[StoryBeat]) -> StoryGraph:
