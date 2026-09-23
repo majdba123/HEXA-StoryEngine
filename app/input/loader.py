@@ -22,6 +22,7 @@ class FinalPackageLoader:
         manifest = self._load_json(manifest_path) if manifest_path.exists() else {}
         script = self._load_script(package_root, script_path, manifest)
         scene_plan = self._load_scene_plan(package_root, manifest)
+        semantic_bindings = self._load_semantic_bindings(package_root, manifest)
         scenes = self._discover_scenes(package_root, manifest, scene_plan)
         if not scenes:
             raise InvalidPackageError("Final Package contains no scene images")
@@ -38,6 +39,7 @@ class FinalPackageLoader:
             script=script,
             manifest=manifest,
             scene_plan=scene_plan,
+            semantic_bindings=semantic_bindings,
         )
 
     def _materialize(self, source: Path, workspace: Path) -> Path:
@@ -77,6 +79,89 @@ class FinalPackageLoader:
         if not isinstance(data, dict):
             raise InvalidPackageError(f"json root must be an object: {path.name}")
         return data
+
+    def _load_semantic_bindings(self, root: Path, manifest: dict) -> dict:
+        raw = manifest.get("semantic_bindings")
+        candidates: list[Path] = []
+        if isinstance(raw, str):
+            candidate = (root / raw).resolve()
+            if not self._inside(root, candidate):
+                raise InvalidPackageError("semantic bindings path escapes Final Package")
+            candidates.append(candidate)
+        candidates.append(root / "semantic_bindings.json")
+
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            data = self._load_json(candidate)
+            self._validate_semantic_bindings(data)
+            return data
+        return {}
+
+    @staticmethod
+    def _validate_semantic_bindings(data: dict) -> None:
+        schema = data.get("schema_name")
+        if schema is not None and schema != "HEXA_SEMANTIC_BINDINGS":
+            raise InvalidPackageError("unsupported semantic bindings schema")
+        scenes = data.get("scenes")
+        if not isinstance(scenes, list):
+            raise InvalidPackageError("semantic bindings scenes must be a list")
+
+        seen_scenes: set[str] = set()
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                raise InvalidPackageError("semantic bindings scene must be an object")
+            scene_id = scene.get("scene_id")
+            if not isinstance(scene_id, str) or not scene_id.strip():
+                raise InvalidPackageError("semantic bindings scene_id is required")
+            if scene_id in seen_scenes:
+                raise InvalidPackageError(f"duplicate semantic bindings scene: {scene_id}")
+            seen_scenes.add(scene_id)
+
+            assets = scene.get("assets")
+            if not isinstance(assets, list):
+                raise InvalidPackageError(
+                    f"semantic bindings assets must be a list: {scene_id}"
+                )
+            seen_assets: set[str] = set()
+            parent_by_asset: dict[str, str | None] = {}
+            for asset in assets:
+                if not isinstance(asset, dict):
+                    raise InvalidPackageError(
+                        f"semantic binding asset must be an object: {scene_id}"
+                    )
+                asset_id = asset.get("asset_id")
+                phrase = asset.get("script_text")
+                if not isinstance(asset_id, str) or not asset_id.strip():
+                    raise InvalidPackageError(
+                        f"semantic binding asset_id is required: {scene_id}"
+                    )
+                if asset_id in seen_assets:
+                    raise InvalidPackageError(
+                        f"duplicate semantic binding asset: {scene_id}:{asset_id}"
+                    )
+                if not isinstance(phrase, str) or not phrase.strip():
+                    raise InvalidPackageError(
+                        f"semantic binding script_text is required: {scene_id}:{asset_id}"
+                    )
+                declared_scene = asset.get("scene_id")
+                if declared_scene is not None and declared_scene != scene_id:
+                    raise InvalidPackageError(
+                        f"semantic binding scene mismatch: {scene_id}:{asset_id}"
+                    )
+                parent = asset.get("parent_asset_id")
+                if parent is not None and not isinstance(parent, str):
+                    raise InvalidPackageError(
+                        f"semantic binding parent_asset_id must be a string: {scene_id}:{asset_id}"
+                    )
+                seen_assets.add(asset_id)
+                parent_by_asset[asset_id] = parent
+
+            for asset_id, parent in parent_by_asset.items():
+                if parent is not None and parent not in seen_assets:
+                    raise InvalidPackageError(
+                        f"semantic binding parent is missing: {scene_id}:{asset_id}"
+                    )
 
     def _load_scene_plan(self, root: Path, manifest: dict) -> dict:
         raw = manifest.get("scene_plan")
