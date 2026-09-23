@@ -177,3 +177,24 @@ def test_ffmpeg_renderer_burns_text_in_same_segment_encode(tmp_path: Path) -> No
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
     assert payload.count("Dialogue: 0,") == 2
+
+def test_text_renderer_semantic_entry_strength_changes_motion_only(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    plan.text_motion[0].params["entry_strength"] = 1.0
+    plan.text_motion[0].params["entry_duration_ms"] = 210
+
+    path = TextRenderer().write_beat_ass(
+        plan,
+        plan.story[0],
+        segment_start=0.0,
+        duration=1.5,
+        output=tmp_path / "focused.ass",
+    )
+
+    assert path is not None
+    payload = path.read_text(encoding="utf-8")
+    assert ",0,210)\\fad(50,0)" in payload
+    assert "Style: Amount,Noto Kufi Arabic Extra Bold,188" in payload
+    assert "&H00FFFFFF" in payload
+    assert "&H00000000" in payload
+
