@@ -50,9 +50,11 @@ class StoryEnginePipeline:
             alignment_models["en"] = self.settings.alignment_en_model
         self.transcriber = TranscriptionService(
             model_name=self.settings.whisper_model,
+            ffmpeg_bin=self.settings.ffmpeg_bin,
             ffprobe_bin=self.settings.ffprobe_bin,
             forced_aligner=WhisperXForcedAligner(
                 model_by_language=alignment_models or None,
+                ffmpeg_bin=self.settings.ffmpeg_bin,
             ),
             require_forced_alignment=self.settings.require_forced_alignment,
         )
