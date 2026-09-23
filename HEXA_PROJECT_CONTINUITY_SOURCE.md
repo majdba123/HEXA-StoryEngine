@@ -3319,3 +3319,236 @@ It is:
 
 Do not modify the Final Package contract to solve this issue.
 
+## MONTAGE17 SEMANTIC VISIBILITY / CARRIER / TEXT SAFE-AREA HARDENING — 2026-09-24
+
+This checkpoint follows direct visual review of the user's latest Black-Hat render and the supplied
+REV9_PRECISE_FINAL White/Black packages. The Final Packages are confirmed sufficient; these fixes
+belong to general Story/Choreography/Motion/Renderer/Text consumption.
+
+### Visual failures reproduced
+
+The reviewed render showed three distinct execution failures:
+
+1. Future semantic visuals were visible before their narration cue.
+   - Old-program scene: the later "years" result was already visible before its phrase.
+   - Install scene: the server/result was visible before the install action completed.
+   - Return-later scene: destination/result visuals were visible before the return action.
+
+2. Character/context artwork could steal first attention from the semantic concept.
+   - Company-discovery scene: the company manager was visually dominant before the company/discovery
+     concept despite metadata being sufficient to distinguish CHARACTER / OBJECT / RESULT.
+
+3. Arabic text could escape the screen.
+   - Character-count width estimation materially under-measured shaped Noto Kufi Arabic glyphs.
+   - The renderer only trusted the planned box and did not apply a final glyph-level title-safe clamp.
+   - Entry motion could move an otherwise safe final position outside the frame.
+
+A fourth issue was confirmed in renderer behavior:
+- Pass2/family-canvas alpha fades could produce pale/ghost-looking reveal frames over white.
+
+### Root causes
+
+#### Renderer visibility leak
+
+Renderer contained a legacy exception that made every Story `primary_asset_id` visible from the
+visual beat boundary, even if its Motion/Story semantic cue started later.
+
+Story primary may be selected from visual weight before precise semantic activation is enriched.
+Therefore a large future RESULT could appear early even while Motion timing itself was correct.
+
+This is why simply increasing/decreasing Motion amplitude could never fully repair narration sync.
+
+#### Boundary carrier selection
+
+The anti-white-flash carrier previously chose the earliest candidate primarily by time/order.
+It did not reason about semantic risk strongly enough.
+
+#### Character identity in semantic binding
+
+`SemanticAssetBinder` historically detected actors mainly from scene-unit `type`.
+REV9 precise packages commonly express units as `VISUAL_ASSET_INTENT` and carry the real meaning in
+`semantic_role`.
+
+Consequently a large CHARACTER could remain in normal focus competition and win by visual weight.
+
+#### Base primitive energy
+
+Even after focus arbitration, a non-focused CHARACTER/SUPPORT could still receive a strong entry
+from its base semantic primitive. Focus strength only affected the later choreography accent.
+
+#### Text box estimation
+
+Text placement used character-count approximations. Arabic Kufi shaping can be far wider than those
+estimates. The renderer had no final measurement guard using the actual production font geometry.
+
+### General fixes
+
+#### 1. Semantic visibility is now authoritative
+
+For every non-persistent visual:
+- renderer visibility begins at its Motion/Story cue start;
+- Story's legacy area-ranked primary no longer forces early visibility;
+- future sequence members and RESULT visuals remain hidden until their own semantic window.
+
+Only one boundary carrier may be visible early, solely to avoid a blank/white handoff frame.
+
+#### 2. Semantic-safe carrier arbitration
+
+The carrier is chosen only from assets whose cue is at or very near the earliest reveal window.
+
+Within that earliest cohort, risk ordering prefers:
+- authored CONTEXT;
+- early semantic OBJECT/context concept;
+- CHARACTER/ACTOR;
+- SUPPORT;
+- ACTION;
+- PRIMARY;
+- unknown;
+- RESULT last.
+
+A later RESULT cannot become carrier simply because it is large.
+Internal multi-cutout ordering remains respected.
+
+This is generic and contains no scene/topic hardcoding.
+
+#### 3. Semantic CHARACTER identity now outranks image area
+
+Story's proven `AssetActivation.semantic_unit_id -> real asset_id` identity is reused with
+`StorySemanticContext.entities[].role`.
+
+CHARACTER/ACTOR cutouts are excluded from ordinary concept-focus competition unless:
+- the package explicitly authors visual focus on them; or
+- no non-character semantic visual exists.
+
+This fixes the class of failures represented by the company-discovery scene without coding for
+"company", "manager", or any scene id.
+
+#### 4. Base entry motion now obeys attention authority
+
+A new attention budget scales the pre-settle primitive itself:
+- RESULT / explicit focus keeps strong entry authority;
+- PRIMARY / ACTION / relation participants remain readable;
+- explicit semantic OBJECT may become a real momentary focus;
+- CHARACTER / ACTOR entry is calmer;
+- SUPPORT is more restrained;
+- CONTEXT is quietest.
+
+Final geometry, Story timing, sequence order and post-settle freeze remain unchanged.
+
+#### 5. Explicit semantic objects can receive focus
+
+An EXPLICIT Final Package OBJECT with its own precise activation is no longer automatically treated
+as weak support. It can receive moderate momentary focus.
+
+This is required for phrases such as a company/object concept followed by a discovery/result while
+the character remains contextual.
+
+#### 6. Family-canvas reveals are crisp
+
+Renderer no longer alpha-fades geometry-locked family members over white.
+Their authored alpha is preserved and visibility is gated at the semantic cue boundary.
+
+This removes the pale/ghost silhouette mechanism without moving or scaling the family footprint.
+
+#### 7. Production Arabic glyph measurement
+
+New:
+`app/text/metrics.py`
+
+It measures text using the production Noto Kufi heavy face with Pillow/RAQM when available.
+- Exact glyph width/height is used instead of character count.
+- ExtraBold is preferred for Noto Kufi so metrics do not under-measure a heavier rendered face.
+- Cross-platform font lookup supports environment override and common Linux/macOS/Windows font roots.
+- Fontconfig is used through the existing hidden-subprocess wrapper when available.
+- A conservative fallback remains when exact font measurement is unavailable.
+
+#### 8. Final renderer title-safe clamp
+
+TextRenderer now performs a final glyph-level safety pass:
+- measures the full shaped phrase;
+- includes horizontal/vertical entry excursion;
+- clamps the final anchor to 4.5% horizontal / 5.5% vertical safe margins;
+- applies a bounded emergency scale reduction only when required to prevent clipping;
+- preserves wording, font family, visual style, outline and placement intent.
+
+This protects both the resting position and the first moving text frame.
+
+### Behavior commits
+
+- `621b460207698582701d76adfc8d954bf2789a49`
+  `[text] Measure production Arabic glyph bounds`
+- `90b0a91092370a7e2f8faac376a18ad4efeaf5e2`
+  `[text] Use shaped glyph bounds for placement`
+- `b43348326ba50b8bb6ee85368127735efba91375`
+  `[story] Exclude semantic characters from focus competition`
+- `17f3a73e07ada2702c08c0aedfaa2d88c2211263`
+  `[motion] Enforce attention hierarchy on base entrances`
+- `ab7877bd1c88bebb49098a43ddd0644e626ab10b`
+  `[render] Enforce semantic visibility before motion`
+- `b5e81654cabb7ab9573dc13e8e07a7e02211b4cb`
+  `[render] Keep shaped Arabic text inside safe area`
+- `8825a8bde8650210ecc59885f5dcb67306ab8578`
+  `[tests] Cover semantic character focus suppression`
+- `cd1f5028a47d24b0740f3a689bc1bec0180460f1`
+  `[tests] Cover semantic visibility carrier and crisp reveals`
+- `e6606c43abfed475ec52be41b8ed43052f8c20f9`
+  `[tests] Cover real Arabic glyph width measurement`
+- `0006eb87f70f641c0bfa04dc162a56313a03f89a`
+  `[tests] Cover final Arabic title-safe clamp`
+- `fcdd5506c78f65d254de1f0a837c23289871d1c7`
+  `[tests] Make glyph-width regression font-environment tolerant`
+
+### CI proof
+
+Behavior HEAD:
+`fcdd5506c78f65d254de1f0a837c23289871d1c7`
+
+GitHub Actions:
+- Run: `35935992486`
+- Workflow: `V2 CI`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **261 passed, 11 warnings in 4.80s**
+
+New regressions prove:
+- a Story-primary future RESULT cannot leak before its semantic cue;
+- a boundary carrier prefers a safe early semantic object over a character/result;
+- semantic CHARACTER context is excluded from normal focus competition;
+- explicit semantic OBJECT focus can outrank character context;
+- base character entry energy is lower than the active semantic concept;
+- family-canvas visible frames remain opaque/crisp instead of alpha-ghosted;
+- wide shaped Arabic text is measured materially wider than the old approximation;
+- final text glyphs and their entry trajectory remain inside title-safe margins.
+
+### Invariants preserved
+
+- Pass1 + Pass2 only.
+- No Layer3 / Pass3.
+- Final Package remains semantic authority.
+- WhisperX/forced alignment remains speech timing authority.
+- Composition final geometry unchanged.
+- No relayout/collision solver.
+- No post-settle wobble/recoil.
+- No future semantic reveal through Story primary.
+- No unrelated outgoing-art carry.
+- No alpha ghost crossfade.
+- Text wording/selection/font family/style unchanged.
+- PR #1 remains draft and unmerged.
+
+### Next visual acceptance gate
+
+Render the same precise Black-Hat or White-Hat package again from latest `montage`.
+
+Mandatory review points:
+- old-program progression: later result stays hidden until its phrase;
+- install progression: program -> action/path -> result, no result pre-exposure;
+- return-later progression: source -> return action -> destination/result;
+- company/discovery class: character remains context, semantic object gets concept focus,
+  result/discovery gets payoff focus;
+- all Arabic text fully inside screen including entry motion;
+- no pale family reveal;
+- no white flash;
+- no collision or final-position drift.
+
+Do not modify the Final Package to compensate for these bugs.
