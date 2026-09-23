@@ -116,10 +116,20 @@ class StoryPlanner:
             beat.audio_end if beat.audio_end is not None else beat.end,
             beat.id,
         ))
-        beats = self._assign_visual_timeline(beats, transcript.duration)
+        beats = self._assign_visual_timeline(
+            beats,
+            transcript.duration,
+            preserve_spoken_completion=bool(package.semantic_bindings),
+        )
         return self.activation.enrich(package, transcript, assets, beats)
 
-    def _assign_visual_timeline(self, beats: list[StoryBeat], duration: float) -> list[StoryBeat]:
+    def _assign_visual_timeline(
+        self,
+        beats: list[StoryBeat],
+        duration: float,
+        *,
+        preserve_spoken_completion: bool = False,
+    ) -> list[StoryBeat]:
         if not beats:
             return beats
 
@@ -138,6 +148,11 @@ class StoryPlanner:
                 )
             proposed = max(0.0, audio_start - lead)
             visual_start = max(proposed, previous_start + self._MIN_VISUAL_BEAT)
+            if preserve_spoken_completion and index > 0:
+                visual_start = max(
+                    visual_start,
+                    min(previous_audio_end, audio_start),
+                )
             starts.append(min(visual_start, max(0.0, duration - self._MIN_VISUAL_BEAT)))
             previous_start = starts[-1]
             previous_audio_end = beat.audio_end if beat.audio_end is not None else beat.end
