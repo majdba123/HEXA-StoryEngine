@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
-from app.text.typography import TypographyMetrics, TypographyProfile
+from app.text.typography import TypographyMetrics
 
 
 Box = tuple[float, float, float, float]
