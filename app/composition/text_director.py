@@ -10,6 +10,8 @@ from app.text.typography import TypographyMetrics, TypographyProfile
 
 Box = tuple[float, float, float, float]
 
+_DEFAULT_TYPOGRAPHY = TypographyMetrics()
+
 
 @dataclass(frozen=True, slots=True)
 class PlacedTextRegion:
@@ -66,7 +68,7 @@ class TextPlacementDirector:
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
-        self.typography = TypographyMetrics()
+        self.typography = _DEFAULT_TYPOGRAPHY
         self.typography_profile = self.typography.profile
 
     def place(
@@ -155,7 +157,7 @@ class TextPlacementDirector:
         scale: float = 1.0,
         font_size_ratio: float | None = None,
     ) -> tuple[float, float]:
-        metrics = TypographyMetrics()
+        metrics = _DEFAULT_TYPOGRAPHY
         target = font_size_ratio or metrics.profile.target_size_ratio(cue)
         measurement = metrics.measure(
             cue.text,
