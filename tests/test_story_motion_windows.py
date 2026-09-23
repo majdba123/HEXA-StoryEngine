@@ -216,3 +216,16 @@ def test_qa_rejects_missing_actual_evidence_and_invalid_timing(damage):
     else:
         cue.start += 0.10
     assert not StorySyncQA().inspect(story=[beat], motion=[cue]).passed
+
+
+def test_final_package_binding_motion_runs_from_phrase_start_to_phrase_end():
+    row = activation(reveal=5.0, spoken=5.0, settle=5.7).model_copy(
+        update={"source": "final_package_semantic_binding"}
+    )
+    beat, cues = plan(row)
+    cue = cues[0]
+
+    assert cue.start == pytest.approx(5.0)
+    assert cue.params["semantic_settle_time"] == pytest.approx(5.7)
+    assert actual_settle(cue) == pytest.approx(5.7)
+    assert StorySyncQA().inspect(story=[beat], motion=cues).passed
