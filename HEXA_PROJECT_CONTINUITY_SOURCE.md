@@ -701,3 +701,104 @@ Tests: `193 passed, 12 warnings`.
 
 Pull `montage`, run `HEXA.bat` with the updated White-Hat Final Package containing `semantic_bindings.json` and the existing White-Hat audio, then review the full render and Story sync diagnostics.
 
+
+
+---
+
+## MONTAGE20 GENERAL RECOVERY + DESKTOP RUNTIME CHECKPOINT — 2026-09-23
+
+Development branch: `montage`.
+
+### WHITE-HAT FULL RUN FAILURE ROOT CAUSE
+
+Observed production run reached:
+- Pass1: 118 authored assets across 35 scenes.
+- Pass2: 133 assets (+15).
+- Story: 35 beats.
+- Authoring QA: 133 semantic sync anchors, 0 conservative fallbacks.
+- Failure occurred only in Recovery with:
+  `MULTI_ELEMENT_POP`.
+
+Root cause:
+- the legacy Recovery detector treated several simultaneous entrances as a defect unless
+  cue end times clustered around `beat.audio_start`;
+- explicit Final Package semantic bindings intentionally allow multiple real Pass1/Pass2
+  cutouts in one scene to share the same trusted Story V2 phrase window;
+- therefore correct `reveal_start -> settle_at` motion was being reclassified as an
+  accidental pop after Authoring QA had already accepted it;
+- rebuilding Motion could not change the result, so Recovery repeated the same issue.
+
+Fix:
+- Recovery now recognizes a grouped entrance as narration-locked when every cue has a
+  trusted Story V2 activation and the compiled cue matches that activation's
+  `reveal_start` and `settle_at` within tolerance;
+- incomplete, malformed or partially-bound groups still fall through to the existing
+  `MULTI_ELEMENT_POP` detector;
+- no scene IDs, White-Hat vocabulary, asset counts or package-specific exceptions exist.
+
+Pass1 and Pass2 remain unchanged.
+
+### DESKTOP / WINDOWS PROCESS UX
+
+Product requirement:
+- visible console/setup activity is allowed only for first-time environment bootstrap or
+  explicit environment repair;
+- normal generation must remain inside the HEXA Dashboard;
+- FFmpeg, FFprobe and other child processes must not create transient Windows console
+  windows during pipeline stages.
+
+Implementation:
+- added `app/shared/process.py` with a Windows-aware hidden child-process runner;
+- all application-owned subprocess calls use the centralized hidden runner;
+- an architecture test rejects future raw `subprocess.run/Popen` calls inside `app/`;
+- WhisperX alignment no longer receives an audio file path, because WhisperX would launch
+  its own FFmpeg subprocess; HEXA decodes the audio through its configured hidden FFmpeg
+  path and passes a 16 kHz mono numpy waveform directly to WhisperX;
+- custom `HEXA_FFMPEG` configuration is propagated into transcription/alignment;
+- `HEXA.bat` remains the visible bootstrap/setup entry and validates FFmpeg/FFprobe
+  during setup;
+- `HEXA.vbs` is the normal silent launcher: if the environment is ready it opens the
+  Dashboard directly; if not, it invokes the visible bootstrap.
+
+### GENERALIZATION / MENTAL-TEST CONTRACT
+
+These fixes are package-agnostic. They do not depend on:
+- characters being present;
+- a fixed asset count;
+- illustrations versus real photos;
+- Arabic text length or numeric density;
+- comparison/timeline scenes;
+- scene duration;
+- narration speed;
+- repeated or re-entering assets.
+
+Recovery trusts only explicit Story V2 timing evidence, not package identity.
+Desktop child-process suppression is independent of Final Package content.
+
+### VERIFIED COMMITS
+
+- `967616d963439eee490aa6ed7f3978cb7a0c60f5` — respect Story V2 grouped semantic entrances in Recovery.
+- `85a61c8ffff739f4d01308052bd95fbb7a57f9d1` — regression coverage for semantic-bound multi-element recovery.
+- `07bacbd7af393bb166a071ad42f5a3abd84c4aaf` — centralized hidden Windows subprocess runner.
+- `f3064da586749389ba21ca445dc9dfe5c698689d` — silent desktop launcher.
+- `b4bc28e5106a4893a2ba76e8b3884d1f74a6d93a` — hidden FFmpeg audio decode.
+- `2b46f5190707ed84c625c00a41161d2e4432e1fb` — console-free WhisperX waveform input.
+- `3df964af7611951655ee94a530138322fe0a3192` — cleanup checkpoint before final green CI.
+
+### CI
+
+GitHub Actions run `35815260128`: SUCCESS.
+Compile: SUCCESS.
+Lint: SUCCESS.
+Tests: `199 passed, 12 warnings`.
+
+### NEXT
+
+Pull current `montage`.
+Use `HEXA.vbs` for normal launches.
+Run the same full White-Hat semantic-bindings render again.
+Expected next gate:
+- Recovery must pass the previous `MULTI_ELEMENT_POP` point;
+- generation stages remain visible only in the Dashboard log/progress UI;
+- no transient FFmpeg/FFprobe/WhisperX console windows;
+- then perform full visual sync QA on the completed render.
