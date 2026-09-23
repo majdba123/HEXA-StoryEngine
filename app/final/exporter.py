@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.shared.process import run_hidden
 
 
 class FinalExporter:
@@ -27,7 +28,7 @@ class FinalExporter:
             str(output),
         ]
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            run_hidden(command, check=True, capture_output=True, text=True)
         except FileNotFoundError as exc:
             raise DependencyUnavailableError("ffmpeg is not available") from exc
         except subprocess.CalledProcessError as exc:
