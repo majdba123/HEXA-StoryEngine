@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.shared.process import run_hidden
 from app.render.motion import FFmpegMotionAdapter
 from app.render.text import TextRenderer
 from app.render.transition import VisualTransitionPolicy
@@ -459,7 +460,7 @@ class FFmpegRenderer:
     @staticmethod
     def _run(command: list[str], message: str) -> None:
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            run_hidden(command, check=True, capture_output=True, text=True)
         except FileNotFoundError as exc:
             raise DependencyUnavailableError("ffmpeg is not available") from exc
         except subprocess.CalledProcessError as exc:
