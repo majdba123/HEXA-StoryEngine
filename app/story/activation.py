@@ -597,7 +597,7 @@ class SemanticActivationPlanner:
         if len(phrases) != len(assets) or any(not phrase for phrase in phrases):
             return None
         normalized = {
-            HybridSemanticTextScorer._normalize_text(phrase)
+            HybridSemanticTextScorer._normalize(phrase)
             for phrase in phrases
         }
         return phrases[0] if len(normalized) == 1 else None
