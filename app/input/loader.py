@@ -29,6 +29,7 @@ class FinalPackageLoader:
         scenes = self._discover_scenes(package_root, manifest, scene_plan)
         if not scenes:
             raise InvalidPackageError("Final Package contains no scene images")
+        self._validate_scene_unit_visual_locators(scenes)
         self._validate_semantic_binding_script(semantic_bindings, script)
         self._validate_semantic_binding_units(semantic_bindings, scenes)
         package_id = (
@@ -200,6 +201,11 @@ class FinalPackageLoader:
                         raise InvalidPackageError(
                             f"confidence must be between 0 and 1: {scene_id}:{asset_id}"
                         )
+                    locator = asset.get("visual_locator")
+                    if locator is not None:
+                        FinalPackageLoader._validate_visual_locator(
+                            locator, scene_id=scene_id, asset_id=asset_id
+                        )
                     group_by_asset[asset_id] = group_id
                     previous_phrase = phrase_by_group.setdefault(group_id, phrase.strip())
                     if previous_phrase != phrase.strip():
@@ -286,6 +292,60 @@ class FinalPackageLoader:
                     raise InvalidPackageError(
                         f"semantic groups must cover every semantic asset: {scene_id}"
                     )
+
+    @staticmethod
+    def _validate_visual_locator(locator: object, *, scene_id: str, asset_id: str) -> None:
+        if not isinstance(locator, dict):
+            raise InvalidPackageError(
+                f"visual_locator must be an object: {scene_id}:{asset_id}"
+            )
+        coordinate_space = locator.get("coordinate_space", "normalized_scene")
+        if coordinate_space != "normalized_scene":
+            raise InvalidPackageError(
+                f"visual_locator coordinate_space must be normalized_scene: "
+                f"{scene_id}:{asset_id}"
+            )
+        values: dict[str, float] = {}
+        for name in ("cx", "cy", "width", "height"):
+            value = locator.get(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise InvalidPackageError(
+                    f"visual_locator {name} must be numeric: {scene_id}:{asset_id}"
+                )
+            values[name] = float(value)
+        cx, cy = values["cx"], values["cy"]
+        width, height = values["width"], values["height"]
+        if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
+            raise InvalidPackageError(
+                f"visual_locator center must be normalized: {scene_id}:{asset_id}"
+            )
+        if not (0.0 < width <= 1.0 and 0.0 < height <= 1.0):
+            raise InvalidPackageError(
+                f"visual_locator size must be normalized and positive: {scene_id}:{asset_id}"
+            )
+        epsilon = 1e-9
+        if (
+            cx - width / 2 < -epsilon
+            or cx + width / 2 > 1.0 + epsilon
+            or cy - height / 2 < -epsilon
+            or cy + height / 2 > 1.0 + epsilon
+        ):
+            raise InvalidPackageError(
+                f"visual_locator must stay inside scene bounds: {scene_id}:{asset_id}"
+            )
+
+    @staticmethod
+    def _validate_scene_unit_visual_locators(scenes: list[SceneSource]) -> None:
+        for scene in scenes:
+            for unit in scene.units:
+                if not isinstance(unit, dict) or unit.get("visual_locator") is None:
+                    continue
+                unit_id = str(unit.get("unit_id") or "unknown")
+                FinalPackageLoader._validate_visual_locator(
+                    unit["visual_locator"],
+                    scene_id=scene.id,
+                    asset_id=unit_id,
+                )
 
     @staticmethod
     def _validate_semantic_binding_script(data: dict, script: str | None) -> None:
