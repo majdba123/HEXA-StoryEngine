@@ -172,8 +172,17 @@ class TextMotionPlanner:
             focus = {}
         role = str(focus.get("role") or "SUPPORT").upper()
         active = bool(focus.get("active"))
+        raw_strength = focus.get("strength")
+        try:
+            authored_strength = (
+                float(raw_strength) if raw_strength is not None else None
+            )
+        except (TypeError, ValueError):
+            authored_strength = None
         if role == "RESULT":
             strength = 1.0
+        elif authored_strength is not None:
+            strength = authored_strength
         elif active:
             strength = 0.82
         elif role in {"SUBJECT", "OBJECT", "ACTOR"}:
