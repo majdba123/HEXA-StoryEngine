@@ -572,4 +572,74 @@ NOT PROVEN:
 
 NEXT:
 **Run the White-Hat Florence Story-only probe. Do not redesign Motion or extraction before this semantic test is measured.**
+---
+
+## MONTAGE15 FINAL-PACKAGE SEMANTIC AUTHORITY CHECKPOINT — 2026-09-23
+
+This checkpoint SUPERSEDES all earlier Florence / SmolVLM visual-semantic plans and tests.
+
+### FINAL DECISION
+
+Production Story semantic understanding must NOT infer asset meaning from a visual model.
+
+Removed from production architecture:
+- Story Florence backend.
+- Story SmolVLM backend.
+- Story visual-semantic inventory/resolver layer.
+- VLM direct asset-to-phrase fallback.
+- Florence detector wiring from Vision.
+- Florence semantic proposal wiring from Pass2.
+- Florence-specific Story/Vision tests and runtime settings.
+- Florence-only vision dependency stack from the vision extra.
+
+Deleted source files:
+- `app/story/florence.py`
+- `app/story/smolvlm.py`
+- `app/story/visual_semantic.py`
+- `app/vision/florence.py`
+
+### ACTIVE AUTHORITY CONTRACT
+
+`Final Package semantic intent -> extracted Pass1/Pass2 assets -> exact/declared script binding -> WhisperX timing -> Story V2 -> Motion`
+
+Hard ownership:
+- Final Package = semantic authority.
+- Pass1 + Pass2 = extraction authority.
+- WhisperX = spoken timing authority.
+- Story V2 = activation-window authority.
+- Motion = animation execution authority.
+
+Do NOT restore Florence/SmolVLM as a semantic fallback.
+
+### CURRENT COMPATIBILITY STATE
+
+Until the new additive `semantic_bindings.json` contract is implemented, legacy Final Packages may still use existing package semantic metadata + multilingual E5 text matching. E5 is text-only and must not inspect pixels.
+
+When `semantic_bindings.json` is available, exact declared `script_text` bindings should bypass semantic guessing whenever they can be resolved safely.
+
+The cutout mapping must NOT assume `Final Package element == one extracted cutout`.
+Resolver design must account for scene identity, package semantic intent, parent/child relationships, authored role, optional package geometry, Pass1/Pass2 source bbox, parent/family lineage, one-to-many or many-to-one mapping, and SAFE_ABSTENTION.
+
+### VERIFIED CODE STATE
+
+- `b4cc556dc67a8dca3f58ece075079dcd6a4bd9d1` — remove visual semantic models and trust Final Package intent.
+- `ad552326dd164b4b904ef4de3d0b98e6dcaff828` — cleanup removed visual call residue.
+- `98f74a2278d7b28eceb4cf915f1ca4ea1b193aa6` — remove obsolete visual Story test.
+- `845404b3105d4688acd856531681e2fb3ff5bda0` — replace visual fallback tests with Final Package authority.
+- `72e19471dd58a3a22f09cbb2f8466bc05c68b42d` — final stale import cleanup.
+
+CI:
+- GitHub Actions run `35811164400`
+- HEAD tested: `72e19471dd58a3a22f09cbb2f8466bc05c68b42d`
+- Compile: SUCCESS
+- Lint: SUCCESS
+- Tests: SUCCESS
+- Result: `187 passed, 12 warnings`
+
+### NEXT OFFICIAL STEP
+
+Do NOT run another Florence probe.
+
+Wait for the user's updated Final Package containing additive `semantic_bindings.json`.
+Then inspect the real ZIP/JSON, compare package semantic elements with actual Pass1/Pass2 cutouts, design the general resolver from observed data, preserve backward compatibility, add diagnostics/tests, and render only after semantic mapping is proven.
 
