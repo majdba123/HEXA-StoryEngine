@@ -178,21 +178,11 @@ class StoryEnginePipeline:
         self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
         composition = self.composition.plan(story, assets, choreography, directions)
         text_composition = self.text_composition.plan(story, composition, text.cues, assets)
-        placed_text_count = sum(len(row.items) for row in text_composition)
-        suppressed_text_count = max(0, len(text.cues) - placed_text_count)
         self._progress(
             progress,
             Stage.composition,
             0.58,
-            (
-                "Composition locked to Final Package geometry; "
-                f"placed {placed_text_count} text cues in negative space"
-                + (
-                    f"; safely suppressed {suppressed_text_count}"
-                    if suppressed_text_count
-                    else ""
-                )
-            ),
+            f"Composition locked to Final Package geometry; placed {len(text.cues)} text cues in negative space",
         )
 
         self._check_cancel(cancelled)
