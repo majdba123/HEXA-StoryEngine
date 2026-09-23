@@ -249,9 +249,12 @@ class SemanticActivationPlanner:
             "assets": [],
         }
         if isinstance(self.scorer, HybridSemanticTextScorer):
-            try:
-                self.scorer.ensure_available()
-            finally:
+            if not package.semantic_bindings:
+                try:
+                    self.scorer.ensure_available()
+                finally:
+                    self._runtime_diagnostics()
+            else:
                 self._runtime_diagnostics()
         scene_by_id = {scene.id: scene for scene in package.scenes}
         assets_by_scene: dict[str, list[VisualAsset]] = {}
@@ -316,6 +319,7 @@ class SemanticActivationPlanner:
         entities = self._ordered_entities(beat)
         entity = next((e for e in entities if e.unit_id == row.semantic_unit_id), None)
         source = (
+            "final_package_binding" if row.source == "final_package_semantic_binding" else
             "inherited" if row.policy == "GROUP" else
             "explicit" if row.policy == "EXPLICIT" else
             "E5" if row.source == "multilingual_semantic_match" else
@@ -380,12 +384,21 @@ class SemanticActivationPlanner:
             and (asset.role or "").casefold() not in {"background", "decorative"}
         )
         asset_by_id = {asset.id: asset for asset in assets}
-        activations: list[AssetActivation] = []
+        activations = self._uniform_scene_binding_activations(
+            package=package,
+            transcript=transcript,
+            scene=scene,
+            assets=assets,
+            beat=beat,
+        )
+        used_assets: set[str] = {row.asset_id for row in activations}
         options: list[tuple[StoryEntity, VisualAsset, list[AssetActivation]]] = []
 
         for entity in entities:
             asset = asset_by_id.get(semantic_map.get(entity.unit_id, ""))
             if asset is None:
+                continue
+            if asset.id in used_assets:
                 continue
             if asset.parent_asset_id and not asset.can_animate_independently:
                 continue
@@ -415,7 +428,6 @@ class SemanticActivationPlanner:
             item[3], item[2].id,
         ))
         used_units: set[str] = set()
-        used_assets: set[str] = set()
         for row, entity, asset, _order in edges:
             if entity.unit_id in used_units or asset.id in used_assets:
                 continue
@@ -486,6 +498,141 @@ class SemanticActivationPlanner:
                 row.asset_id,
             ),
         )
+
+    def _uniform_scene_binding_activations(
+        self,
+        *,
+        package: PackageModel,
+        transcript: Transcript,
+        scene: SceneSource,
+        assets: list[VisualAsset],
+        beat: StoryBeat,
+    ) -> list[AssetActivation]:
+        phrase = self._uniform_scene_binding_phrase(package, scene.id)
+        if phrase is None:
+            return []
+        span = self._binding_phrase_span(package.script, scene, phrase)
+        if span is None:
+            return []
+        char_start, char_end = span
+        words = [
+            word for word in transcript.words
+            if word.char_start is not None
+            and word.char_end is not None
+            and word.char_end > char_start
+            and word.char_start < char_end
+        ]
+        if not words:
+            return []
+
+        spoken_start = words[0].start
+        spoken_end = words[-1].end
+        audio_start = beat.audio_start if beat.audio_start is not None else beat.start
+        audio_end = beat.audio_end if beat.audio_end is not None else beat.end
+        tolerance = 0.025
+        if (
+            spoken_start < audio_start - tolerance
+            or spoken_end > audio_end + tolerance
+            or spoken_end <= spoken_start
+        ):
+            return []
+
+        semantic_unit_id = f"semantic_bindings:{scene.id}"
+        output: list[AssetActivation] = []
+        for asset in sorted(assets, key=lambda row: row.id):
+            if (
+                not asset.can_animate_independently
+                or (asset.role or "").casefold() in {"background", "decorative"}
+            ):
+                continue
+            self._decisions[(beat.id, asset.id)] = {
+                "semantic_text": phrase,
+                "reason": "accepted_final_package_semantic_binding",
+                "score": 1.0,
+                "runner_up_score": None,
+                "margin": None,
+                "phrase_index": None,
+                "candidate_phrase": phrase,
+            }
+            output.append(AssetActivation(
+                asset_id=asset.id,
+                semantic_unit_id=semantic_unit_id,
+                trigger_text=phrase,
+                trigger_char_start=char_start,
+                trigger_char_end=char_end,
+                spoken_start=spoken_start,
+                spoken_end=spoken_end,
+                confidence=1.0,
+                source="final_package_semantic_binding",
+                policy="EXPLICIT",
+                evidence=[
+                    "semantic_bindings_scene_uniform_phrase",
+                    "exact_final_package_script_text",
+                ],
+            ))
+        return output
+
+    @staticmethod
+    def _uniform_scene_binding_phrase(package: PackageModel, scene_id: str) -> str | None:
+        scenes = package.semantic_bindings.get("scenes")
+        if not isinstance(scenes, list):
+            return None
+        row = next(
+            (
+                item for item in scenes
+                if isinstance(item, dict) and item.get("scene_id") == scene_id
+            ),
+            None,
+        )
+        if row is None:
+            return None
+        assets = row.get("assets")
+        if not isinstance(assets, list) or not assets:
+            return None
+        phrases = [
+            str(asset.get("script_text") or "").strip()
+            for asset in assets
+            if isinstance(asset, dict)
+        ]
+        if len(phrases) != len(assets) or any(not phrase for phrase in phrases):
+            return None
+        normalized = {
+            HybridSemanticTextScorer._normalize_text(phrase)
+            for phrase in phrases
+        }
+        return phrases[0] if len(normalized) == 1 else None
+
+    @staticmethod
+    def _binding_phrase_span(
+        script: str | None,
+        scene: SceneSource,
+        phrase: str,
+    ) -> tuple[int, int] | None:
+        if not script or scene.script_char_start is None or scene.script_char_end is None:
+            return None
+        scene_start = max(0, scene.script_char_start)
+        scene_end = min(len(script), scene.script_char_end + 1)
+        if scene_end <= scene_start:
+            return None
+        haystack = script[scene_start:scene_end]
+
+        stripped = haystack.strip()
+        if stripped == phrase.strip():
+            local_start = haystack.find(stripped)
+            return scene_start + local_start, scene_start + local_start + len(stripped)
+
+        matches: list[int] = []
+        cursor = 0
+        while True:
+            found = haystack.find(phrase, cursor)
+            if found < 0:
+                break
+            matches.append(found)
+            cursor = found + max(1, len(phrase))
+        if len(matches) != 1:
+            return None
+        absolute_start = scene_start + matches[0]
+        return absolute_start, absolute_start + len(phrase)
 
     @staticmethod
     def _repair_early_completion(activations, options, beat: StoryBeat) -> None:
