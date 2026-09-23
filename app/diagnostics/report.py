@@ -18,6 +18,7 @@ from app import __version__
 from app.config import Settings
 from app.models import Stage
 from app.shared.errors import HexaError
+from app.shared.process import run_hidden
 
 
 class BuildReportSession:
@@ -270,7 +271,7 @@ class BuildReportSession:
     @staticmethod
     def _run_text(command: list[str], cwd: Path | None = None) -> str:
         try:
-            result = subprocess.run(
+            result = run_hidden(
                 command,
                 cwd=str(cwd) if cwd else None,
                 check=False,
