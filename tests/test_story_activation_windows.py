@@ -380,3 +380,265 @@ def test_semantic_binding_visual_timeline_does_not_handoff_before_previous_phras
 
     assert result[1].start >= 2.0
     assert result[0].end == result[1].start
+
+
+
+def test_asset_level_semantic_group_sequences_real_cutouts_without_model(tmp_path: Path) -> None:
+    script = "alpha beta gamma"
+    scene = SceneSource(
+        id="s",
+        image_path=tmp_path / "s.png",
+        order=0,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+        units=[
+            {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
+            {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
+            {"unit_id": "intent-c", "type": "VISUAL_ASSET_INTENT", "role": "RESULT"},
+        ],
+    )
+    package = PackageModel(
+        root=tmp_path,
+        package_id="asset-level",
+        scenes=[scene],
+        script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": "s",
+                "semantic_groups": [{
+                    "semantic_group_id": "g",
+                    "script_text": script,
+                    "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                    "asset_ids": ["intent-a", "intent-b", "intent-c"],
+                }],
+                "assets": [
+                    {"asset_id": "intent-a", "script_text": script,
+                     "binding_type": "EXPLICIT", "semantic_group_id": "g",
+                     "sequence_order": 1, "confidence": 1.0},
+                    {"asset_id": "intent-b", "script_text": script,
+                     "binding_type": "SEMANTIC", "semantic_group_id": "g",
+                     "sequence_order": 2, "confidence": 0.95},
+                    {"asset_id": "intent-c", "script_text": script,
+                     "binding_type": "SEMANTIC", "semantic_group_id": "g",
+                     "sequence_order": 3, "confidence": 0.95},
+                ],
+            }],
+        },
+    )
+    transcript = Transcript(
+        language="en",
+        duration=3.0,
+        segments=[],
+        words=[
+            TranscriptWord(text="alpha", start=1.0, end=1.25, char_start=0, char_end=5),
+            TranscriptWord(text="beta", start=1.35, end=1.60, char_start=6, char_end=10),
+            TranscriptWord(text="gamma", start=1.70, end=2.10, char_start=11, char_end=16),
+        ],
+    )
+    assets = [
+        VisualAsset(
+            id=f"cutout-{index}", scene_id="s", role="object",
+            image_path=tmp_path / f"cutout-{index}.png", extraction_method="test",
+            source_area_ratio=0.30 - index * 0.05,
+        )
+        for index in range(3)
+    ]
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.8, end=2.3,
+        audio_start=1.0, audio_end=2.1, narration=script,
+        action="INTRODUCE", primary_asset_ids=["cutout-0"],
+    )
+
+    class FailScorer:
+        def score(self, query, candidates):
+            raise AssertionError("asset-level bindings must bypass semantic model scoring")
+
+    result = SemanticActivationPlanner(scorer=FailScorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    rows = [StoryAssetActivation.from_legacy(row) for row in result.asset_activations]
+    anchored = [row for row in rows if row.activation_policy == "OWN_WINDOW"]
+
+    assert [row.sequence_order for row in anchored] == [1, 2, 3]
+    assert [row.semantic_unit_id for row in anchored] == ["intent-a", "intent-b", "intent-c"]
+    assert anchored[0].reveal_start < anchored[1].reveal_start < anchored[2].reveal_start
+    assert anchored[-1].settle_at == pytest.approx(2.10)
+    assert all("semantic_group_sequential_window" in row.evidence for row in anchored)
+
+
+def test_same_sequence_order_is_intentionally_simultaneous_visual_unit() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.0, audio_end=2.0, narration="phrase", action="INTRODUCE",
+    )
+    rows = [
+        AssetActivation(
+            asset_id=asset_id, spoken_start=0.2, spoken_end=1.8,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=order,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        )
+        for asset_id, order in (("a", 1), ("b", 1), ("c", 2))
+    ]
+
+    scheduled = schedule_windows(rows, beat, 2.0, set())
+    by_id = {row.asset_id: row for row in scheduled}
+
+    assert by_id["a"].reveal_start == pytest.approx(by_id["b"].reveal_start)
+    assert by_id["a"].settle_at == pytest.approx(by_id["b"].settle_at)
+    assert by_id["c"].reveal_start > by_id["a"].reveal_start
+    assert by_id["c"].settle_at == pytest.approx(1.8)
+
+
+def test_dense_short_semantic_group_keeps_distinct_ordered_starts() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=0.8,
+        audio_start=0.0, audio_end=0.8, narration="fast", action="INTRODUCE",
+    )
+    rows = [
+        AssetActivation(
+            asset_id=f"a{index}", spoken_start=0.1, spoken_end=0.7,
+            policy="SEMANTIC", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=index + 1,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        )
+        for index in range(20)
+    ]
+
+    scheduled = schedule_windows(rows, beat, 0.8, set())
+    ordered = sorted(scheduled, key=lambda row: row.sequence_order or 0)
+    starts = [row.reveal_start for row in ordered]
+
+    assert all(a < b for a, b in zip(starts, starts[1:]))
+    assert all((row.settle_at or 0) > (row.reveal_start or 0) for row in ordered)
+    assert ordered[-1].settle_at == pytest.approx(0.7)
+
+
+def test_single_unambiguous_group_sequences_unmapped_real_cutout_as_support(tmp_path: Path) -> None:
+    script = "alpha beta"
+    scene = SceneSource(
+        id="s", image_path=tmp_path / "s.png", order=0,
+        script_char_start=0, script_char_end=len(script) - 1,
+        units=[
+            {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
+            {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
+        ],
+    )
+    package = PackageModel(
+        root=tmp_path, package_id="asset-level", scenes=[scene], script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": "s",
+                "semantic_groups": [{
+                    "semantic_group_id": "g", "script_text": script,
+                    "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                    "asset_ids": ["intent-a", "intent-b"],
+                }],
+                "assets": [
+                    {"asset_id": "intent-a", "script_text": script,
+                     "binding_type": "EXPLICIT", "semantic_group_id": "g",
+                     "sequence_order": 1, "confidence": 1.0},
+                    {"asset_id": "intent-b", "script_text": script,
+                     "binding_type": "SEMANTIC", "semantic_group_id": "g",
+                     "sequence_order": 2, "confidence": 0.95},
+                ],
+            }],
+        },
+    )
+    transcript = Transcript(
+        language="en", duration=2.0, segments=[],
+        words=[
+            TranscriptWord(text="alpha", start=0.2, end=0.6, char_start=0, char_end=5),
+            TranscriptWord(text="beta", start=0.7, end=1.2, char_start=6, char_end=10),
+        ],
+    )
+    assets = [
+        VisualAsset(
+            id=f"cutout-{index}", scene_id="s", role="object",
+            image_path=tmp_path / f"cutout-{index}.png", extraction_method="test",
+            source_area_ratio=0.3 - index * 0.05,
+        )
+        for index in range(3)
+    ]
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=1.4,
+        audio_start=0.2, audio_end=1.2, narration=script, action="INTRODUCE",
+    )
+
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    rows = [StoryAssetActivation.from_legacy(row) for row in result.asset_activations]
+    ordered = sorted(rows, key=lambda row: row.sequence_order or 0)
+
+    assert [row.sequence_order for row in ordered] == [1, 2, 3]
+    assert ordered[-1].source == "final_package_scene_support"
+    assert ordered[-1].binding_type == "SUPPORT"
+    assert ordered[0].reveal_start < ordered[1].reveal_start < ordered[2].reveal_start
+    assert ordered[-1].settle_at == pytest.approx(1.2)
+
+
+def test_unmapped_cutout_does_not_guess_between_multiple_semantic_groups(tmp_path: Path) -> None:
+    script = "alpha beta"
+    scene = SceneSource(
+        id="s", image_path=tmp_path / "s.png", order=0,
+        script_char_start=0, script_char_end=len(script) - 1,
+        units=[
+            {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
+            {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
+        ],
+    )
+    package = PackageModel(
+        root=tmp_path, package_id="multi-group", scenes=[scene], script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": "s",
+                "semantic_groups": [
+                    {"semantic_group_id": "g1", "script_text": "alpha",
+                     "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                     "asset_ids": ["intent-a"]},
+                    {"semantic_group_id": "g2", "script_text": "beta",
+                     "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                     "asset_ids": ["intent-b"]},
+                ],
+                "assets": [
+                    {"asset_id": "intent-a", "script_text": "alpha",
+                     "binding_type": "EXPLICIT", "semantic_group_id": "g1",
+                     "sequence_order": 1, "confidence": 1.0},
+                    {"asset_id": "intent-b", "script_text": "beta",
+                     "binding_type": "EXPLICIT", "semantic_group_id": "g2",
+                     "sequence_order": 1, "confidence": 1.0},
+                ],
+            }],
+        },
+    )
+    transcript = Transcript(
+        language="en", duration=2.0, segments=[],
+        words=[
+            TranscriptWord(text="alpha", start=0.2, end=0.5, char_start=0, char_end=5),
+            TranscriptWord(text="beta", start=0.8, end=1.1, char_start=6, char_end=10),
+        ],
+    )
+    assets = [
+        VisualAsset(
+            id=f"cutout-{index}", scene_id="s", role="object",
+            image_path=tmp_path / f"cutout-{index}.png", extraction_method="test",
+            source_area_ratio=0.3 - index * 0.05,
+        )
+        for index in range(3)
+    ]
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=1.3,
+        audio_start=0.2, audio_end=1.1, narration=script, action="INTRODUCE",
+    )
+
+    result = SemanticActivationPlanner(scorer=Scorer()).enrich(
+        package, transcript, assets, [beat],
+    )[0]
+    extra = next(row for row in result.asset_activations if row.asset_id == "cutout-2")
+
+    assert extra.activation_policy == "SAFE_ABSTENTION"
+    assert extra.source == "semantic_abstention"
