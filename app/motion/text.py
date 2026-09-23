@@ -51,10 +51,14 @@ class TextMotionPlanner:
             )
             tokens = self._token_motion(cue, visible_end, action)
             entrance_end = tokens[0].end if tokens else min(
+                visible_end,
                 cue.spoken_end,
                 cue.spoken_start + self._entrance_duration(cue.semantic_type, 0),
             )
-            entrance_end = max(cue.spoken_start + 0.05, entrance_end)
+            entrance_end = min(
+                visible_end,
+                max(cue.spoken_start + 0.03, entrance_end),
+            )
             output.append(
                 TextMotionCue(
                     beat_id=cue.beat_id,
@@ -105,9 +109,12 @@ class TextMotionPlanner:
         output: list[TextMotionToken] = []
         for index, token in enumerate(source_tokens):
             duration = self._entrance_duration(cue.semantic_type, index)
-            end = max(
-                token.spoken_start + 0.05,
-                min(token.spoken_start + duration, visible_end),
+            end = min(
+                visible_end,
+                max(
+                    token.spoken_start + 0.03,
+                    min(token.spoken_start + duration, visible_end),
+                ),
             )
             output.append(
                 TextMotionToken(
