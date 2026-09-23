@@ -15,6 +15,7 @@ from app.models import (
     PackageModel,
     SceneSource,
     StoryBeat,
+    StoryEntity,
     StoryRelation,
     StorySemanticContext,
     VisualAsset,
@@ -303,7 +304,12 @@ def test_story_window_promotes_each_ordered_step_to_momentary_focus() -> None:
     assert [cue.asset_id for cue in cues] == ["a", "b", "c"]
     assert all(cue.params["semantic_focus"]["active"] for cue in cues)
     assert all(
-        cue.params["semantic_focus"]["source"] == "story_activation_window"
+        cue.params["semantic_focus"]["source"]
+        in {"ordered_semantic_step", "relation_participant"}
+        for cue in cues
+    )
+    assert all(
+        cue.params["semantic_focus"]["strength"] >= 0.62
         for cue in cues
     )
     for cue in cues:
@@ -371,4 +377,86 @@ def test_explicit_result_payoff_is_stronger_than_non_result_participants() -> No
     assert max_scale["result"] > max_scale["object"]
     assert max_scale["result"] > max_scale["subject"]
     assert next(cue for cue in cues if cue.asset_id == "result").params["semantic_focus"]["role"] == "RESULT"
+
+def test_focus_arbitration_uses_final_package_roles_instead_of_equal_focus() -> None:
+    activations = [
+        _activation("actor", 1),
+        _activation("action", 2),
+        _activation("support", 3).model_copy(update={"binding_type": "SUPPORT"}),
+        _activation("result", 4, focus="RESULT"),
+    ]
+    beat = _beat(activations=activations, result_ids=["result"])
+    beat.semantic_context.entities = [
+        StoryEntity(unit_id="actor", role="CHARACTER"),
+        StoryEntity(unit_id="action", role="ACTION"),
+        StoryEntity(unit_id="support", role="OBJECT"),
+        StoryEntity(unit_id="result", role="RESULT"),
+    ]
+    beat.asset_activations = schedule_windows(
+        activations,
+        beat,
+        beat.end,
+        set(),
+    )
+    assets = [_asset(row.asset_id) for row in activations]
+    choreography = ChoreographyDirector().plan(
+        _package([row.asset_id for row in activations]),
+        [beat],
+        assets,
+    )
+    composition = [
+        CompositionBeat(
+            beat_id=beat.id,
+            items=[
+                LayoutItem(
+                    asset_id="actor", x=0.15, y=0.5, width=0.16, height=0.20
+                ),
+                LayoutItem(
+                    asset_id="action", x=0.38, y=0.5, width=0.16, height=0.20
+                ),
+                LayoutItem(
+                    asset_id="support", x=0.62, y=0.5, width=0.16, height=0.20
+                ),
+                LayoutItem(
+                    asset_id="result", x=0.85, y=0.5, width=0.16, height=0.20
+                ),
+            ],
+        )
+    ]
+
+    cues = MotionPlanner().plan(
+        [beat],
+        composition,
+        choreography,
+        assets=assets,
+    )
+    by_id = {cue.asset_id: cue for cue in cues}
+
+    assert by_id["actor"].params["semantic_focus"]["active"] is False
+    assert by_id["actor"].params["semantic_focus"]["strength"] == pytest.approx(
+        0.48
+    )
+    assert by_id["action"].params["semantic_focus"]["active"] is True
+    assert (
+        0.68
+        <= by_id["action"].params["semantic_focus"]["strength"]
+        < 1.0
+    )
+    assert by_id["support"].params["semantic_focus"]["active"] is False
+    assert by_id["support"].params["semantic_focus"]["strength"] <= 0.35
+    assert by_id["result"].params["semantic_focus"]["active"] is True
+    assert by_id["result"].params["semantic_focus"]["role"] == "RESULT"
+    assert by_id["result"].params["semantic_focus"]["strength"] == pytest.approx(
+        1.0
+    )
+
+    result_scale = max(
+        frame["scale"]
+        for frame in by_id["result"].params["program"]["keyframes"]
+    )
+    support_scale = max(
+        frame["scale"]
+        for frame in by_id["support"].params["program"]["keyframes"]
+    )
+    assert result_scale > support_scale
 
