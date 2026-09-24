@@ -371,3 +371,23 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
         EventFlowStage.PAYOFF,
         EventFlowStage.RELEASE,
     )
+    assert [step.stage for step in flows[0].steps] == [
+        EventFlowStage.ESTABLISH,
+        EventFlowStage.ADD,
+        EventFlowStage.INTERACT,
+        EventFlowStage.REACT,
+        EventFlowStage.RELEASE,
+    ]
+    assert flows[0].steps[0].focus_asset_id == "leader"
+    assert flows[0].steps[1].focus_asset_id == "participant"
+    assert flows[0].steps[2].source_asset_id == "leader"
+    assert flows[0].steps[2].target_asset_id == "participant"
+    assert flows[0].steps[2].relationship == "CAUSES"
+    assert flows[0].steps[3].focus_asset_id == "participant"
+    assert flows[0].handoff_to_event_id == "E2"
+    assert flows[0].handoff_to_asset_id == "result"
+    assert flows[0].steps[-1].focus_asset_id == "result"
+    assert "context" not in flows[0].focus_path_asset_ids
+    assert flows[1].steps[1].stage == EventFlowStage.PAYOFF
+    assert flows[1].steps[1].focus_asset_id == "result"
+    assert flows[1].handoff_to_event_id is None

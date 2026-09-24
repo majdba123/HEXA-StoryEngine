@@ -129,6 +129,26 @@ class InteractionIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class EventFlowStep:
+    """One explicit semantic beat inside a Final Package event visual sentence.
+
+    Choreography owns WHO participates and WHAT semantic phase occurs. Motion still owns
+    trajectories, amplitudes and final rendering. Context assets intentionally never
+    become step focus unless the Final Package authored them in another semantic role.
+    """
+
+    stage: EventFlowStage
+    focus_asset_id: str | None = None
+    participant_asset_ids: tuple[str, ...] = ()
+    source_asset_id: str | None = None
+    target_asset_id: str | None = None
+    result_asset_id: str | None = None
+    relationship: str | None = None
+    semantic_action: str | None = None
+    authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticEventFlow:
     """One Final Package semantic event compiled into a visual mini-story contract."""
 
@@ -142,6 +162,9 @@ class SemanticEventFlow:
     text_anchor_asset_ids: tuple[str, ...] = ()
     interactions: tuple[InteractionIntent, ...] = ()
     stages: tuple[EventFlowStage, ...] = ()
+    steps: tuple[EventFlowStep, ...] = ()
+    handoff_to_event_id: str | None = None
+    handoff_to_asset_id: str | None = None
     confidence: float = 0.0
     authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
     evidence: tuple[str, ...] = ()
@@ -159,6 +182,12 @@ class SemanticEventFlow:
     @property
     def primary_leader_asset_id(self) -> str | None:
         return self.leader_asset_ids[0] if self.leader_asset_ids else None
+
+    @property
+    def focus_path_asset_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(
+            step.focus_asset_id for step in self.steps if step.focus_asset_id
+        ))
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +240,15 @@ class ChoreographyDirective:
     def has_meaningful_state_change(self) -> bool:
         return any(row.meaningful and row.from_state != row.to_state for row in self.state_transitions)
 
+    @property
+    def event_focus_path_asset_ids(self) -> tuple[str, ...]:
+        """Ordered authored focus handoff path across all semantic events in this beat."""
+        return tuple(dict.fromkeys(
+            asset_id
+            for flow in self.event_flows
+            for asset_id in flow.focus_path_asset_ids
+        ))
+
 
 @dataclass(frozen=True, slots=True)
 class ChoreographySequence:
@@ -256,11 +294,33 @@ class ChoreographyPlan:
             if explicit_orders != sorted(explicit_orders):
                 raise ValueError("choreography event flows must preserve authored event order")
             order_by_id = {flow.event_id: flow.order for flow in directive.event_flows}
+            flow_by_id = {flow.event_id: flow for flow in directive.event_flows}
             for flow in directive.event_flows:
                 if flow.stages and flow.stages[-1] != EventFlowStage.RELEASE:
                     raise ValueError("semantic event flow must release after its final phase")
+                if flow.steps and flow.steps[-1].stage != EventFlowStage.RELEASE:
+                    raise ValueError("semantic event flow steps must end in RELEASE")
                 if flow.result_asset_ids and EventFlowStage.PAYOFF not in flow.stages:
                     raise ValueError("semantic event result must compile a payoff phase")
+                if flow.result_asset_ids and not any(
+                    step.stage == EventFlowStage.PAYOFF for step in flow.steps
+                ):
+                    raise ValueError("semantic event result must own an explicit payoff step")
+                if flow.handoff_to_event_id is not None:
+                    target_flow = flow_by_id.get(flow.handoff_to_event_id)
+                    if target_flow is None:
+                        raise ValueError("semantic event handoff must target an event in the beat")
+                    if (
+                        flow.order is not None
+                        and target_flow.order is not None
+                        and target_flow.order <= flow.order
+                    ):
+                        raise ValueError("semantic event handoff must move forward")
+                    if (
+                        flow.handoff_to_asset_id is not None
+                        and flow.handoff_to_asset_id not in target_flow.asset_ids
+                    ):
+                        raise ValueError("semantic event handoff asset must belong to target event")
                 for dependency in flow.dependency_ids:
                     dependency_order = order_by_id.get(dependency)
                     if (

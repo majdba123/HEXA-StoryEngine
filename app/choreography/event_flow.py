@@ -7,6 +7,7 @@ from app.models import AssetActivation, StoryBeat
 
 from .models import (
     EventFlowStage,
+    EventFlowStep,
     InteractionIntent,
     SemanticEventFlow,
     VisualStateTransition,
@@ -61,30 +62,65 @@ class SemanticEventFlowPlanner:
         )
         transitions_by_asset = {row.asset_id: row for row in transitions if row.meaningful}
 
-        flows: list[SemanticEventFlow] = []
+        metadata: list[dict[str, object]] = []
         for event_id, rows in ordered_groups:
-            event_interactions = interactions_by_event.get(event_id, ())
-            leader_ids = self._assets_for_role(rows, "LEADER")
-            participant_ids = self._assets_for_role(rows, "PARTICIPANT")
-            context_ids = self._assets_for_role(rows, "CONTEXT")
-            result_ids = self._assets_for_role(rows, "RESULT")
-            text_anchor_ids = self._assets_for_role(rows, "TEXT_ANCHOR")
-            dependency_ids = self._unique(
-                dependency
-                for row in rows
-                for dependency in row.semantic_event_dependency_ids
-                if dependency and dependency != event_id
-            )
+            metadata.append({
+                "event_id": event_id,
+                "rows": rows,
+                "interactions": interactions_by_event.get(event_id, ()),
+                "leaders": self._assets_for_role(rows, "LEADER"),
+                "participants": self._assets_for_role(rows, "PARTICIPANT"),
+                "contexts": self._assets_for_role(rows, "CONTEXT"),
+                "results": self._assets_for_role(rows, "RESULT"),
+                "text_anchors": self._assets_for_role(rows, "TEXT_ANCHOR"),
+                "dependency_ids": self._unique(
+                    dependency
+                    for row in rows
+                    for dependency in row.semantic_event_dependency_ids
+                    if dependency and dependency != event_id
+                ),
+            })
+
+        flows: list[SemanticEventFlow] = []
+        for index, item in enumerate(metadata):
+            event_id = str(item["event_id"])
+            rows = item["rows"]
+            assert isinstance(rows, list)
+            event_interactions = item["interactions"]
+            assert isinstance(event_interactions, tuple)
+            leader_ids = item["leaders"]
+            participant_ids = item["participants"]
+            context_ids = item["contexts"]
+            result_ids = item["results"]
+            text_anchor_ids = item["text_anchors"]
+            dependency_ids = item["dependency_ids"]
+            assert isinstance(leader_ids, tuple)
+            assert isinstance(participant_ids, tuple)
+            assert isinstance(context_ids, tuple)
+            assert isinstance(result_ids, tuple)
+            assert isinstance(text_anchor_ids, tuple)
+            assert isinstance(dependency_ids, tuple)
+
+            next_item = metadata[index + 1] if index + 1 < len(metadata) else None
+            handoff_to_event_id: str | None = None
+            handoff_to_asset_id: str | None = None
+            if next_item is not None:
+                handoff_to_event_id = str(next_item["event_id"])
+                handoff_to_asset_id = self._handoff_asset(next_item)
+
             flow_asset_ids = set(event_assets[event_id])
-            stages = self._stages(
+            has_meaningful_reaction = any(
+                asset_id in transitions_by_asset for asset_id in flow_asset_ids
+            )
+            steps = self._steps(
                 leaders=leader_ids,
                 participants=participant_ids,
                 results=result_ids,
                 interactions=event_interactions,
-                has_meaningful_reaction=any(
-                    asset_id in transitions_by_asset for asset_id in flow_asset_ids
-                ),
+                has_meaningful_reaction=has_meaningful_reaction,
+                handoff_to_asset_id=handoff_to_asset_id,
             )
+            stages = tuple(dict.fromkeys(step.stage for step in steps))
             flows.append(
                 SemanticEventFlow(
                     event_id=event_id,
@@ -97,6 +133,9 @@ class SemanticEventFlowPlanner:
                     text_anchor_asset_ids=text_anchor_ids,
                     interactions=event_interactions,
                     stages=stages,
+                    steps=steps,
+                    handoff_to_event_id=handoff_to_event_id,
+                    handoff_to_asset_id=handoff_to_asset_id,
                     confidence=max((row.confidence for row in rows), default=0.0),
                     authority="FINAL_PACKAGE_SEMANTIC_EVENT",
                     evidence=self._evidence(rows, event_interactions),
@@ -167,7 +206,7 @@ class SemanticEventFlowPlanner:
         return {event_id: tuple(rows) for event_id, rows in assigned.items()}
 
     @classmethod
-    def _stages(
+    def _steps(
         cls,
         *,
         leaders: tuple[str, ...],
@@ -175,25 +214,93 @@ class SemanticEventFlowPlanner:
         results: tuple[str, ...],
         interactions: tuple[InteractionIntent, ...],
         has_meaningful_reaction: bool,
-    ) -> tuple[EventFlowStage, ...]:
-        stages: list[EventFlowStage] = []
+        handoff_to_asset_id: str | None,
+    ) -> tuple[EventFlowStep, ...]:
+        steps: list[EventFlowStep] = []
         if leaders:
-            stages.append(EventFlowStage.ESTABLISH)
+            steps.append(EventFlowStep(
+                stage=EventFlowStage.ESTABLISH,
+                focus_asset_id=leaders[0],
+                participant_asset_ids=leaders,
+            ))
         if participants:
-            stages.append(EventFlowStage.ADD)
-        authored_executable = any(row.executable for row in interactions)
-        if authored_executable:
-            stages.append(EventFlowStage.INTERACT)
-        if authored_executable and (
-            has_meaningful_reaction
-            or any(row.requires_state_change for row in interactions)
-        ):
-            stages.append(EventFlowStage.REACT)
+            steps.append(EventFlowStep(
+                stage=EventFlowStage.ADD,
+                focus_asset_id=participants[0],
+                participant_asset_ids=participants,
+            ))
+
+        for interaction in interactions:
+            if not interaction.executable:
+                continue
+            interaction_assets = cls._unique((
+                interaction.subject_asset_id,
+                interaction.object_asset_id,
+                interaction.result_asset_id,
+            ))
+            steps.append(EventFlowStep(
+                stage=EventFlowStage.INTERACT,
+                focus_asset_id=(
+                    interaction.subject_asset_id
+                    or interaction.object_asset_id
+                    or interaction.result_asset_id
+                ),
+                participant_asset_ids=interaction_assets,
+                source_asset_id=interaction.subject_asset_id,
+                target_asset_id=interaction.object_asset_id,
+                result_asset_id=interaction.result_asset_id,
+                relationship=interaction.relationship,
+                semantic_action=interaction.semantic_action,
+                authority=interaction.authority,
+            ))
+            if interaction.requires_state_change or has_meaningful_reaction:
+                steps.append(EventFlowStep(
+                    stage=EventFlowStage.REACT,
+                    focus_asset_id=(
+                        interaction.object_asset_id
+                        or interaction.result_asset_id
+                        or interaction.subject_asset_id
+                    ),
+                    participant_asset_ids=interaction_assets,
+                    source_asset_id=interaction.subject_asset_id,
+                    target_asset_id=interaction.object_asset_id,
+                    result_asset_id=interaction.result_asset_id,
+                    relationship=interaction.relationship,
+                    semantic_action=interaction.semantic_action,
+                    authority=interaction.authority,
+                ))
+
         if results:
-            stages.append(EventFlowStage.PAYOFF)
-        if stages:
-            stages.append(EventFlowStage.RELEASE)
-        return tuple(dict.fromkeys(stages))
+            steps.append(EventFlowStep(
+                stage=EventFlowStage.PAYOFF,
+                focus_asset_id=results[0],
+                participant_asset_ids=results,
+                result_asset_id=results[0],
+            ))
+
+        if steps:
+            release_focus = handoff_to_asset_id
+            if release_focus is None:
+                release_focus = (
+                    results[0] if results else
+                    leaders[0] if leaders else
+                    participants[-1] if participants else
+                    None
+                )
+            steps.append(EventFlowStep(
+                stage=EventFlowStage.RELEASE,
+                focus_asset_id=release_focus,
+                participant_asset_ids=(release_focus,) if release_focus else (),
+            ))
+        return tuple(steps)
+
+    @classmethod
+    def _handoff_asset(cls, item: dict[str, object]) -> str | None:
+        for key in ("leaders", "results", "participants", "text_anchors"):
+            values = item.get(key)
+            if isinstance(values, tuple) and values:
+                return str(values[0])
+        return None
 
     @staticmethod
     def _assets_for_role(

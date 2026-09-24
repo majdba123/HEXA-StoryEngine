@@ -195,6 +195,9 @@ def test_v12_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: 
     assert directive.event_flows[1].leader_asset_ids == ("c",)
     assert directive.event_flows[1].result_asset_ids == ("c",)
     assert directive.event_flows[1].dependency_ids == ("E1",)
+    assert directive.event_focus_path_asset_ids == ("a", "b", "c")
+    assert directive.event_flows[0].handoff_to_event_id == "E2"
+    assert directive.event_flows[0].handoff_to_asset_id == "c"
     assert "final_package_event_flow_choreography" in directive.package_evidence
     assert {stage.value for stage in directive.grammar_stages} >= {
         "ADD", "RELATE", "RESULT"
