@@ -5103,3 +5103,128 @@ execution gaps.
 Current state:
 **Final Package 1.2 event semantics are now first-class Choreography authority; reference-style
 event grammar is encoded; Choreography-only implementation proven by CI.**
+
+## MONTAGE19 CHOREOGRAPHY SECOND-PASS REFERENCE AUDIT — EXPLICIT EVENT PHASE OWNERSHIP — 2026-09-24
+
+User requested a full re-evaluation of the Choreography-only work against the accepted reference-video spirit before moving to Motion/Focus.
+
+Live branch before this audit:
+- `c0479e6c4fea866bc1d8ee0119041b47a6872d84`
+- `[montage19] Record Final Package event-flow choreography checkpoint`
+
+### Audit conclusion
+
+The first event-flow implementation correctly made Final Package 1.2 semantic events first-class Choreography authority and materially improved pattern selection.
+
+One remaining Choreography gap was identified:
+
+The plan knew that an event contained semantic phases such as
+`ESTABLISH / ADD / INTERACT / REACT / PAYOFF / RELEASE`,
+but the phase contract did not explicitly bind every phase to:
+- the visual that owns focus;
+- the participating visual ids;
+- relation source and target;
+- authored result visual;
+- the next semantic event/visual handoff.
+
+This was weaker than the stable reference-video grammar, where a visual sentence does not merely
+contain stages; the viewer's attention is explicitly handed from one semantic participant to the
+next.
+
+### Generalized correction
+
+Behavior commit:
+`0a7d68c5189c8a7e6384e2afdc145817c9e47189`
+`[choreography] Bind semantic event phases to explicit visual handoffs`
+
+New Choreography contract:
+- `EventFlowStep` represents one semantic phase inside an event.
+- Each step can carry:
+  - stage;
+  - focus asset;
+  - participating assets;
+  - source;
+  - target;
+  - result;
+  - relationship;
+  - semantic action;
+  - authority.
+- `SemanticEventFlow` now also carries:
+  - ordered `steps`;
+  - `handoff_to_event_id`;
+  - `handoff_to_asset_id`;
+  - derived `focus_path_asset_ids`.
+- `ChoreographyDirective` exposes the beat-level ordered
+  `event_focus_path_asset_ids`.
+
+Reference-style contract now reads explicitly as:
+`leader -> participant -> authored interaction -> target reaction -> result payoff -> next event leader`
+
+Context visuals are preserved as context and are not promoted into event focus unless the Final
+Package explicitly gives them another semantic role.
+
+No pixel semantics or topic-specific rules were added.
+No inferred relationship is promoted above an authored package relationship.
+Motion trajectory/amplitude implementation remains unchanged in this phase.
+
+### Cross-event handoff
+
+For ordered events inside one Story beat, Choreography now names the next event and the exact visual
+that should receive the semantic handoff.
+
+This is visual progression authority, not invented causality:
+- authored relations still own causal meaning;
+- event order owns progression;
+- handoff only records where the visual sentence continues.
+
+### Validation
+
+`ChoreographyPlan.validate()` additionally proves:
+- event steps end in RELEASE;
+- RESULT flows own an explicit PAYOFF step;
+- event handoffs point to an event in the same beat;
+- handoffs move forward when event order is explicit;
+- handoff visual belongs to the target event.
+
+### Regression proof
+
+The Final Package 1.2 regression now proves the focus path:
+`a -> b -> c`
+
+and proves:
+- E1 establishes leader A;
+- participant B owns ADD;
+- authored A -> B relation owns INTERACT;
+- B owns reaction focus;
+- E1 RELEASE explicitly hands off to E2 visual C;
+- E2 owns C as RESULT/PAYOFF;
+- CONTEXT is not silently promoted into the focus path.
+
+### Verification
+
+Local source-artifact suite excluding unavailable frozen V7 checkpoint files:
+- PASS
+
+GitHub Actions exact behavior commit:
+- Run: `36053742960`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: **All checks passed**
+- Pytest: **304 passed, 12 warnings in 7.86s**
+
+### Current architectural judgment
+
+For the Choreography layer itself, the reference-style semantic contract is now complete enough for
+the next production acceptance gate:
+
+`ESTABLISH -> ADD -> INTERACT -> REACT -> PAYOFF -> RELEASE/HANDOFF`
+
+with explicit semantic visual ownership at each stage.
+
+Do NOT modify Motion/Focus before a fresh production render is reviewed. The remaining unknown is no
+longer whether Choreography can describe the reference-style event; it is whether the existing
+Motion consumer expresses this richer plan strongly enough on screen.
+
+State:
+**Choreography semantic planning complete + second-pass reference audit closed + CI proven;
+perceptual acceptance requires the next real render.**
