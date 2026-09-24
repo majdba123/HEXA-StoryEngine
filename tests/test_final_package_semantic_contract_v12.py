@@ -188,6 +188,17 @@ def test_v12_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: 
     assert directive.interaction.subject_asset_id == "a"
     assert directive.interaction.object_asset_id == "b"
     assert directive.interaction.result_asset_id == "c"
+    assert [flow.event_id for flow in directive.event_flows] == ["E1", "E2"]
+    assert directive.event_flows[0].leader_asset_ids == ("a",)
+    assert directive.event_flows[0].participant_asset_ids == ("b",)
+    assert directive.event_flows[0].interactions == (directive.interaction,)
+    assert directive.event_flows[1].leader_asset_ids == ("c",)
+    assert directive.event_flows[1].result_asset_ids == ("c",)
+    assert directive.event_flows[1].dependency_ids == ("E1",)
+    assert "final_package_event_flow_choreography" in directive.package_evidence
+    assert {stage.value for stage in directive.grammar_stages} >= {
+        "ADD", "RELATE", "RESULT"
+    }
 
     text = TextPlanner().plan(
         transcript=_transcript(), story=story, package=package, choreography=choreography

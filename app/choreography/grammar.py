@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from app.models import StoryBeat
 
-from .models import InteractionIntent, SequencePhase, VisualGrammarStage, VisualStateTransition
+from .models import (
+    EventFlowStage,
+    InteractionIntent,
+    SemanticEventFlow,
+    SequencePhase,
+    VisualGrammarStage,
+    VisualStateTransition,
+)
 
 
 class ReferenceGrammarPlanner:
@@ -22,6 +29,7 @@ class ReferenceGrammarPlanner:
         phase: SequencePhase,
         interaction: InteractionIntent | None,
         transitions: tuple[VisualStateTransition, ...],
+        event_flows: tuple[SemanticEventFlow, ...] = (),
     ) -> tuple[VisualGrammarStage, ...]:
         stages: list[VisualGrammarStage] = []
         if index == 0:
@@ -42,6 +50,17 @@ class ReferenceGrammarPlanner:
             and interaction.requires_state_change
         ):
             stages.append(VisualGrammarStage.RELATE)
+
+        # Final Package semantic events can contain several progressive visual phases
+        # inside one Story beat. Preserve those authored phases in the grammar rather
+        # than reducing the whole beat to one generic READ/ADD action.
+        flow_stages = {stage for flow in event_flows for stage in flow.stages}
+        if len(event_flows) >= 2 or EventFlowStage.ADD in flow_stages:
+            stages.append(VisualGrammarStage.ADD)
+        if flow_stages & {EventFlowStage.INTERACT, EventFlowStage.REACT}:
+            stages.append(VisualGrammarStage.RELATE)
+        if EventFlowStage.PAYOFF in flow_stages:
+            stages.append(VisualGrammarStage.RESULT)
 
         role = beat.semantic_context.story_role.upper() if beat.semantic_context else "CONTEXT"
         if phase == SequencePhase.CONSEQUENCE or role in {"CONSEQUENCE", "RESOLUTION"}:

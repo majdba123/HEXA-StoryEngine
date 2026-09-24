@@ -246,3 +246,128 @@ def test_two_beat_handoff_counts_as_progressive_visual_addition() -> None:
     assert plan.directives[1].phase == SequencePhase.HANDOFF
     stages = {stage.value for stage in plan.sequences[0].grammar_stages}
     assert {"ENTER", "READ", "ADD", "RELEASE"} <= stages
+
+
+def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story() -> None:
+    from app.choreography import (
+        EventFlowStage,
+        InteractionIntent,
+        SemanticEventFlowPlanner,
+        VisualStateTransition,
+    )
+    from app.models import AssetActivation
+
+    beat = StoryBeat(
+        id="beat-events",
+        scene_id="scene-1",
+        start=0.0,
+        end=2.0,
+        audio_start=0.0,
+        audio_end=2.0,
+        narration="alpha beta gamma",
+        primary_asset_ids=["leader"],
+        support_asset_ids=["participant", "context", "result"],
+        action="REVEAL_DETAIL",
+        asset_activations=[
+            AssetActivation(
+                asset_id="leader",
+                semantic_event_id="E1",
+                semantic_event_order=1,
+                semantic_event_roles=["LEADER", "TEXT_ANCHOR"],
+                source="final_package_semantic_binding",
+                policy="EXPLICIT",
+                spoken_start=0.1,
+                spoken_end=0.5,
+                confidence=0.99,
+            ),
+            AssetActivation(
+                asset_id="participant",
+                semantic_event_id="E1",
+                semantic_event_order=1,
+                semantic_event_roles=["PARTICIPANT"],
+                source="final_package_semantic_binding",
+                policy="EXPLICIT",
+                spoken_start=0.2,
+                spoken_end=0.6,
+                confidence=0.96,
+            ),
+            AssetActivation(
+                asset_id="context",
+                semantic_event_id="E1",
+                semantic_event_order=1,
+                semantic_event_roles=["CONTEXT"],
+                source="final_package_semantic_binding",
+                policy="SEMANTIC",
+                spoken_start=0.1,
+                spoken_end=0.6,
+                confidence=0.90,
+            ),
+            AssetActivation(
+                asset_id="result",
+                semantic_event_id="E2",
+                semantic_event_order=2,
+                semantic_event_roles=["LEADER", "RESULT", "TEXT_ANCHOR"],
+                semantic_event_dependency_ids=["E1"],
+                source="final_package_semantic_binding",
+                policy="EXPLICIT",
+                spoken_start=0.9,
+                spoken_end=1.3,
+                confidence=0.99,
+            ),
+        ],
+    )
+    relation = InteractionIntent(
+        semantic_action="REVEAL",
+        relationship="CAUSES",
+        subject_asset_id="leader",
+        object_asset_id="participant",
+        result_asset_id="result",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.98,
+        executable=True,
+        requires_state_change=True,
+    )
+    transitions = (
+        VisualStateTransition(
+            asset_id="participant",
+            from_state="CONTEXT",
+            to_state="EVIDENCE",
+            reason="CAUSES",
+            meaningful=True,
+        ),
+        VisualStateTransition(
+            asset_id="result",
+            from_state="PENDING",
+            to_state="RESULT",
+            reason="RESULT",
+            meaningful=True,
+        ),
+    )
+
+    flows = SemanticEventFlowPlanner().compile(
+        beat=beat,
+        interactions=(relation,),
+        transitions=transitions,
+    )
+
+    assert [flow.event_id for flow in flows] == ["E1", "E2"]
+    assert flows[0].leader_asset_ids == ("leader",)
+    assert flows[0].participant_asset_ids == ("participant",)
+    assert flows[0].context_asset_ids == ("context",)
+    assert flows[0].text_anchor_asset_ids == ("leader",)
+    assert flows[0].interactions == (relation,)
+    assert flows[0].stages == (
+        EventFlowStage.ESTABLISH,
+        EventFlowStage.ADD,
+        EventFlowStage.INTERACT,
+        EventFlowStage.REACT,
+        EventFlowStage.RELEASE,
+    )
+    assert flows[1].dependency_ids == ("E1",)
+    assert flows[1].leader_asset_ids == ("result",)
+    assert flows[1].result_asset_ids == ("result",)
+    assert flows[1].stages == (
+        EventFlowStage.ESTABLISH,
+        EventFlowStage.PAYOFF,
+        EventFlowStage.RELEASE,
+    )

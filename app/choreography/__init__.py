@@ -1,5 +1,6 @@
 from .binding import AssetBinding, SemanticAssetBinder
 from .director import ChoreographyDirector
+from .event_flow import SemanticEventFlowPlanner
 from .grammar import ReferenceGrammarPlanner
 from .interactions import InteractionCompiler
 from .models import (
@@ -8,11 +9,13 @@ from .models import (
     ChoreographyPlan,
     ChoreographySequence,
     ChoreographyPattern,
+    EventFlowStage,
     ContinuityMode,
     HookKind,
     HookMechanism,
     InteractionIntent,
     ParticipantRole,
+    SemanticEventFlow,
     SequencePhase,
     VisualGrammarStage,
     VisualStateTransition,
@@ -30,9 +33,12 @@ __all__ = [
     "ChoreographyPlan",
     "ChoreographySequence",
     "ChoreographyPattern",
+    "EventFlowStage",
     "ContinuityMode",
     "HookKind",
     "HookMechanism",
+    "SemanticEventFlow",
+    "SemanticEventFlowPlanner",
     "InteractionCompiler",
     "ReferenceGrammarPlanner",
     "InteractionIntent",

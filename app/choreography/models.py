@@ -45,6 +45,17 @@ class ParticipantRole(StrEnum):
     SUPPORT = "SUPPORT"
 
 
+class EventFlowStage(StrEnum):
+    """Reference-style semantic phases inside one Final Package event."""
+
+    ESTABLISH = "ESTABLISH"
+    ADD = "ADD"
+    INTERACT = "INTERACT"
+    REACT = "REACT"
+    PAYOFF = "PAYOFF"
+    RELEASE = "RELEASE"
+
+
 class VisualGrammarStage(StrEnum):
     ENTER = "ENTER"
     READ = "READ"
@@ -118,6 +129,39 @@ class InteractionIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticEventFlow:
+    """One Final Package semantic event compiled into a visual mini-story contract."""
+
+    event_id: str
+    order: int | None = None
+    dependency_ids: tuple[str, ...] = ()
+    leader_asset_ids: tuple[str, ...] = ()
+    participant_asset_ids: tuple[str, ...] = ()
+    context_asset_ids: tuple[str, ...] = ()
+    result_asset_ids: tuple[str, ...] = ()
+    text_anchor_asset_ids: tuple[str, ...] = ()
+    interactions: tuple[InteractionIntent, ...] = ()
+    stages: tuple[EventFlowStage, ...] = ()
+    confidence: float = 0.0
+    authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
+    evidence: tuple[str, ...] = ()
+
+    @property
+    def asset_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((
+            *self.leader_asset_ids,
+            *self.participant_asset_ids,
+            *self.context_asset_ids,
+            *self.result_asset_ids,
+            *self.text_anchor_asset_ids,
+        )))
+
+    @property
+    def primary_leader_asset_id(self) -> str | None:
+        return self.leader_asset_ids[0] if self.leader_asset_ids else None
+
+
+@dataclass(frozen=True, slots=True)
 class ChoreographyDirective:
     beat_id: str
     sequence_id: str
@@ -144,6 +188,7 @@ class ChoreographyDirective:
     package_evidence: tuple[str, ...] = ()
     grammar_stages: tuple[VisualGrammarStage, ...] = ()
     asset_requirements: tuple[AssetRequirement, ...] = ()
+    event_flows: tuple[SemanticEventFlow, ...] = ()
 
     def participant_role(self, asset_id: str) -> ParticipantRole:
         # A declared human actor keeps ACTOR semantics even when an explicit relationship
@@ -203,6 +248,28 @@ class ChoreographyPlan:
             raise ValueError("choreography directives must preserve story beat order exactly")
         if self.directives and self.directives[0].hook != HookKind.OPEN:
             raise ValueError("choreography must open with an explicit hook")
+        for directive in self.directives:
+            event_ids = [flow.event_id for flow in directive.event_flows]
+            if len(event_ids) != len(set(event_ids)):
+                raise ValueError("choreography event flows must have unique event ids per beat")
+            explicit_orders = [flow.order for flow in directive.event_flows if flow.order is not None]
+            if explicit_orders != sorted(explicit_orders):
+                raise ValueError("choreography event flows must preserve authored event order")
+            order_by_id = {flow.event_id: flow.order for flow in directive.event_flows}
+            for flow in directive.event_flows:
+                if flow.stages and flow.stages[-1] != EventFlowStage.RELEASE:
+                    raise ValueError("semantic event flow must release after its final phase")
+                if flow.result_asset_ids and EventFlowStage.PAYOFF not in flow.stages:
+                    raise ValueError("semantic event result must compile a payoff phase")
+                for dependency in flow.dependency_ids:
+                    dependency_order = order_by_id.get(dependency)
+                    if (
+                        dependency_order is not None
+                        and flow.order is not None
+                        and dependency_order >= flow.order
+                    ):
+                        raise ValueError("semantic event dependency must precede dependent event")
+
         for sequence in self.sequences:
             if not sequence.beat_ids:
                 raise ValueError("choreography sequence cannot be empty")
