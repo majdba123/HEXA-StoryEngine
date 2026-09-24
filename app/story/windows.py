@@ -329,10 +329,23 @@ def schedule_windows(
 
         duration = end - start
         phrase_end = min(end, visual_upper)
-        focus_duration = _attention_focus_duration(
-            row,
-            beat,
-            available=max(0.05, phrase_end - start),
+        attention_role = _attention_role(row, beat)
+        has_authored_attention = (
+            row.source == "final_package_semantic_binding"
+            and (
+                attention_role != "SUPPORT"
+                or bool(row.visual_focus)
+                or bool(row.visual_state)
+            )
+        )
+        focus_duration = (
+            _attention_focus_duration(
+                row,
+                beat,
+                available=max(0.05, phrase_end - start),
+            )
+            if has_authored_attention
+            else max(0.05, phrase_end - start)
         )
         settle_at = min(phrase_end, start + focus_duration)
         if settle_at <= start:
@@ -354,7 +367,7 @@ def schedule_windows(
             settle_at,
         )
         attention_evidence = row.evidence + [
-            f"attention_role={_attention_role(row, beat)}",
+            f"attention_role={attention_role}",
             f"attention_focus_ms={round((settle_at - start) * 1000)}",
             "attention_decay=settle_hold",
         ]
