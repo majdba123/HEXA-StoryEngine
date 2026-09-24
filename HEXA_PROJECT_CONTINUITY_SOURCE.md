@@ -3645,3 +3645,149 @@ Rerun the SAME precise Black-Hat Final Package + SAME narration audio after pull
 
 The run should now proceed past the prior text-layout false-positive gate while still rejecting
 any true text overlap that exists at the same rendered time.
+
+## MONTAGE17 SELF-HEALING TEXT LAYOUT RECOVERY — 2026-09-24
+
+A new diagnostic ZIP from job `e7330cf748174e9188a5816784705e69` proved that the
+temporal-placement correction alone was insufficient for production robustness.
+
+### Diagnostic facts
+
+Build:
+`d0cea202b825526e2f3dec003856273b2720806f`
+
+Failure:
+`TEXT_LAYOUT_REFERENCE_VIOLATION`
+
+The run reached Motion after:
+- 40 scenes
+- Pass1: 157 assets
+- Pass2: 179 assets
+- Story: 40 beats
+- Text: 51 cues
+- Composition: completed
+
+The final Authoring QA still reported real same-time text/visual overlap on multiple beats.
+
+Critical reliability defect:
+`recovery-events.json` contained **0 events**.
+
+This meant the pipeline could detect a recoverable text-layout failure but had no registered
+Recovery handler and therefore terminated the entire video.
+
+### Product requirement
+
+HEXA is a general production tool. Optional text layout must never make a valid visual/video job
+unrecoverable when a safe degraded result exists.
+
+The correct behavior is:
+1. repair automatically;
+2. preserve Final Package visual geometry;
+3. preserve Story/Motion semantic timing;
+4. record the recovery;
+5. only fail when an explicitly required contract remains impossible.
+
+### General self-healing policy
+
+New known issue:
+`TEXT_LAYOUT_REFERENCE_VIOLATION`
+
+Registered as a proven Recovery issue with up to 3 bounded attempts.
+
+Recovery ladder:
+
+#### Attempt 1 — final-Motion-aware recomposition
+- Re-run Text Composition using actual final Motion reveal times.
+- Text sees only visual assets that can coexist during its readability window.
+- Final Package visual Composition is untouched.
+
+#### Attempt 2 — bounded emergency typography fit
+- Same real Motion visibility.
+- Adds only two emergency scales: 0.52 and 0.50.
+- Font family, weight, fill, outline, wording and style remain unchanged.
+- This mode is used only after normal production sizes cannot produce a QA-safe placement.
+
+#### Attempt 3 — optional-cue degradation
+Only when `require_text_layer=false`:
+- parse the exact violating text cue IDs;
+- remove only those impossible text cues;
+- recompose all remaining cues;
+- re-plan Text Motion;
+- re-run Authoring QA;
+- continue the video if clean.
+
+The video therefore survives impossible optional text geometry instead of failing globally.
+
+When `require_text_layer=true`, impossible required text remains a hard failure after bounded
+repair attempts. This preserves explicit product contracts.
+
+### Recovery observability
+
+Every attempt is now recorded through `RecoveryManager.record_outcome()` with:
+- issue code;
+- attempt number;
+- remaining issue count;
+- repair level;
+- any optional text cue IDs removed by the final fallback.
+
+Future diagnostics should no longer show `recovery-events: 0` for this known issue.
+
+### Code changes
+
+- `1a5ce6c0a2b0a4b446be9a05e35668faf6ba282f`
+  `[text] Add bounded collision-repair placement mode`
+- `0684ab63710fe91852c206fa2e8660354f4888d0`
+  `[models] Permit bounded emergency text scaling`
+- `18d46590df45e252aaf8378cc1751fb0b6e54678`
+  `[text] Recompose against final Motion visibility during repair`
+- `e12d0f58de9a8dd7493c0b8a1b4d9efe1ab46677`
+  `[recovery] Add text-layout repair handler`
+- `95d25c102e9f768bb382e074e6de0eedea65762d`
+  `[recovery] Register text-layout self-healing`
+- `df6639911a9c8cf70552ee6e10b27d1c2ed668fe`
+  `[pipeline] Self-heal text layout before render`
+- `a697ec5fbdbb63cecb2c4a1d76d6febc28f27068`
+  `[tests] Cover self-healing text layout recovery`
+
+### CI proof
+
+Behavior HEAD:
+`a697ec5fbdbb63cecb2c4a1d76d6febc28f27068`
+
+Run:
+`35938530388`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **268 passed, 12 warnings in 7.64s**
+
+Regression coverage now proves:
+- the issue is registered and has a proven handler;
+- attempts are bounded to 3;
+- violation strings identify only real known cue IDs;
+- emergency scale 0.50 is model-valid;
+- prior temporal placement / Motion QA tests remain passing.
+
+### Invariants preserved
+
+- Pass1 + Pass2 only.
+- No Pass3 / Layer3.
+- Final Package remains semantic authority.
+- Visual Composition remains immutable.
+- Story timing and Motion are not changed to make room for text.
+- No collision solver moves artwork.
+- Text wording, font family, bold weight, white fill and black outline are unchanged.
+- Optional text degradation affects only impossible cues after two repair attempts.
+- PR #1 remains draft and unmerged.
+
+### Next acceptance gate
+
+Pull latest `montage` and rerun the exact same Black-Hat Final Package + narration.
+
+Expected behavior:
+- if standard text placement is safe: no recovery;
+- if final Motion creates a text conflict: Recovery events appear and text is recomposed;
+- if a cue is physically impossible to place safely: only that optional cue is omitted;
+- the video continues to Render instead of terminating with
+  `TEXT_LAYOUT_REFERENCE_VIOLATION`.
