@@ -359,6 +359,31 @@ def _v2_attention_peak_case(peak_progress: float) -> tuple[StoryBeat, MotionCue]
     return beat, cue
 
 
+
+def test_story_sync_qa_does_not_invent_peak_for_static_alpha_only_focus() -> None:
+    beat, cue = _v2_attention_peak_case(0.55)
+    params = dict(cue.params)
+    params["render_constraints"] = {
+        "geometry_lock": "authored_footprint",
+        "reveal_mode": "alpha_only",
+    }
+    params["program"] = {
+        "name": "static-alpha-only",
+        "settle_progress": 1.0,
+        "keyframes": [
+            {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+            {"progress": 0.5, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+            {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+        ],
+    }
+    cue = cue.model_copy(update={"params": params})
+
+    report = StorySyncQA().inspect(story=[beat], motion=[cue])
+
+    assert report.passed, report.violations
+    assert report.entries[0].actual_peak is None
+
+
 def test_story_sync_qa_accepts_frame_aware_semantic_focus_peak() -> None:
     beat, cue = _v2_attention_peak_case(0.55)
 
