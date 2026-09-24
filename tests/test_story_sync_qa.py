@@ -5,7 +5,7 @@ import pytest
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, StoryBeat
 from app.motion import MotionPlanner
 from app.story.sync_qa import StorySyncQA
-from app.story.windows import schedule_windows
+from app.story.windows import StoryAssetActivation, schedule_windows
 
 
 def _beat(*activations: AssetActivation) -> StoryBeat:
@@ -265,6 +265,55 @@ def test_story_sync_qa_allows_same_frame_aware_semantic_cohort_overlap() -> None
         "settle_past_next_handoff" in row or "strong_focus_overlap" in row
         for row in report.violations
     ), report.violations
+
+
+def test_close_peaks_do_not_merge_distinct_reveal_cohorts() -> None:
+    first = StoryAssetActivation(
+        asset_id="a", spoken_start=0.20, spoken_end=1.20,
+        phrase_start=0.20, phrase_end=1.20, reveal_start=0.20,
+        semantic_peak=0.50, settle_at=0.90, activation_policy="OWN_WINDOW",
+        confidence=1.0, source="final_package_semantic_binding",
+        policy="EXPLICIT", visual_focus="PRIMARY",
+    )
+    second = StoryAssetActivation(
+        asset_id="b", spoken_start=0.30, spoken_end=1.30,
+        phrase_start=0.30, phrase_end=1.30, reveal_start=0.30,
+        semantic_peak=0.55, settle_at=0.65, activation_policy="OWN_WINDOW",
+        confidence=1.0, source="final_package_semantic_binding",
+        policy="EXPLICIT", visual_focus="RESULT",
+    )
+    beat = _beat(first, second)
+
+    def cue(row: StoryAssetActivation, role: str) -> MotionCue:
+        duration = row.settle_at - row.reveal_start
+        peak_progress = (row.semantic_peak - row.reveal_start) / duration
+        return MotionCue(
+            beat_id=beat.id, asset_id=row.asset_id, kind="program_v3",
+            start=row.reveal_start, end=row.settle_at,
+            params={
+                "semantic_settle_time": row.settle_at,
+                "semantic_focus": {
+                    "active": True, "role": role,
+                    "semantic_role": role, "strength": 0.9,
+                },
+                "program": {
+                    "name": "cohort-regression", "settle_progress": 1.0,
+                    "keyframes": [
+                        {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                        {"progress": peak_progress, "dx": 0.0, "dy": 0.0, "scale": 1.08, "easing": "linear"},
+                        {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                    ],
+                },
+            },
+        )
+
+    report = StorySyncQA().inspect(
+        story=[beat],
+        motion=[cue(first, "PRIMARY"), cue(second, "RESULT")],
+    )
+
+    assert any("settle_past_next_handoff" in row for row in report.violations)
+    assert any("strong_focus_overlap" in row for row in report.violations)
 
 
 def _v2_attention_peak_case(peak_progress: float) -> tuple[StoryBeat, MotionCue]:

@@ -381,7 +381,7 @@ class StorySyncQA:
                 same_moment = (
                     abs(float(row[1].reveal_start) - float(anchor_window.reveal_start))
                     <= cohort_threshold + 1e-9
-                    or abs(float(row[1].semantic_peak) - float(anchor_window.semantic_peak))
+                    and abs(float(row[1].phrase_start) - float(anchor_window.phrase_start))
                     <= cohort_threshold + 1e-9
                 )
                 if same_moment:
