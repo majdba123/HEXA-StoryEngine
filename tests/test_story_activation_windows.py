@@ -507,8 +507,8 @@ def test_shared_trigger_sequence_stops_before_next_distinct_semantic_hit() -> No
     scheduled = {row.asset_id: row for row in schedule_windows(rows, beat, 2.0, set())}
 
     assert scheduled["a"].reveal_start < scheduled["b"].reveal_start
-    assert scheduled["a"].settle_at <= pytest.approx(0.45, abs=1e-9)
-    assert scheduled["b"].settle_at <= pytest.approx(0.45, abs=1e-9)
+    assert scheduled["a"].settle_at <= 0.45 + 1e-9
+    assert scheduled["b"].settle_at <= 0.45 + 1e-9
     assert scheduled["later"].reveal_start == pytest.approx(0.45)
 
 
