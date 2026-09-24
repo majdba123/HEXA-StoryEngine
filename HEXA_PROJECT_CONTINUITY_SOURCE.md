@@ -4111,3 +4111,134 @@ Result: SUCCESS
 - no weakening of visual sync QA;
 - no Pass3/Layer3;
 - Composition remains locked.
+
+## MONTAGE17 RELEASE RENDER SMOKE + CONVERGENT OPTIONAL TEXT RECOVERY — 2026-09-24
+
+A fresh diagnostic ZIP from Black-Hat REV9 on HEAD
+`d704d31408a07e71065201b6332ff703945ac037`
+(job `58d39e36c0e04ee3bc3f9950e4b453f8`) exposed a remaining recovery hole.
+
+### Production failure
+
+The run passed:
+- Final Package load
+- transcription/alignment
+- vision
+- Pass1: 157 assets
+- Pass2: 179 assets
+- Story: 40 beats
+- Composition: 65 initial text cues
+- Story Sync QA
+
+Text Recovery then:
+- attempt 1 -> 21 issues
+- attempt 2 -> 14 issues
+- attempt 3 dropped 14 unsafe optional cues
+
+After that reflow exposed a NEW collision:
+`beat-019:text_visual_overlap:text-028:0.051`
+
+The old attempt-3 implementation degraded optional text only once and then returned. Therefore
+AuthoringQA could still terminate the whole video even with `require_text_layer=false`.
+
+### Convergent optional-text recovery
+
+Attempt 3 is now monotonic and iterative:
+
+`detect unsafe -> drop weakest unsafe cues -> recompose -> re-plan text motion -> re-run QA -> repeat`
+
+- Up to 8 bounded degradation cycles.
+- Each cycle operates on the NEW QA result after reflow.
+- Text/text collisions still preserve the stronger semantic cue.
+- Visual Composition, Story, visual Motion and Final Package geometry are never changed.
+
+Final fail-safe:
+- when `require_text_layer=false`, if bounded degradation still cannot converge,
+  clear the remaining optional text layer only;
+- rebuild Text Composition/Text Motion;
+- re-run Authoring QA;
+- the valid visual/video job is allowed to continue.
+
+Therefore an optional text-layout conflict may no longer kill an otherwise valid video.
+
+Commit:
+- `837deaff38b2635488fb614bb306bacfe1ff179a`
+  `[recovery] Converge optional text layout before render`
+
+Regression:
+- cascading QA fixture reproduces a second collision appearing only after the first cue is removed.
+- recovery must converge to zero violations.
+
+Commit:
+- `6c8111b75b26875e35fff06b5b316955739c0cb7`
+  `[tests] Cover cascading optional text recovery`
+
+### Actual encoded MP4 release smoke
+
+A new CI integration test now performs a REAL downstream release path using FFmpeg:
+
+1. create real RGBA visual assets;
+2. build a 2-beat RenderPlan;
+3. run `FFmpegRenderer`;
+4. encode H.264 MP4;
+5. generate real PCM narration audio;
+6. run `FinalExporter.mux`;
+7. verify final video+audio streams;
+8. run `RecoveryDetector.inspect_final`;
+9. require zero final-media issues;
+10. run `RenderedVisualQA` and require visual evidence.
+
+This is an actual encoded MP4 test, not a mocked render.
+
+Commit:
+- `9cd515c42466d68ea0364190c5a055a870cfae42`
+  `[tests] Add actual MP4 release render smoke`
+
+The first smoke run correctly found an additional robustness issue:
+very short videos could fail to emit the multi-sample contact sheet because the tile filter did not
+have enough frames to flush.
+
+RenderedVisualQA now:
+- first attempts the normal multi-sample contact sheet;
+- if unavailable, falls back to one encoded frame;
+- never reports a false unsampled state solely because the video is short.
+
+Commit:
+- `1f4d792ab6bdeec16f1d0bb2c275175bbdb3064a`
+  `[qa] Fall back to single-frame evidence for short renders`
+
+### CI proof
+
+Behavior HEAD:
+`1f4d792ab6bdeec16f1d0bb2c275175bbdb3064a`
+
+Run:
+`35944415369`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **278 passed, 12 warnings in 6.91s**
+
+The passing suite now includes:
+- multi-trigger semantic-group Story Sync QA;
+- focus calibration;
+- precise keyword selection;
+- temporal text placement;
+- cascading optional-text recovery;
+- white-flash classification/recovery;
+- actual H.264 MP4 render;
+- real audio mux;
+- final A/V detector;
+- post-render visual evidence.
+
+### Release rule
+
+Do not ask the user to run a full production render after code changes unless:
+1. Compile is green;
+2. Ruff is green;
+3. full pytest suite is green;
+4. the actual MP4 release smoke is green.
+
+A fresh full Black-Hat production render is still the final visual acceptance gate because CI cannot
+run the user's WhisperX/model/runtime or the full 40-scene package/audio pair.
