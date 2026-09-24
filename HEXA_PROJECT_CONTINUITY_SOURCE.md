@@ -3791,3 +3791,238 @@ Expected behavior:
 - if a cue is physically impossible to place safely: only that optional cue is omitted;
 - the video continues to Render instead of terminating with
   `TEXT_LAYOUT_REFERENCE_VIOLATION`.
+
+## MONTAGE17 FINAL FOCUS CALIBRATION / SPEECH-FIRST ORDER / TEXT AUTHORITY / FLASH RECOVERY — 2026-09-24
+
+This batch was driven by the user's latest Black-Hat render/screenshot and the goal of closing the
+current project quality phase.
+
+### Confirmed package evidence
+
+The precise REV9 Final Package already contains enough information. No package change is required.
+
+SCENE_035:
+- CHARACTER `SCENE_035_A01_screen_hacker`
+  - precise span 1004–1018
+  - text: `شخص يكتب بسرعة`
+  - sequence_order 1
+- OBJECT `SCENE_035_A02_black_monitor`
+  - precise span 1024–1034
+  - text: `شاشة سوداء`
+  - sequence_order 2
+- ACTION `SCENE_035_A03_fast_keyboard`
+  - precise span 1008–1018
+  - text: `يكتب بسرعة`
+  - sequence_order 3
+
+Therefore narration semantics require:
+CHARACTER context -> KEYBOARD/ACTION on `يكتب بسرعة` -> MONITOR/OBJECT on `شاشة سوداء`.
+The previous engine incorrectly let sequence_order force monitor before keyboard.
+
+SCENE_030:
+- manager CHARACTER: span 828–842, `الشركة تكتشفها`
+- company OBJECT: span 828–834, `الشركة`
+- discovery magnifier RESULT: span 835–842, `تكتشفها`
+
+Desired attention:
+manager quiet context -> company concept focus -> magnifier strongest RESULT payoff.
+
+### Authority correction: precise speech timing wins
+
+Story timing now treats precise script/WhisperX spans as the authoritative WHEN.
+
+`sequence_order` is only allowed to split/stagger assets when they genuinely share the same precise
+semantic trigger. Distinct precise spans retain natural narration order even if a visual ordering hint
+has a conflicting sequence number.
+
+This is general and contains no scene/topic IDs.
+
+Commits:
+- `c06c3909b1db4a9c309ae8a92a61d284c5b78dfd`
+  `[story] Let precise speech timing outrank visual sequence hints`
+- `717d3c87e636034a93b7e37245a3824c4cf81897`
+  `[qa] Validate sequence order only inside shared trigger windows`
+- `359a404c1c337c9229d5ef9a3786725f7982dbba`
+  `[story] Scope focus calibration to authored semantic attention`
+
+### Reference-style semantic attention calibration
+
+Focus timing is now role-aware and pace-aware.
+
+Nominal authored semantic focus targets:
+- ACTION: ~180 ms
+- SUBJECT: ~220 ms
+- OBJECT: ~230 ms
+- PRIMARY: ~250 ms
+- STATE: ~300 ms
+- RESULT: ~320 ms
+- CHARACTER/CONTEXT/SUPPORT: ~160 ms establishment only
+
+These durations compress on fast narration and expand modestly on slower narration.
+
+Motion strength hierarchy adds bounded one-shot pre-settle accents:
+- ACTION >= 1.060
+- OBJECT/SUBJECT >= 1.070
+- PRIMARY >= 1.080
+- STATE >= 1.095
+- RESULT >= 1.105
+
+After semantic settle:
+- exact authored Composition is restored;
+- motion energy becomes zero;
+- no opacity dimming;
+- no wobble/recoil;
+- no post-arrival bounce;
+- previous elements visually quiet by being static, not ghosted.
+
+Motion metadata exposes:
+- `focus_duration_ms`
+- `attention_decay=static_hold`
+- `handoff_residual_strength=0.40`
+
+Commit:
+- `bfbe29f74c1663eeb5cb8521aaf2b1948d2d524d`
+  `[motion] Calibrate semantic focus handoff and result payoff`
+
+### Stronger semantic text selection
+
+Text now prefers exact asset-level `script_span` evidence from the Final Package.
+
+Authority ranking:
+1. numeric/amount evidence
+2. precise semantic asset RESULT/ACTION/OBJECT/SUBJECT/PRIMARY/STATE
+3. aggregate semantic package phrase
+4. precise CHARACTER/CONTEXT-like phrase
+5. generic fallback
+
+Semantic-package videos may use a slightly richer text budget, while legacy/no-package behavior retains
+the previous sparse baseline.
+
+Cue priority also carries semantic salience.
+
+Expected examples:
+- SCENE_035 favors `يكتب بسرعة` and `شاشة سوداء`, not the broad CHARACTER phrase.
+- SCENE_030 favors `الشركة` then `تكتشفها`, with discovery as the stronger cue.
+
+Text recovery also changed:
+- text/text collision no longer drops both cues;
+- it preserves the stronger semantic cue and drops only the weaker one if bounded placement repair
+  remains impossible.
+
+Commits:
+- `dbdd9e22cc7012ba5dcaa5c11ca699793e970c5b`
+  `[text] Prefer precise semantic asset phrases and stronger cue density`
+- `08bb38e8594e572b29c7ca86d5f6401eef5344e2`
+  `[text] Keep legacy sparsity and prioritize precise asset spans`
+- `53210a37a410cdd58c760667e14f05f26c05fd02`
+  `[text] Make precise semantic spans authoritative over aggregate phrases`
+- `afafcdcce2be6f4f230b93109f260a481ea9d4ce`
+  `[text] Preserve precise authority during keyword dedupe`
+- `ac73dddd9dccac9892aa1c7544fe8f12a07ed69e`
+  `[text] Carry semantic salience into cue priority`
+- `bddd3712cecede0044715f8c4dd21ea806533f30`
+  `[recovery] Preserve strongest semantic text cue on collision`
+
+### White-flash QA and recovery hardening
+
+The prior final QA used a broad >99% white detector. That could incorrectly classify valid sparse
+reference-style scenes containing one small semantic object as a flash.
+
+New two-stage detection:
+1. broad FFmpeg blackframe candidate scan;
+2. exact encoded-frame RGB inspection for actual dark/colored foreground occupancy.
+
+Uniform H.264 codec-white (often RGB ~252–254) remains blank; a small but real semantic object is
+accepted.
+
+If a TRUE internal blank remains, `VISUAL_WHITE_FLASH` is now a proven Recovery issue:
+- one bounded rerender attempt;
+- strict boundary coverage mode;
+- candidate must come from the same earliest semantic reveal cohort;
+- future RESULT assets remain forbidden;
+- within that safe cohort, prefer enough authored visual footprint to cover the boundary;
+- remux and re-run final QA.
+
+Commits:
+- `e02aa90b716d8dbfc4ba9b65d7d09214a7bda0c1`
+  `[qa] Distinguish sparse semantic frames from true white flashes`
+- `f1407d188698eb061698fb533880153e3b617e38`
+  `[render] Add strict semantic-safe boundary coverage recovery`
+- `7134a32b1b96717943795fc121b070c5b0d02b59`
+  `[recovery] Add strict white-flash rerender handler`
+- `377b651279816646263255247ae588823b0ebbe0`
+  `[recovery] Register true white-flash self-healing`
+- `74fd462f1fbb800e1a8d3d3b2563de504eaa7611`
+  `[pipeline] Recover true white flashes with strict boundary render`
+- `6dcafa8389c944de21564f44a3eb8628b584895b`
+  `[qa] Verify white-flash candidates by exact encoded frame`
+- `c1673c7d22a0b7920b1ec43bb29974b6e3329cc0`
+  `[qa] Treat uniform codec-white as blank, not foreground`
+- `1982dff8c7f7e52a45e2d6e36dbf80a04a74e562`
+  `[qa] Remove obsolete white-distance calculation`
+
+### Regression tests
+
+New tests prove:
+- distinct precise speech spans outrank conflicting sequence_order;
+- identical precise spans still respect sequence_order;
+- ACTION attention is shorter than RESULT attention;
+- hacker text prefers ACTION/OBJECT precise phrases;
+- company text prefers company concept + discovery result;
+- stronger semantic cue survives text/text fallback;
+- sparse white semantic scenes are not false-positive flashes;
+- true encoded internal blank remains a flash;
+- strict carrier prefers largest safe early visual and never future RESULT.
+
+Test commits:
+- `8b8af1fa47b5193342717d68d0ea2c242fcbcfe8`
+- `464a6027d18fe95bbc399f5ffc6c42f8a7be94ad`
+- `9114974f7126e71a20f83ffc5f40c84d4e9acfc9`
+- `680118cb96ed447a650a77701665ea63120ee903`
+
+### Final CI proof for behavior HEAD
+
+Behavior HEAD:
+`1982dff8c7f7e52a45e2d6e36dbf80a04a74e562`
+
+Run:
+`35941511136`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **275 passed, 12 warnings in 8.16s**
+
+### Invariants preserved
+
+- Pass1 + Pass2 only.
+- No Pass3 / Layer3.
+- No Final Package schema expansion.
+- Final Package remains semantic WHAT/source.
+- precise speech/WhisperX remains timing authority.
+- sequence_order remains useful only as a shared-trigger visual tie-break.
+- Composition positions remain immutable.
+- no collision solver moves artwork.
+- no future-result carrier reveal.
+- no alpha ghosting.
+- no post-settle motion.
+- text typography look remains unchanged.
+- PR #1 remains draft/unmerged.
+
+### Next and final visual acceptance gate
+
+Run the SAME precise Black-Hat REV9 package + narration on the latest `montage`.
+
+Mandatory visual checks:
+1. SCENE_035: CHARACTER context -> KEYBOARD on `يكتب بسرعة` -> MONITOR on `شاشة سوداء`.
+2. SCENE_030: manager quiet -> company focus -> magnifier strongest RESULT at `تكتشفها`.
+3. SCENE_014: old program -> update failure -> years/result; no early calendar.
+4. SCENE_026: installer -> action/path -> infected result.
+5. SCENE_027: backdoor -> return action -> gateway/result.
+6. text stays inside frame and uses stronger semantic phrases.
+7. no false white-flash rejection for sparse valid scenes.
+8. any true blank boundary self-recovers once through strict safe carrier mode.
+9. no future-element reveal, collision, drift, ghosting, wobble or recoil.
+
+Code/CI acceptance is complete. Fresh encoded visual acceptance still requires one new full product
+render on the production desktop/runtime; do not claim visual parity until that render is watched.
