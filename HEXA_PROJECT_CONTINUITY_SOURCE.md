@@ -3552,3 +3552,96 @@ Mandatory review points:
 - no collision or final-position drift.
 
 Do not modify the Final Package to compensate for these bugs.
+
+## MONTAGE17 TEMPORAL TEXT / VISUAL QA FIX — 2026-09-24
+
+The user reran the precise Black-Hat package on commit
+`326914c1ec1b723c521b33032deb473edb27a414` and supplied diagnostic job
+`094056752aa0493aa0046b338b8fd68a`.
+
+This was a CURRENT-HEAD failure, not an old-run artifact.
+
+### Diagnostic result
+
+Pipeline successfully reached Motion after:
+- 40 scenes
+- Pass1: 157 authored assets
+- Pass2: 179 assets (+22)
+- Story: 40 beats
+- Text: 51 cues
+- Composition locked to Final Package geometry
+
+Failure:
+`TEXT_LAYOUT_REFERENCE_VIOLATION`
+
+The new shaped-glyph text measurement correctly exposed 20 text/visual overlap reports.
+
+### Root cause
+
+After semantic visibility was introduced, Text Placement and Authoring QA still reasoned against
+the entire final Composition at once.
+
+This was temporally incorrect:
+- Final Composition contains future assets that have not appeared yet.
+- A text cue may disappear before a later RESULT/OBJECT is revealed.
+- Those two objects cannot visually collide at runtime, but the old QA treated them as simultaneous.
+
+The shaped Arabic bounds fix made this stale assumption visible by increasing text boxes to their
+real production glyph footprint.
+
+### General fix
+
+Text Placement is now temporally visibility-aware before Motion:
+- Story V2 reveal windows determine which visual assets may coexist with each text cue.
+- Future semantic assets whose reveal begins after the text readability window no longer consume
+  negative space.
+- Unknown/legacy assets remain conservative and are treated as visible.
+- The earliest reveal cohort is retained conservatively because Renderer may choose one as the
+  anti-white boundary carrier.
+- When multiple valid candidate positions exist, candidates under the same QA overlap threshold are
+  preferred explicitly before typography-size/style priors.
+
+Authoring QA is now temporally authoritative after Motion:
+- Uses final MotionCue start times for each asset.
+- Validates text only against artwork that is actually visible while the text remains readable.
+- Keeps the earliest Motion cohort conservative for carrier behavior.
+- Assets without Motion remain treated as visible.
+- Text/text temporal collision validation remains unchanged.
+- A visual that reveals DURING the text lifetime still triggers overlap failure.
+
+This does NOT disable QA and does NOT allow real collisions.
+It removes false positives caused by comparing text to future visual state.
+
+### Commits
+
+- `c17bff173ee43d1e671d1c34f905527e3032b30f`
+  `[text] Place cues against temporally visible artwork`
+- `363efee145e6877dc5a508aad50246c899c5c5e9`
+  `[text] Pass readability window into placement`
+- `d4194bc18656416ab0470a5adc828cad834314d7`
+  `[qa] Validate text against rendered visual timing`
+- `f0de6780f45734fa973d9269b8d3ba7ae8e96dfe`
+  `[tests] Cover temporal negative-space placement`
+- `d0cea202b825526e2f3dec003856273b2720806f`
+  `[tests] Cover motion-timed text visual QA`
+
+### CI proof
+
+Behavior HEAD:
+`d0cea202b825526e2f3dec003856273b2720806f`
+
+Run:
+`35937516047`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **264 passed, 12 warnings in 6.66s**
+
+### Acceptance expectation
+
+Rerun the SAME precise Black-Hat Final Package + SAME narration audio after pulling latest
+`montage`. No Final Package modification is required.
+
+The run should now proceed past the prior text-layout false-positive gate while still rejecting
+any true text overlap that exists at the same rendered time.
