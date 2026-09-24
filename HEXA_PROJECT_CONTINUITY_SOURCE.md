@@ -4242,3 +4242,72 @@ Do not ask the user to run a full production render after code changes unless:
 
 A fresh full Black-Hat production render is still the final visual acceptance gate because CI cannot
 run the user's WhisperX/model/runtime or the full 40-scene package/audio pair.
+
+
+## MONTAGE17 STORY-HANDOFF PRODUCTION FAILURE HARDENING — 2026-09-24
+
+Fresh Black-Hat REV9 diagnostic job:
+`829ed88b3e164a7183f756cc19ee2dd0`
+
+The run reached Motion after:
+- Pass1: 157 authored assets / 40 scenes
+- Pass2: 179 assets (+22)
+- Story: 40 beats
+- Text: 65 cues
+- Composition locked to authored Final Package geometry
+
+It then failed with `STORY_SYNC_INVALID` before render.
+
+Violation profile:
+- 13 x `focus_peak_too_late`
+- 15 x `settle_past_next_handoff`
+- 4 x `strong_focus_overlap`
+
+### Root causes
+
+1. Footprint-locked Pass2 family secondary layers are deliberately static/alpha-only. StorySyncQA
+   incorrectly manufactured a spatial focus peak from their last neutral keyframe, producing false
+   late-peak violations even though those layers have no spatial gesture to validate.
+
+2. Shared-trigger `SEQUENTIAL_WITHIN_PHRASE` windows were bounded by the shared phrase end but not
+   by the next distinct precise narration trigger. A sequence could therefore continue moving into
+   the next spoken meaning.
+
+3. Exact Final Package SUPPORT/CONTEXT activations without explicit visual_focus could retain a long
+   phrase-sized motion window even when a later precise semantic hit existed. This allowed support
+   motion to cross a real narration handoff.
+
+### Corrections
+
+- Static/alpha-only programs no longer synthesize an `actual_peak`; reveal/settle contracts still
+  remain enforced.
+- Shared-trigger sequence clusters are capped at the next distinct precise semantic hit.
+- Exact package visuals with a known later semantic hit receive a bounded entry and then static hold,
+  including SUPPORT/CONTEXT roles.
+- No Final Package, Composition geometry, Pass1/Pass2 extraction architecture, Renderer layout, or
+  Text typography changes.
+- No QA tolerance increase and no scene-specific exceptions.
+
+### Commits
+
+- `1a813c85e388954d3fc170d36e6430c5c10b92ec`
+  `[timing] Bound visual attention before later semantics`
+- `2d7e43266c7e36191bcd09b46489e1e9c6a708ec`
+  `[qa] Ignore nonexistent peaks on static family layers`
+- `3f471866d6f44ee570606dc6aa11496ce892680e`
+  `[tests] Fix bounded handoff assertions`
+- `231876990442f5119c30d8d49245925faa26e8d9`
+  `[tests] Cover static family focus peak QA`
+
+### CI proof
+
+Run:
+`35995994163`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **290 passed, 12 warnings in 9.14s**
+- Actual encoded MP4 release smoke remains in the passing suite.
+
+Fresh full production render is still required for visual acceptance.
