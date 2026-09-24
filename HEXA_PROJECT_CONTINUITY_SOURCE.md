@@ -5228,3 +5228,64 @@ Motion consumer expresses this richer plan strongly enough on screen.
 State:
 **Choreography semantic planning complete + second-pass reference audit closed + CI proven;
 perceptual acceptance requires the next real render.**
+
+## MONTAGE19 MOTION EVENT-FLOW EXECUTION CHECKPOINT — 2026-09-24
+
+Behavior commit:
+`a163535fe6a5dd669d20e6b55833e7a707b6aff5`
+`[motion] Execute semantic event flow from choreography`
+
+Scope is intentionally limited to Motion/Focus execution.
+No Pass1/Pass2, Text, Composition geometry, Story timing, or Renderer layout changes.
+
+What changed:
+- Motion now consumes Choreography semantic event flow directly instead of relying only on pattern/primary/interaction summaries.
+- Event execution is driven by Final Package 1.2 authority via Choreography:
+  `ESTABLISH -> ADD -> INTERACT -> REACT -> PAYOFF -> RELEASE/HANDOFF`.
+- Each asset is resolved against the semantic event Story actually activated, preventing reused visuals from inheriting a stronger role from an older event.
+- Directional interaction is source -> target from authored relation geometry.
+- Target reaction and RESULT payoff are distinct bounded phases.
+- When one asset owns multiple phases inside its active event, Motion can compile a phase chain inside the same Story-owned window when timing capacity allows.
+- Short windows degrade conservatively rather than extending past semantic settle.
+- Context stays quiet.
+- COMPOUND_REQUIRED / family-canvas geometry remains protected.
+- Every program still ends at exact Composition geometry and remains static after semantic settle.
+- No topic/scene/count hardcoding.
+
+Reference audit conclusion:
+The remaining reference gap was primarily Choreography -> Motion execution, not missing semantic understanding.
+The three accepted reference videos consistently use longer connected motion phrases, directional focus transfer, and RESULT as the visual destination.
+
+Local A/B on the same Black-Hat package/timing showed:
+- average visual activity approximately 3.95 -> 5.11;
+- average motion burst approximately 0.316s -> 0.427s;
+- median burst 0.2s -> 0.3s;
+- max burst 1.3s -> 2.0s.
+These are diagnostic comparison metrics, not product acceptance thresholds.
+
+Semantic/runtime checks:
+- 55/55 Black-Hat semantic events receive event-aware Motion representation;
+- reused-asset event authority is preserved;
+- StorySync: 0 violations;
+- final geometry/timing contracts preserved.
+
+GitHub Actions exact behavior commit:
+- Run: `36061238545`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **309 passed, 12 warnings in 9.33s**
+
+Next acceptance gate:
+User should pull `montage` and perform the real production render locally with the original Final Package + narration.
+Review should focus on:
+1. whether motion now reads as a connected visual sentence;
+2. source -> target directionality;
+3. visible target reaction;
+4. RESULT payoff;
+5. focus handoff into the next event;
+6. no motion past semantic handoff;
+7. no collisions, wobble, ghosting, white flash, or geometry drift.
+
+State:
+**Motion is now directly coupled to Choreography event flow and CI-proven. Real user-side render is the next required visual acceptance step.**
