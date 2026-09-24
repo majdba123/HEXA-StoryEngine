@@ -318,6 +318,83 @@ def _next_semantic_hits(
     return result
 
 
+def _enforce_final_semantic_handoffs(
+    activations: list[StoryAssetActivation],
+    beat: StoryBeat,
+) -> list[StoryAssetActivation]:
+    """Clamp final Story windows against later scheduled semantic reveals.
+
+    The first scheduling pass can only reason from raw spoken anchors. Locator/group
+    mapping may later inherit or stagger a Story-owned window, which can create a new
+    reveal boundary that was not visible to ``_next_semantic_hits``. This final pass
+    treats the fully scheduled Story windows as the authority and guarantees that no
+    distinct semantic gesture keeps moving through the next scheduled meaning.
+    """
+    trusted = [
+        row
+        for row in activations
+        if row.activation_policy in {"OWN_WINDOW", "INHERITED_WINDOW"}
+        and row.reveal_start is not None
+        and row.settle_at is not None
+    ]
+    if len(trusted) <= 1:
+        return activations
+
+    output = list(activations)
+    for index, row in enumerate(output):
+        if row.activation_policy not in {"OWN_WINDOW", "INHERITED_WINDOW"}:
+            continue
+        # Final Package activations reveal exactly on their spoken/Story boundary.
+        # Inferred legacy activations may intentionally pre-roll before phrase_start;
+        # clipping those against a later reveal could make settle precede phrase_start.
+        if row.source != "final_package_semantic_binding":
+            continue
+        if row.reveal_start is None or row.settle_at is None:
+            continue
+        later_reveals = [
+            float(candidate.reveal_start)
+            for candidate in trusted
+            if candidate.asset_id != row.asset_id
+            and candidate.reveal_start is not None
+            and float(candidate.reveal_start) > float(row.reveal_start) + 1e-9
+            and not same_precise_trigger(row, candidate)
+        ]
+        if not later_reveals:
+            continue
+        next_reveal = min(later_reveals)
+        if float(row.settle_at) <= next_reveal + 1e-9:
+            continue
+
+        available = max(0.025, next_reveal - float(row.reveal_start))
+        bounded_duration = _attention_focus_duration(row, beat, available=available)
+        settle_at = min(
+            float(row.settle_at),
+            next_reveal,
+            float(row.reveal_start) + bounded_duration,
+        )
+        if settle_at <= float(row.reveal_start) + 1e-9:
+            settle_at = next_reveal
+        if settle_at <= float(row.reveal_start) + 1e-9:
+            continue
+
+        peak = float(row.semantic_peak) if row.semantic_peak is not None else float(row.reveal_start)
+        if peak > settle_at:
+            peak = float(row.reveal_start) + (settle_at - float(row.reveal_start)) * 0.55
+        peak = max(float(row.reveal_start), min(peak, settle_at))
+        evidence = [
+            *row.evidence,
+            f"final_handoff_cap={next_reveal:.6f}",
+            "handoff_policy=final_scheduled_reveal",
+        ]
+        data = row.model_dump()
+        data.update(
+            semantic_peak=peak,
+            settle_at=settle_at,
+            evidence=evidence,
+        )
+        output[index] = StoryAssetActivation(**data).with_legacy_evidence()
+    return output
+
 def schedule_windows(
     activations: list[AssetActivation], beat: StoryBeat, audio_duration: float,
     primary_ids: set[str],
@@ -475,6 +552,12 @@ def schedule_windows(
                              "semantic_peak", "settle_at"):
                     data[name] = getattr(parent, name)
                 output[index] = StoryAssetActivation(**data).with_legacy_evidence()
+
+    # Raw spoken anchors are not always the final reveal schedule. Locator/group
+    # inheritance can create a later Story-owned reveal after the first pass. Enforce
+    # narration-first handoff once more against the final scheduled windows so Motion
+    # can never inherit a gesture that crosses the next semantic reveal.
+    output = _enforce_final_semantic_handoffs(output, beat)
 
     important = [r for r in output if r.activation_policy == "OWN_WINDOW"]
     if important:

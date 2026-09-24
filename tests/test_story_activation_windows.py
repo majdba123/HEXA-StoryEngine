@@ -12,7 +12,12 @@ from app.models import (
     StorySemanticContext, StoryTrigger, Transcript, TranscriptWord, VisualAsset,
 )
 from app.story.activation import SemanticActivationPlanner
-from app.story.windows import ScheduledStoryBeat, StoryAssetActivation, schedule_windows
+from app.story.windows import (
+    ScheduledStoryBeat,
+    StoryAssetActivation,
+    _enforce_final_semantic_handoffs,
+    schedule_windows,
+)
 
 
 class Scorer:
@@ -973,3 +978,105 @@ def test_slow_narration_keeps_bounded_entry_then_static_hold() -> None:
     assert result.phrase_end - result.settle_at >= 5.5
     assert "attention_decay=settle_hold" in result.evidence
 
+
+def test_final_scheduled_handoff_caps_nested_result_before_later_exact_reveal() -> None:
+    """Regression for Black-Hat 1.2 SCENE_007 runtime failure.
+
+    A RESULT/leader can cover a wider phrase ("steal accounts") while a participant
+    owns a later exact sub-word ("accounts"). If that later reveal only becomes
+    visible after final scheduling/mapping, the result gesture must still settle before
+    the participant handoff instead of crossing it.
+    """
+    beat = StoryBeat(
+        id="beat-007",
+        scene_id="SCENE_007",
+        start=15.0,
+        end=16.2,
+        audio_start=15.0,
+        audio_end=16.2,
+        narration="steal accounts",
+        action="INTRODUCE",
+        semantic_context=StorySemanticContext(
+            entities=[
+                StoryEntity(unit_id="result", role="RESULT"),
+                StoryEntity(unit_id="participant", role="OBJECT"),
+            ],
+        ),
+    )
+    result = StoryAssetActivation(
+        asset_id="result",
+        semantic_unit_id="result",
+        spoken_start=15.363,
+        spoken_end=15.80,
+        trigger_char_start=193,
+        trigger_char_end=204,
+        confidence=0.98,
+        source="final_package_semantic_binding",
+        policy="EXPLICIT",
+        visual_focus="PRIMARY",
+        semantic_event_id="SCENE_007_EVENT_01",
+        semantic_event_order=1,
+        semantic_event_roles=["LEADER", "RESULT", "TEXT_ANCHOR"],
+        phrase_start=15.363,
+        phrase_end=15.80,
+        reveal_start=15.363,
+        semantic_peak=15.54,
+        settle_at=15.683,
+        activation_policy="OWN_WINDOW",
+    )
+    participant = StoryAssetActivation(
+        asset_id="participant",
+        semantic_unit_id="participant",
+        spoken_start=15.525,
+        spoken_end=15.80,
+        trigger_char_start=198,
+        trigger_char_end=204,
+        confidence=0.98,
+        source="final_package_semantic_binding",
+        policy="EXPLICIT",
+        visual_focus="SUPPORT",
+        semantic_event_id="SCENE_007_EVENT_01",
+        semantic_event_order=1,
+        semantic_event_roles=["PARTICIPANT"],
+        phrase_start=15.525,
+        phrase_end=15.80,
+        reveal_start=15.525,
+        semantic_peak=15.60,
+        settle_at=15.70,
+        activation_policy="OWN_WINDOW",
+    )
+
+    bounded = {
+        row.asset_id: row
+        for row in _enforce_final_semantic_handoffs([result, participant], beat)
+    }
+
+    assert bounded["result"].reveal_start == pytest.approx(15.363)
+    assert bounded["result"].settle_at < 15.525
+    assert bounded["result"].semantic_peak <= bounded["result"].settle_at
+    assert "handoff_policy=final_scheduled_reveal" in bounded["result"].evidence
+    assert bounded["participant"].reveal_start == pytest.approx(15.525)
+
+
+def test_final_scheduled_handoff_does_not_clip_same_precise_trigger_cohort() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=1.5, audio_start=0.0, audio_end=1.5,
+        narration="shared phrase", action="INTRODUCE",
+    )
+    rows = [
+        StoryAssetActivation(
+            asset_id=asset_id, spoken_start=0.4, spoken_end=1.0,
+            trigger_char_start=10, trigger_char_end=20, confidence=1.0,
+            source="final_package_semantic_binding", policy="EXPLICIT",
+            phrase_start=reveal, phrase_end=1.0, reveal_start=reveal,
+            semantic_peak=reveal + 0.12, settle_at=reveal + 0.30,
+            activation_policy="OWN_WINDOW",
+        )
+        for asset_id, reveal in (("a", 0.40), ("b", 0.52))
+    ]
+
+    bounded = _enforce_final_semantic_handoffs(rows, beat)
+
+    assert bounded[0].settle_at == pytest.approx(0.70)
+    assert bounded[1].settle_at == pytest.approx(0.82)
+    assert all("handoff_policy=final_scheduled_reveal" not in row.evidence for row in bounded)
