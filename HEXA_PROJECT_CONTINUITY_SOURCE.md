@@ -4929,3 +4929,177 @@ Expected:
 State:
 **root cause proven + generalized producer/QA contract unified + regression covered + CI green;
 exact Gray-Hat rerender pending user runtime.**
+
+## MONTAGE19 REFERENCE-GRADE CHOREOGRAPHY / FINAL PACKAGE EVENT FLOW — 2026-09-24
+
+Scope decision:
+- This phase intentionally modifies **Choreography only**.
+- Motion/Focus implementation is frozen except for consuming the existing ChoreographyDirective fields it already consumed.
+- Story, Text, Composition, Pass1, Pass2 and Renderer are unchanged.
+- No hacker-specific scene ids, nouns, asset counts or topic presets were introduced.
+
+Behavior commit:
+`bdb96620bb076a8d74821e56f6b35a37e8704c93`
+`[choreography] Compile Final Package semantic events into visual flows`
+
+### Reference-video analysis driving the change
+
+The user's current Black-Hat render was compared against:
+- `تأثير المتفرج2.mp4`
+- `انحياز 2.mp4`
+- `hallo 2.mp4`
+
+The stable visual difference across the references was not text layout or authored composition.
+The references repeatedly build one visual sentence as:
+
+`ESTABLISH -> ADD -> INTERACT -> REACT -> PAYOFF -> RELEASE`
+
+while the current HEXA render too often reads as independent sequential reveals.
+
+Quantitative frame-activity sampling supported the same conclusion:
+- current HEXA high-activity sample rate: ~33.6%
+- references: ~43.2% to ~55.4%
+- current low-activity sample rate: ~47.6%
+- references: ~21.2% to ~39.9%
+- current median spacing between strong visual-change samples: ~0.4s
+- references: typically ~0.2s
+
+These metrics are diagnostic only; they are not hardcoded thresholds or runtime targets.
+The implementation encodes the semantic grammar, not the reference-video numbers.
+
+### New Choreography authority: SemanticEventFlowPlanner
+
+New module:
+`app/choreography/event_flow.py`
+
+For every Story beat, Choreography now consumes the already-resolved Final Package 1.2 event
+metadata carried by `AssetActivation`:
+- `semantic_event_id`
+- `semantic_event_order`
+- `semantic_event_roles`
+- `semantic_event_dependency_ids`
+- exact runtime cutout identity after Visual Locator / Story binding
+
+It groups real renderable cutouts by semantic event and compiles a
+`SemanticEventFlow` containing:
+- ordered event id/order
+- dependency ids
+- leader asset ids
+- participant asset ids
+- context asset ids
+- result asset ids
+- text-anchor asset ids
+- authored interactions assigned to the correct event
+- reference-style semantic stages
+- authority/evidence/confidence
+
+The semantic stages are:
+- `ESTABLISH`
+- `ADD`
+- `INTERACT`
+- `REACT`
+- `PAYOFF`
+- `RELEASE`
+
+### Final Package is used heavily, not treated as passive metadata
+
+Rules:
+- LEADER drives event establishment.
+- PARTICIPANT creates progressive addition.
+- CONTEXT is preserved as context rather than promoted into the main action.
+- RESULT creates explicit payoff.
+- TEXT_ANCHOR is preserved in the same event contract.
+- event dependencies preserve authored cross-event causality/order.
+- explicit Final Package asset relations are assigned to the event whose real runtime
+  cutouts participate in that relation.
+- visual-progression pseudo-relations are not mistaken for executable interactions;
+  event order/dependencies already own that authority.
+- fallback/inferred interactions are not allowed to invent an event INTERACT phase.
+
+One relation may bridge into a later result event. Choreography keeps the interaction on
+the event containing its subject/object while the later semantic event owns RESULT/PAYOFF,
+with dependency order preserved.
+
+### ChoreographyDirective changes
+
+Each directive now carries:
+`event_flows: tuple[SemanticEventFlow, ...]`
+
+The Director uses event flows to:
+- choose the first authored event leader as the stable beat choreography anchor;
+- preserve authored leader/participant/result progression;
+- select `CAUSE_EFFECT_CHAIN` when the event owns an executable authored interaction;
+- select `PROGRESSIVE_BUILD` for multi-event or leader+participant authored flows;
+- select `FOCUS_TRANSFER` for a single result-focused authored event when appropriate;
+- apply only a small bounded energy reward (max +0.10) for authored INTERACT/REACT/PAYOFF
+  richness; no arbitrary global motion amplification was added.
+
+The existing Motion layer therefore receives a materially better WHAT/RELATION/PATTERN plan
+without changing Motion implementation in this phase.
+
+### ReferenceGrammarPlanner changes
+
+Final Package event flows can now contribute multiple semantic grammar stages inside one Story beat.
+
+Mapping:
+- multiple events / ADD -> `VisualGrammarStage.ADD`
+- INTERACT / REACT -> `VisualGrammarStage.RELATE`
+- PAYOFF -> `VisualGrammarStage.RESULT`
+
+This is important because one scene/beat may contain several real semantic events and should no
+longer be flattened to one generic READ or ADD action.
+
+### Safety / validation
+
+`ChoreographyPlan.validate()` now also verifies:
+- event ids unique per beat;
+- authored event order preserved;
+- a non-empty event flow ends in RELEASE;
+- every authored result flow contains PAYOFF;
+- mapped dependency order cannot point backward.
+
+The new event-flow compiler abstains when there are no trustworthy Final Package event activations.
+Legacy/V1.1 packages therefore remain compatible and continue through the previous Choreography path.
+
+### Regression coverage
+
+Added a dedicated Choreography regression proving:
+- event E1 leader + participant + context -> ESTABLISH/ADD/INTERACT/REACT/RELEASE;
+- authored relation is attached to E1;
+- later E2 result/leader depends on E1 -> ESTABLISH/PAYOFF/RELEASE.
+
+The existing Final Package 1.2 end-to-end test now proves:
+- E1/E2 event flow preservation;
+- leader/participant/result extraction from the package;
+- relation attached to the correct event;
+- dependency preserved;
+- package evidence includes `final_package_event_flow_choreography`;
+- beat grammar contains ADD + RELATE + RESULT.
+
+### Verification
+
+Local source-artifact suite:
+- focused Choreography + Final Package 1.2 tests: PASS
+- full suite excluding the unavailable source-artifact V7 frozen checkpoint: PASS
+- the only local full-suite failures were the known missing
+  `checkpoints/v7_audio_sync/manifest.json` artifact, not behavior failures.
+
+GitHub Actions exact behavior commit:
+- Run: `36051040645`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: **All checks passed**
+- Pytest: **304 passed, 12 warnings in 9.50s**
+
+### Next gate
+
+This phase is Choreography-complete.
+
+The next production render should be used to judge whether richer event-flow planning improves the
+current independent-reveal feel. Do **not** immediately modify Motion/Focus in the same iteration.
+First inspect the render and identify which remaining gaps are Choreography-plan gaps versus Motion
+execution gaps.
+
+Current state:
+**Final Package 1.2 event semantics are now first-class Choreography authority; reference-style
+event grammar is encoded; Choreography-only implementation proven by CI.**
