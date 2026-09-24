@@ -4026,3 +4026,88 @@ Mandatory visual checks:
 
 Code/CI acceptance is complete. Fresh encoded visual acceptance still requires one new full product
 render on the production desktop/runtime; do not claim visual parity until that render is watched.
+
+## MONTAGE17 MULTI-TRIGGER SEQUENCE QA CORRECTION — 2026-09-24
+
+A fresh Black-Hat render on HEAD
+`40246b8d93c9737aa9ff1dc5cf769175ed0149d2` failed before Render with
+`STORY_SYNC_INVALID`.
+
+Diagnostic job:
+`004c2710cee24adda36950fc8b2b2ed8`
+
+The package/audio were valid. Story built 40 beats and Text placed 65 cues.
+The failure contained sequence-order QA violations in beats 013, 017, 021, 028, 032, 034 and 040.
+
+### Root cause
+
+The speech-first scheduling correction was correct, but StorySyncQA still validated sequence order too
+coarsely at the semantic-group level.
+
+A semantic group may legitimately contain multiple precise trigger clusters. Example:
+- order 1 -> one precise narration span;
+- order 2 and order 3 -> a different shared precise narration span.
+
+Story correctly sequences order 2 -> 3 inside their shared trigger while allowing their narration
+span to occur before order 1. QA incorrectly used:
+`any(row_is_sequential_window)`
+for an adjacent order pair, which could enforce order 1 -> 2 even though those two orders were not
+part of the same trigger cluster.
+
+This produced false:
+- `sequence_order_motion_reversed`
+- `sequence_order_motion_collapsed`
+
+### General correction
+
+Story scheduling and StorySyncQA now share the exact same
+`same_precise_trigger()` identity rule.
+
+QA:
+- collects only activations that Story explicitly scheduled as sequential;
+- clusters them by actual precise trigger identity;
+- enforces `sequence_order` only inside each cluster;
+- never compares sequence numbers across different narration spans;
+- retains internal multi-cutout ordering validation separately.
+
+This does NOT disable sequence QA.
+Shared-trigger sequences are still required to be strictly ordered.
+Distinct precise narration spans remain governed by spoken timing.
+
+### Commits
+
+- `71b0d3bc8784b44957f77f323f8f5054840b2a3e`
+  `[story] Share precise-trigger identity across scheduling and QA`
+- `4886a7f811f9fcc835fed76a60f30464c69e2970`
+  `[qa] Validate sequence order within precise trigger clusters`
+- `b37e5fab57b153a0037720d5246361d82ef3a0b1`
+  `[tests] Cover multi-trigger semantic-group sync QA`
+
+### Regression proof
+
+The new regression intentionally models:
+- one semantic group;
+- order 1 on a later precise phrase;
+- order 2 and order 3 on an earlier shared precise phrase.
+
+It proves:
+- speech timing may place order 2/3 before order 1;
+- order 2 still must precede order 3;
+- StorySyncQA passes the valid result.
+
+CI run:
+`35943130887`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **276 passed, 12 warnings in 6.69s**
+
+### Invariants
+
+- precise speech remains WHEN authority;
+- sequence_order remains authoritative inside one shared semantic trigger;
+- no Final Package change;
+- no weakening of visual sync QA;
+- no Pass3/Layer3;
+- Composition remains locked.
