@@ -467,6 +467,86 @@ def test_asset_level_semantic_group_sequences_real_cutouts_without_model(tmp_pat
     assert all("semantic_group_sequential_window" in row.evidence for row in anchored)
 
 
+
+def test_shared_trigger_sequence_stops_before_next_distinct_semantic_hit() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.0, audio_end=2.0,
+        narration="shared then later", action="INTRODUCE",
+        semantic_context=StorySemanticContext(entities=[
+            StoryEntity(unit_id="a", role="OBJECT"),
+            StoryEntity(unit_id="b", role="OBJECT"),
+            StoryEntity(unit_id="later", role="RESULT"),
+        ]),
+    )
+    rows = [
+        AssetActivation(
+            asset_id="a", semantic_unit_id="a",
+            spoken_start=0.20, spoken_end=1.20,
+            trigger_char_start=0, trigger_char_end=5,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=1,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        ),
+        AssetActivation(
+            asset_id="b", semantic_unit_id="b",
+            spoken_start=0.20, spoken_end=1.20,
+            trigger_char_start=0, trigger_char_end=5,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+            semantic_group_id="g", sequence_order=2,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        ),
+        AssetActivation(
+            asset_id="later", semantic_unit_id="later",
+            spoken_start=0.45, spoken_end=0.90,
+            trigger_char_start=7, trigger_char_end=12,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+        ),
+    ]
+
+    scheduled = {row.asset_id: row for row in schedule_windows(rows, beat, 2.0, set())}
+
+    assert scheduled["a"].reveal_start < scheduled["b"].reveal_start
+    assert scheduled["a"].settle_at <= pytest.approx(0.45, abs=1e-9)
+    assert scheduled["b"].settle_at <= pytest.approx(0.45, abs=1e-9)
+    assert scheduled["later"].reveal_start == pytest.approx(0.45)
+
+
+def test_precise_support_entry_is_bounded_when_later_semantic_hit_exists() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.0, audio_end=2.0,
+        narration="context then result", action="INTRODUCE",
+        semantic_context=StorySemanticContext(entities=[
+            StoryEntity(unit_id="context", role="SUPPORT"),
+            StoryEntity(unit_id="result", role="RESULT"),
+        ]),
+    )
+    rows = [
+        AssetActivation(
+            asset_id="context", semantic_unit_id="context",
+            spoken_start=0.20, spoken_end=1.50,
+            trigger_char_start=0, trigger_char_end=7,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+        ),
+        AssetActivation(
+            asset_id="result", semantic_unit_id="result",
+            spoken_start=0.90, spoken_end=1.40,
+            trigger_char_start=9, trigger_char_end=14,
+            policy="EXPLICIT", source="final_package_semantic_binding",
+            visual_focus="RESULT",
+        ),
+    ]
+
+    scheduled = {row.asset_id: row for row in schedule_windows(rows, beat, 2.0, set())}
+    context = scheduled["context"]
+
+    assert context.reveal_start == pytest.approx(0.20)
+    assert context.settle_at < 0.50
+    assert context.settle_at < scheduled["result"].reveal_start
+    assert "attention_decay=settle_hold" in context.evidence
+
+
 def test_same_sequence_order_is_intentionally_simultaneous_visual_unit() -> None:
     beat = StoryBeat(
         id="b", scene_id="s", start=0.0, end=2.0,
