@@ -4412,3 +4412,294 @@ Mandatory visual checks remain:
 Do not make another motion-strength change until a fresh exact-HEAD render or concrete diagnostic
 shows the remaining defect.
 
+## MONTAGE19 FINAL PACKAGE 1.2 END-TO-END SEMANTIC EVENT INTEGRATION — 2026-09-24
+
+This checkpoint is the authoritative completion of the user's new package:
+`HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2.zip`.
+
+### User target
+
+The requested production chain is now explicit and tested:
+
+```
+spoken word / WhisperX timing
+    -> exact canonical script span
+    -> written keyword/text cue
+    -> semantic event
+    -> correct visual intent / real cutout
+    -> icon / event ordering
+    -> visual leader + focus arbitration
+    -> relation-aware motion direction
+    -> result/payoff
+    -> exact authored Composition settle
+```
+
+Final Package remains WHAT/identity/semantic authority.
+WhisperX/forced alignment remains actual WHEN authority.
+Motion still owns HOW.
+Composition final geometry remains immutable.
+
+### Final Package 1.2 contract consumed
+
+The loader and runtime now consume, validate and preserve:
+- `semantic_events`
+- event `sequence_order`
+- `visual_leader_asset_id`
+- `participant_asset_ids`
+- `context_asset_ids`
+- `result_asset_ids`
+- `text_anchor_asset_id`
+- `depends_on_event_ids`
+- scene `progression.event_order`
+- `relation_type`
+- `global_char_start/global_char_end`
+- `anchor_granularity`
+- `compound_visual_classification`
+- `internal_progression_unavailable`
+
+Backward compatibility remains for v1.1:
+- legacy `relationship`
+- legacy `char_start/char_end`
+- packages without semantic events.
+
+### Loader hardening
+
+Final Package 1.2 now fails closed for:
+- duplicate semantic events;
+- missing event leaders/text anchors;
+- invalid role asset references;
+- missing event dependencies;
+- dependency cycles;
+- progression referencing missing events;
+- progression order conflicting with event sequence;
+- invalid compound classifications;
+- `internal_progression_unavailable=true` unless the asset is `COMPOUND_REQUIRED`;
+- conflicting local/global script coordinates.
+
+Top-level semantic event mirrors are validated against scene-level events.
+
+### Spoken word -> exact semantic timing
+
+Asset and relation spans can use the 1.2 global coordinate contract.
+
+The activation path now resolves:
+- `global_char_start/global_char_end`
+- repeated phrases by exact canonical span;
+- forced-aligned spoken timestamps from that exact span.
+
+A repeated identical word can no longer silently reuse timing from an earlier occurrence merely because the text matches.
+
+### Semantic Event -> correct visual
+
+Every resolved `AssetActivation` can now carry:
+- `semantic_event_id`
+- `semantic_event_order`
+- `semantic_event_roles`
+- `semantic_event_dependency_ids`
+- `compound_visual_classification`
+- `internal_progression_unavailable`.
+
+Event roles include:
+- LEADER
+- PARTICIPANT
+- CONTEXT
+- RESULT
+- TEXT_ANCHOR.
+
+Visual Locator remains WHICH VISUAL authority only; no crop/layout authority was added.
+
+### Written word -> correct icon
+
+Text selection and anchoring now understand 1.2 event evidence.
+
+When candidate spans overlap:
+1. Final Package TEXT_ANCHOR evidence wins;
+2. event LEADER is next;
+3. exact activation/span confidence/focus remains the fallback;
+4. old beat/choreography primary remains the final fallback.
+
+Text spoken_start/token spoken_start remain forced-aligned.
+No text typography/style redesign was introduced.
+
+### Ordering
+
+Motion order metadata now carries semantic event order/dependencies.
+
+Shared timing windows can use event order + existing asset sequence order without discarding precise spoken-span timing.
+
+The prior rule remains:
+- distinct precise speech triggers follow speech order;
+- `sequence_order` remains a visual tie-break within the same trusted trigger;
+- event progression adds a higher semantic progression layer where authored.
+
+### Focus
+
+The previous cohort attention budget is now driven by explicit event authority.
+
+Inside simultaneous semantic cohorts:
+- explicit event LEADER gets leader authority;
+- same semantic visual-unit members may share leader authority when one intent maps to multiple real cutouts;
+- PARTICIPANT remains readable below leader;
+- CONTEXT is quiet;
+- RESULT receives payoff authority;
+- no global “everything becomes hero” behavior.
+
+### Relation -> motion direction
+
+1.2 `relation_type` is normalized into existing choreography actions.
+
+Added generic support for relations including:
+- ENABLES
+- CAUSES
+- CAUSES_UNUSED_SECURITY
+- LEADS_TO
+- LEADS_TO_DISCOVERY
+- REVEALS_IDENTITY
+- PARALLEL_CAUSES
+- WITHHOLDS_DISCLOSURE
+- SPECIFIES
+- PROGRESSES_TO
+- PERSISTS_OVER_TIME
+- CONTAINS_RISK
+
+They remain generic semantic relations, never package/topic-specific pixel commands.
+
+Examples:
+- ENABLES / causal relation can compile SUBJECT -> OBJECT directional staging;
+- RESULT lands last/strongest where authored;
+- PARALLEL_CAUSES stays comparison-oriented rather than being forced into cause/effect choreography;
+- SPECIFIES remains non-executable descriptive evidence.
+
+### Compound visual safety
+
+When Final Package marks one semantic intent:
+`COMPOUND_REQUIRED`
+or
+`internal_progression_unavailable=true`
+
+MotionOrderResolver does NOT internally stagger its multi-cutout members.
+
+This prevents StoryEngine from creating fake internal sequencing for a visual the authoring stage explicitly says must remain compound.
+
+Pass1/Pass2 extraction itself remains unchanged.
+
+### Choreography progression
+
+Authored 1.2 scene event progression can promote generic `PROGRESSIVE_BUILD` behavior when no stronger explicit state/relation pattern overrides it.
+
+Existing pattern authority remains:
+- state transform;
+- executable relation/cause-effect;
+- authored focus;
+- authored event progression;
+- fallback.
+
+### Behavior commits
+
+- `c843890245b08fe0dcd8c683a0504e4bc8810922`
+  `[final-package] Integrate semantic events contract 1.2 end to end`
+- `6814d9bf489f01b6048a2664d2cc1d66efefcf0b`
+  `[tests] Cover Final Package 1.2 semantic event authority`
+- `1a8053271393e630045d926a8093719c508c788b`
+  `[tests] Clean Final Package 1.2 regression imports`
+
+### Exact-head CI proof
+
+Behavior HEAD:
+`1a8053271393e630045d926a8093719c508c788b`
+
+GitHub Actions:
+- Run: `36037286686`
+- Workflow: `V2 CI`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **300 passed, 12 warnings in 9.50s**
+- actual encoded MP4 release smoke remains in the passing suite.
+
+The earlier Run `36037138570` failed only because the new test file had one unused import.
+That import was removed; no production behavior changed for the rerun.
+
+### Real Black-Hat 1.2 package acceptance
+
+The real user-supplied 40-scene package was run through the current architecture.
+
+Observed:
+- scenes: **40**
+- Vision / Pass1: **157**
+- Pass2: **179** (**+22**)
+- semantic events reaching runtime activations: **55 / 55**
+- authored relations reaching Choreography: **15 / 15**
+- authored visual locators: **107 / 107 resolved**
+  - strict one-to-one: 99
+  - multi-cutout semantic units: 8
+- COMPOUND_REQUIRED intents tested: 2
+  - internal stagger applied: 0
+- Story beats: 40
+- Text cues: 51
+- Text cues carrying explicit Final Package text-anchor evidence: 39
+- Motion cues: 179
+- Motion cues carrying semantic-event authority: 150
+- StorySyncQA: **PASS**
+- sync violations: **0**
+- max semantic settle delta: **0.0**
+- semantic visual coverage: **100%**
+  - 166 OWN-window activations
+  - 13 inherited/support-safe activations
+
+This proves architectural/runtime consumption of Final Package 1.2.
+It does NOT by itself prove final perceptual parity with the reference videos.
+
+### Render status
+
+The uploaded 1.2 ZIP contains:
+- 40 PNG scene images
+- 5 JSON files
+- 1 TXT file
+- **no narration audio file**
+
+Therefore no new full narration-synchronized production MP4 can be truthfully produced from this package alone in this checkpoint.
+
+The engine is now ready for the same real narration audio to be paired with this 1.2 package for the final visual acceptance render.
+
+### PROVEN
+
+- Final Package 1.2 loads and validates.
+- global precise spans reach forced-aligned timing.
+- semantic event identity reaches Story.
+- event leaders/participants/context/results reach focus arbitration.
+- text anchors reach TextPlanner.
+- event ordering/dependencies reach Motion metadata/order.
+- relation_type reaches Choreography and direction semantics.
+- COMPOUND_REQUIRED blocks fake internal stagger.
+- old v1.1 behavior remains regression-covered.
+- full GitHub CI + encoded release smoke is green.
+- real 40-scene 1.2 package architectural acceptance is green.
+
+### NOT YET PROVEN
+
+- final reference-grade perceptual quality of a NEW full Black-Hat render using the 1.2 package + real narration audio;
+- exact visual calibration of focus amplitudes on every production scene after this new event authority;
+- final frame-by-frame comparison against the two reference videos.
+
+### Next acceptance gate
+
+Do NOT redesign Final Package again before this gate.
+
+Use the exact same Black-Hat narration audio with the new 1.2 Final Package and current `montage`.
+
+Mandatory visual review:
+1. spoken phrase activates the correct exact semantic icon;
+2. written keyword reinforces that same icon/event;
+3. future semantic icons remain hidden until their event;
+4. event ordering is visually readable;
+5. one clear leader/focus per semantic event;
+6. relation direction reads as subject -> object -> result where causal;
+7. comparison relations stay comparison-oriented;
+8. RESULT/payoff is stronger than support/context;
+9. COMPOUND_REQUIRED visuals remain coherent and never split into fake internal animation;
+10. exact authored final geometry returns at settle;
+11. no collision, ghost alpha, white flash, text clipping, wobble/recoil, or motion past the next narration handoff.
+
+Until that encoded render is watched, describe this checkpoint as:
+**1.2 code/runtime integration PROVEN; final perceptual acceptance pending production render.**
