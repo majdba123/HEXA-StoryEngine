@@ -6,6 +6,7 @@ from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
 from app.text.metrics import TextTypographyMetrics
+from app.story.windows import StoryAssetActivation
 
 
 Box = tuple[float, float, float, float]
@@ -72,11 +73,26 @@ class TextPlacementDirector:
         concurrent_text: list[PlacedTextRegion],
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
+        visible_end: float | None = None,
     ) -> PlacementResult:
         anchor = self._anchor(cue, visual)
         asset_map = assets_by_id or {}
-        visual_regions = self._visual_regions(beat, visual, asset_map)
-        occupancy = self.occupancy.build(visual.items, asset_map) if visual is not None and asset_map else None
+        visible_items = self.visible_visual_items(
+            beat=beat,
+            visual=visual,
+            visible_end=(visible_end if visible_end is not None else cue.spoken_end),
+        )
+        visible_visual = (
+            visual.model_copy(update={"items": visible_items})
+            if visual is not None
+            else None
+        )
+        visual_regions = self._visual_regions(beat, visible_visual, asset_map)
+        occupancy = (
+            self.occupancy.build(visible_items, asset_map)
+            if visible_items and asset_map
+            else None
+        )
 
         scored = []
         for font_scale in self._font_scales(cue):
@@ -100,7 +116,18 @@ class TextPlacementDirector:
                 scored.append((*score_row, font_scale, width))
                 scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
 
-        best = min(scored, key=lambda row: (row[0], -row[4], row[1].prior, row[1].y, row[1].x))
+        acceptable = [row for row in scored if row[3] <= 0.012]
+        pool = acceptable or scored
+        best = min(
+            pool,
+            key=lambda row: (
+                row[0] if acceptable else row[3] * 1_000_000.0 + row[0],
+                -row[4],
+                row[1].prior,
+                row[1].y,
+                row[1].x,
+            ),
+        )
         score, candidate, box, overlap, font_scale, width = best
         item = TextLayoutItem(
             text_cue_id=cue.id,
@@ -119,6 +146,73 @@ class TextPlacementDirector:
             score=score,
             visual_overlap=overlap,
         )
+
+    @classmethod
+    def visible_visual_items(
+        cls,
+        *,
+        beat: StoryBeat,
+        visual: CompositionBeat | None,
+        visible_end: float,
+    ) -> list[LayoutItem]:
+        """Return artwork that can be visible while a text cue is readable.
+
+        Story V2 reveal windows are authoritative before Motion exists. Unknown or
+        legacy assets remain conservative and are treated as visible. The earliest
+        reveal cohort is also reserved because Renderer may use one member as the
+        anti-white boundary carrier. Later semantic results therefore do not consume
+        negative space before they actually appear.
+        """
+        if visual is None:
+            return []
+        activation_by_asset = {row.asset_id: row for row in beat.asset_activations}
+        reveal_by_asset: dict[str, float | None] = {}
+        known_reveals: list[float] = []
+        for item in visual.items:
+            activation = activation_by_asset.get(item.asset_id)
+            reveal = cls._story_reveal_start(activation, beat)
+            reveal_by_asset[item.asset_id] = reveal
+            if reveal is not None:
+                known_reveals.append(reveal)
+        earliest = min(known_reveals) if known_reveals else None
+        carrier_limit = (earliest + 0.08) if earliest is not None else None
+
+        output: list[LayoutItem] = []
+        for item in visual.items:
+            reveal = reveal_by_asset[item.asset_id]
+            if reveal is None:
+                output.append(item)
+                continue
+            if reveal < visible_end - 0.01:
+                output.append(item)
+                continue
+            if carrier_limit is not None and reveal <= carrier_limit + 1e-9:
+                output.append(item)
+        return output
+
+    @staticmethod
+    def _story_reveal_start(activation, beat: StoryBeat) -> float | None:
+        if activation is None:
+            return None
+        has_v2 = hasattr(activation, "activation_policy") or any(
+            row.startswith("story_activation_v2:") for row in activation.evidence
+        )
+        if not has_v2:
+            return None
+        try:
+            window = (
+                StoryAssetActivation.model_validate(activation.model_dump())
+                if hasattr(activation, "activation_policy")
+                else StoryAssetActivation.from_legacy(activation)
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if window.activation_policy not in {"OWN_WINDOW", "INHERITED_WINDOW"}:
+            return None
+        reveal = window.reveal_start
+        if reveal is None or reveal < beat.start - 1e-9 or reveal > beat.end + 1e-9:
+            return None
+        return float(reveal)
 
     @staticmethod
     def estimated_box(
