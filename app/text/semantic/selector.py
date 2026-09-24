@@ -160,7 +160,10 @@ class TextSemanticSelector:
             if current is None or candidate.score > current.score:
                 deduped[key] = candidate
 
-        budget = self._budget(beat)
+        budget = self._budget(
+            beat,
+            semantic_package=bool(package_candidates),
+        )
         ranked = sorted(
             deduped.values(),
             key=lambda item: (-item.score, item.source_char_start, item.display_text),
@@ -437,7 +440,9 @@ class TextSemanticSelector:
                 or ""
             ).upper()
             visual_focus = str(asset.get("visual_focus") or "").upper()
-            base = 0.90 if binding_type == "EXPLICIT" else 0.82
+            # Exact asset-level script spans outrank aggregate/group phrase mining.
+            # They are the strongest available evidence for WHAT should be written.
+            base = 1.15 if binding_type == "EXPLICIT" else 1.05
             role_bonus = {
                 "RESULT": 0.26,
                 "ACTION": 0.20,
@@ -848,10 +853,23 @@ class TextSemanticSelector:
             and word.start < audio_end
         ]
 
-    def _budget(self, beat: StoryBeat) -> int:
+    def _budget(
+        self,
+        beat: StoryBeat,
+        *,
+        semantic_package: bool = False,
+    ) -> int:
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         duration = max(0.0, audio_end - audio_start)
+        if not semantic_package:
+            # Preserve the proven sparse legacy behavior when no Final Package
+            # semantics exist to justify extra text density.
+            if duration >= 5.0:
+                return min(self.max_keywords_per_beat, 3)
+            if duration >= 2.2:
+                return min(self.max_keywords_per_beat, 2)
+            return 1
         if duration >= 4.5:
             return min(self.max_keywords_per_beat, 4)
         if duration >= 2.2:
