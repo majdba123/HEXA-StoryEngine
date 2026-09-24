@@ -333,7 +333,6 @@ class RecoveryDetector:
         pixels = 160 * 90
         foreground = 0
         strong_foreground = 0
-        distance_sum = 0.0
         for offset in range(0, expected, 3):
             red = data[offset]
             green = data[offset + 1]
@@ -344,11 +343,9 @@ class RecoveryDetector:
                 foreground += 1
             if minimum < 235 or maximum - minimum > 16:
                 strong_foreground += 1
-            distance_sum += 255.0 - (red + green + blue) / 3.0
 
         foreground_ratio = foreground / pixels
         strong_ratio = strong_foreground / pixels
-        mean_white_distance = distance_sum / pixels
         # Uniform codec-white often decodes around RGB 252-254, so mean
         # distance from 255 is not foreground evidence. Require actual colored/dark
         # pixel occupancy instead.
