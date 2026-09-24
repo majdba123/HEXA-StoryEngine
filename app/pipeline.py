@@ -443,7 +443,7 @@ class StoryEnginePipeline:
             if handler_result is not None and handler_result.success:
                 unsafe_ids = self._text_violation_cue_ids(
                     report.text_layout_violations,
-                    {cue.id for cue in current_text.cues},
+                    current_text.cues,
                 )
                 if unsafe_ids:
                     self._progress(
@@ -509,13 +509,35 @@ class StoryEnginePipeline:
     @staticmethod
     def _text_violation_cue_ids(
         violations: tuple[str, ...] | list[str],
-        known_ids: set[str],
+        cues,
     ) -> set[str]:
+        """Choose the minimum semantic text degradation needed to clear QA.
+
+        A visual/offscreen violation belongs to that cue and must remove it if bounded
+        repair failed. A text/text collision needs only one side removed: preserve the
+        higher-priority semantic cue, then prefer the earlier/shorter phrase on ties.
+        """
+        cue_by_id = {cue.id: cue for cue in cues}
         unsafe: set[str] = set()
         for violation in violations:
-            for token in str(violation).split(":"):
-                if token in known_ids:
-                    unsafe.add(token)
+            parts = str(violation).split(":")
+            ids = [token for token in parts if token in cue_by_id]
+            if not ids:
+                continue
+            if "text_text_overlap" in parts and len(ids) >= 2:
+                candidates = [cue_by_id[cue_id] for cue_id in ids]
+                loser = min(
+                    candidates,
+                    key=lambda cue: (
+                        int(cue.priority),
+                        -float(cue.spoken_start),
+                        -len(cue.text),
+                        cue.id,
+                    ),
+                )
+                unsafe.add(loser.id)
+                continue
+            unsafe.update(ids)
         return unsafe
 
     def _apply_refinement(self, package, assets, workspace: Path):
