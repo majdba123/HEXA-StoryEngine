@@ -49,6 +49,7 @@ class MotionWindow:
     end: float
     semantic_settle: float
     pace_tier: str
+    semantic_peak: float | None = None
     story_v2: bool = False
     sequence_staggered: bool = False
 
@@ -369,6 +370,7 @@ class MotionTimingPolicy:
                 end=story_window.settle_at,
                 semantic_settle=story_window.settle_at,
                 pace_tier=pace_tier,
+                semantic_peak=story_window.semantic_peak,
                 story_v2=True,
             )
             return self._stagger_visual_unit_window(
@@ -461,6 +463,16 @@ class MotionTimingPolicy:
             end=end,
             semantic_settle=end,
             pace_tier=window.pace_tier,
+            semantic_peak=(
+                start
+                + (end - start)
+                * (
+                    (window.semantic_peak - window.start)
+                    / max(cls._MIN_EXECUTABLE_DURATION, window.end - window.start)
+                )
+                if window.semantic_peak is not None
+                else None
+            ),
             story_v2=window.story_v2,
             sequence_staggered=True,
         )

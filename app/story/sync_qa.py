@@ -293,7 +293,13 @@ class StorySyncQA:
                     settle_delta_seconds=round(delta, 6),
                     activation_policy=activation_policy,
                     reveal_start=window.reveal_start if window else None,
-                    semantic_peak=window.semantic_peak if window else None,
+                    semantic_peak=(
+                        float(cue.params["semantic_peak_time"])
+                        if window is not None
+                        and ordered_visual_unit
+                        and "semantic_peak_time" in cue.params
+                        else window.semantic_peak if window else None
+                    ),
                     settle_target=target,
                     actual_visual_settle=round(actual, 6) if actual is not None else None,
                     actual_reveal=round(cue.start, 6),
@@ -320,24 +326,41 @@ class StorySyncQA:
                     and semantic_focus.get("active") is True
                 )
                 if trusted_attention and actual_peak is not None:
-                    focus_duration = float(window.settle_at) - float(window.reveal_start)
+                    expected_peak = float(window.semantic_peak)
+                    if ordered_visual_unit:
+                        try:
+                            member_peak = float(cue.params["semantic_peak_time"])
+                            if not (
+                                isfinite(member_peak)
+                                and cue.start <= member_peak <= settle
+                            ):
+                                raise ValueError("invalid member peak")
+                            expected_peak = member_peak
+                        except (KeyError, TypeError, ValueError, OverflowError):
+                            expected_peak = cue.start + (
+                                settle - cue.start
+                            ) * (
+                                (float(window.semantic_peak) - float(window.reveal_start))
+                                / max(0.05, float(window.settle_at) - float(window.reveal_start))
+                            )
+                    focus_duration = settle - cue.start
                     peak_tolerance = max(
                         2.0 / 30.0,
                         min(0.12, focus_duration * 0.35),
                     )
-                    peak_delta = actual_peak - float(window.semantic_peak)
+                    peak_delta = actual_peak - expected_peak
                     if peak_delta < -peak_tolerance - 1e-9:
                         violations.append(
                             f"{beat.id}:{activation.asset_id}:focus_peak_too_early:"
                             f"role={semantic_focus.get('semantic_role') or semantic_focus.get('role') or 'UNKNOWN'}:"
-                            f"target={float(window.semantic_peak):.3f}:"
+                            f"target={expected_peak:.3f}:"
                             f"actual_peak={actual_peak:.3f}:tolerance={peak_tolerance:.3f}"
                         )
                     elif peak_delta > peak_tolerance + 1e-9:
                         violations.append(
                             f"{beat.id}:{activation.asset_id}:focus_peak_too_late:"
                             f"role={semantic_focus.get('semantic_role') or semantic_focus.get('role') or 'UNKNOWN'}:"
-                            f"target={float(window.semantic_peak):.3f}:"
+                            f"target={expected_peak:.3f}:"
                             f"actual_peak={actual_peak:.3f}:tolerance={peak_tolerance:.3f}"
                         )
 
@@ -348,48 +371,79 @@ class StorySyncQA:
                 trusted_windows,
                 key=lambda row: (float(row[1].reveal_start), row[0].asset_id),
             )
-            for (activation, window), (next_activation, next_window) in zip(
-                ordered_trusted,
-                ordered_trusted[1:],
-            ):
-                if same_precise_trigger(activation, next_activation):
+            cohort_threshold = 2.0 / 30.0
+            cohorts: list[list[tuple[AssetActivation, object]]] = []
+            for row in ordered_trusted:
+                if not cohorts:
+                    cohorts.append([row])
                     continue
-                tolerance = max(
-                    2.0 / 30.0,
-                    min(0.12, (float(window.phrase_end) - float(window.phrase_start)) * 0.20),
+                anchor_window = cohorts[-1][0][1]
+                same_moment = (
+                    abs(float(row[1].reveal_start) - float(anchor_window.reveal_start))
+                    <= cohort_threshold + 1e-9
+                    or abs(float(row[1].semantic_peak) - float(anchor_window.semantic_peak))
+                    <= cohort_threshold + 1e-9
                 )
-                cue = cues.get((beat.id, activation.asset_id))
-                next_cue = cues.get((beat.id, next_activation.asset_id))
-                if cue is None or next_cue is None:
+                if same_moment:
+                    cohorts[-1].append(row)
+                else:
+                    cohorts.append([row])
+
+            for cohort, next_cohort in zip(cohorts, cohorts[1:]):
+                next_target = min(float(row[1].reveal_start) for row in next_cohort)
+                next_cues = [
+                    cues.get((beat.id, row[0].asset_id)) for row in next_cohort
+                ]
+                next_cues = [cue for cue in next_cues if cue is not None]
+                if not next_cues:
                     continue
-                settle = float(cue.params.get("semantic_settle_time", cue.end))
-                next_target = float(next_window.reveal_start)
-                current_focus = cue.params.get("semantic_focus", {})
-                next_focus = next_cue.params.get("semantic_focus", {})
-                semantic_role = (
-                    str(current_focus.get("semantic_role") or current_focus.get("role") or "UNKNOWN")
-                    if isinstance(current_focus, dict)
-                    else "UNKNOWN"
-                )
-                if settle > next_target + tolerance:
-                    violations.append(
-                        f"{beat.id}:{activation.asset_id}:settle_past_next_handoff:"
-                        f"role={semantic_role}:"
-                        f"target={float(window.reveal_start):.3f}:actual_reveal={cue.start:.3f}:"
-                        f"actual_settle={settle:.3f}:next_target={next_target:.3f}"
+                next_cue = min(next_cues, key=lambda cue: cue.start)
+                next_activation = next_cohort[0][0]
+                for activation, window in cohort:
+                    if same_precise_trigger(activation, next_activation):
+                        continue
+                    tolerance = max(
+                        2.0 / 30.0,
+                        min(
+                            0.12,
+                            (float(window.phrase_end) - float(window.phrase_start)) * 0.20,
+                        ),
                     )
-                if (
-                    isinstance(current_focus, dict)
-                    and isinstance(next_focus, dict)
-                    and float(current_focus.get("strength", 0.0)) >= 0.60
-                    and float(next_focus.get("strength", 0.0)) >= 0.60
-                    and settle > next_cue.start + tolerance
-                ):
-                    violations.append(
-                        f"{beat.id}:{activation.asset_id}:strong_focus_overlap:"
-                        f"actual_settle={settle:.3f}:next_reveal={next_cue.start:.3f}:"
-                        f"next_asset={next_activation.asset_id}"
+                    cue = cues.get((beat.id, activation.asset_id))
+                    if cue is None:
+                        continue
+                    settle = float(cue.params.get("semantic_settle_time", cue.end))
+                    current_focus = cue.params.get("semantic_focus", {})
+                    next_focus = next_cue.params.get("semantic_focus", {})
+                    semantic_role = (
+                        str(
+                            current_focus.get("semantic_role")
+                            or current_focus.get("role")
+                            or "UNKNOWN"
+                        )
+                        if isinstance(current_focus, dict)
+                        else "UNKNOWN"
                     )
+                    if settle > next_target + tolerance:
+                        violations.append(
+                            f"{beat.id}:{activation.asset_id}:settle_past_next_handoff:"
+                            f"role={semantic_role}:"
+                            f"target={float(window.reveal_start):.3f}:"
+                            f"actual_reveal={cue.start:.3f}:actual_settle={settle:.3f}:"
+                            f"next_target={next_target:.3f}"
+                        )
+                    if (
+                        isinstance(current_focus, dict)
+                        and isinstance(next_focus, dict)
+                        and float(current_focus.get("strength", 0.0)) >= 0.60
+                        and float(next_focus.get("strength", 0.0)) >= 0.60
+                        and settle > next_cue.start + tolerance
+                    ):
+                        violations.append(
+                            f"{beat.id}:{activation.asset_id}:strong_focus_overlap:"
+                            f"actual_settle={settle:.3f}:next_reveal={next_cue.start:.3f}:"
+                            f"next_asset={next_activation.asset_id}"
+                        )
 
             for group_id, rows in sequence_motion.items():
                 # Validate visual sequence only inside the exact same trigger cluster.

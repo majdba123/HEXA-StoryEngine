@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.choreography import ChoreographyPlan
 from app.models import (
     AssetActivation,
     CompositionBeat,
@@ -109,9 +110,15 @@ def test_final_package_sequence_order_overrides_reversed_layout_order() -> None:
 def test_locator_multi_cutout_unit_gets_internal_geometry_flow_order() -> None:
     rows = [
         _activation("previous", order=1, unit="previous"),
-        _activation("card-c", order=2, unit="cards", multi=True),
-        _activation("card-b", order=2, unit="cards", multi=True),
-        _activation("card-a", order=2, unit="cards", multi=True),
+        _activation("card-c", order=2, unit="cards", multi=True).model_copy(
+            update={"visual_focus": "PRIMARY"}
+        ),
+        _activation("card-b", order=2, unit="cards", multi=True).model_copy(
+            update={"visual_focus": "PRIMARY"}
+        ),
+        _activation("card-a", order=2, unit="cards", multi=True).model_copy(
+            update={"visual_focus": "PRIMARY"}
+        ),
         _activation("next", order=3, unit="next"),
     ]
     beat = _beat(rows)
@@ -136,7 +143,7 @@ def test_locator_multi_cutout_unit_gets_internal_geometry_flow_order() -> None:
         ],
     )
 
-    cues = MotionPlanner().plan([beat], [layout])
+    cues = MotionPlanner().plan([beat], [layout], ChoreographyPlan())
     card_cues = [
         cue for cue in cues if cue.asset_id.startswith("card-")
     ]
@@ -172,7 +179,20 @@ def test_locator_multi_cutout_unit_gets_internal_geometry_flow_order() -> None:
         story_start <= cue.start < cue.end <= story_end
         for cue in card_cues
     )
-    assert StorySyncQA().inspect(story=[beat], motion=cues).passed
+    assert all(
+        cue.start <= cue.params["semantic_peak_time"] <= _settle(cue)
+        for cue in card_cues
+    )
+    assert [cue.params["semantic_peak_time"] for cue in card_cues] == sorted(
+        cue.params["semantic_peak_time"] for cue in card_cues
+    )
+    report = StorySyncQA().inspect(story=[beat], motion=cues)
+    assert report.passed, report.violations
+    assert all(
+        entry.actual_peak == pytest.approx(entry.semantic_peak, abs=0.12)
+        for entry in report.entries
+        if entry.asset_id.startswith("card-")
+    )
 
 
 def test_same_position_multi_cutout_falls_back_to_small_to_large_visual_size() -> None:

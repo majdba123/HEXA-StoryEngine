@@ -64,16 +64,54 @@ class MotionCompiler:
             # otherwise its original 78% settle frame arrives before Story's time.
             payload = params["program"]
             settle_progress = (window.semantic_settle - window.start) / max(0.05, window.duration)
+            source_peak = max(
+                (
+                    frame
+                    for frame in payload["keyframes"]
+                    if frame["progress"] <= program.settle_progress + 1e-9
+                ),
+                key=lambda frame: (
+                    max(0.0, frame["scale"] - 1.0),
+                    abs(frame["dx"]) + abs(frame["dy"]),
+                    frame["progress"],
+                ),
+            )["progress"]
+            align_peak = bool(
+                semantic_focus
+                and semantic_focus.get("active") is True
+                and window.semantic_peak is not None
+                and source_peak > 1e-9
+                and source_peak < program.settle_progress - 1e-9
+            )
+            target_peak = (
+                (window.semantic_peak - window.start) / max(0.05, window.duration)
+                if align_peak
+                else None
+            )
+            if target_peak is not None:
+                target_peak = max(0.0, min(settle_progress, target_peak))
+
+            def retime(progress: float) -> float:
+                if not align_peak or target_peak is None:
+                    return progress / program.settle_progress * settle_progress
+                if progress <= source_peak:
+                    return progress / source_peak * target_peak
+                return target_peak + (
+                    (progress - source_peak)
+                    / (program.settle_progress - source_peak)
+                    * (settle_progress - target_peak)
+                )
+
             frames = []
             for frame in payload["keyframes"]:
                 if frame["progress"] <= program.settle_progress:
-                    frames.append({**frame, "progress": (
-                        frame["progress"] / program.settle_progress * settle_progress
-                    )})
+                    frames.append({**frame, "progress": retime(frame["progress"])})
             if settle_progress < 1.0:
                 frames.append({**payload["keyframes"][-1], "progress": 1.0})
             payload["keyframes"] = frames
             payload["settle_progress"] = settle_progress
+            if window.semantic_peak is not None:
+                params["semantic_peak_time"] = window.semantic_peak
         return MotionCue(
             beat_id=beat.id,
             asset_id=asset_id,
