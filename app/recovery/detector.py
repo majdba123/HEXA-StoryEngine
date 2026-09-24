@@ -280,7 +280,7 @@ class RecoveryDetector:
             # reference grammar often uses sparse white scenes with one small semantic
             # object, so >99% white is not sufficient evidence of a flash. Confirm that
             # the encoded frame is actually devoid of meaningful foreground.
-            if self._frame_has_meaningful_foreground(video, timestamp):
+            if self._frame_has_meaningful_foreground(video, frame):
                 continue
             flashes.append({"frame": frame, "time": timestamp})
         return flashes
@@ -288,7 +288,7 @@ class RecoveryDetector:
     def _frame_has_meaningful_foreground(
         self,
         video: Path,
-        timestamp: float,
+        frame_index: int,
     ) -> bool:
         """Distinguish an intentional sparse white scene from a true blank frame.
 
@@ -304,12 +304,13 @@ class RecoveryDetector:
             "error",
             "-i",
             str(video),
-            "-ss",
-            f"{max(0.0, timestamp):.6f}",
             "-frames:v",
             "1",
             "-vf",
-            "scale=160:90:flags=fast_bilinear,format=rgb24",
+            (
+                f"select=eq(n\\,{max(0, int(frame_index))}),"
+                "scale=160:90:flags=fast_bilinear,format=rgb24"
+            ),
             "-f",
             "rawvideo",
             "pipe:1",
