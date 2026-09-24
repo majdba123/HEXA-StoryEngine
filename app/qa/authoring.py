@@ -77,6 +77,8 @@ class AuthoringVisualQA:
             text=text,
             text_composition=text_composition or [],
             assets=by_id,
+            motion=motion,
+            fps=fps,
         )
 
         short: list[str] = []
@@ -108,6 +110,8 @@ class AuthoringVisualQA:
         text: TextPlan,
         text_composition: list[TextCompositionBeat],
         assets: dict[str, VisualAsset],
+        motion: list[MotionCue],
+        fps: int,
     ) -> list[str]:
         visual_by_beat = {row.beat_id: row for row in composition}
         beat_by_id = {row.id: row for row in story}
@@ -118,15 +122,10 @@ class AuthoringVisualQA:
         for rows in cues_by_beat.values():
             rows.sort(key=lambda cue: (cue.spoken_start, cue.id))
         issues: list[str] = []
+        motion_by_key = {(row.beat_id, row.asset_id): row for row in motion}
 
         for text_beat in text_composition:
             visual = visual_by_beat.get(text_beat.beat_id)
-            occupancy = (
-                self.occupancy.build(visual.items, assets)
-                if visual is not None
-                else None
-            )
-
             beat = beat_by_id.get(text_beat.beat_id)
             text_boxes: list[
                 tuple[
@@ -149,6 +148,27 @@ class AuthoringVisualQA:
                 )
                 if box[0] < 0.0 or box[1] < 0.0 or box[2] > 1.0 or box[3] > 1.0:
                     issues.append(f"{text_beat.beat_id}:text_offscreen:{item.text_cue_id}")
+                visible_end = (
+                    self.text_visibility.visible_end(
+                        cue,
+                        beat,
+                        cues_by_beat.get(text_beat.beat_id, []),
+                    )
+                    if beat is not None
+                    else cue.spoken_end
+                )
+                visible_items = self._visible_visual_items(
+                    beat_id=text_beat.beat_id,
+                    visual=visual,
+                    motion_by_key=motion_by_key,
+                    visible_end=visible_end,
+                    fps=fps,
+                )
+                occupancy = (
+                    self.occupancy.build(visible_items, assets)
+                    if visible_items
+                    else None
+                )
                 visual_overlap = (
                     self.occupancy.overlap(occupancy, box).ratio
                     if occupancy is not None
@@ -159,15 +179,6 @@ class AuthoringVisualQA:
                         f"{text_beat.beat_id}:text_visual_overlap:{item.text_cue_id}:"
                         f"{visual_overlap:.3f}"
                     )
-                visible_end = (
-                    self.text_visibility.visible_end(
-                        cue,
-                        beat,
-                        cues_by_beat.get(text_beat.beat_id, []),
-                    )
-                    if beat is not None
-                    else cue.spoken_end
-                )
                 text_boxes.append(
                     (
                         item.text_cue_id,
@@ -197,6 +208,49 @@ class AuthoringVisualQA:
                             f"{min(left_end, right_end):.3f}"
                         )
         return issues
+
+    @staticmethod
+    def _visible_visual_items(
+        *,
+        beat_id: str,
+        visual: CompositionBeat | None,
+        motion_by_key: dict[tuple[str, str], MotionCue],
+        visible_end: float,
+        fps: int,
+    ) -> list:
+        """Validate text only against artwork visible during its readability window.
+
+        Final Motion timing is authoritative at QA time. A final-composition asset that
+        has not reached its reveal cannot collide with text that disappears beforehand.
+        The earliest cue cohort remains conservative because Renderer may use one member
+        as the anti-white boundary carrier. Assets without Motion remain visible.
+        """
+        if visual is None:
+            return []
+        starts = [
+            float(cue.start)
+            for item in visual.items
+            if (cue := motion_by_key.get((beat_id, item.asset_id))) is not None
+        ]
+        earliest = min(starts) if starts else None
+        carrier_limit = (
+            earliest + max(0.08, 2.0 / max(1, fps))
+            if earliest is not None
+            else None
+        )
+        output = []
+        for item in visual.items:
+            cue = motion_by_key.get((beat_id, item.asset_id))
+            if cue is None:
+                output.append(item)
+                continue
+            start = float(cue.start)
+            if start < visible_end - 0.01:
+                output.append(item)
+                continue
+            if carrier_limit is not None and start <= carrier_limit + 1e-9:
+                output.append(item)
+        return output
 
     @staticmethod
     def _intersection_ratio(
