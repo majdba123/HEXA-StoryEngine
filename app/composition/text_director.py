@@ -74,6 +74,7 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
         visible_end: float | None = None,
+        repair_level: int = 0,
     ) -> PlacementResult:
         anchor = self._anchor(cue, visual)
         asset_map = assets_by_id or {}
@@ -95,7 +96,7 @@ class TextPlacementDirector:
         )
 
         scored = []
-        for font_scale in self._font_scales(cue):
+        for font_scale in self._font_scales(cue, repair_level=repair_level):
             width, height = self.estimated_box(cue, scale=font_scale)
             candidates = self._candidate_field(width, height, anchor)
             for candidate in candidates:
@@ -244,10 +245,22 @@ class TextPlacementDirector:
         )
 
     @staticmethod
-    def _font_scales(cue: TextCue) -> tuple[float, ...]:
-        # Sparse keywords remain large by default. Dense artwork may force a controlled
-        # reduction, but never below a readable production floor.
-        return (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56) if cue.priority >= 85 else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
+    def _font_scales(
+        cue: TextCue,
+        *,
+        repair_level: int = 0,
+    ) -> tuple[float, ...]:
+        # Normal authoring keeps the established typography scale. Recovery may use
+        # two additional bounded sizes only when no collision-free production-sized
+        # placement exists. This is preferable to failing an otherwise valid video.
+        base = (
+            (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56)
+            if cue.priority >= 85
+            else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
+        )
+        if repair_level >= 2:
+            return (*base, 0.52, 0.50)
+        return base
 
     def _candidate_field(
         self,
