@@ -42,6 +42,14 @@ def rerender(context: dict) -> HandlerResult:
     return HandlerResult(True, "render", "rebuild rendered video from the current verified plan")
 
 
+def rerender_strict_handoff(context: dict) -> HandlerResult:
+    return HandlerResult(
+        True,
+        "render",
+        "rerender with semantic-safe maximum boundary coverage",
+    )
+
+
 def remux_audio(context: dict) -> HandlerResult:
     return HandlerResult(True, "final", "rebuild final audio/video mux")
 
@@ -53,5 +61,6 @@ HANDLERS: dict[str, RecoveryHandler] = {
     "rebuild_motion": rebuild_motion,
     "repair_text_layout": repair_text_layout,
     "rerender": rerender,
+    "rerender_strict_handoff": rerender_strict_handoff,
     "remux_audio": remux_audio,
 }
