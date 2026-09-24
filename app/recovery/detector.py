@@ -274,9 +274,85 @@ class RecoveryDetector:
         for match in pattern.finditer(result.stderr or ""):
             frame = int(match.group(1))
             timestamp = float(match.group(2))
-            if guard < timestamp < duration - guard:
-                flashes.append({"frame": frame, "time": timestamp})
+            if not (guard < timestamp < duration - guard):
+                continue
+            # blackframe is intentionally a broad first-pass detector. HEXA's
+            # reference grammar often uses sparse white scenes with one small semantic
+            # object, so >99% white is not sufficient evidence of a flash. Confirm that
+            # the encoded frame is actually devoid of meaningful foreground.
+            if self._frame_has_meaningful_foreground(video, timestamp):
+                continue
+            flashes.append({"frame": frame, "time": timestamp})
         return flashes
+
+    def _frame_has_meaningful_foreground(
+        self,
+        video: Path,
+        timestamp: float,
+    ) -> bool:
+        """Distinguish an intentional sparse white scene from a true blank frame.
+
+        Decode one tiny RGB frame only for blackframe candidates. A few hundred colored
+        or dark pixels are enough to represent a valid semantic icon; an encoded white
+        flash has essentially no such foreground. This second pass is cheap because it
+        runs only on already-suspicious timestamps.
+        """
+        command = [
+            self.ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-ss",
+            f"{max(0.0, timestamp):.6f}",
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=160:90:flags=fast_bilinear,format=rgb24",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+        try:
+            sampled = run_hidden(
+                command,
+                check=True,
+                capture_output=True,
+                text=False,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError):
+            # Conservative failure mode: if verification itself fails, keep the
+            # original flash candidate instead of silently accepting bad output.
+            return False
+        expected = 160 * 90 * 3
+        if not isinstance(sampled, (bytes, bytearray)) or len(sampled) < expected:
+            return False
+        data = sampled[:expected]
+        pixels = 160 * 90
+        foreground = 0
+        strong_foreground = 0
+        distance_sum = 0.0
+        for offset in range(0, expected, 3):
+            red = data[offset]
+            green = data[offset + 1]
+            blue = data[offset + 2]
+            minimum = min(red, green, blue)
+            maximum = max(red, green, blue)
+            if minimum < 245 or maximum - minimum > 7:
+                foreground += 1
+            if minimum < 235 or maximum - minimum > 16:
+                strong_foreground += 1
+            distance_sum += 255.0 - (red + green + blue) / 3.0
+
+        foreground_ratio = foreground / pixels
+        strong_ratio = strong_foreground / pixels
+        mean_white_distance = distance_sum / pixels
+        return (
+            foreground_ratio >= 0.0030
+            or strong_ratio >= 0.0015
+            or mean_white_distance >= 0.80
+        )
 
     @staticmethod
     def _duration(stream: dict, probe: dict) -> float:
