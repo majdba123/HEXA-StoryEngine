@@ -30,6 +30,14 @@ def rebuild_motion(context: dict) -> HandlerResult:
     return HandlerResult(True, "motion", "rebuild reveal/handoff motion")
 
 
+def repair_text_layout(context: dict) -> HandlerResult:
+    return HandlerResult(
+        True,
+        "composition",
+        "recompose text against final visual timing and degrade only unsafe optional cues",
+    )
+
+
 def rerender(context: dict) -> HandlerResult:
     return HandlerResult(True, "render", "rebuild rendered video from the current verified plan")
 
@@ -43,6 +51,7 @@ HANDLERS: dict[str, RecoveryHandler] = {
     "rebuild_story_timing": rebuild_story_timing,
     "rebuild_composition": rebuild_composition,
     "rebuild_motion": rebuild_motion,
+    "repair_text_layout": repair_text_layout,
     "rerender": rerender,
     "remux_audio": remux_audio,
 }
