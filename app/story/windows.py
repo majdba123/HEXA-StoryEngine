@@ -64,7 +64,7 @@ class ScheduledStoryBeat(StoryBeat):
     asset_activations: list[StoryAssetActivation] = Field(default_factory=list)
 
 
-def _same_precise_trigger(left: AssetActivation, right: AssetActivation) -> bool:
+def same_precise_trigger(left: AssetActivation, right: AssetActivation) -> bool:
     """Sequence order may split only genuinely identical semantic trigger windows.
 
     Precise narration timing is the stronger authority whenever assets point at
@@ -132,7 +132,7 @@ def _semantic_sequence_windows(
                 (
                     rows
                     for rows in clusters
-                    if rows and _same_precise_trigger(rows[0], row)
+                    if rows and same_precise_trigger(rows[0], row)
                 ),
                 None,
             )
