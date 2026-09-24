@@ -30,5 +30,32 @@ class RenderedVisualQA:
         try:
             run_hidden(command, check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
+            pass
+        if target.is_file():
+            return RenderedVisualReport(contact_sheet=target, sampled=True)
+
+        # Very short renders may not provide enough samples for the tile filter to
+        # flush a contact sheet. Final visual QA must still leave evidence instead of
+        # reporting a false "unsampled" state, so fall back to a single encoded frame.
+        fallback = [
+            self.ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=320:-2",
+            str(target),
+        ]
+        try:
+            run_hidden(fallback, check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
             return RenderedVisualReport(contact_sheet=None, sampled=False)
-        return RenderedVisualReport(contact_sheet=target if target.is_file() else None, sampled=target.is_file())
+        return RenderedVisualReport(
+            contact_sheet=target if target.is_file() else None,
+            sampled=target.is_file(),
+        )
