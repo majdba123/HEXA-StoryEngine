@@ -5,8 +5,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from math import isfinite
 
-from app.models import MotionCue, StoryBeat
+from app.models import AssetActivation, MotionCue, StoryBeat
 from app.shared.errors import StageFailedError
+from app.story.windows import same_precise_trigger
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +76,7 @@ class StorySyncQA:
             previous_anchor: float | None = None
             sequence_motion: dict[
                 str,
-                list[tuple[int, float, str, bool, int | None, int | None]],
+                list[tuple[int, float, AssetActivation, bool]],
             ] = {}
             internal_motion: dict[
                 tuple[str | None, int | None, str | None],
@@ -236,10 +237,8 @@ class StorySyncQA:
                     ).append((
                         activation.sequence_order,
                         cue.start,
-                        activation.asset_id,
+                        activation,
                         "semantic_group_sequential_window" in activation.evidence,
-                        activation.trigger_char_start,
-                        activation.trigger_char_end,
                     ))
                 if ordered_visual_unit:
                     key = (
@@ -281,45 +280,68 @@ class StorySyncQA:
                     )
 
             for group_id, rows in sequence_motion.items():
-                by_order: dict[
-                    int,
-                    list[tuple[float, str, bool, int | None, int | None]],
-                ] = {}
-                for order, start_time, asset_id, scheduled, char_start, char_end in rows:
-                    by_order.setdefault(order, []).append(
-                        (
-                            start_time,
-                            asset_id,
-                            scheduled,
-                            char_start,
-                            char_end,
-                        )
-                    )
-                ordered_starts = [
-                    (order, min(row[0] for row in by_order[order]))
-                    for order in sorted(by_order)
-                ]
-                for (left_order, left_start), (right_order, right_start) in zip(
-                    ordered_starts, ordered_starts[1:]
+                # Validate visual sequence only inside the exact same trigger cluster.
+                # A semantic group may contain several precise narration spans whose
+                # natural speech order legitimately conflicts with global sequence_order.
+                # Story scheduling and QA intentionally share same_precise_trigger() so
+                # the producer and validator cannot disagree about that authority.
+                scheduled_rows = [row for row in rows if row[3]]
+                clusters: list[
+                    list[tuple[int, float, AssetActivation, bool]]
+                ] = []
+                for row in sorted(
+                    scheduled_rows,
+                    key=lambda item: (
+                        float(item[2].spoken_start)
+                        if item[2].spoken_start is not None
+                        else float("inf"),
+                        item[0],
+                        item[2].asset_id,
+                    ),
                 ):
-                    pair_rows = by_order[left_order] + by_order[right_order]
-                    explicitly_scheduled = any(row[2] for row in pair_rows)
-                    # sequence_order is enforceable only when Story deliberately
-                    # allocated a shared precise phrase into sequential sub-windows.
-                    # Distinct precise script spans are allowed to follow narration
-                    # order even when that differs from a visual authoring hint.
-                    if not explicitly_scheduled:
+                    cluster = next(
+                        (
+                            candidate
+                            for candidate in clusters
+                            if candidate
+                            and same_precise_trigger(candidate[0][2], row[2])
+                        ),
+                        None,
+                    )
+                    if cluster is None:
+                        clusters.append([row])
+                    else:
+                        cluster.append(row)
+
+                for cluster in clusters:
+                    by_order: dict[
+                        int,
+                        list[tuple[float, AssetActivation]],
+                    ] = {}
+                    for order, start_time, activation, _scheduled in cluster:
+                        by_order.setdefault(order, []).append(
+                            (start_time, activation)
+                        )
+                    if len(by_order) <= 1:
                         continue
-                    if right_start + 1e-9 < left_start:
-                        violations.append(
-                            f"{beat.id}:{group_id}:sequence_order_motion_reversed:"
-                            f"{left_order}>{right_order}"
-                        )
-                    if right_start <= left_start + 1e-9:
-                        violations.append(
-                            f"{beat.id}:{group_id}:sequence_order_motion_collapsed:"
-                            f"{left_order}={right_order}"
-                        )
+                    ordered_starts = [
+                        (order, min(row[0] for row in by_order[order]))
+                        for order in sorted(by_order)
+                    ]
+                    for (left_order, left_start), (right_order, right_start) in zip(
+                        ordered_starts,
+                        ordered_starts[1:],
+                    ):
+                        if right_start + 1e-9 < left_start:
+                            violations.append(
+                                f"{beat.id}:{group_id}:sequence_order_motion_reversed:"
+                                f"{left_order}>{right_order}"
+                            )
+                        if right_start <= left_start + 1e-9:
+                            violations.append(
+                                f"{beat.id}:{group_id}:sequence_order_motion_collapsed:"
+                                f"{left_order}={right_order}"
+                            )
 
             for key, rows in internal_motion.items():
                 group_id, sequence_order, semantic_unit_id = key
