@@ -4311,3 +4311,104 @@ Result: SUCCESS
 - Actual encoded MP4 release smoke remains in the passing suite.
 
 Fresh full production render is still required for visual acceptance.
+## MONTAGE19 STARTUP / COHORT ATTENTION AUDIT CHECKPOINT — 2026-09-24
+
+Incoming owner: `montage19`.
+Received from: the latest repository continuity line after Montage17 production hardening.
+Development branch: `montage` ONLY.
+
+### Startup verification
+
+Live branch was re-verified from GitHub before any write.
+
+- Live `montage` HEAD before this continuity commit:
+  `866254fcf5b961323f4799fd52c57bb97d1be66d`
+- HEAD message:
+  `[motion] Budget attention within semantic cohorts`
+- Previous handoff behavior SHA:
+  `231876990442f5119c30d8d49245925faa26e8d9`
+- Compare result:
+  - status: ahead
+  - commits ahead: 2
+  - behind: 0
+
+### Unseen commit audit completed
+
+Both commits after the last recorded behavior SHA were reviewed before this documentation write.
+
+1. `a084ca53547e1f48d3ab550929a5cfe5a4e85fa3`
+   `[continuity] Record semantic handoff production hardening`
+   - documentation-only;
+   - appends the Story-handoff failure/root-cause/fix/CI evidence already reflected in the final
+     Montage17 checkpoint;
+   - changed only `HEXA_PROJECT_CONTINUITY_SOURCE.md`.
+
+2. `866254fcf5b961323f4799fd52c57bb97d1be66d`
+   `[motion] Budget attention within semantic cohorts`
+   - behavior change in `app/motion/planner.py`;
+   - regression additions in `tests/test_final_package_choreography_v11.py`;
+   - introduces a bounded attention budget for assets sharing the same Story semantic cohort;
+   - chooses one semantic leader from authored focus/role/relation evidence;
+   - keeps relation participants readable but below the leader;
+   - suppresses simultaneous support/context motion energy rather than letting every valid activation
+     become equally strong;
+   - preserves Story-owned timing, exact Composition geometry, final settle, post-settle freeze,
+     Pass1/Pass2 architecture and existing choreography authority.
+
+No additional unseen commit exists between the recorded behavior SHA and the live HEAD.
+
+### Live CI proof
+
+GitHub Actions:
+- Run: `35999994814`
+- Workflow: `V2 CI`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: **295 passed, 12 warnings in 7.43s**
+- The actual encoded MP4 release smoke remains part of the passing suite.
+
+### Render / Visual QA / PROVEN state
+
+Render:
+- No fresh full production Black-Hat/White-Hat render is recorded for exact HEAD
+  `866254fc...`.
+
+Visual QA:
+- NOT YET performed on a full encoded production render from this exact HEAD.
+- Therefore the new cohort attention budget is code/CI proven but not perceptually accepted.
+
+PROVEN:
+- Pass1 + Pass2 only.
+- Final Package semantic authority.
+- precise speech/WhisperX timing authority.
+- Story handoff bounding and static family-layer QA hardening.
+- cohort attention-budget architecture and regression coverage.
+- Compile/Ruff/full pytest/release-smoke gate.
+
+NOT PROVEN:
+- reference-grade focus hierarchy from a real 40-scene production render on exact HEAD
+  `866254fc...`;
+- final perceptual balance of leader/participant/support energy on real narration;
+- absence of any scene-specific visual regression in the full user package/audio runtime.
+
+### Current blocker / next action
+
+The engineering gate is no longer a known code/CI failure.
+
+The remaining acceptance blocker is the fresh exact-HEAD production render using the precise REV9
+Final Package + real narration audio, followed by full visual review.
+
+Mandatory visual checks remain:
+- one clear focus leader per simultaneous semantic cohort;
+- relation participants readable without competing with RESULT/PRIMARY;
+- support/context/character calm unless explicitly promoted;
+- no future semantic reveal;
+- no settle past the next narration handoff;
+- no strong-focus overlap;
+- exact final authored geometry;
+- no collision, ghost alpha, white flash, wobble/recoil, or text clipping.
+
+Do not make another motion-strength change until a fresh exact-HEAD render or concrete diagnostic
+shows the remaining defect.
+
