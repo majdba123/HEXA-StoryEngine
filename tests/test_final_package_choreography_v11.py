@@ -6,6 +6,7 @@ import pytest
 
 from app.choreography import (
     ChoreographyDirector,
+    ChoreographyPlan,
     ChoreographyPattern,
 )
 from app.models import (
@@ -107,6 +108,167 @@ def _activation(
         visual_focus=focus,
         visual_state=state,
     )
+
+
+def _same_cohort_motion(
+    activations: list[AssetActivation],
+    roles: dict[str, str],
+) -> tuple[StoryBeat, dict[str, object]]:
+    beat = _beat(activations=activations)
+    beat.semantic_context.entities = [
+        StoryEntity(unit_id=asset_id, role=role)
+        for asset_id, role in roles.items()
+    ]
+    beat.asset_activations = schedule_windows(activations, beat, beat.end, set())
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(
+                asset_id=row.asset_id,
+                x=0.15 + index * 0.20,
+                y=0.50,
+                width=0.16,
+                height=0.20,
+            )
+            for index, row in enumerate(activations)
+        ],
+    )]
+    cues = MotionPlanner().plan(
+        [beat], composition, ChoreographyPlan(),
+        assets=[_asset(row.asset_id) for row in activations],
+    )
+    return beat, {cue.asset_id: cue for cue in cues}
+
+
+def _motion_energy(cue) -> float:
+    return max(
+        abs(frame["dx"]) + abs(frame["dy"]) + abs(frame["scale"] - 1.0)
+        for frame in cue.params["program"]["keyframes"]
+    )
+
+
+def test_same_cohort_primary_gets_bounded_attention_budget_over_supports() -> None:
+    activations = [
+        _activation("primary", 1, focus="PRIMARY"),
+        _activation("support-a", 1).model_copy(update={"binding_type": "SUPPORT"}),
+        _activation("support-b", 1).model_copy(update={"binding_type": "SUPPORT"}),
+    ]
+    beat, cues = _same_cohort_motion(
+        activations,
+        {"primary": "PRIMARY", "support-a": "SUPPORT", "support-b": "SUPPORT"},
+    )
+
+    assert cues["primary"].params["semantic_focus"]["cohort_role"] == "leader"
+    assert _motion_energy(cues["primary"]) > _motion_energy(cues["support-a"])
+    assert _motion_energy(cues["primary"]) > _motion_energy(cues["support-b"])
+    assert all(
+        cue.start == pytest.approx(beat.asset_activations[0].reveal_start)
+        for cue in cues.values()
+    )
+
+
+def test_same_cohort_result_beats_object_and_context() -> None:
+    activations = [
+        _activation("object", 1),
+        _activation("context", 1, focus="CONTEXT"),
+        _activation("result", 1, focus="RESULT"),
+    ]
+    _beat_row, cues = _same_cohort_motion(
+        activations,
+        {"object": "OBJECT", "context": "SUPPORT", "result": "RESULT"},
+    )
+
+    assert cues["result"].params["semantic_focus"]["cohort_role"] == "leader"
+    assert _motion_energy(cues["result"]) > _motion_energy(cues["object"])
+    assert _motion_energy(cues["object"]) > _motion_energy(cues["context"])
+
+
+def test_same_cohort_interaction_keeps_participants_readable_below_result() -> None:
+    activations = [
+        _activation("subject", 1),
+        _activation("object", 1),
+        _activation("result", 1, focus="RESULT"),
+    ]
+    relation = StoryRelation(
+        source_unit_id="subject", target_unit_id="object", result_unit_id="result",
+        kind="CREATES", authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.98, causal=True,
+    )
+    beat = _beat(activations=activations, relations=[relation], result_ids=["result"])
+    beat.semantic_context.entities = [
+        StoryEntity(unit_id="subject", role="ACTION"),
+        StoryEntity(unit_id="object", role="OBJECT"),
+        StoryEntity(unit_id="result", role="RESULT"),
+    ]
+    beat.asset_activations = schedule_windows(activations, beat, beat.end, set())
+    assets = [_asset(row.asset_id) for row in activations]
+    choreography = ChoreographyDirector().plan(
+        _package([row.asset_id for row in activations]), [beat], assets,
+    )
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="subject", x=0.2, y=0.5, width=0.2, height=0.25),
+            LayoutItem(asset_id="object", x=0.5, y=0.5, width=0.2, height=0.25),
+            LayoutItem(asset_id="result", x=0.8, y=0.5, width=0.2, height=0.25),
+        ],
+    )]
+    cues = {
+        cue.asset_id: cue
+        for cue in MotionPlanner().plan([beat], composition, choreography, assets=assets)
+    }
+
+    assert cues["result"].params["semantic_focus"]["cohort_role"] == "leader"
+    assert cues["subject"].params["semantic_focus"]["cohort_role"] == "participant"
+    assert cues["object"].params["semantic_focus"]["cohort_role"] == "participant"
+    assert _motion_energy(cues["result"]) > _motion_energy(cues["subject"])
+    assert _motion_energy(cues["result"]) > _motion_energy(cues["object"])
+    assert _motion_energy(cues["subject"]) > 0.0
+    assert _motion_energy(cues["object"]) > 0.0
+
+
+def test_same_cohort_action_beats_context_character_unless_character_is_explicit() -> None:
+    contextual = [
+        _activation("character", 1),
+        _activation("action", 1),
+    ]
+    _beat_row, cues = _same_cohort_motion(
+        contextual,
+        {"character": "CHARACTER", "action": "ACTION"},
+    )
+    assert cues["action"].params["semantic_focus"]["cohort_role"] == "leader"
+    assert _motion_energy(cues["action"]) > _motion_energy(cues["character"])
+
+    explicit = [
+        _activation("character", 1, focus="PRIMARY"),
+        _activation("action", 1),
+    ]
+    _beat_row, cues = _same_cohort_motion(
+        explicit,
+        {"character": "CHARACTER", "action": "ACTION"},
+    )
+    assert cues["character"].params["semantic_focus"]["cohort_role"] == "leader"
+    assert _motion_energy(cues["character"]) > _motion_energy(cues["action"])
+
+
+def test_four_same_cohort_supports_do_not_receive_equal_strong_accents() -> None:
+    activations = [
+        _activation(f"support-{index}", 1).model_copy(
+            update={"binding_type": "SUPPORT"}
+        )
+        for index in range(4)
+    ]
+    _beat_row, cues = _same_cohort_motion(
+        activations,
+        {row.asset_id: "SUPPORT" for row in activations},
+    )
+    energies = [_motion_energy(cue) for cue in cues.values()]
+
+    assert sum(
+        cue.params["semantic_focus"]["cohort_role"] == "leader"
+        for cue in cues.values()
+    ) == 1
+    assert max(energies) > min(energies) * 2.0
 
 
 def test_explicit_final_package_state_selects_state_transform_and_wins_inference() -> None:

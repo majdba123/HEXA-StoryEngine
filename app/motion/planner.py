@@ -153,6 +153,31 @@ class MotionPlanner:
                 preferred_asset_id=preferred_interaction_id,
             )
             previous_items = {item.asset_id: item for item in previous_layout.items} if previous_layout else {}
+            participant_roles = {
+                slot.item.asset_id: (
+                    directive.participant_role(slot.item.asset_id).value
+                    if directive is not None
+                    else "SUPPORT"
+                )
+                for slot in ordered_slots
+            }
+            attention_profiles = {
+                slot.item.asset_id: self._semantic_focus_profile(
+                    beat=beat,
+                    activation=activation_by_asset.get(slot.item.asset_id),
+                    participant_role=participant_roles[slot.item.asset_id],
+                    static_primary=(slot.item is primary_item),
+                )
+                for slot in ordered_slots
+            }
+            cohort_budget = self._cohort_attention_budget(
+                beat=beat,
+                activation_by_asset=activation_by_asset,
+                attention_profiles=attention_profiles,
+                participant_roles=participant_roles,
+                preferred_primary_id=preferred_primary_id,
+                preferred_interaction_id=preferred_interaction_id,
+            )
 
             for index, slot in enumerate(ordered_slots):
                 item = slot.item
@@ -163,11 +188,7 @@ class MotionPlanner:
                     primary_item=primary_item,
                     target_item=target_item,
                 )
-                participant_role = (
-                    directive.participant_role(item.asset_id).value
-                    if directive is not None
-                    else "SUPPORT"
-                )
+                participant_role = participant_roles[item.asset_id]
                 activation = activation_by_asset.get(item.asset_id)
                 (
                     momentary_focus,
@@ -175,11 +196,10 @@ class MotionPlanner:
                     focus_source,
                     focus_strength,
                     semantic_role,
-                ) = self._semantic_focus_profile(
-                    beat=beat,
-                    activation=activation,
-                    participant_role=participant_role,
-                    static_primary=(item is primary_item),
+                ) = attention_profiles[item.asset_id]
+                cohort_gain, cohort_role = cohort_budget.get(
+                    item.asset_id,
+                    (1.0, "independent"),
                 )
                 continuity_source = previous_items.get(item.asset_id)
                 # Continuity is allowed only for the exact same visual asset. A semantic
@@ -237,6 +257,7 @@ class MotionPlanner:
                     focus_role=focus_role,
                     momentary_focus=momentary_focus,
                     primary=(item is primary_item),
+                    cohort_gain=cohort_gain,
                 )
                 state_target = bool(
                     directive is not None
@@ -257,6 +278,7 @@ class MotionPlanner:
                         state_target=state_target,
                         interaction_vector=interaction_vector,
                         energy=intensity,
+                        cohort_gain=cohort_gain,
                     )
                 program = self._apply_density_budget(
                     program,
@@ -308,6 +330,8 @@ class MotionPlanner:
                             "role": focus_role,
                             "source": focus_source,
                             "strength": round(focus_strength, 4),
+                            "cohort_gain": round(cohort_gain, 4),
+                            "cohort_role": cohort_role,
                             "semantic_role": semantic_role,
                             "focus_duration_ms": round(
                                 max(0.0, window.semantic_settle - window.start) * 1000
@@ -564,6 +588,106 @@ class MotionPlanner:
         return False, focus_role, source, strength, semantic_role
 
     @staticmethod
+    def _cohort_attention_budget(
+        *,
+        beat: StoryBeat,
+        activation_by_asset: dict[str, AssetActivation],
+        attention_profiles: dict[str, tuple[bool, str, str, float, str]],
+        participant_roles: dict[str, str],
+        preferred_primary_id: str | None,
+        preferred_interaction_id: str | None,
+    ) -> dict[str, tuple[float, str]]:
+        """Bound simultaneous motion energy while preserving Story-owned timing."""
+        timed: list[tuple[str, AssetActivation, object]] = []
+        for asset_id, activation in activation_by_asset.items():
+            has_v2, window = story_activation_window(activation, beat)
+            if has_v2 and window is not None:
+                timed.append((asset_id, activation, window))
+        timed.sort(key=lambda row: (float(row[2].reveal_start), row[0]))
+
+        cohorts: list[list[tuple[str, AssetActivation, object]]] = []
+        threshold = 2.0 / 30.0
+        for row in timed:
+            if not cohorts:
+                cohorts.append([row])
+                continue
+            anchor = cohorts[-1][0][2]
+            if (
+                abs(float(row[2].reveal_start) - float(anchor.reveal_start))
+                <= threshold + 1e-9
+                and abs(float(row[2].phrase_start) - float(anchor.phrase_start))
+                <= threshold + 1e-9
+            ):
+                cohorts[-1].append(row)
+            else:
+                cohorts.append([row])
+
+        output: dict[str, tuple[float, str]] = {}
+        for cohort in cohorts:
+            if len(cohort) <= 1:
+                continue
+
+            def authority(row: tuple[str, AssetActivation, object]) -> tuple[float, str]:
+                asset_id, activation, _window = row
+                _active, focus_role, _source, strength, semantic_role = (
+                    attention_profiles[asset_id]
+                )
+                visual_focus = str(activation.visual_focus or "").upper()
+                participant = str(participant_roles.get(asset_id, "SUPPORT")).upper()
+                score = {
+                    "RESULT": 100.0,
+                    "PRIMARY": 96.0,
+                    "ACTION": 88.0,
+                    "STATE": 87.0,
+                    "OBJECT": 84.0,
+                    "SUBJECT": 84.0,
+                    "CHARACTER": 45.0,
+                    "ACTOR": 44.0,
+                    "SUPPORT": 25.0,
+                    "CONTEXT": 10.0,
+                }.get(focus_role, 50.0)
+                if visual_focus in {"RESULT", "PRIMARY"}:
+                    score += 100.0
+                if asset_id == preferred_primary_id:
+                    score += 40.0
+                if participant == "RESULT":
+                    score += 35.0
+                elif participant in {"SUBJECT", "OBJECT"}:
+                    score += 20.0
+                if semantic_role == "RESULT":
+                    score += 24.0
+                if asset_id in beat.primary_asset_ids:
+                    score += 12.0
+                return score + strength, asset_id
+
+            leader_id = max(cohort, key=authority)[0]
+            density = len(cohort)
+            for asset_id, activation, _window in cohort:
+                if asset_id == leader_id:
+                    output[asset_id] = (1.0, "leader")
+                    continue
+                participant = str(participant_roles.get(asset_id, "SUPPORT")).upper()
+                _active, focus_role, _source, _strength, semantic_role = (
+                    attention_profiles[asset_id]
+                )
+                explicit_participant = (
+                    participant in {"SUBJECT", "OBJECT", "RESULT"}
+                    or asset_id == preferred_interaction_id
+                )
+                if explicit_participant:
+                    gain, cohort_role = 0.58, "participant"
+                elif focus_role in {"ACTION", "OBJECT", "SUBJECT", "STATE", "PRIMARY"}:
+                    gain, cohort_role = 0.44, "secondary"
+                elif semantic_role == "CHARACTER" and activation.visual_focus:
+                    gain, cohort_role = 0.44, "secondary"
+                else:
+                    gain, cohort_role = 0.24, "quiet"
+                if density >= 4 and cohort_role == "quiet":
+                    gain = 0.18
+                output[asset_id] = (gain, cohort_role)
+        return output
+
+    @staticmethod
     def _apply_attention_budget(
         program: MotionProgram,
         *,
@@ -571,6 +695,7 @@ class MotionPlanner:
         focus_role: str,
         momentary_focus: bool,
         primary: bool,
+        cohort_gain: float = 1.0,
     ) -> MotionProgram:
         """Dampen base entry energy for non-focal context before semantic accents.
 
@@ -594,6 +719,7 @@ class MotionPlanner:
             factor = max(factor, 0.72)
         if primary and role not in {"CONTEXT", "SUPPORT", "CHARACTER", "ACTOR"}:
             factor = max(factor, 0.80)
+        factor *= max(0.0, min(1.0, cohort_gain))
 
         frames = []
         for frame in program.keyframes:
@@ -628,6 +754,7 @@ class MotionPlanner:
         state_target: bool,
         interaction_vector: tuple[float, float],
         energy: float,
+        cohort_gain: float = 1.0,
     ) -> MotionProgram:
         """Add one meaning-bearing pre-settle accent without reintroducing wobble.
 
@@ -738,6 +865,10 @@ class MotionPlanner:
         dx = max(-0.06, min(0.06, dx * strength))
         dy = max(-0.06, min(0.06, dy * strength))
         scale = 1.0 + (scale - 1.0) * strength
+        cohort_gain = max(0.0, min(1.0, cohort_gain))
+        dx *= cohort_gain
+        dy *= cohort_gain
+        scale = 1.0 + (scale - 1.0) * cohort_gain
         return MotionProgram(
             name=f"{pattern.value.lower()}_{program.name}",
             settle_progress=settle,
