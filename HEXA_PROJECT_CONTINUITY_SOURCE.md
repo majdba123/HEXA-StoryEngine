@@ -4810,3 +4810,122 @@ Expected behavior:
 
 The current state is:
 **production failure root-caused + generalized fix published + regression covered + CI PROVEN**.
+
+## MONTAGE19 GRAY-HAT MIXED EVENT COVERAGE ORDERING HARDENING — 2026-09-24
+
+Fresh production diagnostic supplied by the user:
+- Job: `82d463773b34444c89ec8f0ea6f320e1`
+- Source commit: `1da8b53940953584cf34181e2704aa6877dcf781`
+- Final Package: `HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2.zip`
+- Audio: real ElevenLabs Gray-Hat narration
+- Platform: Windows 10
+- Duration before failure: 312.624s
+
+Pipeline reached Motion successfully after:
+- 35 scenes
+- Pass1: 127 authored assets
+- Pass2: 153 assets (+26)
+- Story: 35 beats
+- Text/Composition: 72 text cues placed
+- Composition locked to Final Package geometry
+
+The run then failed StorySyncQA with:
+```
+beat-033:SCENE_033_G01:sequence_order_motion_reversed:event1/asset5>event2/asset3
+beat-033:SCENE_033_G01:sequence_order_motion_collapsed:event1/asset5=event2/asset3
+```
+
+### Root cause
+
+Inside one exact spoken-trigger cohort, some semantic-group assets had explicit
+`semantic_event_order` and some contextual/support members did not.
+
+The Story scheduler previously used event order only when **every** row in the cohort
+had event metadata:
+
+```
+use_event_order = all(row.semantic_event_order is not None ...)
+```
+
+Therefore one eventless support/context row disabled authored semantic event ordering
+for the entire cohort and Story fell back to asset-level `sequence_order`.
+
+StorySyncQA, however, still evaluated rows by:
+`(semantic_event_order-or-0, sequence_order)`.
+
+That created a producer/validator disagreement. In the Gray-Hat SCENE_033 case,
+event 1 asset-sequence 5 could be scheduled after event 2 asset-sequence 3 even though
+event order explicitly required event 1 before event 2.
+
+This is why earlier packages could pass while the third package exposed the bug:
+the failure requires mixed event coverage inside the same exact-trigger semantic group.
+
+### Generalized correction
+
+Commit:
+`4d2a9d719d3b14c869ab9abec3989046f10ec388`
+`[story] Preserve semantic event order with mixed event coverage`
+
+A single shared ordering function now defines the contract for both producer and QA:
+
+```
+semantic_visual_order =
+    (semantic_event_order if present else 0, sequence_order)
+```
+
+Meaning:
+- authored event ordering remains active whenever present;
+- a support/context member without event metadata occupies deterministic lane 0;
+- missing event metadata on one asset can never disable event ordering for other assets;
+- Story scheduling and StorySyncQA consume the exact same function, preventing future drift.
+
+The QA diagnostic was also corrected so one reversed pair does not simultaneously emit
+both `reversed` and `collapsed`; these are now mutually exclusive diagnostics.
+No validation protection was weakened.
+
+### Regression
+
+A dedicated regression reproduces the Gray-Hat structure:
+- one eventless context asset;
+- event 1 with asset sequence 5;
+- event 2 with asset sequence 3;
+- all in the same exact precise trigger and semantic group.
+
+Required result:
+- context lane first;
+- event 1 reveal before event 2 reveal;
+- semantic-group sequential Story windows preserved.
+
+This exact mixed-coverage condition now passes.
+
+### CI proof
+
+Exact behavior commit:
+`4d2a9d719d3b14c869ab9abec3989046f10ec388`
+
+GitHub Actions:
+- Run: `36045944073`
+- Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **303 passed, 12 warnings in 9.81s**
+- release MP4 smoke remains green.
+
+### Current production gate
+
+The supplied diagnostic ZIP intentionally contains reports only; it does not contain
+the raw Gray-Hat Final Package or narration audio. Therefore the exact 35-scene production
+job cannot be rerun from this diagnostic archive alone.
+
+The user should rerun the same Gray-Hat package/audio from commit
+`4d2a9d719d3b14c869ab9abec3989046f10ec388` or newer.
+
+Expected:
+- SCENE_033 mixed-event ordering failure must not recur;
+- a support/context row without semantic_event_order must never cancel authored event order;
+- if a different concrete runtime defect appears, fix the producer contract rather than
+  lowering StorySyncQA.
+
+State:
+**root cause proven + generalized producer/QA contract unified + regression covered + CI green;
+exact Gray-Hat rerender pending user runtime.**
