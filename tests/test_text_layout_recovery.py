@@ -1,6 +1,7 @@
 from pathlib import Path
+from types import SimpleNamespace
 
-from app.models import TextCue, TextLayoutItem
+from app.models import TextCue, TextLayoutItem, TextPlan
 from app.pipeline import StoryEnginePipeline
 from app.recovery.manager import RecoveryManager
 
@@ -97,4 +98,87 @@ def test_true_white_flash_has_strict_recovery_handler(tmp_path: Path) -> None:
         context={},
         attempt=2,
     ) is None
+
+class _CascadingTextQA:
+    def inspect(self, *, text, **_kwargs):
+        cue_ids = {cue.id for cue in text.cues}
+        if "text-a" in cue_ids:
+            violations = ("beat-001:text_visual_overlap:text-a:0.080",)
+        elif "text-b" in cue_ids:
+            # This second collision appears only after text-a has been removed,
+            # reproducing the production failure where reflow exposed text-028.
+            violations = ("beat-001:text_visual_overlap:text-b:0.051",)
+        else:
+            violations = ()
+        return SimpleNamespace(text_layout_violations=violations)
+
+
+class _NoopTextComposition:
+    def plan(self, *_args, **_kwargs):
+        return []
+
+
+class _NoopTextMotion:
+    def plan(self, *_args, **_kwargs):
+        return []
+
+
+def _recovery_cue(cue_id: str, priority: int) -> TextCue:
+    return TextCue(
+        id=cue_id,
+        beat_id="beat-001",
+        text=cue_id,
+        semantic_type="keyword",
+        source_char_start=0,
+        source_char_end=1,
+        spoken_start=0.1,
+        spoken_end=0.3,
+        emphasis_time=0.1,
+        priority=priority,
+        style_id="keyword",
+    )
+
+
+def test_optional_text_recovery_converges_when_reflow_exposes_new_collision(
+    tmp_path: Path,
+) -> None:
+    pipeline = StoryEnginePipeline.__new__(StoryEnginePipeline)
+    pipeline.settings = SimpleNamespace(require_text_layer=False)
+    pipeline.recovery = RecoveryManager(tmp_path)
+    pipeline.text_composition = _NoopTextComposition()
+    pipeline.text_motion = _NoopTextMotion()
+    pipeline.authoring_qa = _CascadingTextQA()
+
+    text = TextPlan(
+        cues=[
+            _recovery_cue("text-a", 80),
+            _recovery_cue("text-b", 90),
+        ],
+        styles=[],
+    )
+    initial_report = SimpleNamespace(
+        text_layout_violations=(
+            "beat-001:text_visual_overlap:text-a:0.080",
+        )
+    )
+
+    repaired_text, _composition, _motion, report = pipeline._recover_text_layout(
+        package_id="fixture",
+        job_id="job",
+        transcript=SimpleNamespace(),
+        story=[],
+        composition=[],
+        motion=[],
+        text=text,
+        text_composition=[],
+        text_motion=[],
+        assets=[],
+        choreography=[],
+        progress=None,
+        cancelled=None,
+        initial_report=initial_report,
+    )
+
+    assert report.text_layout_violations == ()
+    assert repaired_text.cues == []
 
