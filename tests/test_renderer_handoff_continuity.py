@@ -574,3 +574,116 @@ def test_family_canvas_semantic_reveal_is_crisp_not_alpha_ghost(tmp_path: Path) 
     for pixel in nonwhite[:5]:
         assert int(pixel[0]) > int(pixel[1]) + 45
         assert int(pixel[0]) > int(pixel[2]) + 45
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_white_flash_detector_accepts_sparse_semantic_foreground(tmp_path: Path) -> None:
+    frame_root = tmp_path / "sparse-frames"
+    frame_root.mkdir()
+    for frame_index in range(30):
+        image = Image.new("RGB", (320, 180), "white")
+        if frame_index == 15:
+            draw = ImageDraw.Draw(image)
+            # Intentionally tiny semantic object: <1% of the frame, but clearly real
+            # foreground. Broad blackframe detection may flag it; second-pass HEXA
+            # foreground classification must keep it.
+            draw.rectangle((150, 84, 169, 103), fill=(20, 90, 210))
+        else:
+            ImageDraw.Draw(image).rectangle((80, 45, 240, 135), fill=(30, 50, 100))
+        image.save(frame_root / f"{frame_index:04d}.png")
+
+    output = tmp_path / "sparse-valid.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-framerate", "30",
+            "-i", str(frame_root / "%04d.png"),
+            "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
+            "-bf", "0", str(output),
+        ],
+        check=True,
+    )
+
+    detector = RecoveryDetector("ffprobe", "ffmpeg")
+    flashes = detector._white_flash_frames(output, duration=1.0)
+
+    assert not any(entry["frame"] == 15 for entry in flashes), flashes
+
+
+def test_strict_boundary_carrier_prefers_largest_safe_early_visual() -> None:
+    beat = StoryBeat(
+        id="beat-strict",
+        scene_id="scene-strict",
+        start=0.0,
+        end=1.5,
+        audio_start=0.2,
+        audio_end=1.3,
+        narration="context then result",
+        primary_asset_ids=["result"],
+        support_asset_ids=["tiny-object", "character"],
+        action="REVEAL_DETAIL",
+    )
+    items = [
+        LayoutItem(
+            asset_id="tiny-object", x=0.15, y=0.50,
+            width=0.08, height=0.10, z=10,
+        ),
+        LayoutItem(
+            asset_id="character", x=0.55, y=0.50,
+            width=0.34, height=0.68, z=20,
+        ),
+        LayoutItem(
+            asset_id="result", x=0.84, y=0.50,
+            width=0.24, height=0.34, z=30,
+        ),
+    ]
+    motion = {
+        (beat.id, "tiny-object"): MotionCue(
+            beat_id=beat.id, asset_id="tiny-object", kind="program_v3",
+            start=0.20, end=0.45,
+            params={
+                "semantic_focus": {"semantic_role": "OBJECT", "role": "OBJECT"},
+                "motion_order": {"sequence_order": 1, "internal_index": 0},
+            },
+        ),
+        (beat.id, "character"): MotionCue(
+            beat_id=beat.id, asset_id="character", kind="program_v3",
+            start=0.20, end=0.45,
+            params={
+                "semantic_focus": {"semantic_role": "CHARACTER", "role": "CHARACTER"},
+                "motion_order": {"sequence_order": 2, "internal_index": 0},
+            },
+        ),
+        (beat.id, "result"): MotionCue(
+            beat_id=beat.id, asset_id="result", kind="program_v3",
+            start=0.80, end=1.05,
+            params={
+                "semantic_focus": {
+                    "semantic_role": "RESULT",
+                    "role": "RESULT",
+                    "visual_focus": "RESULT",
+                },
+                "motion_order": {"sequence_order": 3, "internal_index": 0},
+            },
+        ),
+    }
+
+    normal = FFmpegRenderer._visual_carrier_asset_id(
+        beat=beat,
+        ordered_items=items,
+        motion=motion,
+        persistent_ids=frozenset(),
+        fps=30,
+    )
+    strict = FFmpegRenderer._visual_carrier_asset_id(
+        beat=beat,
+        ordered_items=items,
+        motion=motion,
+        persistent_ids=frozenset(),
+        fps=30,
+        strict_boundary_coverage=True,
+    )
+
+    assert normal == "tiny-object"
+    assert strict == "character"
+    assert strict != "result"
+
