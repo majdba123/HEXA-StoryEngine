@@ -313,6 +313,33 @@ class StorySyncQA:
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:settle_delta={delta:.3f}"
                     )
+                semantic_focus = cue.params.get("semantic_focus", {})
+                trusted_attention = bool(
+                    window is not None
+                    and isinstance(semantic_focus, dict)
+                    and semantic_focus.get("active") is True
+                )
+                if trusted_attention and actual_peak is not None:
+                    focus_duration = float(window.settle_at) - float(window.reveal_start)
+                    peak_tolerance = max(
+                        2.0 / 30.0,
+                        min(0.12, focus_duration * 0.35),
+                    )
+                    peak_delta = actual_peak - float(window.semantic_peak)
+                    if peak_delta < -peak_tolerance - 1e-9:
+                        violations.append(
+                            f"{beat.id}:{activation.asset_id}:focus_peak_too_early:"
+                            f"role={semantic_focus.get('semantic_role') or semantic_focus.get('role') or 'UNKNOWN'}:"
+                            f"target={float(window.semantic_peak):.3f}:"
+                            f"actual_peak={actual_peak:.3f}:tolerance={peak_tolerance:.3f}"
+                        )
+                    elif peak_delta > peak_tolerance + 1e-9:
+                        violations.append(
+                            f"{beat.id}:{activation.asset_id}:focus_peak_too_late:"
+                            f"role={semantic_focus.get('semantic_role') or semantic_focus.get('role') or 'UNKNOWN'}:"
+                            f"target={float(window.semantic_peak):.3f}:"
+                            f"actual_peak={actual_peak:.3f}:tolerance={peak_tolerance:.3f}"
+                        )
 
             # Strong attention must be handed off before the next distinct spoken
             # meaning.  A gap after the last available activation is a legitimate

@@ -231,3 +231,74 @@ def test_story_sync_qa_reports_settle_past_next_semantic_handoff() -> None:
 
     assert any("settle_past_next_handoff" in row for row in report.violations)
 
+
+def _v2_attention_peak_case(peak_progress: float) -> tuple[StoryBeat, MotionCue]:
+    beat = _beat(AssetActivation(
+        asset_id="a",
+        spoken_start=0.40,
+        spoken_end=1.40,
+        confidence=1.0,
+        source="final_package_semantic_binding",
+        policy="EXPLICIT",
+        visual_focus="PRIMARY",
+    ))
+    scheduled = schedule_windows(beat.asset_activations, beat, beat.end, {"a"})
+    beat = beat.model_copy(update={"asset_activations": scheduled})
+    window = scheduled[0]
+    duration = window.settle_at - window.reveal_start
+    cue = MotionCue(
+        beat_id=beat.id,
+        asset_id="a",
+        kind="program_v3",
+        start=window.reveal_start,
+        end=window.settle_at,
+        params={
+            "semantic_settle_time": window.settle_at,
+            "semantic_focus": {
+                "active": True,
+                "role": "PRIMARY",
+                "semantic_role": "PRIMARY",
+                "strength": 0.9,
+            },
+            "program": {
+                "name": "peak-qa",
+                "settle_progress": 1.0,
+                "keyframes": [
+                    {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                    {"progress": peak_progress, "dx": 0.0, "dy": 0.0, "scale": 1.08, "easing": "linear"},
+                    {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                ],
+            },
+        },
+    )
+    assert duration > 0
+    return beat, cue
+
+
+def test_story_sync_qa_accepts_frame_aware_semantic_focus_peak() -> None:
+    beat, cue = _v2_attention_peak_case(0.55)
+
+    report = StorySyncQA().inspect(story=[beat], motion=[cue])
+
+    assert report.passed, report.violations
+    assert report.entries[0].actual_peak == pytest.approx(
+        report.entries[0].semantic_peak,
+        abs=0.02,
+    )
+
+
+def test_story_sync_qa_rejects_semantic_focus_peak_too_early() -> None:
+    beat, cue = _v2_attention_peak_case(0.05)
+
+    report = StorySyncQA().inspect(story=[beat], motion=[cue])
+
+    assert any("focus_peak_too_early" in row for row in report.violations)
+
+
+def test_story_sync_qa_rejects_semantic_focus_peak_too_late() -> None:
+    beat, cue = _v2_attention_peak_case(0.98)
+
+    report = StorySyncQA().inspect(story=[beat], motion=[cue])
+
+    assert any("focus_peak_too_late" in row for row in report.violations)
+
