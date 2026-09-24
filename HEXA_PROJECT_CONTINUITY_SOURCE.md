@@ -5289,3 +5289,183 @@ Review should focus on:
 
 State:
 **Motion is now directly coupled to Choreography event flow and CI-proven. Real user-side render is the next required visual acceptance step.**
+
+## MONTAGE19 FINAL PACKAGE SEMANTICS → CHOREOGRAPHY → MOTION CLOSURE — 2026-09-24
+
+Behavior commit:
+`c405b03a617de94310223c7eec6048295415bada`
+`[motion] Preserve full Final Package event semantics`
+
+Scope:
+- Final closure pass for the Choreography → Motion bridge.
+- No Pass1/Pass2 changes.
+- No Text changes.
+- No Composition geometry changes.
+- No Renderer layout changes.
+- No topic/scene/count-specific rules.
+- Story remains the sole timing authority.
+- Composition remains the sole final geometry authority.
+
+### Why this pass was required
+
+The previous event-flow implementation correctly connected Motion to Choreography, but an audit of
+the real Black-Hat Final Package 1.2 exposed four remaining genericity gaps:
+
+1. rich authored relationship types could collapse to generic INTERACT/REACT motion;
+2. several participants inside one semantic event could share one ADD step, so only the first had
+   explicit focus ownership;
+3. multiple authored results could collapse to one explicit PAYOFF leader;
+4. event-to-event handoff was mostly sequential even when dependency metadata described a branch.
+
+The fix preserves full Final Package semantic intent without inventing topic-specific behavior.
+
+### Choreography event-flow changes
+
+Every distinct semantic visual unit now gets its own authored phase:
+- LEADER → ESTABLISH
+- each PARTICIPANT → ADD
+- executable relation → INTERACT
+- target state response when semantically justified → REACT
+- each RESULT → PAYOFF
+- RELEASE/HANDOFF follows the dependency graph.
+
+If one semantic intent resolves to multiple runtime cutouts, those cutouts remain one visual unit and
+do not receive fake internal semantic order.
+
+Final Package `progression.type` is preserved in the event-flow contract for diagnostics/future
+generic behavior. No topic-specific motion is inferred from its string value.
+
+### Dependency / branching handoff
+
+`SemanticEventFlow` now carries:
+- `handoff_mode`
+- `handoff_to_event_ids`
+- `handoff_to_asset_ids`
+- backward-compatible singular handoff fields when there is exactly one target.
+
+Rules:
+- direct dependency edge wins over simple next-event order;
+- one dependent → DEPENDENCY;
+- multiple dependents → BRANCH;
+- no dependency edge → SEQUENTIAL fallback;
+- terminal event → NONE.
+
+A branch never chooses one arbitrary child as the single next focus.
+A merge never invents one arbitrary incoming visual source.
+
+### Relation-specific Motion character
+
+Motion event phases now preserve the authored semantic action instead of flattening all relations to
+one generic interaction gesture.
+
+Generic action families currently preserve distinct bounded one-shot behavior for:
+- COMPARE
+- LOOP / persistence
+- TRAVEL
+- CONNECT
+- BLOCK
+- REJECT
+- LOCK
+- PROTECT
+- RESOLVE
+- REVEAL
+- general causal interaction fallback.
+
+COMPARE remains balanced rather than causal.
+LOOP/persistence receives one bounded tangential cue, never continuous wobble.
+RESULT/PAYOFF remains the strongest visual destination while still returning to exact authored
+Composition geometry.
+
+All relationship movement remains bounded by existing density/collision-safe Motion limits.
+
+### Reaction correctness
+
+COMPARE and LOOP no longer automatically create a fake REACT phase merely because the relation is
+executable. They create a reaction only when a meaningful authored visual state transition actually
+exists.
+
+This keeps:
+- comparison as comparison;
+- persistence as persistence;
+- cause/effect as cause/effect.
+
+### Multi-result attention
+
+Every authored RESULT gets a PAYOFF step.
+When multiple results share one semantic instant:
+- one may remain the cohort leader;
+- sibling results receive `result_peer` attention rather than being demoted to quiet support.
+
+No result is silently lost merely because another result shares its timing.
+
+### Compound / multi-cutout safety
+
+If one semantic unit resolves to multiple runtime cutouts and is:
+- `COMPOUND_REQUIRED`, or
+- `internal_progression_unavailable=true`,
+
+Motion abstains from per-piece event choreography.
+
+All members use the identical one-shot:
+`compound_unit_coherent_reveal`
+
+so the semantic unit moves coherently and settles to exact authored geometry.
+Pass2 family-canvas behavior remains unchanged.
+
+### Regression matrix added
+
+New regressions cover:
+- multiple participants in one event;
+- multiple results in one event;
+- dependency branching;
+- compare/parallel semantics;
+- relation-specific Motion flavor;
+- reused assets with Story event authority;
+- short-window phase compression;
+- compound-required multi-cutout units;
+- legacy packages without semantic event flow.
+
+### Real Black-Hat 1.2 structural audit
+
+No-render audit against the real Final Package:
+- semantic events represented: **55 / 55**
+- participant visual units with explicit ADD ownership: **74 / 74**
+- authored result units with explicit PAYOFF ownership: **30 / 30**
+- authored relations: **15**
+- executable relations preserved in Motion event flow: **14 / 14**
+- `SPECIFIES`: intentionally descriptive / non-executable
+- dependency handoffs: **15**
+- compare fake-reaction violations: **0**
+- loop fake-reaction violations: **0**
+- result coverage failures: **0**
+- synthetic StorySync: **PASS / 0 violations**
+
+This is a structural/runtime contract audit, not a substitute for the user's production visual
+acceptance render.
+
+### CI proof
+
+GitHub Actions exact behavior commit:
+- Run: `36064337668`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: **All checks passed**
+- Pytest: **315 passed, 12 warnings in 9.40s**
+
+### Production acceptance gate
+
+The implementation is now ready for the user-side full production render from branch `montage`.
+
+Required visual acceptance:
+1. event reads as one connected visual sentence;
+2. multi-participant focus follows the spoken/semantic order;
+3. relation character is visible (compare != cause, loop != impact, block != connect);
+4. every meaningful authored result receives payoff;
+5. dependency handoff is coherent;
+6. compound visuals remain visually intact;
+7. no motion crosses the next semantic handoff;
+8. no collision, ghosting, white flash, wobble, or final-geometry drift.
+
+State:
+**Final Package 1.2 semantics are now strongly consumed end-to-end by Choreography and Motion,
+generalized regressions are green, and the next gate is the user's real full render.**
