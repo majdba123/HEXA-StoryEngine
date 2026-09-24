@@ -158,7 +158,17 @@ class TextSemanticSelector:
             if not key:
                 continue
             current = deduped.get(key)
-            if current is None or candidate.score > current.score:
+            if (
+                current is None
+                or (
+                    candidate.authority_rank,
+                    candidate.score,
+                )
+                > (
+                    current.authority_rank,
+                    current.score,
+                )
+            ):
                 deduped[key] = candidate
 
         budget = self._budget(
