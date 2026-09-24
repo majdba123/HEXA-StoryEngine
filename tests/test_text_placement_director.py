@@ -195,3 +195,111 @@ def test_arabic_kufi_measurement_reserves_real_glyph_width_and_entry_motion() ->
 
     assert width > 0.55
     assert height > 0.14
+
+def test_director_ignores_later_semantic_visual_until_text_disappears(tmp_path) -> None:
+    from PIL import Image, ImageDraw
+    from app.models import AssetActivation, VisualAsset
+    from app.story.windows import schedule_windows
+
+    context_path = tmp_path / "context.png"
+    future_path = tmp_path / "future.png"
+    for path, color in (
+        (context_path, (40, 120, 220, 255)),
+        (future_path, (220, 50, 60, 255)),
+    ):
+        image = Image.new("RGBA", (220, 220), (255, 255, 255, 0))
+        ImageDraw.Draw(image).rectangle((0, 0, 219, 219), fill=color)
+        image.save(path)
+    assets = {
+        "context": VisualAsset(
+            id="context",
+            scene_id="scene-001",
+            role="visual",
+            image_path=context_path,
+            extraction_method="fixture",
+        ),
+        "future": VisualAsset(
+            id="future",
+            scene_id="scene-001",
+            role="visual",
+            image_path=future_path,
+            extraction_method="fixture",
+        ),
+    }
+    activations = [
+        AssetActivation(
+            asset_id="context",
+            semantic_unit_id="context",
+            trigger_text="context",
+            spoken_start=0.35,
+            spoken_end=0.75,
+            confidence=1.0,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            semantic_group_id="g",
+            sequence_order=1,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+            visual_focus="CONTEXT",
+        ),
+        AssetActivation(
+            asset_id="future",
+            semantic_unit_id="future",
+            trigger_text="future result",
+            spoken_start=2.6,
+            spoken_end=3.2,
+            confidence=1.0,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            semantic_group_id="g",
+            sequence_order=2,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+            visual_focus="RESULT",
+        ),
+    ]
+    beat = _beat().model_copy(update={"asset_activations": activations})
+    beat.asset_activations = schedule_windows(activations, beat, beat.end, set())
+    visual = CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(
+                asset_id="context",
+                x=0.20,
+                y=0.70,
+                width=0.22,
+                height=0.30,
+                z=10,
+            ),
+            LayoutItem(
+                asset_id="future",
+                x=0.50,
+                y=0.16,
+                width=0.58,
+                height=0.24,
+                z=20,
+            ),
+        ],
+    )
+    cue = _cue("text-early", "1000 ريال", 0.3, 0.8)
+    director = TextPlacementDirector()
+
+    result = director.place(
+        beat=beat,
+        visual=visual,
+        cue=cue,
+        concurrent_text=[],
+        preferred_zone="top",
+        assets_by_id=assets,
+        visible_end=1.0,
+    )
+
+    visible_ids = {
+        row.asset_id
+        for row in director.visible_visual_items(
+            beat=beat,
+            visual=visual,
+            visible_end=1.0,
+        )
+    }
+    assert "context" in visible_ids
+    assert "future" not in visible_ids
+    assert result.visual_overlap <= 0.001
