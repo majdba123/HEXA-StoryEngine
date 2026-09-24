@@ -42,6 +42,8 @@ class SceneSource(BaseModel):
     relation_to_previous: str | None = None
     units: list[dict[str, Any]] = Field(default_factory=list)
     visual_progression: list[dict[str, Any]] = Field(default_factory=list)
+    semantic_events: list[dict[str, Any]] = Field(default_factory=list)
+    semantic_progression: dict[str, Any] | None = None
 
 
 class PackageModel(BaseModel):
@@ -199,6 +201,12 @@ class AssetActivation(BaseModel):
     visual_focus: str | None = None
     visual_state: dict[str, str] | None = None
     continuity: dict[str, Any] | None = None
+    semantic_event_id: str | None = None
+    semantic_event_order: int | None = Field(default=None, ge=1)
+    semantic_event_roles: list[str] = Field(default_factory=list)
+    semantic_event_dependency_ids: list[str] = Field(default_factory=list)
+    compound_visual_classification: str | None = None
+    internal_progression_unavailable: bool = False
     evidence: list[str] = Field(default_factory=list)
 
 

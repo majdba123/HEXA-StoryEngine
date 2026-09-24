@@ -313,6 +313,24 @@ class TextSemanticSelector:
             for row in assets
             if row.get("asset_id")
         }
+        event_roles_by_asset: dict[str, set[str]] = {}
+        for event in binding_scene.get("semantic_events", []) or []:
+            if not isinstance(event, dict):
+                continue
+            leader = event.get("visual_leader_asset_id")
+            text_anchor = event.get("text_anchor_asset_id")
+            if isinstance(leader, str) and leader:
+                event_roles_by_asset.setdefault(leader, set()).add("LEADER")
+            if isinstance(text_anchor, str) and text_anchor:
+                event_roles_by_asset.setdefault(text_anchor, set()).add("TEXT_ANCHOR")
+            for field, role in (
+                ("participant_asset_ids", "PARTICIPANT"),
+                ("context_asset_ids", "CONTEXT"),
+                ("result_asset_ids", "RESULT"),
+            ):
+                for asset_id in event.get(field, []) or []:
+                    if isinstance(asset_id, str) and asset_id:
+                        event_roles_by_asset.setdefault(asset_id, set()).add(role)
 
         phrase_rows: list[tuple[str, list[dict]]] = []
         if isinstance(groups, list) and groups:
@@ -359,6 +377,7 @@ class TextSemanticSelector:
                 self._precise_asset_candidates(
                     phrase_words,
                     semantic_assets,
+                    event_roles_by_asset=event_roles_by_asset,
                 )
             )
 
@@ -410,6 +429,8 @@ class TextSemanticSelector:
         self,
         words: list[TranscriptWord],
         semantic_assets: list[dict],
+        *,
+        event_roles_by_asset: dict[str, set[str]] | None = None,
     ) -> list[KeywordCandidate]:
         """Prefer exact Final Package asset spans as on-screen semantic labels.
 
@@ -426,9 +447,19 @@ class TextSemanticSelector:
             span = asset.get("script_span")
             if not isinstance(span, dict):
                 continue
+            start_value = (
+                span.get("char_start")
+                if span.get("char_start") is not None
+                else span.get("global_char_start")
+            )
+            end_value = (
+                span.get("char_end")
+                if span.get("char_end") is not None
+                else span.get("global_char_end")
+            )
             try:
-                char_start = int(span.get("char_start"))
-                char_end = int(span.get("char_end"))
+                char_start = int(start_value)
+                char_end = int(end_value)
             except (TypeError, ValueError):
                 continue
             if char_end <= char_start:
@@ -479,17 +510,33 @@ class TextSemanticSelector:
                 "CONTEXT": -0.14,
             }.get(visual_focus, 0.0)
             state_bonus = 0.08 if asset.get("visual_state") else 0.0
-            score = base + role_bonus + focus_bonus + state_bonus
+            asset_id = str(asset.get("asset_id") or "")
+            event_roles = (event_roles_by_asset or {}).get(asset_id, set())
+            event_bonus = 0.0
+            if "TEXT_ANCHOR" in event_roles:
+                event_bonus += 0.30
+            if "LEADER" in event_roles:
+                event_bonus += 0.16
+            if "RESULT" in event_roles:
+                event_bonus += 0.12
+            if "CONTEXT" in event_roles:
+                event_bonus -= 0.12
+            score = base + role_bonus + focus_bonus + state_bonus + event_bonus
             score -= 0.015 * max(0, len(matched) - 1)
 
-            authority_rank = (
-                3
-                if role in {
-                    "RESULT", "ACTION", "OBJECT", "SUBJECT", "PRIMARY", "STATE"
-                }
-                or visual_focus in {"RESULT", "PRIMARY"}
-                else 1
-            )
+            if "TEXT_ANCHOR" in event_roles:
+                authority_rank = 5
+            elif "LEADER" in event_roles or "RESULT" in event_roles:
+                authority_rank = 4
+            else:
+                authority_rank = (
+                    3
+                    if role in {
+                        "RESULT", "ACTION", "OBJECT", "SUBJECT", "PRIMARY", "STATE"
+                    }
+                    or visual_focus in {"RESULT", "PRIMARY"}
+                    else 1
+                )
             candidate = self._candidate_from_words(
                 matched,
                 "emphasis",

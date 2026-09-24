@@ -416,13 +416,21 @@ class ChoreographyDirector:
             non_compare = [
                 row
                 for row in authored_relations
-                if str(row.relationship or "").upper() not in {
+                if row.semantic_action != "COMPARE"
+                and str(row.relationship or "").upper() not in {
                     "COMPARES_WITH",
                     "CONTRASTS_WITH",
                 }
             ]
             if non_compare:
                 return ChoreographyPattern.CAUSE_EFFECT_CHAIN
+
+        context = beat.semantic_context
+        if context is not None:
+            progression = context.scene_metadata.get("semantic_progression")
+            event_count = int(context.scene_metadata.get("semantic_event_count") or 0)
+            if isinstance(progression, dict) and event_count >= 2:
+                return ChoreographyPattern.PROGRESSIVE_BUILD
 
         if any(row.visual_focus for row in beat.asset_activations):
             return ChoreographyPattern.FOCUS_TRANSFER

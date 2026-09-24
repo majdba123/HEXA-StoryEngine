@@ -84,7 +84,7 @@ class StorySyncQA:
             previous_anchor: float | None = None
             sequence_motion: dict[
                 str,
-                list[tuple[int, float, AssetActivation, bool]],
+                list[tuple[tuple[int, int], float, AssetActivation, bool]],
             ] = {}
             internal_motion: dict[
                 tuple[str | None, int | None, str | None],
@@ -271,7 +271,12 @@ class StorySyncQA:
                         activation.semantic_group_id,
                         [],
                     ).append((
-                        activation.sequence_order,
+                        (
+                            activation.semantic_event_order
+                            if activation.semantic_event_order is not None
+                            else 0,
+                            activation.sequence_order,
+                        ),
                         cue.start,
                         activation,
                         "semantic_group_sequential_window" in activation.evidence,
@@ -466,7 +471,7 @@ class StorySyncQA:
                 # the producer and validator cannot disagree about that authority.
                 scheduled_rows = [row for row in rows if row[3]]
                 clusters: list[
-                    list[tuple[int, float, AssetActivation, bool]]
+                    list[tuple[tuple[int, int], float, AssetActivation, bool]]
                 ] = []
                 for row in sorted(
                     scheduled_rows,
@@ -494,7 +499,7 @@ class StorySyncQA:
 
                 for cluster in clusters:
                     by_order: dict[
-                        int,
+                        tuple[int, int],
                         list[tuple[float, AssetActivation]],
                     ] = {}
                     for order, start_time, activation, _scheduled in cluster:
@@ -514,12 +519,14 @@ class StorySyncQA:
                         if right_start + 1e-9 < left_start:
                             violations.append(
                                 f"{beat.id}:{group_id}:sequence_order_motion_reversed:"
-                                f"{left_order}>{right_order}"
+                                f"{self._visual_order_label(left_order)}>"
+                                f"{self._visual_order_label(right_order)}"
                             )
                         if right_start <= left_start + 1e-9:
                             violations.append(
                                 f"{beat.id}:{group_id}:sequence_order_motion_collapsed:"
-                                f"{left_order}={right_order}"
+                                f"{self._visual_order_label(left_order)}="
+                                f"{self._visual_order_label(right_order)}"
                             )
 
             for key, rows in internal_motion.items():
@@ -567,6 +574,13 @@ class StorySyncQA:
             entries=tuple(entries),
             violations=tuple(violations),
         )
+
+    @staticmethod
+    def _visual_order_label(order: tuple[int, int]) -> str:
+        event_order, sequence_order = order
+        if event_order > 0:
+            return f"event{event_order}/asset{sequence_order}"
+        return str(sequence_order)
 
     @staticmethod
     def require(report: StorySyncReport) -> None:

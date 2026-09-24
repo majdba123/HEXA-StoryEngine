@@ -32,6 +32,15 @@ class MotionOrderSlot:
             "semantic_group_id": activation.semantic_group_id if activation else None,
             "semantic_unit_id": activation.semantic_unit_id if activation else None,
             "sequence_order": self.external_sequence_order,
+            "semantic_event_id": activation.semantic_event_id if activation else None,
+            "semantic_event_order": activation.semantic_event_order if activation else None,
+            "semantic_event_roles": list(activation.semantic_event_roles) if activation else [],
+            "semantic_event_dependency_ids": (
+                list(activation.semantic_event_dependency_ids) if activation else []
+            ),
+            "compound_visual_classification": (
+                activation.compound_visual_classification if activation else None
+            ),
             "internal_index": self.internal_index,
             "internal_count": self.internal_count,
         }
@@ -143,6 +152,9 @@ class MotionOrderResolver:
                 if activation.trigger_char_start is not None
                 else inf,
                 activation.semantic_group_id or "",
+                activation.semantic_event_order
+                if activation.semantic_event_order is not None
+                else 10_000,
                 activation.sequence_order
                 if activation.sequence_order is not None
                 else 10_000,
@@ -167,6 +179,8 @@ class MotionOrderResolver:
                 or activation.sequence_order is None
                 or activation.group_animation_policy
                 == "SIMULTANEOUS_VISUAL_UNIT"
+                or activation.compound_visual_classification == "COMPOUND_REQUIRED"
+                or activation.internal_progression_unavailable
                 or _MULTI_IDENTITY_EVIDENCE not in activation.evidence
             ):
                 continue

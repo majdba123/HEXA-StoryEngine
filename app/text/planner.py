@@ -59,6 +59,20 @@ class TextPlanner:
                 package_evidence = list(context.evidence) if context else []
                 if scene and scene.relation_to_previous:
                     package_evidence.append(f"scene_relation:{scene.relation_to_previous}")
+                if anchor_asset_id:
+                    anchor_activation = next(
+                        (row for row in beat.asset_activations if row.asset_id == anchor_asset_id),
+                        None,
+                    )
+                    if anchor_activation is not None:
+                        if anchor_activation.semantic_event_id:
+                            package_evidence.append(
+                                f"semantic_event:{anchor_activation.semantic_event_id}"
+                            )
+                        if "TEXT_ANCHOR" in anchor_activation.semantic_event_roles:
+                            package_evidence.append("final_package_text_anchor")
+                        if "LEADER" in anchor_activation.semantic_event_roles:
+                            package_evidence.append("final_package_visual_leader")
                 relationship = directive.relationship if directive is not None else None
                 cues.append(TextCue(
                     id=f"text-{cue_number:03d}",
@@ -134,8 +148,16 @@ class TextPlanner:
                 "SUPPORT": 2,
                 "CONTEXT": 3,
             }.get(visual_focus, 2)
+            event_anchor_rank = (
+                1 if "TEXT_ANCHOR" in activation.semantic_event_roles else 0
+            )
+            event_leader_rank = (
+                1 if "LEADER" in activation.semantic_event_roles else 0
+            )
             matches.append((
                 overlap / cue_len,
+                event_anchor_rank,
+                event_leader_rank,
                 overlap / activation_len,
                 float(activation.confidence),
                 -focus_rank,

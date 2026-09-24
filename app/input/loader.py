@@ -15,6 +15,8 @@ _ASSET_LEVEL_BINDING_TYPES = {"EXPLICIT", "SEMANTIC", "SUPPORT", "PARENT", "AMBI
 _SEMANTIC_GROUP_POLICIES = {"SEQUENTIAL_WITHIN_PHRASE", "SIMULTANEOUS_VISUAL_UNIT"}
 _VISUAL_FOCUS_VALUES = {"PRIMARY", "SUPPORT", "RESULT", "CONTEXT"}
 _CONTINUITY_MODES = {"PERSIST", "TRANSFORM_TO"}
+_COMPOUND_VISUAL_CLASSIFICATIONS = {"SEPARABLE_SAFE", "COMPOUND_REQUIRED"}
+_ANCHOR_GRANULARITIES = {"EXACT_WORD", "EXACT_PHRASE", "SCENE_PHRASE"}
 
 
 class FinalPackageLoader:
@@ -153,6 +155,7 @@ class FinalPackageLoader:
             seen_assets: set[str] = set()
             parent_by_asset: dict[str, str | None] = {}
             group_by_asset: dict[str, str] = {}
+            event_by_asset: dict[str, str] = {}
             for asset in assets:
                 if not isinstance(asset, dict):
                     raise InvalidPackageError(
@@ -227,6 +230,38 @@ class FinalPackageLoader:
                             raise InvalidPackageError(
                                 f"invalid visual_focus: {scene_id}:{asset_id}"
                             )
+                    anchor_granularity = asset.get("anchor_granularity")
+                    if anchor_granularity is not None and (
+                        not isinstance(anchor_granularity, str)
+                        or anchor_granularity.upper() not in _ANCHOR_GRANULARITIES
+                    ):
+                        raise InvalidPackageError(
+                            f"invalid anchor_granularity: {scene_id}:{asset_id}"
+                        )
+                    compound = asset.get("compound_visual_classification")
+                    if compound is not None and (
+                        not isinstance(compound, str)
+                        or compound.upper() not in _COMPOUND_VISUAL_CLASSIFICATIONS
+                    ):
+                        raise InvalidPackageError(
+                            f"invalid compound_visual_classification: {scene_id}:{asset_id}"
+                        )
+                    internal_unavailable = asset.get("internal_progression_unavailable")
+                    if internal_unavailable is not None and not isinstance(internal_unavailable, bool):
+                        raise InvalidPackageError(
+                            f"internal_progression_unavailable must be boolean: {scene_id}:{asset_id}"
+                        )
+                    if internal_unavailable is True and str(compound or "").upper() != "COMPOUND_REQUIRED":
+                        raise InvalidPackageError(
+                            f"internal_progression_unavailable requires COMPOUND_REQUIRED: {scene_id}:{asset_id}"
+                        )
+                    semantic_event_id = asset.get("semantic_event_id")
+                    if semantic_event_id is not None:
+                        if not isinstance(semantic_event_id, str) or not semantic_event_id.strip():
+                            raise InvalidPackageError(
+                                f"semantic_event_id must be non-empty: {scene_id}:{asset_id}"
+                            )
+                        event_by_asset[asset_id] = semantic_event_id
                     visual_state = asset.get("visual_state")
                     if visual_state is not None:
                         if not isinstance(visual_state, dict):
@@ -370,10 +405,10 @@ class FinalPackageLoader:
                         raise InvalidPackageError(
                             f"semantic relation subject is missing: {scene_id}"
                         )
-                    relationship = relation.get("relationship")
+                    relationship = relation.get("relationship") or relation.get("relation_type")
                     if not isinstance(relationship, str) or not relationship.strip():
                         raise InvalidPackageError(
-                            f"semantic relation relationship is required: {scene_id}"
+                            f"semantic relation relationship/relation_type is required: {scene_id}"
                         )
                     for field in ("object_asset_id", "result_asset_id"):
                         target = relation.get(field)
@@ -397,6 +432,174 @@ class FinalPackageLoader:
                         raise InvalidPackageError(
                             f"semantic relation script_span must be an object: {scene_id}"
                         )
+
+                FinalPackageLoader._validate_semantic_events(
+                    scene=scene,
+                    scene_id=scene_id,
+                    seen_assets=seen_assets,
+                    event_by_asset=event_by_asset,
+                )
+
+        FinalPackageLoader._validate_top_level_semantic_events(data)
+
+    @staticmethod
+    def _validate_semantic_events(
+        *,
+        scene: dict,
+        scene_id: str,
+        seen_assets: set[str],
+        event_by_asset: dict[str, str],
+    ) -> None:
+        events = scene.get("semantic_events", [])
+        if events is None:
+            events = []
+        if not isinstance(events, list):
+            raise InvalidPackageError(f"semantic_events must be a list: {scene_id}")
+
+        event_rows: dict[str, dict] = {}
+        referenced_assets: dict[str, set[str]] = {}
+        dependency_map: dict[str, list[str]] = {}
+        for event in events:
+            if not isinstance(event, dict):
+                raise InvalidPackageError(f"semantic event must be an object: {scene_id}")
+            event_id = event.get("semantic_event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise InvalidPackageError(f"semantic_event_id is required: {scene_id}")
+            if event_id in event_rows:
+                raise InvalidPackageError(f"duplicate semantic event: {scene_id}:{event_id}")
+            declared_scene = event.get("scene_id")
+            if declared_scene is not None and declared_scene != scene_id:
+                raise InvalidPackageError(f"semantic event scene mismatch: {scene_id}:{event_id}")
+            phrase = event.get("script_text")
+            if not isinstance(phrase, str) or not phrase.strip():
+                raise InvalidPackageError(f"semantic event script_text is required: {scene_id}:{event_id}")
+            span = event.get("script_span")
+            if not isinstance(span, dict):
+                raise InvalidPackageError(f"semantic event script_span is required: {scene_id}:{event_id}")
+            anchor = event.get("anchor_granularity")
+            if anchor is not None and (
+                not isinstance(anchor, str) or anchor.upper() not in _ANCHOR_GRANULARITIES
+            ):
+                raise InvalidPackageError(f"invalid semantic event anchor_granularity: {scene_id}:{event_id}")
+            order = event.get("sequence_order")
+            if isinstance(order, bool) or not isinstance(order, int) or order < 1:
+                raise InvalidPackageError(f"semantic event sequence_order must be positive: {scene_id}:{event_id}")
+            confidence = event.get("confidence")
+            if confidence is not None and (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not 0.0 <= float(confidence) <= 1.0
+            ):
+                raise InvalidPackageError(f"semantic event confidence must be between 0 and 1: {scene_id}:{event_id}")
+
+            leader = event.get("visual_leader_asset_id")
+            text_anchor = event.get("text_anchor_asset_id")
+            for field, asset_id in (("visual_leader_asset_id", leader), ("text_anchor_asset_id", text_anchor)):
+                if not isinstance(asset_id, str) or asset_id not in seen_assets:
+                    raise InvalidPackageError(f"semantic event {field} is missing: {scene_id}:{event_id}")
+
+            role_assets: set[str] = {str(leader), str(text_anchor)}
+            for field in ("participant_asset_ids", "context_asset_ids", "result_asset_ids"):
+                values = event.get(field, [])
+                if not isinstance(values, list) or any(
+                    not isinstance(value, str) or value not in seen_assets for value in values
+                ):
+                    raise InvalidPackageError(f"semantic event {field} is invalid: {scene_id}:{event_id}")
+                role_assets.update(values)
+
+            dependencies = event.get("depends_on_event_ids", [])
+            if dependencies is None:
+                dependencies = []
+            if not isinstance(dependencies, list) or any(
+                not isinstance(value, str) or not value.strip() for value in dependencies
+            ):
+                raise InvalidPackageError(f"semantic event dependencies are invalid: {scene_id}:{event_id}")
+            if event_id in dependencies:
+                raise InvalidPackageError(f"semantic event cannot depend on itself: {scene_id}:{event_id}")
+
+            event_rows[event_id] = event
+            referenced_assets[event_id] = role_assets
+            dependency_map[event_id] = list(dependencies)
+
+        for event_id, dependencies in dependency_map.items():
+            for dependency in dependencies:
+                if dependency not in event_rows:
+                    raise InvalidPackageError(
+                        f"semantic event dependency is missing: {scene_id}:{event_id}:{dependency}"
+                    )
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        def visit(event_id: str) -> None:
+            if event_id in visited:
+                return
+            if event_id in visiting:
+                raise InvalidPackageError(f"semantic event dependency cycle: {scene_id}:{event_id}")
+            visiting.add(event_id)
+            for dependency in dependency_map.get(event_id, []):
+                visit(dependency)
+            visiting.remove(event_id)
+            visited.add(event_id)
+        for event_id in event_rows:
+            visit(event_id)
+
+        for asset_id, event_id in event_by_asset.items():
+            if event_id not in event_rows:
+                raise InvalidPackageError(
+                    f"semantic asset references missing event: {scene_id}:{asset_id}:{event_id}"
+                )
+            if asset_id not in referenced_assets[event_id]:
+                raise InvalidPackageError(
+                    f"semantic event does not reference assigned asset: {scene_id}:{asset_id}:{event_id}"
+                )
+
+        progression = scene.get("progression")
+        if progression is not None:
+            if not isinstance(progression, dict):
+                raise InvalidPackageError(f"semantic progression must be an object: {scene_id}")
+            progression_type = progression.get("type")
+            if progression_type is not None and (
+                not isinstance(progression_type, str) or not progression_type.strip()
+            ):
+                raise InvalidPackageError(f"semantic progression type must be non-empty: {scene_id}")
+            event_order = progression.get("event_order")
+            if not isinstance(event_order, list) or not event_order:
+                raise InvalidPackageError(f"semantic progression event_order is required: {scene_id}")
+            if len(set(event_order)) != len(event_order) or any(
+                not isinstance(value, str) or value not in event_rows for value in event_order
+            ):
+                raise InvalidPackageError(f"semantic progression event_order is invalid: {scene_id}")
+            sequence = [int(event_rows[event_id]["sequence_order"]) for event_id in event_order]
+            if any(right <= left for left, right in zip(sequence, sequence[1:])):
+                raise InvalidPackageError(f"semantic progression order conflicts with event sequence: {scene_id}")
+
+    @staticmethod
+    def _validate_top_level_semantic_events(data: dict) -> None:
+        top_events = data.get("semantic_events")
+        if top_events is None:
+            return
+        if not isinstance(top_events, list):
+            raise InvalidPackageError("top-level semantic_events must be a list")
+        scene_events = {
+            str(event.get("semantic_event_id")): str(scene.get("scene_id"))
+            for scene in data.get("scenes", [])
+            if isinstance(scene, dict)
+            for event in scene.get("semantic_events", [])
+            if isinstance(event, dict) and event.get("semantic_event_id")
+        }
+        seen: set[str] = set()
+        for event in top_events:
+            if not isinstance(event, dict):
+                raise InvalidPackageError("top-level semantic event must be an object")
+            event_id = event.get("semantic_event_id")
+            scene_id = event.get("scene_id")
+            if not isinstance(event_id, str) or event_id in seen:
+                raise InvalidPackageError("top-level semantic event id must be unique")
+            seen.add(event_id)
+            if event_id not in scene_events or scene_events[event_id] != scene_id:
+                raise InvalidPackageError(f"top-level semantic event mismatch: {event_id}")
+        if seen != set(scene_events):
+            raise InvalidPackageError("top-level semantic_events must mirror scene semantic events")
 
     @staticmethod
     def _validate_visual_locator(locator: object, *, scene_id: str, asset_id: str) -> None:
@@ -497,7 +700,22 @@ class FinalPackageLoader:
                     script,
                     relation.get("script_span"),
                     phrase,
-                    context=f"{scene_id}:{relation.get('relation_id') or 'relation'}",
+                    context=f"{scene_id}:{relation.get('relation_id') or relation.get('relation_type') or 'relation'}",
+                )
+            for event in scene.get("semantic_events", []) or []:
+                if not isinstance(event, dict):
+                    continue
+                phrase = str(event.get("script_text") or "").strip()
+                if script and phrase and phrase not in script:
+                    raise InvalidPackageError(
+                        f"semantic event script_text not found in canonical script: "
+                        f"{scene_id}:{event.get('semantic_event_id')}"
+                    )
+                FinalPackageLoader._validate_precise_script_span(
+                    script,
+                    event.get("script_span"),
+                    phrase,
+                    context=f"{scene_id}:{event.get('semantic_event_id') or 'semantic_event'}",
                 )
 
     @staticmethod
@@ -516,8 +734,18 @@ class FinalPackageLoader:
             )
         if not isinstance(span, dict):
             raise InvalidPackageError(f"script_span must be an object: {context}")
-        start = span.get("char_start")
-        end = span.get("char_end")
+        local_start = span.get("char_start")
+        local_end = span.get("char_end")
+        global_start = span.get("global_char_start")
+        global_end = span.get("global_char_end")
+        if local_start is not None or local_end is not None:
+            start, end = local_start, local_end
+            if (global_start is not None or global_end is not None) and (
+                global_start != local_start or global_end != local_end
+            ):
+                raise InvalidPackageError(f"conflicting script_span coordinates: {context}")
+        else:
+            start, end = global_start, global_end
         if (
             isinstance(start, bool)
             or not isinstance(start, int)
@@ -528,7 +756,7 @@ class FinalPackageLoader:
             or end > len(script)
         ):
             raise InvalidPackageError(f"invalid half-open script_span: {context}")
-        if script[start:end] != expected_text:
+        if expected_text and script[start:end] != expected_text:
             raise InvalidPackageError(f"script_span does not match script_text: {context}")
 
     @staticmethod
@@ -624,6 +852,14 @@ class FinalPackageLoader:
                     visual_progression=[
                         row for row in item.get("visual_progression", []) if isinstance(row, dict)
                     ],
+                    semantic_events=[
+                        row for row in item.get("semantic_events", []) if isinstance(row, dict)
+                    ],
+                    semantic_progression=(
+                        dict(item["progression"])
+                        if isinstance(item.get("progression"), dict)
+                        else None
+                    ),
                 ))
             if rows:
                 return sorted(rows, key=lambda row: row.order)

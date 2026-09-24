@@ -343,6 +343,24 @@ class MotionPlanner:
                                 if activation is not None and activation.visual_focus
                                 else None
                             ),
+                            "semantic_event_id": (
+                                activation.semantic_event_id if activation is not None else None
+                            ),
+                            "semantic_event_order": (
+                                activation.semantic_event_order if activation is not None else None
+                            ),
+                            "semantic_event_roles": (
+                                list(activation.semantic_event_roles) if activation is not None else []
+                            ),
+                            "semantic_event_dependency_ids": (
+                                list(activation.semantic_event_dependency_ids)
+                                if activation is not None
+                                else []
+                            ),
+                            "compound_visual_classification": (
+                                activation.compound_visual_classification
+                                if activation is not None else None
+                            ),
                             "trigger_char_start": (
                                 activation.trigger_char_start if activation is not None else None
                             ),
@@ -503,6 +521,7 @@ class MotionPlanner:
             else None
         )
         participant = str(participant_role or "SUPPORT").upper()
+        event_roles = set(activation.semantic_event_roles) if activation is not None else set()
         semantic_role = "UNKNOWN"
         if activation is not None and activation.semantic_unit_id and beat.semantic_context:
             entity = next(
@@ -516,10 +535,20 @@ class MotionPlanner:
             if entity is not None and entity.role:
                 semantic_role = str(entity.role).upper()
 
-        if visual_focus == "CONTEXT":
+        if "LEADER" in event_roles:
+            if "RESULT" in event_roles or semantic_role == "RESULT" or visual_focus == "RESULT":
+                focus_role, strength, source = "RESULT", 1.0, "semantic_event_leader"
+            elif semantic_role in {"ACTION", "OBJECT", "SUBJECT", "PRIMARY", "STATE"}:
+                focus_role, strength, source = semantic_role, 0.98, "semantic_event_leader"
+            else:
+                focus_role, strength, source = "PRIMARY", 0.98, "semantic_event_leader"
+        elif "RESULT" in event_roles:
+            focus_role, strength, source = "RESULT", 0.92, "semantic_event_result"
+        elif "CONTEXT" in event_roles and visual_focus not in {"PRIMARY", "RESULT"}:
+            return False, "CONTEXT", "semantic_event_context", 0.08, semantic_role
+        elif visual_focus == "CONTEXT":
             return False, "CONTEXT", "authored_context", 0.0, semantic_role
-
-        if visual_focus == "RESULT":
+        elif visual_focus == "RESULT":
             focus_role, strength, source = "RESULT", 1.0, "authored_visual_focus"
         elif visual_focus == "PRIMARY":
             focus_role, strength, source = "PRIMARY", 0.95, "authored_visual_focus"
@@ -660,21 +689,44 @@ class MotionPlanner:
                     score += 12.0
                 return score + strength, asset_id
 
-            leader_id = max(cohort, key=authority)[0]
+            explicit_leaders = [
+                row for row in cohort
+                if "LEADER" in row[1].semantic_event_roles
+            ]
+            leader_id = max(explicit_leaders or cohort, key=authority)[0]
+            leader_activation = next(row[1] for row in cohort if row[0] == leader_id)
+            leader_unit_id = (
+                leader_activation.semantic_unit_id
+                if (
+                    "LEADER" in leader_activation.semantic_event_roles
+                    or "visual_identity_multi_cutout_member" in leader_activation.evidence
+                )
+                else None
+            )
             density = len(cohort)
             for asset_id, activation, _window in cohort:
-                if asset_id == leader_id:
-                    output[asset_id] = (1.0, "leader")
+                same_leader_unit = bool(
+                    leader_unit_id
+                    and activation.semantic_unit_id == leader_unit_id
+                )
+                if asset_id == leader_id or same_leader_unit:
+                    output[asset_id] = (
+                        1.0,
+                        "leader" if asset_id == leader_id else "leader_member",
+                    )
                     continue
                 participant = str(participant_roles.get(asset_id, "SUPPORT")).upper()
                 _active, focus_role, _source, _strength, semantic_role = (
                     attention_profiles[asset_id]
                 )
+                event_roles = set(activation.semantic_event_roles)
                 explicit_participant = (
                     participant in {"SUBJECT", "OBJECT", "RESULT"}
                     or asset_id == preferred_interaction_id
                 )
-                if explicit_participant:
+                if "CONTEXT" in event_roles:
+                    gain, cohort_role = 0.18, "quiet"
+                elif explicit_participant or "PARTICIPANT" in event_roles:
                     gain, cohort_role = 0.58, "participant"
                 elif focus_role in {"ACTION", "OBJECT", "SUBJECT", "STATE", "PRIMARY"}:
                     gain, cohort_role = 0.44, "secondary"

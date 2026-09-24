@@ -59,6 +59,18 @@ class SemanticActionResolver:
         "reports_to": "TRAVEL",
         "authorizes": "CONNECT",
         "depends_on": "CONNECT",
+        "enables": "CONNECT",
+        "causes": "REVEAL",
+        "causes_unused_security": "REVEAL",
+        "leads_to": "REVEAL",
+        "leads_to_discovery": "REVEAL",
+        "reveals_identity": "REVEAL",
+        "parallel_causes": "COMPARE",
+        "withholds_disclosure": "BLOCK",
+        "specifies": "REVEAL",
+        "progresses_to": "REVEAL",
+        "persists_over_time": "LOOP",
+        "contains_risk": "REVEAL",
     }
     _INTENT_ACTIONS = (
         ("REJECT", ("reject", "decline", "deny", "fail")),

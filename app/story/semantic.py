@@ -129,6 +129,17 @@ class PackageStoryInterpreter:
             "reports_to",
             "authorizes",
             "depends_on",
+            "enables",
+            "causes",
+            "causes_unused_security",
+            "leads_to",
+            "leads_to_discovery",
+            "reveals_identity",
+            "parallel_causes",
+            "withholds_disclosure",
+            "progresses_to",
+            "persists_over_time",
+            "contains_risk",
         }
     )
 
@@ -156,6 +167,11 @@ class PackageStoryInterpreter:
             for row in (semantic_binding_scene or {}).get("assets", [])
             if isinstance(row, dict) and row.get("asset_id")
         ]
+        semantic_events = [
+            row
+            for row in (semantic_binding_scene or {}).get("semantic_events", [])
+            if isinstance(row, dict) and row.get("semantic_event_id")
+        ]
         for asset in binding_assets:
             unit_id = str(asset.get("asset_id"))
             scene_unit = units_by_id.get(unit_id, {})
@@ -181,7 +197,9 @@ class PackageStoryInterpreter:
                 continue
             source = str(relation.get("subject_asset_id") or "")
             target = str(relation.get("object_asset_id") or "")
-            relationship = str(relation.get("relationship") or "").strip()
+            relationship = str(
+                relation.get("relationship") or relation.get("relation_type") or ""
+            ).strip()
             if not source or not target or not relationship:
                 continue
             span = relation.get("script_span")
@@ -194,12 +212,20 @@ class PackageStoryInterpreter:
                     authority="FINAL_PACKAGE_ASSET_RELATION",
                     trigger_text=self._string_or_none(relation.get("script_text")),
                     trigger_char_start=(
-                        self._int_or_none(span.get("char_start"))
+                        self._int_or_none(
+                            span.get("char_start")
+                            if span.get("char_start") is not None
+                            else span.get("global_char_start")
+                        )
                         if isinstance(span, dict)
                         else None
                     ),
                     trigger_char_end=(
-                        self._int_or_none(span.get("char_end"))
+                        self._int_or_none(
+                            span.get("char_end")
+                            if span.get("char_end") is not None
+                            else span.get("global_char_end")
+                        )
                         if isinstance(span, dict)
                         else None
                     ),
@@ -292,12 +318,31 @@ class PackageStoryInterpreter:
             or self._normalize(entity.semantic_intent) in {"reaction", "result"}
             or entity.unit_id in explicit_reaction_sources
         )
-        result_ids = self._unique([*explicit_result_ids, *inferred_result_ids])
+        event_result_ids = self._unique(
+            asset_id
+            for event_row in semantic_events
+            for asset_id in event_row.get("result_asset_ids", [])
+            if isinstance(asset_id, str) and asset_id
+        )
+        result_ids = self._unique([
+            *explicit_result_ids,
+            *event_result_ids,
+            *inferred_result_ids,
+        ])
 
-        focus_unit_ids = self._unique(
-            str(row.get("asset_id"))
-            for row in binding_assets
-            if row.get("visual_focus")
+        event_leader_ids = self._unique(
+            str(row.get("visual_leader_asset_id"))
+            for row in semantic_events
+            if row.get("visual_leader_asset_id")
+        )
+        focus_unit_ids = (
+            event_leader_ids
+            if event_leader_ids
+            else self._unique(
+                str(row.get("asset_id"))
+                for row in binding_assets
+                if row.get("visual_focus")
+            )
         )
         visual_states = {
             str(row.get("asset_id")): {
@@ -359,8 +404,16 @@ class PackageStoryInterpreter:
             evidence.append("final_package_asset_level_semantics")
             if relations:
                 evidence.append("final_package_asset_relations")
+            if semantic_events:
+                evidence.append("final_package_semantic_events")
+                if isinstance(semantic_binding_scene.get("progression"), dict):
+                    evidence.append("final_package_event_progression")
             if focus_unit_ids:
-                evidence.append("final_package_visual_focus")
+                evidence.append(
+                    "final_package_event_leaders"
+                    if event_leader_ids
+                    else "final_package_visual_focus"
+                )
             if visual_states:
                 evidence.append("final_package_visual_state")
         confidence = self._confidence(scene, entities, relations, target_ids)
@@ -378,6 +431,13 @@ class PackageStoryInterpreter:
                 "relation_to_previous": scene.relation_to_previous,
                 "script_char_start": scene.script_char_start,
                 "script_char_end": scene.script_char_end,
+                "semantic_event_count": len(semantic_events),
+                "semantic_progression": (
+                    dict(semantic_binding_scene.get("progression"))
+                    if semantic_binding_scene is not None
+                    and isinstance(semantic_binding_scene.get("progression"), dict)
+                    else scene.semantic_progression
+                ),
             },
             event_metadata=dict(event),
             entities=entities,

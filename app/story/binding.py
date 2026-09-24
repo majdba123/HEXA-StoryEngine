@@ -216,6 +216,19 @@ class SemanticAssetBinder:
         if beat is None:
             return None
         by_id = {asset.id: asset for asset in assets}
+        event_leaders = [
+            (
+                row.semantic_event_order if row.semantic_event_order is not None else 10_000,
+                row.trigger_char_start if row.trigger_char_start is not None else 10**9,
+                -float(row.confidence),
+                row.asset_id,
+            )
+            for row in beat.asset_activations
+            if "LEADER" in row.semantic_event_roles and row.asset_id in by_id
+        ]
+        if event_leaders:
+            return by_id[min(event_leaders)[-1]]
+
         rank = {
             "PRIMARY": 0,
             "RESULT": 1,

@@ -43,6 +43,18 @@ _RELATION_ACTIONS = {
     "REPORTS_TO": "TRAVEL",
     "AUTHORIZES": "CONNECT",
     "DEPENDS_ON": "CONNECT",
+    "ENABLES": "CONNECT",
+    "CAUSES": "REVEAL",
+    "CAUSES_UNUSED_SECURITY": "REVEAL",
+    "LEADS_TO": "REVEAL",
+    "LEADS_TO_DISCOVERY": "REVEAL",
+    "REVEALS_IDENTITY": "REVEAL",
+    "PARALLEL_CAUSES": "COMPARE",
+    "WITHHOLDS_DISCLOSURE": "BLOCK",
+    "SPECIFIES": "REVEAL",
+    "PROGRESSES_TO": "REVEAL",
+    "PERSISTS_OVER_TIME": "LOOP",
+    "CONTAINS_RISK": "REVEAL",
     # Descriptive package relations still carry interaction meaning, but they do not
     # override a stronger primary semantic action in SemanticActionResolver.
     "EXPLAINS": "REVEAL",
@@ -66,7 +78,8 @@ _MEANING_ACTIONS = {
 
 # These relations describe a guide/context actor pointing toward a concept. The concept
 # should remain the focal visual; the actor is a participant, not the thing being taught.
-_OBJECT_FOCUS_RELATIONS = {"EXPLAINS", "CONTEXT_FOR", "SUPPORTS"}
+_OBJECT_FOCUS_RELATIONS = {"EXPLAINS", "CONTEXT_FOR", "SUPPORTS", "SPECIFIES"}
+_NON_EXECUTABLE_RELATIONS = {"SPECIFIES"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +131,11 @@ class InteractionCompiler:
             )
             distinct = bool(subject_asset and object_asset and subject_asset != object_asset)
             is_progression = relation.authority == "FINAL_PACKAGE_VISUAL_PROGRESSION"
+            executable_relation = (
+                distinct
+                and not is_progression
+                and canonical not in _NON_EXECUTABLE_RELATIONS
+            )
             compiled.append(
                 InteractionIntent(
                     semantic_action=action,
@@ -130,8 +148,10 @@ class InteractionCompiler:
                     result_unit_id=result_unit,
                     authority=relation.authority,
                     confidence=min(1.0, relation.confidence * binding.binding_confidence),
-                    executable=distinct and not is_progression,
-                    requires_state_change=(action in _MEANING_ACTIONS and not is_progression),
+                    executable=executable_relation,
+                    requires_state_change=(
+                        executable_relation and action in _MEANING_ACTIONS
+                    ),
                     evidence=tuple((context.evidence if context else [])[:8]),
                 )
             )

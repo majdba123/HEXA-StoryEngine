@@ -143,11 +143,17 @@ def _semantic_sequence_windows(
                 cluster.append(row)
 
         for rows in clusters:
-            orders = sorted({
-                row.sequence_order
-                for row in rows
-                if row.sequence_order is not None
-            })
+            use_event_order = bool(rows) and all(
+                row.semantic_event_order is not None for row in rows
+            )
+
+            def visual_order(row: AssetActivation) -> tuple[int, int]:
+                return (
+                    int(row.semantic_event_order) if use_event_order else 0,
+                    int(row.sequence_order) if row.sequence_order is not None else 10_000,
+                )
+
+            orders = sorted({visual_order(row) for row in rows})
             if len(orders) <= 1:
                 continue
 
@@ -197,7 +203,7 @@ def _semantic_sequence_windows(
                 order: index for index, order in enumerate(orders)
             }
             for row in rows:
-                rank = rank_by_order[row.sequence_order]
+                rank = rank_by_order[visual_order(row)]
                 start = phrase_start + step * rank
                 finish = start + motion_duration
                 if rank == distinct_count - 1:
@@ -210,6 +216,15 @@ def _semantic_sequence_windows(
 
 
 def _attention_role(row: AssetActivation, beat: StoryBeat) -> str:
+    event_roles = set(row.semantic_event_roles)
+    if "LEADER" in event_roles and "RESULT" in event_roles:
+        return "RESULT"
+    if "LEADER" in event_roles:
+        return "PRIMARY"
+    if "RESULT" in event_roles:
+        return "RESULT"
+    if "CONTEXT" in event_roles:
+        return "CONTEXT"
     visual_focus = str(row.visual_focus or "").upper()
     if visual_focus in {"RESULT", "PRIMARY", "SUPPORT", "CONTEXT"}:
         return visual_focus
@@ -357,6 +372,11 @@ def schedule_windows(
                 f"group_phrase_start={start:.6f}",
                 f"group_phrase_end={end:.6f}",
                 f"assigned_sequence_order={row.sequence_order}",
+                *(
+                    [f"assigned_semantic_event_order={row.semantic_event_order}"]
+                    if row.semantic_event_order is not None
+                    else []
+                ),
             ]
             output.append(StoryAssetActivation(
                 **{**data, "evidence": sequence_evidence},

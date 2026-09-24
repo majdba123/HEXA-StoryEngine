@@ -579,6 +579,11 @@ class SemanticActivationPlanner:
             for row in scene_binding.get("semantic_groups", [])
             if isinstance(row, dict) and row.get("semantic_group_id")
         }
+        events_by_id = {
+            str(row.get("semantic_event_id")): row
+            for row in scene_binding.get("semantic_events", [])
+            if isinstance(row, dict) and row.get("semantic_event_id")
+        }
         asset_by_id = {asset.id: asset for asset in assets}
         identity = self.identity_binder.bind(
             scene=scene,
@@ -671,12 +676,20 @@ class SemanticActivationPlanner:
 
             authored_span = row.get("script_span")
             authored_start = (
-                authored_span.get("char_start")
+                (
+                    authored_span.get("char_start")
+                    if authored_span.get("char_start") is not None
+                    else authored_span.get("global_char_start")
+                )
                 if isinstance(authored_span, dict)
                 else None
             )
             authored_end = (
-                authored_span.get("char_end")
+                (
+                    authored_span.get("char_end")
+                    if authored_span.get("char_end") is not None
+                    else authored_span.get("global_char_end")
+                )
                 if isinstance(authored_span, dict)
                 else None
             )
@@ -729,6 +742,39 @@ class SemanticActivationPlanner:
             sequence_order = row.get("sequence_order")
             semantic_confidence = float(row.get("confidence", 0.0))
             policy = "EXPLICIT" if binding_type == "EXPLICIT" else "SEMANTIC"
+            semantic_event_id = str(row.get("semantic_event_id") or "").strip() or None
+            semantic_event = events_by_id.get(semantic_event_id or "", {})
+            semantic_event_order = (
+                int(semantic_event["sequence_order"])
+                if isinstance(semantic_event.get("sequence_order"), int)
+                and not isinstance(semantic_event.get("sequence_order"), bool)
+                else None
+            )
+            semantic_event_roles: list[str] = []
+            if semantic_event_id:
+                if semantic_event.get("visual_leader_asset_id") == semantic_id:
+                    semantic_event_roles.append("LEADER")
+                if semantic_id in semantic_event.get("participant_asset_ids", []):
+                    semantic_event_roles.append("PARTICIPANT")
+                if semantic_id in semantic_event.get("context_asset_ids", []):
+                    semantic_event_roles.append("CONTEXT")
+                if semantic_id in semantic_event.get("result_asset_ids", []):
+                    semantic_event_roles.append("RESULT")
+                if semantic_event.get("text_anchor_asset_id") == semantic_id:
+                    semantic_event_roles.append("TEXT_ANCHOR")
+            semantic_event_dependencies = [
+                str(value)
+                for value in semantic_event.get("depends_on_event_ids", [])
+                if isinstance(value, str) and value
+            ]
+            compound_visual_classification = (
+                str(row.get("compound_visual_classification")).upper()
+                if row.get("compound_visual_classification") is not None
+                else None
+            )
+            internal_progression_unavailable = bool(
+                row.get("internal_progression_unavailable", False)
+            )
 
             for asset, identity_match in resolved_assets:
                 if identity_match is not None:
@@ -779,6 +825,12 @@ class SemanticActivationPlanner:
                         if isinstance(row.get("continuity"), dict)
                         else None
                     ),
+                    semantic_event_id=semantic_event_id,
+                    semantic_event_order=semantic_event_order,
+                    semantic_event_roles=list(dict.fromkeys(semantic_event_roles)),
+                    semantic_event_dependency_ids=semantic_event_dependencies,
+                    compound_visual_classification=compound_visual_classification,
+                    internal_progression_unavailable=internal_progression_unavailable,
                     evidence=[
                         "asset_level_final_package_binding",
                         "exact_final_package_script_text",
@@ -800,6 +852,27 @@ class SemanticActivationPlanner:
                         *(
                             ["final_package_continuity"]
                             if isinstance(row.get("continuity"), dict)
+                            else []
+                        ),
+                        *(
+                            [f"semantic_event={semantic_event_id}"]
+                            if semantic_event_id is not None
+                            else []
+                        ),
+                        *(
+                            [f"semantic_event_order={semantic_event_order}"]
+                            if semantic_event_order is not None
+                            else []
+                        ),
+                        *(f"semantic_event_role={role}" for role in semantic_event_roles),
+                        *(
+                            [f"compound_visual={compound_visual_classification}"]
+                            if compound_visual_classification is not None
+                            else []
+                        ),
+                        *(
+                            ["internal_progression_unavailable"]
+                            if internal_progression_unavailable
                             else []
                         ),
                         f"semantic_intent={semantic_id}",
@@ -858,6 +931,10 @@ class SemanticActivationPlanner:
                 "candidate_phrase": chosen.trigger_text,
                 "semantic_group_id": chosen.semantic_group_id,
                 "sequence_order": chosen.sequence_order,
+                "semantic_event_id": chosen.semantic_event_id,
+                "semantic_event_order": chosen.semantic_event_order,
+                "semantic_event_roles": chosen.semantic_event_roles,
+                "compound_visual_classification": chosen.compound_visual_classification,
             }
             output.append(chosen)
         return output
@@ -1100,6 +1177,9 @@ class SemanticActivationPlanner:
         if isinstance(authored_span, dict) and script:
             start = authored_span.get("char_start")
             end = authored_span.get("char_end")
+            if start is None and end is None:
+                start = authored_span.get("global_char_start")
+                end = authored_span.get("global_char_end")
             if (
                 isinstance(start, int)
                 and not isinstance(start, bool)
