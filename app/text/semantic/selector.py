@@ -118,7 +118,7 @@ class TextSemanticSelector:
     def __init__(
         self,
         *,
-        max_keywords_per_beat: int = 3,
+        max_keywords_per_beat: int = 4,
         max_display_chars: int = 24,
         min_candidate_score: float = 0.74,
     ) -> None:
@@ -335,6 +335,13 @@ class TextSemanticSelector:
             if not phrase_words:
                 continue
 
+            output.extend(
+                self._precise_asset_candidates(
+                    phrase_words,
+                    semantic_assets,
+                )
+            )
+
             produced = False
             for semantic_asset in semantic_assets:
                 binding_type = str(semantic_asset.get("binding_type") or "").upper()
@@ -377,6 +384,89 @@ class TextSemanticSelector:
                     require_semantic_match=False,
                     require_full_semantic_coverage=False,
                 ))
+        return output
+
+    def _precise_asset_candidates(
+        self,
+        words: list[TranscriptWord],
+        semantic_assets: list[dict],
+    ) -> list[KeywordCandidate]:
+        """Prefer exact Final Package asset spans as on-screen semantic labels.
+
+        This keeps text selection aligned with the same semantic units that drive
+        visual focus. CHARACTER/CONTEXT are intentionally de-emphasized so a broad
+        character phrase cannot steal the text budget from an ACTION/OBJECT/RESULT
+        bound to a more precise script span.
+        """
+        output: list[KeywordCandidate] = []
+        for asset in semantic_assets:
+            binding_type = str(asset.get("binding_type") or "").upper()
+            if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
+                continue
+            span = asset.get("script_span")
+            if not isinstance(span, dict):
+                continue
+            try:
+                char_start = int(span.get("char_start"))
+                char_end = int(span.get("char_end"))
+            except (TypeError, ValueError):
+                continue
+            if char_end <= char_start:
+                continue
+
+            matched = [
+                word
+                for word in words
+                if word.char_start is not None
+                and word.char_end is not None
+                and word.char_end > char_start
+                and word.char_start < char_end
+            ]
+            if not matched or len(matched) > 3:
+                continue
+            cleaned = [self._clean(row.text) for row in matched]
+            if any(not token for token in cleaned):
+                continue
+            display = " ".join(cleaned).strip()
+            if not display or len(display) > self.max_display_chars:
+                continue
+
+            role = str(
+                asset.get("semantic_role")
+                or asset.get("role")
+                or ""
+            ).upper()
+            visual_focus = str(asset.get("visual_focus") or "").upper()
+            base = 0.90 if binding_type == "EXPLICIT" else 0.82
+            role_bonus = {
+                "RESULT": 0.26,
+                "ACTION": 0.20,
+                "PRIMARY": 0.18,
+                "OBJECT": 0.16,
+                "SUBJECT": 0.14,
+                "STATE": 0.16,
+                "SUPPORT": -0.10,
+                "ACTOR": -0.10,
+                "CHARACTER": -0.18,
+                "CONTEXT": -0.20,
+            }.get(role, 0.0)
+            focus_bonus = {
+                "RESULT": 0.16,
+                "PRIMARY": 0.12,
+                "SUPPORT": -0.04,
+                "CONTEXT": -0.14,
+            }.get(visual_focus, 0.0)
+            state_bonus = 0.08 if asset.get("visual_state") else 0.0
+            score = base + role_bonus + focus_bonus + state_bonus
+            score -= 0.015 * max(0, len(matched) - 1)
+
+            candidate = self._candidate_from_words(
+                matched,
+                "emphasis",
+                score,
+            )
+            if candidate is not None:
+                output.append(candidate)
         return output
 
     def _generic_semantic_candidates(
@@ -762,9 +852,11 @@ class TextSemanticSelector:
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         duration = max(0.0, audio_end - audio_start)
-        if duration >= 5.0:
-            return min(self.max_keywords_per_beat, 3)
+        if duration >= 4.5:
+            return min(self.max_keywords_per_beat, 4)
         if duration >= 2.2:
+            return min(self.max_keywords_per_beat, 3)
+        if duration >= 1.2:
             return min(self.max_keywords_per_beat, 2)
         return 1
 
