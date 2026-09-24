@@ -71,7 +71,11 @@ class TextPlanner:
                     spoken_end=timed.spoken_end,
                     emphasis_time=timed.emphasis_time,
                     anchor_asset_id=anchor_asset_id,
-                    priority=self._priority(candidate.semantic_type),
+                    priority=min(
+                        100,
+                        self._priority(candidate.semantic_type)
+                        + max(0, round((candidate.score - 0.74) * 20)),
+                    ),
                     style_id=style.id,
                     placement_hint="anchor",
                     story_role=context.story_role if context else None,
