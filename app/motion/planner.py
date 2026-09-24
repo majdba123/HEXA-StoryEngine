@@ -309,6 +309,11 @@ class MotionPlanner:
                             "source": focus_source,
                             "strength": round(focus_strength, 4),
                             "semantic_role": semantic_role,
+                            "focus_duration_ms": round(
+                                max(0.0, window.semantic_settle - window.start) * 1000
+                            ),
+                            "attention_decay": "static_hold",
+                            "handoff_residual_strength": 0.40,
                             "visual_focus": (
                                 str(activation.visual_focus).upper()
                                 if activation is not None and activation.visual_focus
@@ -706,9 +711,23 @@ class MotionPlanner:
             else:
                 return program
 
-        # Explicit result semantics are the strongest payoff. This never fabricates
-        # RESULT: it only reacts to Choreography/Final Package evidence already present.
-        if focus_role == "RESULT":
+        # Calibrated attention hierarchy. These are one-shot accents only; the
+        # asset returns to exact authored Composition and then stays still. ACTION is
+        # decisive and short, PRIMARY/OBJECT are stronger concept anchors, and RESULT
+        # receives the largest bounded payoff.
+        if focus_role == "ACTION":
+            scale = max(scale, 1.060)
+            dy = min(dy, -0.009)
+        elif focus_role in {"OBJECT", "SUBJECT"}:
+            scale = max(scale, 1.070)
+            dy = min(dy, -0.010)
+        elif focus_role == "PRIMARY":
+            scale = max(scale, 1.080)
+            dy = min(dy, -0.011)
+        elif focus_role == "STATE":
+            scale = max(scale, 1.095)
+            dy = min(dy, -0.013)
+        elif focus_role == "RESULT":
             scale = max(scale, 1.105)
             dy = min(dy, -0.014)
 
