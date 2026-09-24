@@ -678,6 +678,7 @@ class StoryEnginePipeline:
                 video_only = self.renderer.render(
                     plan,
                     workspace / "render" / f"recovered-{attempt}.mp4",
+                    strict_boundary_coverage=(issue.code == "VISUAL_WHITE_FLASH"),
                 )
                 final_path = self.final.mux(video_only, audio_path, final_path)
             elif result.invalidate_from_stage == "final":
