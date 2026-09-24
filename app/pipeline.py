@@ -225,6 +225,36 @@ class StoryEnginePipeline:
             text_composition=text_composition,
             assets=assets,
         )
+        if visual_report.text_layout_violations:
+            text, text_composition, text_motion, visual_report = self._recover_text_layout(
+                package_id=package.package_id,
+                job_id=job_id,
+                transcript=transcript,
+                story=story,
+                composition=composition,
+                motion=motion,
+                text=text,
+                text_composition=text_composition,
+                text_motion=text_motion,
+                assets=assets,
+                choreography=choreography,
+                progress=progress,
+                cancelled=cancelled,
+                initial_report=visual_report,
+            )
+            authoring_report = StorytellingValidator.validate(
+                package=package,
+                story=story,
+                choreography=choreography,
+                composition=composition,
+                motion=motion,
+                text=text,
+                text_motion=text_motion,
+            )
+            StorytellingValidator.write(
+                authoring_report,
+                workspace / "diagnostics" / "storytelling-authoring.json",
+            )
         self.authoring_qa.write(
             visual_report,
             workspace / "diagnostics" / "authoring-visual-qa.json",
@@ -291,6 +321,202 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path
+
+    def _recover_text_layout(
+        self,
+        *,
+        package_id: str,
+        job_id: str,
+        transcript,
+        story,
+        composition,
+        motion,
+        text,
+        text_composition,
+        text_motion,
+        assets,
+        choreography,
+        progress: ProgressCallback | None,
+        cancelled: CancellationCallback | None,
+        initial_report,
+    ):
+        """Self-heal text layout before allowing Authoring QA to stop the job.
+
+        Recovery is deliberately bounded and monotonic:
+        1. Recompose using final Motion visibility.
+        2. Permit a small emergency scale reduction while keeping the same typography.
+        3. If text is optional and geometry is genuinely impossible, remove only the
+           unsafe cues instead of failing the entire video.
+
+        Visual Composition, Story timing, Final Package semantics and visual Motion are
+        never modified by this repair.
+        """
+        code = "TEXT_LAYOUT_REFERENCE_VIOLATION"
+        report = initial_report
+        current_text = text
+        current_composition = text_composition
+        current_motion = text_motion
+
+        for attempt in (1, 2):
+            self._check_cancel(cancelled)
+            context = {
+                "violations": list(report.text_layout_violations[:20]),
+                "violation_count": len(report.text_layout_violations),
+                "repair_level": attempt,
+            }
+            handler_result = self.recovery.handle(
+                code=code,
+                context=context,
+                attempt=attempt,
+            )
+            if (
+                handler_result is None
+                or not handler_result.success
+                or not handler_result.invalidate_from_stage
+            ):
+                break
+
+            self._progress(
+                progress,
+                Stage.recovery,
+                0.655,
+                f"Repairing text layout ({attempt}/3)",
+            )
+            current_composition = self.text_composition.plan(
+                story,
+                composition,
+                current_text.cues,
+                assets,
+                visual_motion=motion,
+                repair_level=attempt,
+            )
+            current_motion = self.text_motion.plan(
+                story,
+                current_text.cues,
+                current_composition,
+                choreography,
+                visual_motion=motion,
+            )
+            report = self.authoring_qa.inspect(
+                transcript=transcript,
+                composition=composition,
+                motion=motion,
+                story=story,
+                text=current_text,
+                text_composition=current_composition,
+                assets=assets,
+            )
+            success = not report.text_layout_violations
+            self.recovery.record_outcome(
+                code=code,
+                job_id=job_id,
+                package_id=package_id,
+                attempt=attempt,
+                handler_result=handler_result,
+                success=success,
+                details={
+                    "remaining_issue_count": len(report.text_layout_violations),
+                    "repair_level": attempt,
+                },
+            )
+            if success:
+                return (
+                    current_text,
+                    current_composition,
+                    current_motion,
+                    report,
+                )
+
+        if report.text_layout_violations and not self.settings.require_text_layer:
+            attempt = 3
+            context = {
+                "violations": list(report.text_layout_violations[:20]),
+                "violation_count": len(report.text_layout_violations),
+                "repair_level": attempt,
+                "optional_text_fallback": True,
+            }
+            handler_result = self.recovery.handle(
+                code=code,
+                context=context,
+                attempt=attempt,
+            )
+            if handler_result is not None and handler_result.success:
+                unsafe_ids = self._text_violation_cue_ids(
+                    report.text_layout_violations,
+                    {cue.id for cue in current_text.cues},
+                )
+                if unsafe_ids:
+                    self._progress(
+                        progress,
+                        Stage.recovery,
+                        0.66,
+                        (
+                            "Dropping only unsafe optional text cues "
+                            f"({len(unsafe_ids)})"
+                        ),
+                    )
+                    current_text = current_text.model_copy(
+                        update={
+                            "cues": [
+                                cue
+                                for cue in current_text.cues
+                                if cue.id not in unsafe_ids
+                            ]
+                        }
+                    )
+                    current_composition = self.text_composition.plan(
+                        story,
+                        composition,
+                        current_text.cues,
+                        assets,
+                        visual_motion=motion,
+                        repair_level=2,
+                    )
+                    current_motion = self.text_motion.plan(
+                        story,
+                        current_text.cues,
+                        current_composition,
+                        choreography,
+                        visual_motion=motion,
+                    )
+                    report = self.authoring_qa.inspect(
+                        transcript=transcript,
+                        composition=composition,
+                        motion=motion,
+                        story=story,
+                        text=current_text,
+                        text_composition=current_composition,
+                        assets=assets,
+                    )
+                success = not report.text_layout_violations
+                self.recovery.record_outcome(
+                    code=code,
+                    job_id=job_id,
+                    package_id=package_id,
+                    attempt=attempt,
+                    handler_result=handler_result,
+                    success=success,
+                    details={
+                        "remaining_issue_count": len(report.text_layout_violations),
+                        "dropped_optional_text_cues": sorted(unsafe_ids)
+                        if unsafe_ids
+                        else [],
+                    },
+                )
+
+        return current_text, current_composition, current_motion, report
+
+    @staticmethod
+    def _text_violation_cue_ids(
+        violations: tuple[str, ...] | list[str],
+        known_ids: set[str],
+    ) -> set[str]:
+        unsafe: set[str] = set()
+        for violation in violations:
+            for token in str(violation).split(":"):
+                if token in known_ids:
+                    unsafe.add(token)
+        return unsafe
 
     def _apply_refinement(self, package, assets, workspace: Path):
         mode = self.settings.refinement_mode
