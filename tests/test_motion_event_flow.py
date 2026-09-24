@@ -189,11 +189,12 @@ def test_motion_executes_choreography_event_steps_not_just_pattern_metadata() ->
     assert by_id["b"].start == pytest.approx(0.40)
     assert by_id["c"].start == pytest.approx(0.78)
 
-    # Source moves toward target, reaction moves away, payoff is strongest.
+    # CONNECT keeps the source/target relationship directional: source moves toward
+    # target and the target acknowledges by moving back toward the source.
     a_frames = by_id["a"].params["program"]["keyframes"]
     b_frames = by_id["b"].params["program"]["keyframes"]
     assert any(frame["dx"] > 0.0 for frame in a_frames[1:-1])
-    assert any(frame["dx"] > 0.0 for frame in b_frames[1:-1])
+    assert any(frame["dx"] < 0.0 for frame in b_frames[1:-1])
     max_scale = {
         asset_id: max(frame["scale"] for frame in cue.params["program"]["keyframes"])
         for asset_id, cue in by_id.items()
@@ -336,3 +337,131 @@ def test_story_event_id_overrides_stronger_stage_from_other_event_for_reused_ass
     assert event_flow["stage"] == "ESTABLISH"
     assert "event_chain_establish_" in cue.params["program"]["name"]
     assert "react" not in cue.params["program"]["name"]
+
+
+def test_relation_flavors_survive_event_flow_instead_of_becoming_generic_interaction() -> None:
+    from app.motion.event_flow import MotionEventPhase
+
+    compare_source = MotionEventPhase(
+        event_id="E", event_order=1, stage=EventFlowStage.INTERACT,
+        step_index=0, involvement="SOURCE", focus_asset_id="a",
+        source_asset_id="a", target_asset_id="b", result_asset_id=None,
+        relationship="PARALLEL_CAUSES", semantic_action="COMPARE",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+    )
+    connect_source = replace(compare_source, semantic_action="CONNECT", relationship="ENABLES")
+    loop_source = replace(compare_source, semantic_action="LOOP", relationship="PERSISTS_OVER_TIME")
+
+    compare = MotionPlanner._phase_transform(
+        phase=compare_source, vector=(0.4, 0.0), focus_strength=1.0
+    )
+    connect = MotionPlanner._phase_transform(
+        phase=connect_source, vector=(0.4, 0.0), focus_strength=1.0
+    )
+    loop = MotionPlanner._phase_transform(
+        phase=loop_source, vector=(0.4, 0.0), focus_strength=1.0
+    )
+
+    assert compare[0] < 0.0
+    assert connect[0] > 0.0
+    assert abs(loop[0]) < 1e-9 and loop[1] > 0.0
+    assert len({compare, connect, loop}) == 3
+
+
+def test_multiple_results_are_all_payoff_visuals_not_quiet_support() -> None:
+    r1 = _activation(
+        "r1", start=0.45, peak=0.58, settle=0.72, end=0.76,
+        event_id="E1", event_order=1, roles=["RESULT"],
+    )
+    r2 = _activation(
+        "r2", start=0.45, peak=0.58, settle=0.72, end=0.76,
+        event_id="E1", event_order=1, roles=["RESULT"],
+    )
+    beat = StoryBeat(
+        id="multi-result", scene_id="scene", start=0.0, end=1.0,
+        audio_start=0.0, audio_end=0.9, narration="two results",
+        primary_asset_ids=["r1"], support_asset_ids=["r2"], action="RESULT",
+        asset_activations=[r1, r2],
+    )
+    composition = CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="r1", x=0.35, y=0.5, width=0.2, height=0.2),
+            LayoutItem(asset_id="r2", x=0.65, y=0.5, width=0.2, height=0.2),
+        ],
+    )
+    flow = SemanticEventFlow(
+        event_id="E1", order=1, result_asset_ids=("r1", "r2"),
+        stages=(EventFlowStage.PAYOFF, EventFlowStage.RELEASE),
+        steps=(
+            EventFlowStep(EventFlowStage.PAYOFF, focus_asset_id="r1", participant_asset_ids=("r1",), result_asset_id="r1"),
+            EventFlowStep(EventFlowStage.PAYOFF, focus_asset_id="r2", participant_asset_ids=("r2",), result_asset_id="r2"),
+            EventFlowStep(EventFlowStage.RELEASE, focus_asset_id="r2", participant_asset_ids=("r2",)),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id, sequence_id="sequence-001", phase=SequencePhase.CONSEQUENCE,
+        action="RESULT", pattern=ChoreographyPattern.FOCUS_TRANSFER,
+        hook=HookKind.OPEN, primary_asset_id="r1", event_flows=(flow,),
+    )
+    cues = MotionPlanner().plan(
+        [beat], [composition], ChoreographyPlan(directives=(directive,))
+    )
+    by_id = {cue.asset_id: cue for cue in cues}
+
+    assert by_id["r1"].params["semantic_focus"]["event_flow"]["stage"] == "PAYOFF"
+    assert by_id["r2"].params["semantic_focus"]["event_flow"]["stage"] == "PAYOFF"
+    assert by_id["r2"].params["semantic_focus"]["cohort_role"] == "result_peer"
+    assert by_id["r2"].params["semantic_focus"]["cohort_gain"] >= 0.8
+    assert max(f["scale"] for f in by_id["r2"].params["program"]["keyframes"]) > 1.04
+
+
+def test_compound_required_multi_cutout_executes_one_coherent_unit_motion() -> None:
+    def compound(asset_id: str) -> StoryAssetActivation:
+        return _activation(
+            asset_id, start=0.1, peak=0.25, settle=0.5, end=0.55,
+            event_id="E1", event_order=1, roles=["LEADER"],
+        ).model_copy(update={
+            "semantic_unit_id": "compound-unit",
+            "compound_visual_classification": "COMPOUND_REQUIRED",
+            "internal_progression_unavailable": True,
+            "evidence": ["visual_identity_multi_cutout_member"],
+        })
+
+    left, right = compound("left"), compound("right")
+    beat = StoryBeat(
+        id="compound", scene_id="scene", start=0.0, end=0.8,
+        audio_start=0.0, audio_end=0.7, narration="compound",
+        primary_asset_ids=["left"], support_asset_ids=["right"], action="EXPLAIN",
+        asset_activations=[left, right],
+    )
+    composition = CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="left", x=0.4, y=0.5, width=0.2, height=0.2),
+            LayoutItem(asset_id="right", x=0.6, y=0.5, width=0.2, height=0.2),
+        ],
+    )
+    flow = SemanticEventFlow(
+        event_id="E1", order=1, leader_asset_ids=("left", "right"),
+        stages=(EventFlowStage.ESTABLISH, EventFlowStage.RELEASE),
+        steps=(
+            EventFlowStep(EventFlowStage.ESTABLISH, focus_asset_id="left", participant_asset_ids=("left", "right")),
+            EventFlowStep(EventFlowStage.RELEASE, focus_asset_id="left", participant_asset_ids=("left", "right")),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id, sequence_id="sequence-001", phase=SequencePhase.SETUP,
+        action="EXPLAIN", pattern=ChoreographyPattern.PROGRESSIVE_BUILD,
+        hook=HookKind.OPEN, primary_asset_id="left", event_flows=(flow,),
+    )
+    cues = MotionPlanner().plan(
+        [beat], [composition], ChoreographyPlan(directives=(directive,))
+    )
+
+    assert {cue.params["program"]["name"] for cue in cues} == {"compound_unit_coherent_reveal"}
+    assert cues[0].params["program"]["keyframes"] == cues[1].params["program"]["keyframes"]
+    assert all(
+        cue.params["semantic_focus"]["event_flow_execution"] == "COMPOUND_UNIT_LOCK"
+        for cue in cues
+    )

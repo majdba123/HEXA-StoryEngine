@@ -458,11 +458,23 @@ class ChoreographyDirector:
         # which visuals participate, where payoff lives, and how events depend on each
         # other. This avoids reducing a rich 1.2 event to a generic asset-by-asset reveal.
         if event_flows:
-            if any(
-                any(interaction.executable for interaction in flow.interactions)
+            executable = [
+                interaction
                 for flow in event_flows
-            ):
+                for interaction in flow.interactions
+                if interaction.executable
+            ]
+            non_compare = [
+                interaction for interaction in executable
+                if str(interaction.semantic_action or "").upper() != "COMPARE"
+            ]
+            if non_compare:
                 return ChoreographyPattern.CAUSE_EFFECT_CHAIN
+            # Comparison/parallel relations are authored interactions, but they should
+            # not be visually mislabeled as a causal chain. Their Motion flavor is
+            # preserved later from the relation semantic_action.
+            if executable:
+                return ChoreographyPattern.PROGRESSIVE_BUILD
             if len(event_flows) >= 2 or any(
                 len(flow.participant_asset_ids) >= 1 for flow in event_flows
             ):

@@ -60,7 +60,11 @@ class MotionEventAssignment:
     semantic_action: str | None
     authority: str
     involvement: str
+    progression_type: str | None = None
+    handoff_mode: str = "NONE"
     incoming_from_asset_id: str | None = None
+    handoff_to_event_ids: tuple[str, ...] = ()
+    handoff_to_asset_ids: tuple[str, ...] = ()
     handoff_to_event_id: str | None = None
     handoff_to_asset_id: str | None = None
     phase_chain: tuple[MotionEventPhase, ...] = ()
@@ -79,7 +83,11 @@ class MotionEventAssignment:
             "semantic_action": self.semantic_action,
             "authority": self.authority,
             "involvement": self.involvement,
+            "progression_type": self.progression_type,
+            "handoff_mode": self.handoff_mode,
             "incoming_from_asset_id": self.incoming_from_asset_id,
+            "handoff_to_event_ids": list(self.handoff_to_event_ids),
+            "handoff_to_asset_ids": list(self.handoff_to_asset_ids),
             "handoff_to_event_id": self.handoff_to_event_id,
             "handoff_to_asset_id": self.handoff_to_asset_id,
             "phase_chain": [phase.to_payload() for phase in self.phase_chain],
@@ -133,8 +141,6 @@ class MotionEventFlowResolver:
         if directive is None or not directive.event_flows:
             return None
 
-        focus_path = directive.event_focus_path_asset_ids
-        incoming_from = self._previous_focus_asset(focus_path, asset_id)
         candidates: list[tuple[int, int, int, MotionEventAssignment]] = []
         owned_phases: list[MotionEventPhase] = []
 
@@ -145,6 +151,7 @@ class MotionEventFlowResolver:
             # a stronger stage from a different event.
             if semantic_event_id and flow.event_id != semantic_event_id:
                 continue
+            incoming_from = self._incoming_focus_asset(directive, flow.event_id, asset_id)
             for step_index, step in enumerate(flow.steps):
                 involvement = self._involvement_for_stage(step, asset_id)
                 if involvement is None or step.stage == EventFlowStage.RELEASE:
@@ -182,7 +189,11 @@ class MotionEventFlowResolver:
                         semantic_action=step.semantic_action,
                         authority=step.authority,
                         involvement=involvement,
+                        progression_type=flow.progression_type,
+                        handoff_mode=flow.handoff_mode,
                         incoming_from_asset_id=incoming_from,
+                        handoff_to_event_ids=flow.handoff_to_event_ids,
+                        handoff_to_asset_ids=flow.handoff_to_asset_ids,
                         handoff_to_event_id=flow.handoff_to_event_id,
                         handoff_to_asset_id=flow.handoff_to_asset_id,
                     ),
@@ -204,7 +215,11 @@ class MotionEventFlowResolver:
             semantic_action=dominant.semantic_action,
             authority=dominant.authority,
             involvement=dominant.involvement,
+            progression_type=dominant.progression_type,
+            handoff_mode=dominant.handoff_mode,
             incoming_from_asset_id=dominant.incoming_from_asset_id,
+            handoff_to_event_ids=dominant.handoff_to_event_ids,
+            handoff_to_asset_ids=dominant.handoff_to_asset_ids,
             handoff_to_event_id=dominant.handoff_to_event_id,
             handoff_to_asset_id=dominant.handoff_to_asset_id,
             phase_chain=tuple(owned_phases),
@@ -212,17 +227,14 @@ class MotionEventFlowResolver:
 
     @staticmethod
     def _involvement_for_stage(step: EventFlowStep, asset_id: str) -> str | None:
-        """Return only the participant that semantically owns this phase.
-
-        EventFlowStep.participant_asset_ids describe the whole relation context. Motion
-        must not let a relation source steal the later REACT phase merely because it is
-        listed as a participant in that step.
-        """
+        """Return only the participant that semantically owns this phase."""
         if step.stage == EventFlowStage.PAYOFF:
             if step.result_asset_id == asset_id:
                 return "RESULT"
             if step.focus_asset_id == asset_id:
                 return "FOCUS"
+            if asset_id in step.participant_asset_ids:
+                return "RESULT_MEMBER"
             return None
         if step.stage == EventFlowStage.REACT:
             if step.target_asset_id == asset_id:
@@ -252,6 +264,8 @@ class MotionEventFlowResolver:
     def _role_bonus(stage: EventFlowStage, involvement: str) -> int:
         if stage == EventFlowStage.PAYOFF and involvement == "RESULT":
             return 50
+        if stage == EventFlowStage.PAYOFF and involvement == "RESULT_MEMBER":
+            return 35
         if stage == EventFlowStage.REACT and involvement in {"TARGET", "FOCUS"}:
             return 40
         if stage == EventFlowStage.INTERACT and involvement == "SOURCE":
@@ -260,15 +274,53 @@ class MotionEventFlowResolver:
             return 25
         return 0
 
-    @staticmethod
-    def _previous_focus_asset(
-        focus_path: tuple[str, ...],
+    @classmethod
+    def _incoming_focus_asset(
+        cls,
+        directive: ChoreographyDirective,
+        event_id: str,
         asset_id: str,
     ) -> str | None:
+        flow = next((row for row in directive.event_flows if row.event_id == event_id), None)
+        if flow is None:
+            return None
+
+        # First prefer an earlier focus inside the same event. This supports a real
+        # leader -> participant -> result chain without consulting unrelated events.
+        path = flow.focus_path_asset_ids
         try:
-            index = focus_path.index(asset_id)
+            index = path.index(asset_id)
         except ValueError:
-            return None
-        if index <= 0:
-            return None
-        return focus_path[index - 1]
+            index = -1
+        if index > 0:
+            return path[index - 1]
+
+        # At an event boundary, use a predecessor only when the graph gives one
+        # unambiguous visual source. Multiple predecessors are a merge, not a fake
+        # single direction, so Motion abstains from choosing one arbitrarily.
+        predecessors = [
+            row for row in directive.event_flows
+            if event_id in (
+                row.handoff_to_event_ids
+                or ((row.handoff_to_event_id,) if row.handoff_to_event_id else ())
+            )
+        ]
+        sources = tuple(dict.fromkeys(
+            source
+            for row in predecessors
+            if (source := cls._terminal_focus_asset(row))
+        ))
+        return sources[0] if len(sources) == 1 else None
+
+    @staticmethod
+    def _terminal_focus_asset(flow) -> str | None:
+        for step in reversed(flow.steps):
+            if step.stage == EventFlowStage.RELEASE:
+                continue
+            if step.focus_asset_id:
+                return step.focus_asset_id
+        if flow.result_asset_ids:
+            return flow.result_asset_ids[-1]
+        if flow.leader_asset_ids:
+            return flow.leader_asset_ids[-1]
+        return None

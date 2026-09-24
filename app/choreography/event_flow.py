@@ -24,6 +24,7 @@ class SemanticEventFlowPlanner:
     """
 
     _PACKAGE_SOURCE = "final_package_semantic_binding"
+    _NO_AUTOMATIC_REACTION_ACTIONS = {"COMPARE", "LOOP"}
 
     def compile(
         self,
@@ -60,19 +61,32 @@ class SemanticEventFlowPlanner:
             event_assets,
             interactions,
         )
-        transitions_by_asset = {row.asset_id: row for row in transitions if row.meaningful}
+        reaction_asset_ids = {
+            row.asset_id for row in transitions if row.meaningful
+        }
+        progression_type = self._progression_type(beat)
 
         metadata: list[dict[str, object]] = []
         for event_id, rows in ordered_groups:
+            leader_units = self._role_units(rows, "LEADER")
+            participant_units = self._role_units(rows, "PARTICIPANT")
+            context_units = self._role_units(rows, "CONTEXT")
+            result_units = self._role_units(rows, "RESULT")
+            text_anchor_units = self._role_units(rows, "TEXT_ANCHOR")
             metadata.append({
                 "event_id": event_id,
                 "rows": rows,
                 "interactions": interactions_by_event.get(event_id, ()),
-                "leaders": self._assets_for_role(rows, "LEADER"),
-                "participants": self._assets_for_role(rows, "PARTICIPANT"),
-                "contexts": self._assets_for_role(rows, "CONTEXT"),
-                "results": self._assets_for_role(rows, "RESULT"),
-                "text_anchors": self._assets_for_role(rows, "TEXT_ANCHOR"),
+                "leader_units": leader_units,
+                "participant_units": participant_units,
+                "context_units": context_units,
+                "result_units": result_units,
+                "text_anchor_units": text_anchor_units,
+                "leaders": self._flatten_units(leader_units),
+                "participants": self._flatten_units(participant_units),
+                "contexts": self._flatten_units(context_units),
+                "results": self._flatten_units(result_units),
+                "text_anchors": self._flatten_units(text_anchor_units),
                 "dependency_ids": self._unique(
                     dependency
                     for row in rows
@@ -80,6 +94,12 @@ class SemanticEventFlowPlanner:
                     if dependency and dependency != event_id
                 ),
             })
+
+        dependents_by_event: dict[str, list[str]] = defaultdict(list)
+        for item in metadata:
+            event_id = str(item["event_id"])
+            for dependency_id in item["dependency_ids"]:
+                dependents_by_event[str(dependency_id)].append(event_id)
 
         flows: list[SemanticEventFlow] = []
         for index, item in enumerate(metadata):
@@ -94,31 +114,38 @@ class SemanticEventFlowPlanner:
             result_ids = item["results"]
             text_anchor_ids = item["text_anchors"]
             dependency_ids = item["dependency_ids"]
+            leader_units = item["leader_units"]
+            participant_units = item["participant_units"]
+            result_units = item["result_units"]
             assert isinstance(leader_ids, tuple)
             assert isinstance(participant_ids, tuple)
             assert isinstance(context_ids, tuple)
             assert isinstance(result_ids, tuple)
             assert isinstance(text_anchor_ids, tuple)
             assert isinstance(dependency_ids, tuple)
+            assert isinstance(leader_units, tuple)
+            assert isinstance(participant_units, tuple)
+            assert isinstance(result_units, tuple)
 
-            next_item = metadata[index + 1] if index + 1 < len(metadata) else None
-            handoff_to_event_id: str | None = None
-            handoff_to_asset_id: str | None = None
-            if next_item is not None:
-                handoff_to_event_id = str(next_item["event_id"])
-                handoff_to_asset_id = self._handoff_asset(next_item)
-
-            flow_asset_ids = set(event_assets[event_id])
-            has_meaningful_reaction = any(
-                asset_id in transitions_by_asset for asset_id in flow_asset_ids
+            (
+                handoff_mode,
+                handoff_to_event_ids,
+                handoff_to_asset_ids,
+            ) = self._handoff_targets(
+                index=index,
+                metadata=metadata,
+                dependents_by_event=dependents_by_event,
             )
+            singular_event = handoff_to_event_ids[0] if len(handoff_to_event_ids) == 1 else None
+            singular_asset = handoff_to_asset_ids[0] if len(handoff_to_asset_ids) == 1 else None
+
             steps = self._steps(
-                leaders=leader_ids,
-                participants=participant_ids,
-                results=result_ids,
+                leader_units=leader_units,
+                participant_units=participant_units,
+                result_units=result_units,
                 interactions=event_interactions,
-                has_meaningful_reaction=has_meaningful_reaction,
-                handoff_to_asset_id=handoff_to_asset_id,
+                reaction_asset_ids=reaction_asset_ids,
+                handoff_to_asset_ids=handoff_to_asset_ids,
             )
             stages = tuple(dict.fromkeys(step.stage for step in steps))
             flows.append(
@@ -134,8 +161,12 @@ class SemanticEventFlowPlanner:
                     interactions=event_interactions,
                     stages=stages,
                     steps=steps,
-                    handoff_to_event_id=handoff_to_event_id,
-                    handoff_to_asset_id=handoff_to_asset_id,
+                    progression_type=progression_type,
+                    handoff_mode=handoff_mode,
+                    handoff_to_event_ids=handoff_to_event_ids,
+                    handoff_to_asset_ids=handoff_to_asset_ids,
+                    handoff_to_event_id=singular_event,
+                    handoff_to_asset_id=singular_asset,
                     confidence=max((row.confidence for row in rows), default=0.0),
                     authority="FINAL_PACKAGE_SEMANTIC_EVENT",
                     evidence=self._evidence(rows, event_interactions),
@@ -209,25 +240,29 @@ class SemanticEventFlowPlanner:
     def _steps(
         cls,
         *,
-        leaders: tuple[str, ...],
-        participants: tuple[str, ...],
-        results: tuple[str, ...],
+        leader_units: tuple[tuple[str, ...], ...],
+        participant_units: tuple[tuple[str, ...], ...],
+        result_units: tuple[tuple[str, ...], ...],
         interactions: tuple[InteractionIntent, ...],
-        has_meaningful_reaction: bool,
-        handoff_to_asset_id: str | None,
+        reaction_asset_ids: set[str],
+        handoff_to_asset_ids: tuple[str, ...],
     ) -> tuple[EventFlowStep, ...]:
         steps: list[EventFlowStep] = []
-        if leaders:
+
+        # Each semantic visual unit gets its own authored focus step. If one semantic
+        # intent resolves to multiple cutouts, they stay in the same step so Choreography
+        # never invents internal order for a compound/multi-cutout visual.
+        for unit in leader_units:
             steps.append(EventFlowStep(
                 stage=EventFlowStage.ESTABLISH,
-                focus_asset_id=leaders[0],
-                participant_asset_ids=leaders,
+                focus_asset_id=unit[0],
+                participant_asset_ids=unit,
             ))
-        if participants:
+        for unit in participant_units:
             steps.append(EventFlowStep(
                 stage=EventFlowStage.ADD,
-                focus_asset_id=participants[0],
-                participant_asset_ids=participants,
+                focus_asset_id=unit[0],
+                participant_asset_ids=unit,
             ))
 
         for interaction in interactions:
@@ -253,7 +288,11 @@ class SemanticEventFlowPlanner:
                 semantic_action=interaction.semantic_action,
                 authority=interaction.authority,
             ))
-            if interaction.requires_state_change or has_meaningful_reaction:
+            target_has_state_change = bool(
+                interaction.object_asset_id
+                and interaction.object_asset_id in reaction_asset_ids
+            )
+            if cls._should_react(interaction, target_has_state_change):
                 steps.append(EventFlowStep(
                     stage=EventFlowStage.REACT,
                     focus_asset_id=(
@@ -270,49 +309,176 @@ class SemanticEventFlowPlanner:
                     authority=interaction.authority,
                 ))
 
-        if results:
+        for unit in result_units:
+            result_id = unit[0]
+            result_interaction = cls._interaction_for_result(result_id, interactions)
             steps.append(EventFlowStep(
                 stage=EventFlowStage.PAYOFF,
-                focus_asset_id=results[0],
-                participant_asset_ids=results,
-                result_asset_id=results[0],
+                focus_asset_id=result_id,
+                participant_asset_ids=unit,
+                source_asset_id=(
+                    result_interaction.subject_asset_id if result_interaction else None
+                ),
+                target_asset_id=(
+                    result_interaction.object_asset_id if result_interaction else None
+                ),
+                result_asset_id=result_id,
+                relationship=(result_interaction.relationship if result_interaction else None),
+                semantic_action=(result_interaction.semantic_action if result_interaction else None),
+                authority=(
+                    result_interaction.authority
+                    if result_interaction
+                    else "FINAL_PACKAGE_SEMANTIC_EVENT"
+                ),
             ))
 
         if steps:
-            release_focus = handoff_to_asset_id
-            if release_focus is None:
-                release_focus = (
-                    results[0] if results else
-                    leaders[0] if leaders else
-                    participants[-1] if participants else
-                    None
-                )
+            release_focus: str | None = None
+            if len(handoff_to_asset_ids) == 1:
+                release_focus = handoff_to_asset_ids[0]
+            elif not handoff_to_asset_ids:
+                if result_units:
+                    release_focus = result_units[-1][0]
+                elif leader_units:
+                    release_focus = leader_units[-1][0]
+                elif participant_units:
+                    release_focus = participant_units[-1][0]
             steps.append(EventFlowStep(
                 stage=EventFlowStage.RELEASE,
                 focus_asset_id=release_focus,
-                participant_asset_ids=(release_focus,) if release_focus else (),
+                participant_asset_ids=(
+                    handoff_to_asset_ids
+                    if handoff_to_asset_ids
+                    else ((release_focus,) if release_focus else ())
+                ),
             ))
         return tuple(steps)
 
     @classmethod
-    def _handoff_asset(cls, item: dict[str, object]) -> str | None:
-        for key in ("leaders", "results", "participants", "text_anchors"):
-            values = item.get(key)
-            if isinstance(values, tuple) and values:
-                return str(values[0])
-        return None
+    def _should_react(
+        cls,
+        interaction: InteractionIntent,
+        target_has_state_change: bool,
+    ) -> bool:
+        action = str(interaction.semantic_action or "").upper()
+        if action in cls._NO_AUTOMATIC_REACTION_ACTIONS:
+            return target_has_state_change
+        return bool(interaction.requires_state_change or target_has_state_change)
 
     @staticmethod
-    def _assets_for_role(
+    def _interaction_for_result(
+        result_asset_id: str,
+        interactions: tuple[InteractionIntent, ...],
+    ) -> InteractionIntent | None:
+        direct = [
+            row for row in interactions
+            if row.result_asset_id == result_asset_id
+        ]
+        if direct:
+            return max(direct, key=lambda row: (row.executable, row.confidence))
+        return None
+
+    @classmethod
+    def _handoff_targets(
+        cls,
+        *,
+        index: int,
+        metadata: list[dict[str, object]],
+        dependents_by_event: dict[str, list[str]],
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+        item = metadata[index]
+        event_id = str(item["event_id"])
+        by_id = {str(row["event_id"]): row for row in metadata}
+        direct_dependents = cls._unique(dependents_by_event.get(event_id, ()))
+        if direct_dependents:
+            targets = tuple(
+                sorted(
+                    direct_dependents,
+                    key=lambda target: cls._metadata_sort_key(by_id[target]),
+                )
+            )
+            mode = "BRANCH" if len(targets) > 1 else "DEPENDENCY"
+        elif index + 1 < len(metadata):
+            targets = (str(metadata[index + 1]["event_id"]),)
+            mode = "SEQUENTIAL"
+        else:
+            return "NONE", (), ()
+
+        assets = cls._unique(
+            asset_id
+            for target in targets
+            for asset_id in cls._handoff_assets(by_id[target])
+        )
+        return mode, targets, assets
+
+    @staticmethod
+    def _metadata_sort_key(item: dict[str, object]) -> tuple[float, float, str]:
+        rows = item.get("rows")
+        if not isinstance(rows, list):
+            return inf, inf, str(item.get("event_id") or "")
+        return SemanticEventFlowPlanner._event_sort_key(
+            str(item.get("event_id") or ""), rows
+        )
+
+    @staticmethod
+    def _handoff_assets(item: dict[str, object]) -> tuple[str, ...]:
+        # Leader is the strongest next-event visual authority, followed by result or
+        # participant. Preserve a multi-cutout semantic unit together rather than taking
+        # an arbitrary member.
+        for key in ("leader_units", "result_units", "participant_units", "text_anchor_units"):
+            units = item.get(key)
+            if isinstance(units, tuple) and units:
+                first = units[0]
+                if isinstance(first, tuple):
+                    return tuple(str(value) for value in first if value)
+        return ()
+
+    @staticmethod
+    def _activation_sort_key(row: AssetActivation) -> tuple[float, int, int, str]:
+        return (
+            float(row.spoken_start) if row.spoken_start is not None else inf,
+            int(row.sequence_order) if row.sequence_order is not None else 10_000,
+            int(row.trigger_char_start) if row.trigger_char_start is not None else 10**9,
+            row.asset_id,
+        )
+
+    @classmethod
+    def _role_units(
+        cls,
         rows: list[AssetActivation],
         role: str,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, ...], ...]:
         role = role.upper()
-        return SemanticEventFlowPlanner._unique(
-            row.asset_id
-            for row in rows
+        selected = [
+            row for row in rows
             if role in {value.upper() for value in row.semantic_event_roles}
-        )
+        ]
+        selected.sort(key=cls._activation_sort_key)
+        grouped: dict[str, list[str]] = {}
+        order: list[str] = []
+        for row in selected:
+            key = row.semantic_unit_id or row.asset_id
+            if key not in grouped:
+                grouped[key] = []
+                order.append(key)
+            if row.asset_id not in grouped[key]:
+                grouped[key].append(row.asset_id)
+        return tuple(tuple(grouped[key]) for key in order if grouped[key])
+
+    @staticmethod
+    def _flatten_units(units: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(asset_id for unit in units for asset_id in unit))
+
+    @staticmethod
+    def _progression_type(beat: StoryBeat) -> str | None:
+        context = beat.semantic_context
+        if context is None:
+            return None
+        progression = context.scene_metadata.get("semantic_progression")
+        if not isinstance(progression, dict):
+            return None
+        value = progression.get("type")
+        return str(value) if value else None
 
     @staticmethod
     def _evidence(

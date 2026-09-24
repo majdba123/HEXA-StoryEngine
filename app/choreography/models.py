@@ -163,6 +163,12 @@ class SemanticEventFlow:
     interactions: tuple[InteractionIntent, ...] = ()
     stages: tuple[EventFlowStage, ...] = ()
     steps: tuple[EventFlowStep, ...] = ()
+    progression_type: str | None = None
+    handoff_mode: str = "NONE"
+    handoff_to_event_ids: tuple[str, ...] = ()
+    handoff_to_asset_ids: tuple[str, ...] = ()
+    # Backward-compatible singular fields remain populated only when the handoff has
+    # exactly one target. Branches/parallel progressions use the plural fields above.
     handoff_to_event_id: str | None = None
     handoff_to_asset_id: str | None = None
     confidence: float = 0.0
@@ -302,12 +308,24 @@ class ChoreographyPlan:
                     raise ValueError("semantic event flow steps must end in RELEASE")
                 if flow.result_asset_ids and EventFlowStage.PAYOFF not in flow.stages:
                     raise ValueError("semantic event result must compile a payoff phase")
-                if flow.result_asset_ids and not any(
-                    step.stage == EventFlowStage.PAYOFF for step in flow.steps
-                ):
-                    raise ValueError("semantic event result must own an explicit payoff step")
-                if flow.handoff_to_event_id is not None:
-                    target_flow = flow_by_id.get(flow.handoff_to_event_id)
+                payoff_assets = {
+                    asset_id
+                    for step in flow.steps
+                    if step.stage == EventFlowStage.PAYOFF
+                    for asset_id in (step.result_asset_id, *step.participant_asset_ids)
+                    if asset_id
+                }
+                if flow.result_asset_ids and not set(flow.result_asset_ids).issubset(payoff_assets):
+                    raise ValueError("every semantic event result must own an explicit payoff step")
+
+                target_event_ids = flow.handoff_to_event_ids or (
+                    (flow.handoff_to_event_id,) if flow.handoff_to_event_id else ()
+                )
+                target_asset_ids = flow.handoff_to_asset_ids or (
+                    (flow.handoff_to_asset_id,) if flow.handoff_to_asset_id else ()
+                )
+                for target_event_id in target_event_ids:
+                    target_flow = flow_by_id.get(target_event_id)
                     if target_flow is None:
                         raise ValueError("semantic event handoff must target an event in the beat")
                     if (
@@ -316,11 +334,15 @@ class ChoreographyPlan:
                         and target_flow.order <= flow.order
                     ):
                         raise ValueError("semantic event handoff must move forward")
-                    if (
-                        flow.handoff_to_asset_id is not None
-                        and flow.handoff_to_asset_id not in target_flow.asset_ids
+                for target_asset_id in target_asset_ids:
+                    if not any(
+                        target_asset_id in flow_by_id[event_id].asset_ids
+                        for event_id in target_event_ids
+                        if event_id in flow_by_id
                     ):
-                        raise ValueError("semantic event handoff asset must belong to target event")
+                        raise ValueError("semantic event handoff asset must belong to a target event")
+                if flow.handoff_mode in {"BRANCH", "PARALLEL"} and len(target_event_ids) < 2:
+                    raise ValueError("branched semantic handoff requires multiple target events")
                 for dependency in flow.dependency_ids:
                     dependency_order = order_by_id.get(dependency)
                     if (

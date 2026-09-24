@@ -391,3 +391,177 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
     assert flows[1].steps[1].stage == EventFlowStage.PAYOFF
     assert flows[1].steps[1].focus_asset_id == "result"
     assert flows[1].handoff_to_event_id is None
+
+
+def test_event_flow_preserves_every_participant_and_every_result_as_distinct_focus_steps() -> None:
+    from app.choreography import EventFlowStage, SemanticEventFlowPlanner
+    from app.models import AssetActivation
+
+    def row(asset_id: str, role: str, start: float, order: int) -> AssetActivation:
+        return AssetActivation(
+            asset_id=asset_id,
+            semantic_unit_id=asset_id,
+            semantic_event_id="E1",
+            semantic_event_order=1,
+            semantic_event_roles=[role],
+            sequence_order=order,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            spoken_start=start,
+            spoken_end=start + 0.2,
+            confidence=0.99,
+        )
+
+    beat = StoryBeat(
+        id="multi",
+        scene_id="scene-1",
+        start=0.0,
+        end=2.0,
+        audio_start=0.0,
+        audio_end=1.8,
+        narration="leader p1 p2 r1 r2",
+        primary_asset_ids=["leader"],
+        support_asset_ids=["p1", "p2", "r1", "r2"],
+        action="EXPLAIN",
+        asset_activations=[
+            row("leader", "LEADER", 0.1, 1),
+            row("p1", "PARTICIPANT", 0.3, 2),
+            row("p2", "PARTICIPANT", 0.5, 3),
+            row("r1", "RESULT", 0.9, 4),
+            row("r2", "RESULT", 1.1, 5),
+        ],
+    )
+
+    flow = SemanticEventFlowPlanner().compile(
+        beat=beat, interactions=(), transitions=()
+    )[0]
+
+    assert [
+        (step.stage, step.focus_asset_id)
+        for step in flow.steps
+        if step.stage != EventFlowStage.RELEASE
+    ] == [
+        (EventFlowStage.ESTABLISH, "leader"),
+        (EventFlowStage.ADD, "p1"),
+        (EventFlowStage.ADD, "p2"),
+        (EventFlowStage.PAYOFF, "r1"),
+        (EventFlowStage.PAYOFF, "r2"),
+    ]
+    assert flow.focus_path_asset_ids == ("leader", "p1", "p2", "r1", "r2")
+
+
+def test_event_flow_dependency_graph_branches_without_fake_serial_handoff() -> None:
+    from app.choreography import SemanticEventFlowPlanner
+    from app.models import AssetActivation
+
+    def row(asset_id: str, event_id: str, event_order: int, deps: list[str]) -> AssetActivation:
+        return AssetActivation(
+            asset_id=asset_id,
+            semantic_unit_id=asset_id,
+            semantic_event_id=event_id,
+            semantic_event_order=event_order,
+            semantic_event_roles=["LEADER"],
+            semantic_event_dependency_ids=deps,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            spoken_start=0.1 * event_order,
+            spoken_end=0.1 * event_order + 0.2,
+            confidence=0.99,
+        )
+
+    beat = StoryBeat(
+        id="branch",
+        scene_id="scene-1",
+        start=0.0,
+        end=1.5,
+        audio_start=0.0,
+        audio_end=1.4,
+        narration="root branch one branch two",
+        primary_asset_ids=["root"],
+        support_asset_ids=["left", "right"],
+        action="EXPLAIN",
+        asset_activations=[
+            row("root", "E1", 1, []),
+            row("left", "E2", 2, ["E1"]),
+            row("right", "E3", 3, ["E1"]),
+        ],
+    )
+
+    flows = SemanticEventFlowPlanner().compile(
+        beat=beat, interactions=(), transitions=()
+    )
+    root = flows[0]
+    assert root.handoff_mode == "BRANCH"
+    assert root.handoff_to_event_ids == ("E2", "E3")
+    assert root.handoff_to_asset_ids == ("left", "right")
+    assert root.handoff_to_event_id is None
+    assert root.handoff_to_asset_id is None
+    assert root.steps[-1].focus_asset_id is None
+    assert root.steps[-1].participant_asset_ids == ("left", "right")
+
+
+def test_compare_event_is_relational_but_not_mislabeled_as_cause_effect() -> None:
+    from app.choreography import (
+        ChoreographyPattern,
+        EventFlowStage,
+        InteractionIntent,
+        SemanticEventFlowPlanner,
+    )
+    from app.models import AssetActivation
+
+    rows = [
+        AssetActivation(
+            asset_id="left",
+            semantic_unit_id="left",
+            semantic_event_id="E1",
+            semantic_event_order=1,
+            semantic_event_roles=["LEADER"],
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            spoken_start=0.1,
+            spoken_end=0.6,
+            confidence=0.99,
+        ),
+        AssetActivation(
+            asset_id="right",
+            semantic_unit_id="right",
+            semantic_event_id="E1",
+            semantic_event_order=1,
+            semantic_event_roles=["PARTICIPANT"],
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            spoken_start=0.2,
+            spoken_end=0.6,
+            confidence=0.99,
+        ),
+    ]
+    beat = StoryBeat(
+        id="compare",
+        scene_id="scene-1",
+        start=0.0,
+        end=1.0,
+        narration="left versus right",
+        primary_asset_ids=["left"],
+        support_asset_ids=["right"],
+        action="COMPARE",
+        asset_activations=rows,
+    )
+    relation = InteractionIntent(
+        semantic_action="COMPARE",
+        relationship="PARALLEL_CAUSES",
+        subject_asset_id="left",
+        object_asset_id="right",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.99,
+        executable=True,
+        requires_state_change=True,
+    )
+    flows = SemanticEventFlowPlanner().compile(
+        beat=beat, interactions=(relation,), transitions=()
+    )
+
+    assert EventFlowStage.INTERACT in flows[0].stages
+    assert EventFlowStage.REACT not in flows[0].stages
+    assert ChoreographyDirector._pattern_for(
+        beat, (relation,), (), flows
+    ) == ChoreographyPattern.PROGRESSIVE_BUILD

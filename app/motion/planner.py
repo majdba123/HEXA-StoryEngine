@@ -164,6 +164,12 @@ class MotionPlanner:
                 )
                 for slot in ordered_slots
             }
+            semantic_unit_member_counts: dict[str, int] = {}
+            for activation in beat.asset_activations:
+                if activation.semantic_unit_id:
+                    semantic_unit_member_counts[activation.semantic_unit_id] = (
+                        semantic_unit_member_counts.get(activation.semantic_unit_id, 0) + 1
+                    )
             event_assignments = self.event_flow.resolve_all(
                 directive,
                 [slot.item.asset_id for slot in ordered_slots],
@@ -202,6 +208,10 @@ class MotionPlanner:
                 asset = by_asset.get(item.asset_id)
                 family_secondary = self._is_family_secondary(asset)
                 assignment = event_assignments.get(item.asset_id)
+                compound_unit_locked = self._compound_unit_motion_locked(
+                    activation=activation_by_asset.get(item.asset_id),
+                    semantic_unit_member_counts=semantic_unit_member_counts,
+                )
                 interaction_vector = self._event_interaction_vector(
                     assignment=assignment,
                     item=item,
@@ -232,6 +242,8 @@ class MotionPlanner:
                 # large cross-screen sweeps on dense/new Final Packages.
                 if family_secondary:
                     program = self.primitives.build_family_secondary()
+                elif compound_unit_locked:
+                    program = self._compound_unit_program()
                 elif continuity_source is not None:
                     source = continuity_source
                     previous_offset = (source.x - item.x, source.y - item.y)
@@ -290,7 +302,7 @@ class MotionPlanner:
                         for row in directive.state_transitions
                     )
                 )
-                if not family_secondary:
+                if not family_secondary and not compound_unit_locked:
                     if assignment is not None:
                         has_story_window, event_story_window = story_activation_window(activation, beat)
                         active_seconds = (
@@ -403,6 +415,11 @@ class MotionPlanner:
                             "event_flow": (
                                 assignment.to_payload() if assignment is not None else None
                             ),
+                            "event_flow_execution": (
+                                "COMPOUND_UNIT_LOCK"
+                                if compound_unit_locked
+                                else "EXECUTED" if assignment is not None else "NONE"
+                            ),
                             "compound_visual_classification": (
                                 activation.compound_visual_classification
                                 if activation is not None else None
@@ -504,6 +521,35 @@ class MotionPlanner:
                 )
             previous_layout = layout
         return cues
+
+    @staticmethod
+    def _compound_unit_motion_locked(
+        *,
+        activation: AssetActivation | None,
+        semantic_unit_member_counts: dict[str, int],
+    ) -> bool:
+        """Protect compound semantic units from fake cutout-by-cutout choreography."""
+        if activation is None or not activation.semantic_unit_id:
+            return False
+        if semantic_unit_member_counts.get(activation.semantic_unit_id, 0) <= 1:
+            return False
+        return bool(
+            activation.compound_visual_classification == "COMPOUND_REQUIRED"
+            or activation.internal_progression_unavailable
+        )
+
+    @staticmethod
+    def _compound_unit_program() -> MotionProgram:
+        """One identical, translation-only reveal for every member of a locked unit."""
+        return MotionProgram(
+            name="compound_unit_coherent_reveal",
+            settle_progress=0.78,
+            keyframes=(
+                MotionKeyframe(0.0, 0.0, 0.016, 1.0, "ease_out_cubic"),
+                MotionKeyframe(0.78, 0.0, 0.0, 1.0, "ease_out_cubic"),
+                MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+            ),
+        )
 
     @staticmethod
     def _stable_entry_hold(program: MotionProgram) -> MotionProgram:
@@ -789,23 +835,78 @@ class MotionPlanner:
         vector: tuple[float, float],
         focus_strength: float,
     ) -> tuple[float, float, float]:
-        """Return a bounded semantic accent for one event phase."""
+        """Return one bounded relation-aware semantic accent for an event phase.
+
+        The stage owns narrative position; semantic_action preserves the visual character
+        of the authored relationship (compare, block, loop, travel, connect, etc.).
+        This remains topic-agnostic and always settles back to Composition.
+        """
         vx, vy = vector
         stage = phase.stage
+        action = str(phase.semantic_action or "").upper()
+
         if stage == EventFlowStage.ESTABLISH:
             return vx * 0.035, vy * 0.035 - 0.006, 1.055 + 0.025 * focus_strength
         if stage == EventFlowStage.ADD:
             return vx * 0.075, vy * 0.075 - 0.007, 1.050 + 0.030 * focus_strength
+
         if stage == EventFlowStage.INTERACT:
+            if action == "COMPARE":
+                # Both sides move slightly away from their partner, preserving a balanced
+                # contrast instead of implying subject -> target causality.
+                return -vx * 0.075, -vy * 0.075 - 0.004, 1.050 + 0.020 * focus_strength
+            if action == "LOOP":
+                # One bounded tangential beat suggests persistence/cycle without wobble.
+                return -vy * 0.12, vx * 0.12, 1.040 + 0.020 * focus_strength
+            if action == "TRAVEL":
+                factor = 0.18 if phase.involvement == "SOURCE" else 0.07
+                return vx * factor, vy * factor, 1.045 + 0.020 * focus_strength
+            if action == "CONNECT":
+                factor = 0.12 if phase.involvement == "SOURCE" else 0.06
+                return vx * factor, vy * factor, 1.045 + 0.020 * focus_strength
+            if action in {"BLOCK", "REJECT"}:
+                if phase.involvement == "TARGET":
+                    return -vx * 0.050, -vy * 0.050, 1.040 + 0.015 * focus_strength
+                return vx * 0.10, vy * 0.10, 1.045 + 0.020 * focus_strength
+            if action == "LOCK":
+                factor = 0.10 if phase.involvement == "SOURCE" else 0.07
+                return vx * factor, vy * factor, 0.995 + 0.015 * focus_strength
+            if action in {"PROTECT", "RESOLVE"}:
+                factor = 0.08 if phase.involvement == "SOURCE" else 0.045
+                return vx * factor, vy * factor, 1.045 + 0.020 * focus_strength
             if phase.involvement == "SOURCE":
                 return vx * 0.14, vy * 0.14, 1.050 + 0.025 * focus_strength
             if phase.involvement == "TARGET":
                 return -vx * 0.025, -vy * 0.025, 1.045 + 0.020 * focus_strength
             return 0.0, -0.006, 1.045 + 0.020 * focus_strength
+
         if stage == EventFlowStage.REACT:
+            if action in {"BLOCK", "REJECT", "TRAVEL"}:
+                return -vx * 0.070, -vy * 0.070 - 0.005, 1.065 + 0.025 * focus_strength
+            if action == "LOCK":
+                return vx * 0.045, vy * 0.045, 0.985 + 0.010 * focus_strength
+            if action in {"CONNECT", "PROTECT", "RESOLVE"}:
+                return vx * 0.050, vy * 0.050 - 0.005, 1.055 + 0.020 * focus_strength
+            if action == "REVEAL":
+                return 0.0, -0.010, 1.080 + 0.025 * focus_strength
+            if action == "LOOP":
+                return -vy * 0.085, vx * 0.085, 1.050 + 0.020 * focus_strength
             return -vx * 0.055, -vy * 0.055 - 0.006, 1.065 + 0.030 * focus_strength
+
         if stage == EventFlowStage.PAYOFF:
-            return vx * 0.055, vy * 0.055 - 0.014, 1.095 + 0.025 * focus_strength
+            payoff_scale = {
+                "COMPARE": 1.075,
+                "LOOP": 1.070,
+                "BLOCK": 1.085,
+                "REJECT": 1.090,
+                "LOCK": 1.085,
+                "TRAVEL": 1.105,
+                "CONNECT": 1.110,
+                "PROTECT": 1.110,
+                "RESOLVE": 1.115,
+                "REVEAL": 1.120,
+            }.get(action, 1.105)
+            return vx * 0.050, vy * 0.050 - 0.014, payoff_scale + 0.015 * focus_strength
         return 0.0, 0.0, 1.0
 
     @staticmethod
@@ -956,8 +1057,14 @@ class MotionPlanner:
             MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
         ))
         stage_name = "_".join(phase.stage.value.lower() for phase in chain)
+        action_names = tuple(dict.fromkeys(
+            str(phase.semantic_action).lower()
+            for phase in chain
+            if phase.semantic_action
+        ))
+        action_suffix = f"__{'_'.join(action_names)}" if action_names else ""
         return MotionProgram(
-            name=f"event_chain_{stage_name}_{program.name}",
+            name=f"event_chain_{stage_name}_{program.name}{action_suffix}",
             settle_progress=settle,
             keyframes=tuple(frames),
         )
@@ -1072,6 +1179,10 @@ class MotionPlanner:
                 )
                 if "CONTEXT" in event_roles:
                     gain, cohort_role = 0.18, "quiet"
+                elif "RESULT" in event_roles or focus_role == "RESULT":
+                    # Multiple authored results may share one semantic instant. Keep a
+                    # primary result leader, but never demote sibling results to quiet.
+                    gain, cohort_role = 0.80, "result_peer"
                 elif explicit_participant or "PARTICIPANT" in event_roles:
                     gain, cohort_role = 0.58, "participant"
                 elif focus_role in {"ACTION", "OBJECT", "SUBJECT", "STATE", "PRIMARY"}:
