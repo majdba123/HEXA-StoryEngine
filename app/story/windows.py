@@ -64,6 +64,31 @@ class ScheduledStoryBeat(StoryBeat):
     asset_activations: list[StoryAssetActivation] = Field(default_factory=list)
 
 
+def _same_precise_trigger(left: AssetActivation, right: AssetActivation) -> bool:
+    """Sequence order may split only genuinely identical semantic trigger windows.
+
+    Precise narration timing is the stronger authority whenever assets point at
+    different script spans. This prevents an authored visual-order hint from moving an
+    ACTION after a later OBJECT/RESULT phrase. Sequence order remains useful for several
+    visuals intentionally bound to the exact same phrase.
+    """
+    left_chars = (left.trigger_char_start, left.trigger_char_end)
+    right_chars = (right.trigger_char_start, right.trigger_char_end)
+    if None not in left_chars and None not in right_chars:
+        return left_chars == right_chars
+    if (
+        left.spoken_start is None
+        or left.spoken_end is None
+        or right.spoken_start is None
+        or right.spoken_end is None
+    ):
+        return False
+    return (
+        abs(float(left.spoken_start) - float(right.spoken_start)) <= 0.04
+        and abs(float(left.spoken_end) - float(right.spoken_end)) <= 0.06
+    )
+
+
 def _semantic_sequence_windows(
     activations: list[AssetActivation],
     *,
@@ -71,14 +96,14 @@ def _semantic_sequence_windows(
     visual_upper: float,
     speech_upper: float,
 ) -> dict[str, tuple[float, float]]:
-    """Allocate ordered sub-windows inside one spoken semantic phrase.
+    """Allocate sequence sub-windows only inside one *identical* spoken trigger.
 
-    Final Package owns semantic grouping/order, WhisperX owns the phrase bounds, and
-    Story owns how that finite phrase window is shared. Distinct sequence orders must
-    not collapse onto the same first frame. Same-order members intentionally share a
-    window because they represent one visual unit.
+    Final Package sequence_order describes visual progression, but precise script spans
+    describe WHEN meaning is spoken. Those authorities are compatible only when several
+    visuals share the same semantic phrase. If the phrase spans differ, Story preserves
+    their natural narration timing and sequence_order becomes a tie-breaker only.
     """
-    groups: dict[str, list[AssetActivation]] = {}
+    semantic_groups: dict[str, list[AssetActivation]] = {}
     for row in activations:
         if (
             row.policy == "FALLBACK"
@@ -89,70 +114,152 @@ def _semantic_sequence_windows(
             or row.spoken_end is None
         ):
             continue
-        groups.setdefault(row.semantic_group_id, []).append(row)
+        semantic_groups.setdefault(row.semantic_group_id, []).append(row)
 
     windows: dict[str, tuple[float, float]] = {}
-    for rows in groups.values():
-        orders = sorted({row.sequence_order for row in rows if row.sequence_order is not None})
-        if len(orders) <= 1:
-            continue
-        # Exact asset phrases may legitimately differ inside one semantic group.
-        # Final Package sequence_order still owns visual progression, so reconcile only
-        # when those exact speech anchors would collapse or reverse the declared order.
-        by_order: dict[int, list[AssetActivation]] = {
-            order: [row for row in rows if row.sequence_order == order]
-            for order in orders
-        }
-        natural_starts = [
-            min(float(row.spoken_start) for row in by_order[order])
-            for order in orders
-        ]
-        needs_reconciliation = any(
-            right <= left + 1e-9
-            for left, right in zip(natural_starts, natural_starts[1:])
-        )
-        if not needs_reconciliation:
-            continue
-
-        phrase_start = min(float(row.spoken_start) for row in rows)
-        phrase_end = min(
-            max(float(row.spoken_end) for row in rows),
-            visual_upper,
-        )
-        if (
-            not math.isfinite(phrase_start)
-            or not math.isfinite(phrase_end)
-            or phrase_start < lower
-            or phrase_end > speech_upper + 1e-9
-            or phrase_end <= phrase_start
+    for group_rows in semantic_groups.values():
+        clusters: list[list[AssetActivation]] = []
+        for row in sorted(
+            group_rows,
+            key=lambda item: (
+                float(item.spoken_start),
+                item.trigger_char_start if item.trigger_char_start is not None else math.inf,
+                item.sequence_order if item.sequence_order is not None else 10_000,
+                item.asset_id,
+            ),
         ):
-            continue
-        duration = phrase_end - phrase_start
-        if duration <= 0.05:
-            continue
+            cluster = next(
+                (
+                    rows
+                    for rows in clusters
+                    if rows and _same_precise_trigger(rows[0], row)
+                ),
+                None,
+            )
+            if cluster is None:
+                clusters.append([row])
+            else:
+                cluster.append(row)
 
-        distinct_count = len(orders)
-        preferred_motion = min(0.80, max(0.18, duration * 0.55))
-        minimum_start_gap = 0.025
-        maximum_motion_for_gap = duration - minimum_start_gap * (distinct_count - 1)
-        if maximum_motion_for_gap >= 0.05:
-            motion_duration = min(preferred_motion, maximum_motion_for_gap)
-        else:
-            motion_duration = 0.05
-        motion_duration = min(duration, max(0.05, motion_duration))
-        step = (duration - motion_duration) / (distinct_count - 1)
-        if step <= 1e-6:
-            continue
+        for rows in clusters:
+            orders = sorted({
+                row.sequence_order
+                for row in rows
+                if row.sequence_order is not None
+            })
+            if len(orders) <= 1:
+                continue
 
-        rank_by_order = {order: index for index, order in enumerate(orders)}
-        for row in rows:
-            rank = rank_by_order[row.sequence_order]
-            start = phrase_start + step * rank
-            end = start + motion_duration
-            if rank == distinct_count - 1:
-                end = phrase_end
-            windows[row.asset_id] = (start, min(end, phrase_end))
+            phrase_start = min(float(row.spoken_start) for row in rows)
+            phrase_end = min(
+                max(float(row.spoken_end) for row in rows),
+                visual_upper,
+            )
+            if (
+                not math.isfinite(phrase_start)
+                or not math.isfinite(phrase_end)
+                or phrase_start < lower
+                or phrase_end > speech_upper + 1e-9
+                or phrase_end <= phrase_start
+            ):
+                continue
+            duration = phrase_end - phrase_start
+            if duration <= 0.05:
+                continue
+
+            distinct_count = len(orders)
+            preferred_motion = min(0.80, max(0.18, duration * 0.55))
+            minimum_start_gap = 0.025
+            maximum_motion_for_gap = (
+                duration - minimum_start_gap * (distinct_count - 1)
+            )
+            if maximum_motion_for_gap >= 0.05:
+                motion_duration = min(preferred_motion, maximum_motion_for_gap)
+            else:
+                motion_duration = 0.05
+            motion_duration = min(duration, max(0.05, motion_duration))
+            step = (duration - motion_duration) / (distinct_count - 1)
+            if step <= 1e-6:
+                continue
+
+            rank_by_order = {
+                order: index for index, order in enumerate(orders)
+            }
+            for row in rows:
+                rank = rank_by_order[row.sequence_order]
+                start = phrase_start + step * rank
+                finish = start + motion_duration
+                if rank == distinct_count - 1:
+                    finish = phrase_end
+                windows[row.asset_id] = (
+                    start,
+                    min(finish, phrase_end),
+                )
     return windows
+
+
+def _attention_role(row: AssetActivation, beat: StoryBeat) -> str:
+    visual_focus = str(row.visual_focus or "").upper()
+    if visual_focus in {"RESULT", "PRIMARY", "SUPPORT", "CONTEXT"}:
+        return visual_focus
+    if row.visual_state:
+        return "STATE"
+    if row.semantic_unit_id and beat.semantic_context is not None:
+        entity = next(
+            (
+                item
+                for item in beat.semantic_context.entities
+                if item.unit_id == row.semantic_unit_id
+            ),
+            None,
+        )
+        if entity is not None and entity.role:
+            return str(entity.role).upper()
+    return "SUPPORT"
+
+
+def _attention_focus_duration(
+    row: AssetActivation,
+    beat: StoryBeat,
+    *,
+    available: float,
+) -> float:
+    """Reference-style one-shot focus duration followed by a static authored hold."""
+    role = _attention_role(row, beat)
+    target = {
+        "RESULT": 0.32,
+        "STATE": 0.30,
+        "PRIMARY": 0.25,
+        "OBJECT": 0.23,
+        "SUBJECT": 0.22,
+        "ACTION": 0.18,
+        "ACTIVE_FOCUS": 0.22,
+        "ACTOR": 0.17,
+        "CHARACTER": 0.16,
+        "CONTEXT": 0.16,
+        "SUPPORT": 0.16,
+    }.get(role, 0.20)
+
+    audio_start = beat.audio_start if beat.audio_start is not None else beat.start
+    audio_end = beat.audio_end if beat.audio_end is not None else beat.end
+    spoken_duration = max(0.12, audio_end - audio_start)
+    words_per_second = max(1, len(beat.narration.split())) / spoken_duration
+    if words_per_second >= 3.0:
+        pace_factor = 0.80
+    elif words_per_second >= 2.5:
+        pace_factor = 0.90
+    elif words_per_second >= 2.0:
+        pace_factor = 1.0
+    else:
+        pace_factor = 1.12
+
+    if str(beat.action or "").upper() in {"REJECT", "BLOCK", "LOOP"}:
+        pace_factor *= 0.90
+    elif str(beat.action or "").upper() in {"PROTECT", "REVEAL", "RESOLVE"}:
+        pace_factor *= 1.05
+
+    desired = max(0.12, min(0.40, target * pace_factor))
+    return min(max(0.05, available), desired)
 
 
 def schedule_windows(
@@ -221,7 +328,13 @@ def schedule_windows(
             continue
 
         duration = end - start
-        settle_at = min(end, visual_upper)
+        phrase_end = min(end, visual_upper)
+        focus_duration = _attention_focus_duration(
+            row,
+            beat,
+            available=max(0.05, phrase_end - start),
+        )
+        settle_at = min(phrase_end, start + focus_duration)
         if settle_at <= start:
             data.update(policy="FALLBACK", spoken_start=None, spoken_end=None,
                         confidence=0.0, source="semantic_abstention")
@@ -236,9 +349,18 @@ def schedule_windows(
             (visual_upper - lower) * 0.05,
             max(0.0, start - previous_peak),
         )
-        semantic_peak = min(start + duration * 0.5, settle_at)
+        semantic_peak = min(
+            start + max(0.05, settle_at - start) * 0.55,
+            settle_at,
+        )
+        attention_evidence = row.evidence + [
+            f"attention_role={_attention_role(row, beat)}",
+            f"attention_focus_ms={round((settle_at - start) * 1000)}",
+            "attention_decay=settle_hold",
+        ]
         output.append(StoryAssetActivation(
-            **data, phrase_start=start, phrase_end=end,
+            **{**data, "evidence": attention_evidence},
+            phrase_start=start, phrase_end=end,
             reveal_start=start if exact_package_binding else max(lower, start - lead),
             semantic_peak=semantic_peak, settle_at=settle_at,
             activation_policy="INHERITED_WINDOW" if row.policy == "GROUP" else "OWN_WINDOW",
