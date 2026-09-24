@@ -7,7 +7,7 @@ from math import isfinite
 
 from app.models import AssetActivation, MotionCue, StoryBeat
 from app.shared.errors import StageFailedError
-from app.story.windows import same_precise_trigger
+from app.story.windows import same_precise_trigger, semantic_visual_order
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,12 +271,7 @@ class StorySyncQA:
                         activation.semantic_group_id,
                         [],
                     ).append((
-                        (
-                            activation.semantic_event_order
-                            if activation.semantic_event_order is not None
-                            else 0,
-                            activation.sequence_order,
-                        ),
+                        semantic_visual_order(activation),
                         cue.start,
                         activation,
                         "semantic_group_sequential_window" in activation.evidence,
@@ -522,7 +517,7 @@ class StorySyncQA:
                                 f"{self._visual_order_label(left_order)}>"
                                 f"{self._visual_order_label(right_order)}"
                             )
-                        if right_start <= left_start + 1e-9:
+                        elif right_start <= left_start + 1e-9:
                             violations.append(
                                 f"{beat.id}:{group_id}:sequence_order_motion_collapsed:"
                                 f"{self._visual_order_label(left_order)}="

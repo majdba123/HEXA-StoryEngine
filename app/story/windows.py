@@ -89,6 +89,19 @@ def same_precise_trigger(left: AssetActivation, right: AssetActivation) -> bool:
     )
 
 
+def semantic_visual_order(row: AssetActivation) -> tuple[int, int]:
+    """Return one shared deterministic visual-order key for Story and QA.
+
+    Explicit Final Package semantic_event_order remains authoritative whenever it is
+    present. Assets without event metadata occupy lane 0 so contextual/support visuals
+    cannot disable authored event progression for the rest of the exact trigger cohort.
+    """
+    return (
+        int(row.semantic_event_order) if row.semantic_event_order is not None else 0,
+        int(row.sequence_order) if row.sequence_order is not None else 10_000,
+    )
+
+
 def _semantic_sequence_windows(
     activations: list[AssetActivation],
     *,
@@ -143,17 +156,7 @@ def _semantic_sequence_windows(
                 cluster.append(row)
 
         for rows in clusters:
-            use_event_order = bool(rows) and all(
-                row.semantic_event_order is not None for row in rows
-            )
-
-            def visual_order(row: AssetActivation) -> tuple[int, int]:
-                return (
-                    int(row.semantic_event_order) if use_event_order else 0,
-                    int(row.sequence_order) if row.sequence_order is not None else 10_000,
-                )
-
-            orders = sorted({visual_order(row) for row in rows})
+            orders = sorted({semantic_visual_order(row) for row in rows})
             if len(orders) <= 1:
                 continue
 
@@ -203,7 +206,7 @@ def _semantic_sequence_windows(
                 order: index for index, order in enumerate(orders)
             }
             for row in rows:
-                rank = rank_by_order[visual_order(row)]
+                rank = rank_by_order[semantic_visual_order(row)]
                 start = phrase_start + step * rank
                 finish = start + motion_duration
                 if rank == distinct_count - 1:

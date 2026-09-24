@@ -17,6 +17,7 @@ from app.story.windows import (
     StoryAssetActivation,
     _enforce_final_semantic_handoffs,
     schedule_windows,
+    semantic_visual_order,
 )
 
 
@@ -1080,3 +1081,77 @@ def test_final_scheduled_handoff_does_not_clip_same_precise_trigger_cohort() -> 
     assert bounded[0].settle_at == pytest.approx(0.70)
     assert bounded[1].settle_at == pytest.approx(0.82)
     assert all("handoff_policy=final_scheduled_reveal" not in row.evidence for row in bounded)
+
+
+def test_mixed_event_coverage_cannot_disable_authored_event_order() -> None:
+    """Regression for Gray-Hat SCENE_033 production failure.
+
+    One exact trigger cohort may contain contextual/support assets without event metadata
+    plus authored event rows. Missing event metadata must never disable event ordering for
+    the authored rows: event 1 must remain before event 2 even when their asset-level
+    sequence numbers would otherwise sort as 5 > 3.
+    """
+    beat = StoryBeat(
+        id="beat-033",
+        scene_id="SCENE_033",
+        start=0.0,
+        end=1.5,
+        audio_start=0.0,
+        audio_end=1.5,
+        narration="shared semantic phrase",
+        action="EXPLAIN",
+    )
+    common = {
+        "semantic_group_id": "SCENE_033_G01",
+        "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+        "source": "final_package_semantic_binding",
+        "policy": "EXPLICIT",
+        "trigger_char_start": 100,
+        "trigger_char_end": 122,
+        "spoken_start": 0.40,
+        "spoken_end": 1.10,
+        "confidence": 0.99,
+    }
+    rows = [
+        AssetActivation(
+            asset_id="context",
+            sequence_order=1,
+            semantic_event_order=None,
+            semantic_event_roles=["CONTEXT"],
+            **common,
+        ),
+        AssetActivation(
+            asset_id="event-1-asset-5",
+            sequence_order=5,
+            semantic_event_id="E1",
+            semantic_event_order=1,
+            semantic_event_roles=["LEADER"],
+            **common,
+        ),
+        AssetActivation(
+            asset_id="event-2-asset-3",
+            sequence_order=3,
+            semantic_event_id="E2",
+            semantic_event_order=2,
+            semantic_event_roles=["RESULT"],
+            **common,
+        ),
+    ]
+
+    scheduled = {
+        row.asset_id: row
+        for row in schedule_windows(rows, beat, beat.end, set())
+    }
+
+    assert semantic_visual_order(rows[0]) == (0, 1)
+    assert semantic_visual_order(rows[1]) == (1, 5)
+    assert semantic_visual_order(rows[2]) == (2, 3)
+    assert scheduled["context"].reveal_start < scheduled["event-1-asset-5"].reveal_start
+    assert (
+        scheduled["event-1-asset-5"].reveal_start
+        < scheduled["event-2-asset-3"].reveal_start
+    )
+    assert all(
+        "semantic_group_sequential_window" in row.evidence
+        for row in scheduled.values()
+    )
