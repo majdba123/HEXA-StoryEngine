@@ -4703,3 +4703,110 @@ Mandatory visual review:
 
 Until that encoded render is watched, describe this checkpoint as:
 **1.2 code/runtime integration PROVEN; final perceptual acceptance pending production render.**
+
+## MONTAGE19 FINAL-SCHEDULE HANDOFF RUNTIME HARDENING — 2026-09-24
+
+Fresh user production diagnostic:
+- Job: `67b38b8524cc449aa67b437494f8b19f`
+- Source commit: `4935820c8fb256d3c1e2a6785347758744706ccc`
+- Final Package: `HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2.zip`
+- Audio: real ElevenLabs Black-Hat narration
+- Platform: Windows 10
+- FFmpeg: 9.0.2
+
+The production run reached Motion after:
+- Pass1: 157 authored assets / 40 scenes
+- Pass2: 179 assets (+22)
+- Story: 40 beats
+- Composition: authored Final Package geometry locked
+- Text placement completed
+
+It then failed before render with exactly one StorySync violation:
+
+```
+beat-007:SCENE_007:asset-02:settle_past_next_handoff:
+role=RESULT:
+actual_reveal=15.363:
+actual_settle=15.683:
+next_target=15.525
+```
+
+### Root cause
+
+SCENE_007 uses one semantic event for the phrase equivalent to "steal accounts".
+
+The RESULT/leader visual is authored against the wider exact phrase, while a participant owns the
+later exact sub-word. The first Story scheduling pass normally bounds precise activations using raw
+spoken anchors. However, final locator/group/window mapping can produce a later Story-owned reveal
+boundary that is only visible after scheduling/inheritance.
+
+Therefore the raw-anchor pass was not a sufficient invariant: one valid RESULT gesture could still
+remain active across a later final scheduled semantic reveal even though StorySyncQA correctly
+rejected that overlap.
+
+This was a scheduler gap, not a Final Package error and not a reason to weaken QA.
+
+### Correction
+
+Commit:
+`15bb34e725ceb46180fd457f0923c8c442aab99a`
+`[timing] Enforce final semantic handoffs after scheduling`
+
+Story now runs a final semantic-handoff enforcement pass after group/window inheritance.
+
+For exact Final Package semantic activations:
+- inspect the fully scheduled Story reveal windows;
+- locate the first later distinct precise semantic reveal;
+- if the current settle crosses it, compress the current one-shot focus envelope;
+- preserve reveal time;
+- preserve phrase identity;
+- bound semantic peak inside the compressed window;
+- finish strictly before the later reveal where capacity permits;
+- record `handoff_policy=final_scheduled_reveal`.
+
+The rule intentionally does NOT alter inferred/legacy pre-roll activations, because those may reveal
+before phrase_start by design.
+
+Same-precise-trigger cohorts remain untouched.
+
+No QA tolerance was increased.
+No scene-specific exception was added.
+No Final Package change was required.
+Pass1/Pass2, Composition, Renderer layout and Text typography remain unchanged.
+
+### Regression
+
+A dedicated regression reproduces the production timing:
+- RESULT reveal: 15.363
+- previous invalid settle: 15.683
+- next exact semantic reveal: 15.525
+
+The corrected Story window settles before 15.525.
+
+A companion regression proves same-precise-trigger cohorts are not clipped.
+
+### CI proof
+
+Run:
+`36040230405`
+
+Exact behavior commit:
+`15bb34e725ceb46180fd457f0923c8c442aab99a`
+
+Result: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **302 passed, 12 warnings in 9.99s**
+- release MP4 smoke remains in the passing suite.
+
+### Current render gate
+
+The exact user production run that failed must be rerun from commit `15bb34e...` or newer.
+
+Expected behavior:
+- the previous SCENE_007 `settle_past_next_handoff` failure must not recur;
+- if a different real runtime defect appears, treat it as a new concrete diagnostic and fix the
+  producer/scheduler rather than lowering StorySyncQA.
+
+The current state is:
+**production failure root-caused + generalized fix published + regression covered + CI PROVEN**.
