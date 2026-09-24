@@ -61,6 +61,7 @@ class TextCompositionPlanner:
                     concurrent_text=concurrent,
                     preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
                     assets_by_id=assets_by_id,
+                    visible_end=visible_end,
                 )
                 items.append(result.item)
                 placed.append(
