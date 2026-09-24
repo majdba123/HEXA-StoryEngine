@@ -1,0 +1,274 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from app.choreography import ChoreographyDirective, EventFlowStage, EventFlowStep
+
+
+@dataclass(frozen=True, slots=True)
+class MotionEventPhase:
+    """One authored event-flow phase owned by a rendered visual."""
+
+    event_id: str
+    event_order: int | None
+    stage: EventFlowStage
+    step_index: int
+    involvement: str
+    focus_asset_id: str | None
+    source_asset_id: str | None
+    target_asset_id: str | None
+    result_asset_id: str | None
+    relationship: str | None
+    semantic_action: str | None
+    authority: str
+
+    def to_payload(self) -> dict[str, object | None]:
+        return {
+            "event_id": self.event_id,
+            "event_order": self.event_order,
+            "stage": self.stage.value,
+            "step_index": self.step_index,
+            "involvement": self.involvement,
+            "focus_asset_id": self.focus_asset_id,
+            "source_asset_id": self.source_asset_id,
+            "target_asset_id": self.target_asset_id,
+            "result_asset_id": self.result_asset_id,
+            "relationship": self.relationship,
+            "semantic_action": self.semantic_action,
+            "authority": self.authority,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MotionEventAssignment:
+    """Motion-facing projection of one Choreography event-flow step.
+
+    Choreography owns semantic order/participants. This object only answers which
+    authored event phase the current visual should express during its Story-owned
+    activation window. It never changes timing or final geometry.
+    """
+
+    event_id: str
+    event_order: int | None
+    stage: EventFlowStage
+    step_index: int
+    focus_asset_id: str | None
+    source_asset_id: str | None
+    target_asset_id: str | None
+    result_asset_id: str | None
+    relationship: str | None
+    semantic_action: str | None
+    authority: str
+    involvement: str
+    incoming_from_asset_id: str | None = None
+    handoff_to_event_id: str | None = None
+    handoff_to_asset_id: str | None = None
+    phase_chain: tuple[MotionEventPhase, ...] = ()
+
+    def to_payload(self) -> dict[str, object | None]:
+        return {
+            "event_id": self.event_id,
+            "event_order": self.event_order,
+            "stage": self.stage.value,
+            "step_index": self.step_index,
+            "focus_asset_id": self.focus_asset_id,
+            "source_asset_id": self.source_asset_id,
+            "target_asset_id": self.target_asset_id,
+            "result_asset_id": self.result_asset_id,
+            "relationship": self.relationship,
+            "semantic_action": self.semantic_action,
+            "authority": self.authority,
+            "involvement": self.involvement,
+            "incoming_from_asset_id": self.incoming_from_asset_id,
+            "handoff_to_event_id": self.handoff_to_event_id,
+            "handoff_to_asset_id": self.handoff_to_asset_id,
+            "phase_chain": [phase.to_payload() for phase in self.phase_chain],
+        }
+
+
+class MotionEventFlowResolver:
+    """Bind rich Choreography event-flow plans to individual rendered visuals.
+
+    The resolver is deliberately topic-agnostic. It consumes only semantic event
+    structure authored by the Final Package/Choreography and never image content,
+    scene ids, nouns, or package-specific presets.
+    """
+
+    _STAGE_PRIORITY = {
+        EventFlowStage.PAYOFF: 600,
+        EventFlowStage.REACT: 500,
+        EventFlowStage.INTERACT: 400,
+        EventFlowStage.ADD: 300,
+        EventFlowStage.ESTABLISH: 200,
+        EventFlowStage.RELEASE: 0,
+    }
+
+    def resolve_all(
+        self,
+        directive: ChoreographyDirective | None,
+        asset_ids: list[str] | tuple[str, ...],
+        *,
+        semantic_event_by_asset: dict[str, str | None] | None = None,
+    ) -> dict[str, MotionEventAssignment]:
+        if directive is None or not directive.event_flows:
+            return {}
+        semantic_event_by_asset = semantic_event_by_asset or {}
+        return {
+            asset_id: assignment
+            for asset_id in asset_ids
+            if (assignment := self.resolve(
+                directive,
+                asset_id,
+                semantic_event_id=semantic_event_by_asset.get(asset_id),
+            )) is not None
+        }
+
+    def resolve(
+        self,
+        directive: ChoreographyDirective | None,
+        asset_id: str,
+        *,
+        semantic_event_id: str | None = None,
+    ) -> MotionEventAssignment | None:
+        if directive is None or not directive.event_flows:
+            return None
+
+        focus_path = directive.event_focus_path_asset_ids
+        incoming_from = self._previous_focus_asset(focus_path, asset_id)
+        candidates: list[tuple[int, int, int, MotionEventAssignment]] = []
+        owned_phases: list[MotionEventPhase] = []
+
+        for flow_index, flow in enumerate(directive.event_flows):
+            # Story owns the actual semantic activation. If a visual participates in an
+            # earlier relation and is later reused as another event's leader/result,
+            # Motion must execute the event Story actually activated rather than picking
+            # a stronger stage from a different event.
+            if semantic_event_id and flow.event_id != semantic_event_id:
+                continue
+            for step_index, step in enumerate(flow.steps):
+                involvement = self._involvement_for_stage(step, asset_id)
+                if involvement is None or step.stage == EventFlowStage.RELEASE:
+                    continue
+                phase = MotionEventPhase(
+                    event_id=flow.event_id,
+                    event_order=flow.order,
+                    stage=step.stage,
+                    step_index=step_index,
+                    involvement=involvement,
+                    focus_asset_id=step.focus_asset_id,
+                    source_asset_id=step.source_asset_id,
+                    target_asset_id=step.target_asset_id,
+                    result_asset_id=step.result_asset_id,
+                    relationship=step.relationship,
+                    semantic_action=step.semantic_action,
+                    authority=step.authority,
+                )
+                owned_phases.append(phase)
+                role_bonus = self._role_bonus(step.stage, involvement)
+                candidates.append((
+                    self._STAGE_PRIORITY[step.stage] + role_bonus,
+                    -flow_index,
+                    -step_index,
+                    MotionEventAssignment(
+                        event_id=flow.event_id,
+                        event_order=flow.order,
+                        stage=step.stage,
+                        step_index=step_index,
+                        focus_asset_id=step.focus_asset_id,
+                        source_asset_id=step.source_asset_id,
+                        target_asset_id=step.target_asset_id,
+                        result_asset_id=step.result_asset_id,
+                        relationship=step.relationship,
+                        semantic_action=step.semantic_action,
+                        authority=step.authority,
+                        involvement=involvement,
+                        incoming_from_asset_id=incoming_from,
+                        handoff_to_event_id=flow.handoff_to_event_id,
+                        handoff_to_asset_id=flow.handoff_to_asset_id,
+                    ),
+                ))
+
+        if not candidates:
+            return None
+        dominant = max(candidates, key=lambda row: row[:3])[3]
+        return MotionEventAssignment(
+            event_id=dominant.event_id,
+            event_order=dominant.event_order,
+            stage=dominant.stage,
+            step_index=dominant.step_index,
+            focus_asset_id=dominant.focus_asset_id,
+            source_asset_id=dominant.source_asset_id,
+            target_asset_id=dominant.target_asset_id,
+            result_asset_id=dominant.result_asset_id,
+            relationship=dominant.relationship,
+            semantic_action=dominant.semantic_action,
+            authority=dominant.authority,
+            involvement=dominant.involvement,
+            incoming_from_asset_id=dominant.incoming_from_asset_id,
+            handoff_to_event_id=dominant.handoff_to_event_id,
+            handoff_to_asset_id=dominant.handoff_to_asset_id,
+            phase_chain=tuple(owned_phases),
+        )
+
+    @staticmethod
+    def _involvement_for_stage(step: EventFlowStep, asset_id: str) -> str | None:
+        """Return only the participant that semantically owns this phase.
+
+        EventFlowStep.participant_asset_ids describe the whole relation context. Motion
+        must not let a relation source steal the later REACT phase merely because it is
+        listed as a participant in that step.
+        """
+        if step.stage == EventFlowStage.PAYOFF:
+            if step.result_asset_id == asset_id:
+                return "RESULT"
+            if step.focus_asset_id == asset_id:
+                return "FOCUS"
+            return None
+        if step.stage == EventFlowStage.REACT:
+            if step.target_asset_id == asset_id:
+                return "TARGET"
+            if step.result_asset_id == asset_id:
+                return "RESULT"
+            if step.focus_asset_id == asset_id:
+                return "FOCUS"
+            return None
+        if step.stage == EventFlowStage.INTERACT:
+            if step.source_asset_id == asset_id:
+                return "SOURCE"
+            if step.target_asset_id == asset_id:
+                return "TARGET"
+            if step.focus_asset_id == asset_id:
+                return "FOCUS"
+            return None
+        if step.stage in {EventFlowStage.ADD, EventFlowStage.ESTABLISH}:
+            if step.focus_asset_id == asset_id:
+                return "FOCUS"
+            if asset_id in step.participant_asset_ids:
+                return "PARTICIPANT"
+            return None
+        return None
+
+    @staticmethod
+    def _role_bonus(stage: EventFlowStage, involvement: str) -> int:
+        if stage == EventFlowStage.PAYOFF and involvement == "RESULT":
+            return 50
+        if stage == EventFlowStage.REACT and involvement in {"TARGET", "FOCUS"}:
+            return 40
+        if stage == EventFlowStage.INTERACT and involvement == "SOURCE":
+            return 35
+        if stage in {EventFlowStage.ADD, EventFlowStage.ESTABLISH} and involvement == "FOCUS":
+            return 25
+        return 0
+
+    @staticmethod
+    def _previous_focus_asset(
+        focus_path: tuple[str, ...],
+        asset_id: str,
+    ) -> str | None:
+        try:
+            index = focus_path.index(asset_id)
+        except ValueError:
+            return None
+        if index <= 0:
+            return None
+        return focus_path[index - 1]
