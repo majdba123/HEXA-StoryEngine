@@ -73,7 +73,10 @@ class StorySyncQA:
 
         for beat in story:
             previous_anchor: float | None = None
-            sequence_motion: dict[str, list[tuple[int, float, str, bool]]] = {}
+            sequence_motion: dict[
+                str,
+                list[tuple[int, float, str, bool, int | None, int | None]],
+            ] = {}
             internal_motion: dict[
                 tuple[str | None, int | None, str | None],
                 list[tuple[int, int, float, float | None, float, bool, str]],
@@ -227,11 +230,16 @@ class StorySyncQA:
                     and activation.semantic_group_id
                     and activation.sequence_order is not None
                 ):
-                    sequence_motion.setdefault(activation.semantic_group_id, []).append((
+                    sequence_motion.setdefault(
+                        activation.semantic_group_id,
+                        [],
+                    ).append((
                         activation.sequence_order,
                         cue.start,
                         activation.asset_id,
                         "semantic_group_sequential_window" in activation.evidence,
+                        activation.trigger_char_start,
+                        activation.trigger_char_end,
                     ))
                 if ordered_visual_unit:
                     key = (
@@ -273,9 +281,20 @@ class StorySyncQA:
                     )
 
             for group_id, rows in sequence_motion.items():
-                by_order: dict[int, list[tuple[float, str, bool]]] = {}
-                for order, start, asset_id, scheduled in rows:
-                    by_order.setdefault(order, []).append((start, asset_id, scheduled))
+                by_order: dict[
+                    int,
+                    list[tuple[float, str, bool, int | None, int | None]],
+                ] = {}
+                for order, start_time, asset_id, scheduled, char_start, char_end in rows:
+                    by_order.setdefault(order, []).append(
+                        (
+                            start_time,
+                            asset_id,
+                            scheduled,
+                            char_start,
+                            char_end,
+                        )
+                    )
                 ordered_starts = [
                     (order, min(row[0] for row in by_order[order]))
                     for order in sorted(by_order)
@@ -283,15 +302,20 @@ class StorySyncQA:
                 for (left_order, left_start), (right_order, right_start) in zip(
                     ordered_starts, ordered_starts[1:]
                 ):
+                    pair_rows = by_order[left_order] + by_order[right_order]
+                    explicitly_scheduled = any(row[2] for row in pair_rows)
+                    # sequence_order is enforceable only when Story deliberately
+                    # allocated a shared precise phrase into sequential sub-windows.
+                    # Distinct precise script spans are allowed to follow narration
+                    # order even when that differs from a visual authoring hint.
+                    if not explicitly_scheduled:
+                        continue
                     if right_start + 1e-9 < left_start:
                         violations.append(
                             f"{beat.id}:{group_id}:sequence_order_motion_reversed:"
                             f"{left_order}>{right_order}"
                         )
-                    explicitly_scheduled = any(
-                        row[2] for row in by_order[left_order] + by_order[right_order]
-                    )
-                    if explicitly_scheduled and right_start <= left_start + 1e-9:
+                    if right_start <= left_start + 1e-9:
                         violations.append(
                             f"{beat.id}:{group_id}:sequence_order_motion_collapsed:"
                             f"{left_order}={right_order}"
