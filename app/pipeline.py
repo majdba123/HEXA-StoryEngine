@@ -441,18 +441,38 @@ class StoryEnginePipeline:
                 attempt=attempt,
             )
             if handler_result is not None and handler_result.success:
-                unsafe_ids = self._text_violation_cue_ids(
-                    report.text_layout_violations,
-                    current_text.cues,
+                dropped_ids: set[str] = set()
+                degradation_cycles = 0
+                max_degradation_cycles = min(
+                    8,
+                    max(1, len(current_text.cues)),
                 )
-                if unsafe_ids:
+
+                # Text placement is interdependent: removing one cue can move another
+                # cue into newly available negative space and expose a different
+                # collision. Therefore optional degradation must converge against the
+                # *new* QA result, not assume one batch removal is sufficient.
+                while (
+                    report.text_layout_violations
+                    and current_text.cues
+                    and degradation_cycles < max_degradation_cycles
+                ):
+                    self._check_cancel(cancelled)
+                    unsafe_ids = self._text_violation_cue_ids(
+                        report.text_layout_violations,
+                        current_text.cues,
+                    )
+                    if not unsafe_ids:
+                        break
+                    degradation_cycles += 1
+                    dropped_ids.update(unsafe_ids)
                     self._progress(
                         progress,
                         Stage.recovery,
                         0.66,
                         (
-                            "Dropping only unsafe optional text cues "
-                            f"({len(unsafe_ids)})"
+                            "Resolving unsafe optional text "
+                            f"(cycle {degradation_cycles}, drop {len(unsafe_ids)})"
                         ),
                     )
                     current_text = current_text.model_copy(
@@ -488,6 +508,48 @@ class StoryEnginePipeline:
                         text_composition=current_composition,
                         assets=assets,
                     )
+
+                cleared_optional_text_layer = False
+                if report.text_layout_violations:
+                    # Optional text may never block a valid visual/video render.
+                    # If bounded semantic degradation cannot converge, remove the
+                    # remaining optional text layer as the final fail-safe. Visual
+                    # Composition, Story, Motion and Final Package geometry are
+                    # deliberately untouched.
+                    cleared_optional_text_layer = True
+                    dropped_ids.update(cue.id for cue in current_text.cues)
+                    self._progress(
+                        progress,
+                        Stage.recovery,
+                        0.665,
+                        "Disabling remaining optional text to preserve video render",
+                    )
+                    current_text = current_text.model_copy(update={"cues": []})
+                    current_composition = self.text_composition.plan(
+                        story,
+                        composition,
+                        current_text.cues,
+                        assets,
+                        visual_motion=motion,
+                        repair_level=2,
+                    )
+                    current_motion = self.text_motion.plan(
+                        story,
+                        current_text.cues,
+                        current_composition,
+                        choreography,
+                        visual_motion=motion,
+                    )
+                    report = self.authoring_qa.inspect(
+                        transcript=transcript,
+                        composition=composition,
+                        motion=motion,
+                        story=story,
+                        text=current_text,
+                        text_composition=current_composition,
+                        assets=assets,
+                    )
+
                 success = not report.text_layout_violations
                 self.recovery.record_outcome(
                     code=code,
@@ -498,9 +560,9 @@ class StoryEnginePipeline:
                     success=success,
                     details={
                         "remaining_issue_count": len(report.text_layout_violations),
-                        "dropped_optional_text_cues": sorted(unsafe_ids)
-                        if unsafe_ids
-                        else [],
+                        "degradation_cycles": degradation_cycles,
+                        "dropped_optional_text_cues": sorted(dropped_ids),
+                        "cleared_optional_text_layer": cleared_optional_text_layer,
                     },
                 )
 
