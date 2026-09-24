@@ -33,7 +33,13 @@ class FFmpegRenderer:
         self.transition_policy = VisualTransitionPolicy()
         self.motion_adapter = FFmpegMotionAdapter()
 
-    def render(self, plan: RenderPlan, output: Path) -> Path:
+    def render(
+        self,
+        plan: RenderPlan,
+        output: Path,
+        *,
+        strict_boundary_coverage: bool = False,
+    ) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
         story = sorted(plan.story, key=lambda beat: (beat.start, beat.end, beat.id))
         if not story:
@@ -94,6 +100,7 @@ class FFmpegRenderer:
                     assets,
                     composition,
                     motion,
+                    strict_boundary_coverage,
                 ): target
                 for _, beat, previous_beat, segment_start, frame_count, target in jobs
             }
@@ -127,6 +134,7 @@ class FFmpegRenderer:
         assets: dict,
         composition: dict,
         motion: dict[tuple[str, str], MotionCue],
+        strict_boundary_coverage: bool = False,
     ) -> None:
         duration = frame_count / plan.fps
         layout = composition.get(beat.id)
@@ -144,6 +152,7 @@ class FFmpegRenderer:
             motion=motion,
             persistent_ids=persistent_ids,
             fps=plan.fps,
+            strict_boundary_coverage=strict_boundary_coverage,
         )
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
@@ -285,6 +294,7 @@ class FFmpegRenderer:
         motion: dict[tuple[str, str], MotionCue],
         persistent_ids: frozenset[str],
         fps: int = 30,
+        strict_boundary_coverage: bool = False,
     ) -> str | None:
         """Choose one low-risk boundary carrier without leaking future semantics.
 
@@ -326,6 +336,7 @@ class FFmpegRenderer:
                 "internal_index": internal_index,
                 "original_index": original_index,
                 "asset_id": item.asset_id,
+                "coverage": max(0.0, float(item.width) * float(item.height)),
                 "semantic_role": str(
                     focus.get("semantic_role") or "UNKNOWN"
                 ).upper(),
@@ -377,6 +388,26 @@ class FFmpegRenderer:
                 int(row["sequence_order"]),
                 int(row["original_index"]),
             )
+
+        if strict_boundary_coverage:
+            non_result = [
+                row
+                for row in cohort
+                if safety_rank(row)[0] < 9
+            ]
+            pool = non_result or cohort
+            # Recovery mode trades only within the SAME earliest semantic cohort.
+            # It never exposes a later RESULT. Prefer enough authored footprint to
+            # guarantee a visibly occupied boundary, then use semantic safety as the
+            # deterministic tie-break.
+            chosen = min(
+                pool,
+                key=lambda row: (
+                    -float(row["coverage"]),
+                    *safety_rank(row),
+                ),
+            )
+            return str(chosen["asset_id"])
 
         return str(min(cohort, key=safety_rank)["asset_id"])
 
