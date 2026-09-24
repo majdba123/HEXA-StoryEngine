@@ -15,4 +15,5 @@ BUILTIN_ISSUES = [
     KnownIssue(code="FINAL_MISSING_OUTPUT", description="Final output file is missing", affected_stage="render", handler="rerender", status=RecoveryStatus.proven),
     KnownIssue(code="FINAL_UNREADABLE_MEDIA", description="Final media cannot be probed", affected_stage="render", handler="rerender", status=RecoveryStatus.proven),
     KnownIssue(code="FINAL_MISSING_VIDEO", description="Final media has no video stream", affected_stage="render", handler="rerender", status=RecoveryStatus.proven),
+    KnownIssue(code="VISUAL_WHITE_FLASH", description="Final video contains a true blank internal handoff frame", affected_stage="render", handler="rerender_strict_handoff", status=RecoveryStatus.proven, max_attempts=1),
 ]
