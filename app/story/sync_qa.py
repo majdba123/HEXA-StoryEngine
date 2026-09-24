@@ -201,9 +201,22 @@ class StorySyncQA:
                             row for row in program.keyframes
                             if row.progress <= program.settle_progress + 1e-9
                         ]
-                        if focus_frames:
+                        attention_frames = [
+                            row
+                            for row in focus_frames
+                            if (
+                                abs(row.dx) > 1e-9
+                                or abs(row.dy) > 1e-9
+                                or abs(row.scale - 1.0) > 1e-9
+                            )
+                        ]
+                        # Footprint-locked Pass2 family layers are intentionally
+                        # alpha-only/static: they have a reveal time but no spatial
+                        # gesture peak. Do not manufacture a late peak from the last
+                        # neutral keyframe; reveal/settle contracts still apply.
+                        if attention_frames:
                             peak_frame = max(
-                                focus_frames,
+                                attention_frames,
                                 key=lambda row: (
                                     max(0.0, row.scale - 1.0),
                                     abs(row.dx) + abs(row.dy),
