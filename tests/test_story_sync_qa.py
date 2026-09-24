@@ -179,3 +179,55 @@ def test_story_sync_qa_scopes_sequence_order_to_same_precise_trigger_cluster() -
         for row in report.violations
     )
 
+
+def test_story_sync_qa_reports_settle_past_next_semantic_handoff() -> None:
+    beat = _beat(
+        AssetActivation(
+            asset_id="a",
+            spoken_start=0.30,
+            spoken_end=1.20,
+            trigger_char_start=0,
+            trigger_char_end=4,
+            confidence=1.0,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            visual_focus="PRIMARY",
+        ),
+        AssetActivation(
+            asset_id="b",
+            spoken_start=0.48,
+            spoken_end=1.40,
+            trigger_char_start=5,
+            trigger_char_end=9,
+            confidence=1.0,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            visual_focus="RESULT",
+        ),
+    )
+    beat = beat.model_copy(update={
+        "asset_activations": schedule_windows(
+            beat.asset_activations, beat, beat.end, {"a"}
+        ),
+    })
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="a", x=0.3, y=0.5, width=0.2, height=0.2),
+            LayoutItem(asset_id="b", x=0.7, y=0.5, width=0.2, height=0.2),
+        ],
+    )]
+    motion = MotionPlanner().plan([beat], composition)
+    corrupted = []
+    for cue in motion:
+        if cue.asset_id == "a":
+            corrupted.append(cue.model_copy(update={
+                "params": {**cue.params, "semantic_settle_time": 0.70},
+            }))
+        else:
+            corrupted.append(cue)
+
+    report = StorySyncQA().inspect(story=[beat], motion=corrupted)
+
+    assert any("settle_past_next_handoff" in row for row in report.violations)
+

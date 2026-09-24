@@ -259,7 +259,37 @@ def _attention_focus_duration(
         pace_factor *= 1.05
 
     desired = max(0.12, min(0.40, target * pace_factor))
-    return min(max(0.05, available), desired)
+    # Narration owns the handoff.  A short gap compresses the current gesture;
+    # a long gap never stretches it because the remainder is an intentional,
+    # motionless hold at authored Composition geometry.
+    safe_available = max(0.025, available * 0.82)
+    return min(safe_available, desired)
+
+
+def _next_semantic_hits(
+    activations: list[AssetActivation],
+) -> dict[str, float]:
+    """Return the next distinct precise narration trigger for each activation."""
+    precise = [
+        row
+        for row in activations
+        if row.policy != "FALLBACK"
+        and row.spoken_start is not None
+        and row.spoken_end is not None
+        and math.isfinite(row.spoken_start)
+        and math.isfinite(row.spoken_end)
+    ]
+    result: dict[str, float] = {}
+    for row in precise:
+        later = [
+            float(candidate.spoken_start)
+            for candidate in precise
+            if float(candidate.spoken_start) > float(row.spoken_start) + 1e-9
+            and not same_precise_trigger(row, candidate)
+        ]
+        if later:
+            result[row.asset_id] = min(later)
+    return result
 
 
 def schedule_windows(
@@ -285,6 +315,7 @@ def schedule_windows(
     sequence_windows = _semantic_sequence_windows(
         activations, lower=lower, visual_upper=visual_upper, speech_upper=speech_upper,
     )
+    next_semantic_hits = _next_semantic_hits(activations)
     output: list[StoryAssetActivation] = []
     previous_peak = lower
     for row in sorted(activations, key=lambda r: (
@@ -338,11 +369,15 @@ def schedule_windows(
                 or bool(row.visual_state)
             )
         )
+        next_semantic_hit = next_semantic_hits.get(row.asset_id)
+        available = max(0.025, phrase_end - start)
+        if next_semantic_hit is not None:
+            available = min(available, max(0.025, next_semantic_hit - start))
         focus_duration = (
             _attention_focus_duration(
                 row,
                 beat,
-                available=max(0.05, phrase_end - start),
+                available=available,
             )
             if has_authored_attention
             else max(0.05, phrase_end - start)
@@ -371,6 +406,11 @@ def schedule_windows(
             f"attention_focus_ms={round((settle_at - start) * 1000)}",
             "attention_decay=settle_hold",
         ]
+        if next_semantic_hit is not None:
+            attention_evidence.extend([
+                f"next_semantic_hit={next_semantic_hit:.6f}",
+                "handoff_policy=narration_first",
+            ])
         output.append(StoryAssetActivation(
             **{**data, "evidence": attention_evidence},
             phrase_start=start, phrase_end=end,

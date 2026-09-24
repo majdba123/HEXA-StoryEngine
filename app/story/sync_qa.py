@@ -27,6 +27,9 @@ class StorySyncEntry:
     semantic_peak: float | None = None
     settle_target: float | None = None
     actual_visual_settle: float | None = None
+    actual_reveal: float | None = None
+    actual_peak: float | None = None
+    next_semantic_target: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +76,11 @@ class StorySyncQA:
         violations: list[str] = []
 
         for beat in story:
+            trusted_windows: list[tuple[AssetActivation, object]] = []
+            for activation in beat.asset_activations:
+                has_v2, candidate = story_activation_window(activation, beat)
+                if has_v2 and candidate is not None and activation.policy != "GROUP":
+                    trusted_windows.append((activation, candidate))
             previous_anchor: float | None = None
             sequence_motion: dict[
                 str,
@@ -164,6 +172,7 @@ class StorySyncQA:
                     continue
 
                 actual = None
+                actual_peak = None
                 if window is not None:
                     try:
                         payload = cue.params["program"]
@@ -188,6 +197,20 @@ class StorySyncQA:
                         if moving:
                             arrival = program.keyframes[moving[-1] + 1].progress
                             actual = cue.start + max(0.05, cue.end - cue.start) * arrival
+                        focus_frames = [
+                            row for row in program.keyframes
+                            if row.progress <= program.settle_progress + 1e-9
+                        ]
+                        if focus_frames:
+                            peak_frame = max(
+                                focus_frames,
+                                key=lambda row: (
+                                    max(0.0, row.scale - 1.0),
+                                    abs(row.dx) + abs(row.dy),
+                                    row.progress,
+                                ),
+                            )
+                            actual_peak = cue.start + max(0.05, cue.end - cue.start) * peak_frame.progress
                     except (KeyError, TypeError, ValueError, OverflowError):
                         violations.append(f"{beat.id}:{activation.asset_id}:invalid_visual_settle")
                         actual = None
@@ -273,10 +296,72 @@ class StorySyncQA:
                     semantic_peak=window.semantic_peak if window else None,
                     settle_target=target,
                     actual_visual_settle=round(actual, 6) if actual is not None else None,
+                    actual_reveal=round(cue.start, 6),
+                    actual_peak=round(actual_peak, 6) if actual_peak is not None else None,
+                    next_semantic_target=min(
+                        (
+                            float(candidate_window.reveal_start)
+                            for candidate_activation, candidate_window in trusted_windows
+                            if candidate_activation.asset_id != activation.asset_id
+                            and float(candidate_window.reveal_start) > float(window.reveal_start) + 1e-9
+                            and not same_precise_trigger(activation, candidate_activation)
+                        ),
+                        default=None,
+                    ) if window is not None else None,
                 ))
                 if delta > self._SYNC_TOLERANCE_SECONDS + 1e-9:
                     violations.append(
                         f"{beat.id}:{activation.asset_id}:settle_delta={delta:.3f}"
+                    )
+
+            # Strong attention must be handed off before the next distinct spoken
+            # meaning.  A gap after the last available activation is a legitimate
+            # quiet hold; a gap while a later precise activation exists is not.
+            ordered_trusted = sorted(
+                trusted_windows,
+                key=lambda row: (float(row[1].reveal_start), row[0].asset_id),
+            )
+            for (activation, window), (next_activation, next_window) in zip(
+                ordered_trusted,
+                ordered_trusted[1:],
+            ):
+                if same_precise_trigger(activation, next_activation):
+                    continue
+                tolerance = max(
+                    2.0 / 30.0,
+                    min(0.12, (float(window.phrase_end) - float(window.phrase_start)) * 0.20),
+                )
+                cue = cues.get((beat.id, activation.asset_id))
+                next_cue = cues.get((beat.id, next_activation.asset_id))
+                if cue is None or next_cue is None:
+                    continue
+                settle = float(cue.params.get("semantic_settle_time", cue.end))
+                next_target = float(next_window.reveal_start)
+                current_focus = cue.params.get("semantic_focus", {})
+                next_focus = next_cue.params.get("semantic_focus", {})
+                semantic_role = (
+                    str(current_focus.get("semantic_role") or current_focus.get("role") or "UNKNOWN")
+                    if isinstance(current_focus, dict)
+                    else "UNKNOWN"
+                )
+                if settle > next_target + tolerance:
+                    violations.append(
+                        f"{beat.id}:{activation.asset_id}:settle_past_next_handoff:"
+                        f"role={semantic_role}:"
+                        f"target={float(window.reveal_start):.3f}:actual_reveal={cue.start:.3f}:"
+                        f"actual_settle={settle:.3f}:next_target={next_target:.3f}"
+                    )
+                if (
+                    isinstance(current_focus, dict)
+                    and isinstance(next_focus, dict)
+                    and float(current_focus.get("strength", 0.0)) >= 0.60
+                    and float(next_focus.get("strength", 0.0)) >= 0.60
+                    and settle > next_cue.start + tolerance
+                ):
+                    violations.append(
+                        f"{beat.id}:{activation.asset_id}:strong_focus_overlap:"
+                        f"actual_settle={settle:.3f}:next_reveal={next_cue.start:.3f}:"
+                        f"next_asset={next_activation.asset_id}"
                     )
 
             for group_id, rows in sequence_motion.items():

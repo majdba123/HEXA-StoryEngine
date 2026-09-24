@@ -810,3 +810,86 @@ def test_authored_attention_calibration_makes_action_shorter_than_result() -> No
     assert action_duration < result_duration
     assert "attention_decay=settle_hold" in scheduled["result"].evidence
 
+
+def test_attention_envelopes_compress_at_next_precise_semantic_handoff() -> None:
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=2.0,
+        audio_start=0.0,
+        audio_end=2.0,
+        narration="act object result",
+        action="INTRODUCE",
+        semantic_context=StorySemanticContext(
+            entities=[
+                StoryEntity(unit_id="action", role="ACTION"),
+                StoryEntity(unit_id="object", role="OBJECT"),
+                StoryEntity(unit_id="result", role="RESULT"),
+            ],
+        ),
+    )
+    rows = [
+        AssetActivation(
+            asset_id=role.lower(),
+            semantic_unit_id=role.lower(),
+            spoken_start=start,
+            spoken_end=end,
+            trigger_char_start=index * 5,
+            trigger_char_end=index * 5 + 4,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            visual_focus="RESULT" if role == "RESULT" else None,
+        )
+        for index, (role, start, end) in enumerate(
+            (("ACTION", 0.20, 0.90), ("OBJECT", 0.32, 1.10), ("RESULT", 0.48, 1.50))
+        )
+    ]
+
+    scheduled = {
+        row.asset_id: row for row in schedule_windows(rows, beat, 2.0, set())
+    }
+
+    assert scheduled["action"].reveal_start < scheduled["object"].reveal_start
+    assert scheduled["object"].reveal_start < scheduled["result"].reveal_start
+    assert scheduled["action"].semantic_peak < scheduled["object"].semantic_peak
+    assert scheduled["object"].semantic_peak < scheduled["result"].semantic_peak
+    assert scheduled["action"].settle_at < scheduled["object"].reveal_start
+    assert scheduled["object"].settle_at < scheduled["result"].reveal_start
+    assert scheduled["result"].reveal_start == pytest.approx(0.48)
+    assert "handoff_policy=narration_first" in scheduled["action"].evidence
+
+
+def test_slow_narration_keeps_bounded_entry_then_static_hold() -> None:
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=8.0,
+        audio_start=0.0,
+        audio_end=8.0,
+        narration="result",
+        action="INTRODUCE",
+        semantic_context=StorySemanticContext(
+            entities=[StoryEntity(unit_id="result", role="RESULT")],
+        ),
+    )
+    result = schedule_windows(
+        [AssetActivation(
+            asset_id="result",
+            semantic_unit_id="result",
+            spoken_start=1.0,
+            spoken_end=7.0,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            visual_focus="RESULT",
+        )],
+        beat,
+        8.0,
+        set(),
+    )[0]
+
+    assert result.settle_at - result.reveal_start <= 0.36
+    assert result.phrase_end - result.settle_at >= 5.5
+    assert "attention_decay=settle_hold" in result.evidence
+
