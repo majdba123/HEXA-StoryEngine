@@ -104,6 +104,7 @@ class KeywordCandidate:
     source_char_end: int
     score: float
     tokens: tuple[KeywordToken, ...] = ()
+    authority_rank: int = 0
 
 
 class TextSemanticSelector:
@@ -166,7 +167,12 @@ class TextSemanticSelector:
         )
         ranked = sorted(
             deduped.values(),
-            key=lambda item: (-item.score, item.source_char_start, item.display_text),
+            key=lambda item: (
+                -item.authority_rank,
+                -item.score,
+                item.source_char_start,
+                item.display_text,
+            ),
         )
         selected: list[KeywordCandidate] = []
         for candidate in ranked:
@@ -258,6 +264,7 @@ class TextSemanticSelector:
                 source_char_end=last.char_end,
                 score=1.22 if reserved is not None else 1.10,
                 tokens=tuple(token_parts),
+                authority_rank=4,
             ))
         return output
 
@@ -465,10 +472,19 @@ class TextSemanticSelector:
             score = base + role_bonus + focus_bonus + state_bonus
             score -= 0.015 * max(0, len(matched) - 1)
 
+            authority_rank = (
+                3
+                if role in {
+                    "RESULT", "ACTION", "OBJECT", "SUBJECT", "PRIMARY", "STATE"
+                }
+                or visual_focus in {"RESULT", "PRIMARY"}
+                else 1
+            )
             candidate = self._candidate_from_words(
                 matched,
                 "emphasis",
                 score,
+                authority_rank=authority_rank,
             )
             if candidate is not None:
                 output.append(candidate)
@@ -597,7 +613,12 @@ class TextSemanticSelector:
                     if "EXPLICIT" in binding_types or semantic_matches or explicit_matches
                     else "keyword"
                 )
-                candidate = self._candidate_from_words(window, semantic_type, score)
+                candidate = self._candidate_from_words(
+                    window,
+                    semantic_type,
+                    score,
+                    authority_rank=2,
+                )
                 if candidate:
                     output.append(candidate)
         return output
@@ -811,6 +832,8 @@ class TextSemanticSelector:
         words: list[TranscriptWord],
         semantic_type: str,
         score: float,
+        *,
+        authority_rank: int = 0,
     ) -> KeywordCandidate | None:
         if not words:
             return None
@@ -838,6 +861,7 @@ class TextSemanticSelector:
             source_char_end=last.char_end,
             score=score,
             tokens=tokens,
+            authority_rank=max(0, int(authority_rank)),
         )
 
     @staticmethod
