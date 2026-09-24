@@ -349,10 +349,12 @@ class RecoveryDetector:
         foreground_ratio = foreground / pixels
         strong_ratio = strong_foreground / pixels
         mean_white_distance = distance_sum / pixels
+        # Uniform codec-white often decodes around RGB 252-254, so mean
+        # distance from 255 is not foreground evidence. Require actual colored/dark
+        # pixel occupancy instead.
         return (
             foreground_ratio >= 0.0030
             or strong_ratio >= 0.0015
-            or mean_white_distance >= 0.80
         )
 
     @staticmethod
