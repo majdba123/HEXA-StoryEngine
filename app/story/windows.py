@@ -95,6 +95,7 @@ def _semantic_sequence_windows(
     lower: float,
     visual_upper: float,
     speech_upper: float,
+    next_semantic_hits: dict[str, float] | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Allocate sequence sub-windows only inside one *identical* spoken trigger.
 
@@ -151,9 +152,19 @@ def _semantic_sequence_windows(
                 continue
 
             phrase_start = min(float(row.spoken_start) for row in rows)
+            next_distinct_hit = min(
+                (
+                    float(next_semantic_hits[row.asset_id])
+                    for row in rows
+                    if next_semantic_hits is not None
+                    and row.asset_id in next_semantic_hits
+                ),
+                default=visual_upper,
+            )
             phrase_end = min(
                 max(float(row.spoken_end) for row in rows),
                 visual_upper,
+                next_distinct_hit,
             )
             if (
                 not math.isfinite(phrase_start)
@@ -312,10 +323,14 @@ def schedule_windows(
     anchored = [row for row in activations if row.policy != "FALLBACK"
                 and row.spoken_start is not None and row.spoken_end is not None]
     capacity = (visual_upper - lower) / max(1, len([r for r in anchored if r.policy != "GROUP"]))
-    sequence_windows = _semantic_sequence_windows(
-        activations, lower=lower, visual_upper=visual_upper, speech_upper=speech_upper,
-    )
     next_semantic_hits = _next_semantic_hits(activations)
+    sequence_windows = _semantic_sequence_windows(
+        activations,
+        lower=lower,
+        visual_upper=visual_upper,
+        speech_upper=speech_upper,
+        next_semantic_hits=next_semantic_hits,
+    )
     output: list[StoryAssetActivation] = []
     previous_peak = lower
     for row in sorted(activations, key=lambda r: (
@@ -361,8 +376,9 @@ def schedule_windows(
         duration = end - start
         phrase_end = min(end, visual_upper)
         attention_role = _attention_role(row, beat)
+        exact_package_binding = row.source == "final_package_semantic_binding"
         has_authored_attention = (
-            row.source == "final_package_semantic_binding"
+            exact_package_binding
             and (
                 attention_role != "SUPPORT"
                 or bool(row.visual_focus)
@@ -373,13 +389,20 @@ def schedule_windows(
         available = max(0.025, phrase_end - start)
         if next_semantic_hit is not None:
             available = min(available, max(0.025, next_semantic_hit - start))
+        # A precise package visual with a known later semantic handoff must finish its
+        # entry before that next meaning even when it is only SUPPORT/CONTEXT. Otherwise
+        # the support can keep moving through the next spoken concept. With no later
+        # semantic hit, preserve the legacy full-phrase support window.
+        bounded_precise_handoff = (
+            exact_package_binding and next_semantic_hit is not None
+        )
         focus_duration = (
             _attention_focus_duration(
                 row,
                 beat,
                 available=available,
             )
-            if has_authored_attention
+            if has_authored_attention or bounded_precise_handoff
             else max(0.05, phrase_end - start)
         )
         settle_at = min(phrase_end, start + focus_duration)
@@ -390,7 +413,6 @@ def schedule_windows(
             output.append(StoryAssetActivation(**data).with_legacy_evidence())
             continue
         importance = 1.0 if row.asset_id in primary_ids else 0.75
-        exact_package_binding = row.source == "final_package_semantic_binding"
         lead = 0.0 if exact_package_binding else min(
             duration * 0.5 * importance,
             capacity * 0.25,
