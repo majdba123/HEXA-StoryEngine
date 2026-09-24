@@ -645,44 +645,168 @@ def test_unmapped_cutout_does_not_guess_between_multiple_semantic_groups(tmp_pat
 
 
 
-def test_precise_asset_phrases_cannot_reverse_final_package_sequence() -> None:
-    """Exact phrase identity is preferred timing evidence, not permission to reverse order."""
+def test_precise_speech_order_outranks_conflicting_visual_sequence_hint() -> None:
     beat = StoryBeat(
-        id="b", scene_id="s", start=0.0, end=2.0,
-        audio_start=0.0, audio_end=2.0, narration="a later a", action="INTRODUCE",
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=2.0,
+        audio_start=0.0,
+        audio_end=2.0,
+        narration="person writes fast on black screen",
+        action="INTRODUCE",
+        semantic_context=StorySemanticContext(
+            entities=[
+                StoryEntity(unit_id="character", role="CHARACTER"),
+                StoryEntity(unit_id="monitor", role="OBJECT"),
+                StoryEntity(unit_id="keyboard", role="ACTION"),
+            ],
+        ),
     )
     rows = [
         AssetActivation(
-            asset_id="a1", spoken_start=0.10, spoken_end=0.55,
-            policy="EXPLICIT", source="final_package_semantic_binding",
-            semantic_group_id="g", sequence_order=1,
+            asset_id="character",
+            semantic_unit_id="character",
+            spoken_start=0.10,
+            spoken_end=0.70,
+            trigger_char_start=0,
+            trigger_char_end=18,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            semantic_group_id="g",
+            sequence_order=1,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         ),
         AssetActivation(
-            asset_id="a2", spoken_start=0.90, spoken_end=1.35,
-            policy="EXPLICIT", source="final_package_semantic_binding",
-            semantic_group_id="g", sequence_order=2,
+            asset_id="monitor",
+            semantic_unit_id="monitor",
+            spoken_start=1.15,
+            spoken_end=1.60,
+            trigger_char_start=27,
+            trigger_char_end=39,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            semantic_group_id="g",
+            sequence_order=2,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         ),
-        # Precise trigger points back to the early phrase, but Final Package explicitly
-        # places this visual third. Story must reconcile timing inside the group envelope.
         AssetActivation(
-            asset_id="a3", spoken_start=0.10, spoken_end=0.55,
-            policy="SEMANTIC", source="final_package_semantic_binding",
-            semantic_group_id="g", sequence_order=3,
+            asset_id="keyboard",
+            semantic_unit_id="keyboard",
+            spoken_start=0.35,
+            spoken_end=0.75,
+            trigger_char_start=7,
+            trigger_char_end=18,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            semantic_group_id="g",
+            sequence_order=3,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         ),
     ]
 
     scheduled = schedule_windows(rows, beat, 2.0, set())
-    by_order = {
-        row.sequence_order: row
-        for row in scheduled
-    }
+    by_id = {row.asset_id: row for row in scheduled}
 
-    assert by_order[1].reveal_start < by_order[2].reveal_start < by_order[3].reveal_start
-    assert by_order[3].settle_at == pytest.approx(1.35)
+    assert by_id["character"].reveal_start == pytest.approx(0.10)
+    assert by_id["keyboard"].reveal_start == pytest.approx(0.35)
+    assert by_id["monitor"].reveal_start == pytest.approx(1.15)
+    assert by_id["keyboard"].reveal_start < by_id["monitor"].reveal_start
+    assert all(
+        "semantic_group_sequential_window" not in row.evidence
+        for row in scheduled
+    )
+
+
+def test_identical_precise_trigger_still_uses_sequence_order() -> None:
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=1.5,
+        audio_start=0.0,
+        audio_end=1.5,
+        narration="same phrase",
+        action="INTRODUCE",
+    )
+    rows = [
+        AssetActivation(
+            asset_id=f"a{index}",
+            spoken_start=0.20,
+            spoken_end=1.20,
+            trigger_char_start=0,
+            trigger_char_end=11,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            semantic_group_id="g",
+            sequence_order=index,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+        )
+        for index in (1, 2, 3)
+    ]
+
+    scheduled = sorted(
+        schedule_windows(rows, beat, 1.5, set()),
+        key=lambda row: row.sequence_order or 0,
+    )
+
+    assert scheduled[0].reveal_start < scheduled[1].reveal_start < scheduled[2].reveal_start
     assert all(
         "semantic_group_sequential_window" in row.evidence
         for row in scheduled
     )
+
+
+def test_authored_attention_calibration_makes_action_shorter_than_result() -> None:
+    beat = StoryBeat(
+        id="b",
+        scene_id="s",
+        start=0.0,
+        end=3.0,
+        audio_start=0.0,
+        audio_end=3.0,
+        narration="action concept then strong final result",
+        action="INTRODUCE",
+        semantic_context=StorySemanticContext(
+            entities=[
+                StoryEntity(unit_id="action", role="ACTION"),
+                StoryEntity(unit_id="result", role="RESULT"),
+            ],
+        ),
+    )
+    rows = [
+        AssetActivation(
+            asset_id="action",
+            semantic_unit_id="action",
+            spoken_start=0.40,
+            spoken_end=1.20,
+            trigger_char_start=0,
+            trigger_char_end=6,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+        ),
+        AssetActivation(
+            asset_id="result",
+            semantic_unit_id="result",
+            spoken_start=1.60,
+            spoken_end=2.60,
+            trigger_char_start=20,
+            trigger_char_end=26,
+            policy="EXPLICIT",
+            source="final_package_semantic_binding",
+            visual_focus="RESULT",
+        ),
+    ]
+
+    scheduled = {
+        row.asset_id: row
+        for row in schedule_windows(rows, beat, 3.0, set())
+    }
+    action_duration = scheduled["action"].settle_at - scheduled["action"].reveal_start
+    result_duration = scheduled["result"].settle_at - scheduled["result"].reveal_start
+
+    assert action_duration == pytest.approx(0.18, abs=0.03)
+    assert result_duration == pytest.approx(0.32, abs=0.04)
+    assert action_duration < result_duration
+    assert "attention_decay=settle_hold" in scheduled["result"].evidence
+
