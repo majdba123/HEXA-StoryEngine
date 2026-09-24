@@ -381,3 +381,190 @@ def test_text_motion_consumes_visual_focus_without_leading_speech() -> None:
             token.spoken_start for token in source.tokens
         ]
 
+def _precise_semantic_package(
+    script: str,
+    assets: list[dict],
+) -> PackageModel:
+    scene = SceneSource(
+        id="scene-001",
+        image_path=Path("scene.png"),
+        order=1,
+        script_char_start=0,
+        script_char_end=len(script) - 1,
+    )
+    asset_ids = [row["asset_id"] for row in assets]
+    normalized_assets = []
+    for index, row in enumerate(assets, start=1):
+        normalized_assets.append({
+            "scene_id": scene.id,
+            "semantic_group_id": "group-1",
+            "sequence_order": index,
+            "binding_type": "EXPLICIT",
+            "confidence": 1.0,
+            **row,
+        })
+    return PackageModel(
+        root=Path("/tmp"),
+        package_id="precise-text",
+        scenes=[scene],
+        script=script,
+        semantic_bindings={
+            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+            "scenes": [{
+                "scene_id": scene.id,
+                "semantic_groups": [{
+                    "semantic_group_id": "group-1",
+                    "script_text": script,
+                    "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+                    "asset_ids": asset_ids,
+                }],
+                "assets": normalized_assets,
+            }],
+        },
+    )
+
+
+def test_text_prefers_action_and_object_precise_spans_over_character_phrase() -> None:
+    script = "إن الاختراق عبارة عن شخص يكتب بسرعة قدام شاشة سوداء"
+    transcript = _transcript(script)
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=transcript.duration,
+        audio_start=0.0,
+        audio_end=transcript.words[-1].end,
+        narration=script,
+        action="INTRODUCE",
+    )
+    character_start = script.index("شخص")
+    character_end = script.index("قدام") - 1
+    keyboard_start = script.index("يكتب")
+    keyboard_end = keyboard_start + len("يكتب بسرعة")
+    monitor_start = script.index("شاشة")
+    monitor_end = monitor_start + len("شاشة سوداء")
+    package = _precise_semantic_package(
+        script,
+        [
+            {
+                "asset_id": "character",
+                "semantic_role": "CHARACTER",
+                "semantic_meaning": "شخص يكتب أمام شاشة",
+                "visual_concept": "شخص يكتب أمام شاشة",
+                "script_text": "شخص يكتب بسرعة",
+                "script_span": {
+                    "char_start": character_start,
+                    "char_end": character_end,
+                },
+            },
+            {
+                "asset_id": "monitor",
+                "semantic_role": "OBJECT",
+                "semantic_meaning": "شاشة سوداء",
+                "visual_concept": "شاشة سوداء",
+                "script_text": "شاشة سوداء",
+                "script_span": {
+                    "char_start": monitor_start,
+                    "char_end": monitor_end,
+                },
+            },
+            {
+                "asset_id": "keyboard",
+                "semantic_role": "ACTION",
+                "semantic_meaning": "الكتابة بسرعة",
+                "visual_concept": "لوحة مفاتيح سريعة",
+                "script_text": "يكتب بسرعة",
+                "script_span": {
+                    "char_start": keyboard_start,
+                    "char_end": keyboard_end,
+                },
+            },
+        ],
+    )
+
+    plan = TextPlanner().plan(
+        transcript=transcript,
+        story=[beat],
+        package=package,
+    )
+    texts = [cue.text for cue in plan.cues]
+
+    assert "يكتب بسرعة" in texts
+    assert "شاشة سوداء" in texts
+    assert "شخص يكتب بسرعة" not in texts
+    keyboard = next(cue for cue in plan.cues if cue.text == "يكتب بسرعة")
+    monitor = next(cue for cue in plan.cues if cue.text == "شاشة سوداء")
+    assert keyboard.spoken_start < monitor.spoken_start
+
+
+def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
+    script = "قبل ما الشركة تكتشفها"
+    transcript = _transcript(script)
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=transcript.duration,
+        audio_start=0.0,
+        audio_end=transcript.words[-1].end,
+        narration=script,
+        action="REVEAL_DETAIL",
+    )
+    company_start = script.index("الشركة")
+    company_end = company_start + len("الشركة")
+    discover_start = script.index("تكتشفها")
+    discover_end = discover_start + len("تكتشفها")
+    package = _precise_semantic_package(
+        script,
+        [
+            {
+                "asset_id": "manager",
+                "semantic_role": "CHARACTER",
+                "semantic_meaning": "مسؤول يكتشف المشكلة",
+                "visual_concept": "مسؤول شركة",
+                "script_text": "الشركة تكتشفها",
+                "script_span": {
+                    "char_start": company_start,
+                    "char_end": discover_end,
+                },
+            },
+            {
+                "asset_id": "company",
+                "semantic_role": "OBJECT",
+                "semantic_meaning": "الشركة",
+                "visual_concept": "مبنى الشركة",
+                "script_text": "الشركة",
+                "script_span": {
+                    "char_start": company_start,
+                    "char_end": company_end,
+                },
+            },
+            {
+                "asset_id": "magnifier",
+                "semantic_role": "RESULT",
+                "visual_focus": "RESULT",
+                "semantic_meaning": "اكتشاف الاختراق",
+                "visual_concept": "عدسة تكشف الاختراق",
+                "script_text": "تكتشفها",
+                "script_span": {
+                    "char_start": discover_start,
+                    "char_end": discover_end,
+                },
+            },
+        ],
+    )
+
+    plan = TextPlanner().plan(
+        transcript=transcript,
+        story=[beat],
+        package=package,
+    )
+    texts = [cue.text for cue in plan.cues]
+
+    assert "الشركة" in texts
+    assert "تكتشفها" in texts
+    assert "الشركة تكتشفها" not in texts
+    company = next(cue for cue in plan.cues if cue.text == "الشركة")
+    discovery = next(cue for cue in plan.cues if cue.text == "تكتشفها")
+    assert discovery.priority > company.priority
+
