@@ -8261,3 +8261,181 @@ rerun the exact corrected Black-Hat Final Package on the operator Windows enviro
 
 Any new diagnostic after that run must be treated as a NEW production gate, not assumed to be one of the
 already-closed MONTAGE20-27 classes.
+
+
+## CURRENT OFFICIAL HANDOFF STATE AFTER MONTAGE27 — 2026-09-25
+
+Official branch:
+`montage`
+
+Current documentation HEAD before this status commit:
+`a5356655eab1392801316b1ea08c6e69a37204d4`
+`[montage27] Record full-package render gate and shared readability contract`
+
+Latest CI on that HEAD:
+Run `36162207556`
+
+Result:
+**SUCCESS**
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **367 passed, 12 warnings in 13.22s**
+- tested source snapshot upload: SUCCESS
+
+### What is complete
+
+MONTAGE20-27 production failure classes are closed generically, including:
+- semantic segment / handoff timing;
+- V1.2 relation coverage;
+- spanless relation timing fallback;
+- cross-event INTERACT / REACT ownership;
+- ENTRY masking by later semantic motion;
+- geometry-lock versus encoded-motion QA mismatch;
+- first-beat semantic leakage;
+- Motion-created relation collision auto-fit;
+- Windows WinError 206 from inline filter-complex growth;
+- FFmpeg filter-file transport compatibility / preflight;
+- duplicated Planner-versus-QA semantic readability floors.
+
+The latest ffa3e158 failure class is closed by one shared semantic readability contract.
+
+### Full-package proof already completed
+
+The exact corrected Black-Hat Final Package was run through a full 40-scene gate using the exact CI-tested
+source snapshot.
+
+Observed full-gate semantics:
+- 40 beats
+- 179 semantic sync anchors
+- 0 conservative fallbacks
+- 15 authored relations represented
+- 14 executable relation timelines
+- 55 / 55 semantic events represented
+- 0 missing semantic events
+- 0 visual-layout violations
+- 0 text-layout violations
+- 0 short-motion violations
+
+MotionInteractionQA:
+- 117 checked segments
+- 14 checked relations
+- 0 violations
+
+RenderedMotionQA:
+- 110 checked semantic segments
+- 7 intentionally skipped static/locked segments
+- 0 violations
+
+SceneContinuityQA:
+- 39 boundaries
+- 39 bridged
+- 0 blur boundaries
+- 0 violations
+
+Full encoded output:
+- H.264
+- 1920x1080
+- yuv420p
+- 30fps
+- AAC mono 44.1 kHz
+- duration approximately 97.1s
+- full FFmpeg decode PASS
+
+### Quality contract is still locked
+
+No bug fix may reduce output quality or weaken visual semantics merely to satisfy QA.
+
+Locked:
+- libx264
+- CRF 18
+- yuv420p
+- 30fps
+- 1920x1080 production output
+- Story / WhisperX timing authority
+- Composition final geometry authority
+- Final Package semantic authority
+- Pass1 + Pass2 only
+- no Pass3 / Layer3
+- no global Motion weakening
+- no asset-count reduction
+- no scene simplification
+- no relation deletion
+- no global QA bypass
+
+Any future QA/Planner disagreement must be resolved by one shared production contract, not by lowering
+quality or suppressing the validator.
+
+### Permanent production-bug closure protocol
+
+A new production bug is not considered closed by code review, unit tests or CI alone.
+
+For every reproducible production failure:
+1. inspect the exact real diagnostic;
+2. identify the generic root-cause class;
+3. implement a package-agnostic fix;
+4. prohibit topic / scene / asset hardcodes;
+5. preserve output quality and semantic intent;
+6. add a regression reproducing the exact failure class;
+7. run Compile + Ruff + full Pytest;
+8. use the exact CI-tested source snapshot;
+9. run an actual encoded render;
+10. if the failing Final Package is available, run that full package end-to-end;
+11. reach and pass the exact stage that previously failed;
+12. verify final mux, decode and output specs;
+13. only then document the bug as closed.
+
+### Known validation-environment limitation
+
+The full sandbox gate did not have the exact production WhisperX / multilingual E5 stack nor the
+standalone original ElevenLabs MP3.
+
+For the full gate, narration audio was recovered from the prior real Black-Hat render and controlled
+alignment / semantic fallback was used.
+
+Therefore engine/package/render/QA integrity is proven, but exact operator-side production parity with
+the original MP3 + production WhisperX/E5 remains the final external gate.
+
+### What we are waiting for now
+
+No known code fix is currently pending.
+
+The next required action is the operator-side Windows rerender using:
+- current `montage` HEAD;
+- exact corrected Black-Hat Final Package;
+- exact original ElevenLabs narration MP3;
+- production WhisperX alignment;
+- production semantic model;
+- FFmpeg 9.0.2.
+
+Expected result:
+- pipeline completes;
+- final MP4 is produced;
+- then perform A/B perceptual review versus previous render and reference videos.
+
+If a new diagnostic appears, it must be treated as a NEW production gate. Do not reopen a previously
+closed MONTAGE20-27 issue unless the new diagnostic proves a regression.
+
+### Immediate next conversation protocol
+
+At the start of the next conversation:
+1. read `HEXA_PROJECT_CONTINUITY_SOURCE.md` from branch `montage`;
+2. verify live `refs/heads/montage`;
+3. verify latest CI live;
+4. do not rely on a remembered SHA if the branch has moved;
+5. if the user sends a new diagnostic, inspect that exact file first;
+6. if the user sends a completed MP4, perform the full perceptual A/B review:
+   - Entry strength and smoothness;
+   - INTERACT / REACT / PAYOFF readability;
+   - EXIT quality;
+   - Golden-ratio pacing;
+   - focus hierarchy;
+   - relation continuity;
+   - selective blur;
+   - text timing;
+   - collision safety;
+   - ghost / flash / black-frame checks;
+   - reference-video spirit.
+
+State:
+**MONTAGE27 is the current stable engine checkpoint. No known code blocker remains. We are waiting for
+the exact operator-side Windows production rerender or its next diagnostic.**
