@@ -375,9 +375,18 @@ class FFmpegRenderer:
             # frame between beats. Story's legacy area-ranked primary must never make
             # a future semantic result visible early.
             enable_start = 0.0 if (persistent or visual_carrier) else start
+            exit_segments = (
+                [segment for segment in cue.segments if segment.phase == "EXIT"]
+                if cue is not None
+                else []
+            )
+            enable_end = duration
+            if exit_segments:
+                exit_end = min(float(segment.end) for segment in exit_segments) - segment_start
+                enable_end = max(enable_start, min(duration, exit_end))
             filters.append(
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{enable_start:.6f},{duration:.6f})':eof_action=pass:shortest=0"
+                f"enable='between(t,{enable_start:.6f},{enable_end:.6f})':eof_action=pass:shortest=0"
                 f"[{next_label}]"
             )
             composite_label = next_label
