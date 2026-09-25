@@ -468,7 +468,7 @@ def test_repeated_asset_across_beats_keeps_same_asset_continuity_without_phantom
     cues = MotionPlanner().plan([first, second], compositions, choreography)
 
     assert len(cues) == 2
-    assert "continuity" in cues[1].params["program"]["name"]
+    assert cues[1].params["program"]["name"] == "reference_focus_handoff"
     assert cues[0].params["semantic_focus"]["semantic_event_id"] == "E1"
     assert cues[1].params["semantic_focus"]["semantic_event_id"] == "E2"
     for cue in cues:

@@ -14,7 +14,7 @@ from app.motion.rhythm import (
     ReferenceRhythmPolicy,
     focus_progression_key,
 )
-from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
+from app.motion.reference_gestures import ReferenceGestureLibrary
 from app.motion.style import MotionStyleDirector
 from app.motion.timing import (
     GOLDEN_MAJOR,
@@ -38,7 +38,7 @@ class MotionPlanner:
     """
 
     def __init__(self) -> None:
-        self.primitives = SemanticMotionPrimitiveLibrary()
+        self.primitives = ReferenceGestureLibrary()
         self.timing = MotionTimingPolicy()
         self.style = MotionStyleDirector()
         self.ordering = MotionOrderResolver()
@@ -363,6 +363,7 @@ class MotionPlanner:
                     elif assignment is None:
                         program = self._apply_choreography_pattern(
                             program,
+                            action=action,
                             pattern=pattern,
                             participant_role=participant_role,
                             primary=(item is primary_item),
@@ -1460,11 +1461,15 @@ class MotionPlanner:
             frames.append(MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"))
             settle_progress = 1.0
 
+        gesture, _gx, _gy, _gs = ReferenceGestureLibrary.event_accent(
+            stage=phase.stage.value,
+            semantic_action=str(phase.semantic_action or ""),
+            involvement=str(phase.involvement or ""),
+            vector=vector,
+            focus_strength=focus_strength,
+        )
         return MotionProgram(
-            name=(
-                f"semantic_segment_{phase.stage.value.lower()}_"
-                f"{str(phase.semantic_action or 'event').lower()}"
-            ),
+            name=f"reference_{gesture.value.lower()}",
             settle_progress=settle_progress,
             keyframes=tuple(frames),
         )
@@ -2005,79 +2010,15 @@ class MotionPlanner:
         vector: tuple[float, float],
         focus_strength: float,
     ) -> tuple[float, float, float]:
-        """Return one bounded relation-aware semantic accent for an event phase.
-
-        The stage owns narrative position; semantic_action preserves the visual character
-        of the authored relationship (compare, block, loop, travel, connect, etc.).
-        This remains topic-agnostic and always settles back to Composition.
-        """
-        vx, vy = vector
-        stage = phase.stage
-        action = str(phase.semantic_action or "").upper()
-
-        if stage == EventFlowStage.ESTABLISH:
-            return vx * 0.035, vy * 0.035 - 0.006, 1.055 + 0.025 * focus_strength
-        if stage == EventFlowStage.ADD:
-            return vx * 0.075, vy * 0.075 - 0.007, 1.050 + 0.030 * focus_strength
-
-        if stage == EventFlowStage.INTERACT:
-            if action == "COMPARE":
-                # Both sides move slightly away from their partner, preserving a balanced
-                # contrast instead of implying subject -> target causality.
-                return -vx * 0.075, -vy * 0.075 - 0.004, 1.050 + 0.020 * focus_strength
-            if action == "LOOP":
-                # One bounded tangential beat suggests persistence/cycle without wobble.
-                return -vy * 0.12, vx * 0.12, 1.040 + 0.020 * focus_strength
-            if action == "TRAVEL":
-                factor = 0.18 if phase.involvement == "SOURCE" else 0.07
-                return vx * factor, vy * factor, 1.045 + 0.020 * focus_strength
-            if action == "CONNECT":
-                factor = 0.12 if phase.involvement == "SOURCE" else 0.06
-                return vx * factor, vy * factor, 1.045 + 0.020 * focus_strength
-            if action in {"BLOCK", "REJECT"}:
-                if phase.involvement == "TARGET":
-                    return -vx * 0.050, -vy * 0.050, 1.040 + 0.015 * focus_strength
-                return vx * 0.10, vy * 0.10, 1.045 + 0.020 * focus_strength
-            if action == "LOCK":
-                factor = 0.10 if phase.involvement == "SOURCE" else 0.07
-                return vx * factor, vy * factor, 0.995 + 0.015 * focus_strength
-            if action in {"PROTECT", "RESOLVE"}:
-                factor = 0.08 if phase.involvement == "SOURCE" else 0.045
-                return vx * factor, vy * factor, 1.045 + 0.020 * focus_strength
-            if phase.involvement == "SOURCE":
-                return vx * 0.14, vy * 0.14, 1.050 + 0.025 * focus_strength
-            if phase.involvement == "TARGET":
-                return -vx * 0.025, -vy * 0.025, 1.045 + 0.020 * focus_strength
-            return 0.0, -0.006, 1.045 + 0.020 * focus_strength
-
-        if stage == EventFlowStage.REACT:
-            if action in {"BLOCK", "REJECT", "TRAVEL"}:
-                return -vx * 0.070, -vy * 0.070 - 0.005, 1.065 + 0.025 * focus_strength
-            if action == "LOCK":
-                return vx * 0.045, vy * 0.045, 0.985 + 0.010 * focus_strength
-            if action in {"CONNECT", "PROTECT", "RESOLVE"}:
-                return vx * 0.050, vy * 0.050 - 0.005, 1.055 + 0.020 * focus_strength
-            if action == "REVEAL":
-                return 0.0, -0.010, 1.080 + 0.025 * focus_strength
-            if action == "LOOP":
-                return -vy * 0.085, vx * 0.085, 1.050 + 0.020 * focus_strength
-            return -vx * 0.055, -vy * 0.055 - 0.006, 1.065 + 0.030 * focus_strength
-
-        if stage == EventFlowStage.PAYOFF:
-            payoff_scale = {
-                "COMPARE": 1.075,
-                "LOOP": 1.070,
-                "BLOCK": 1.085,
-                "REJECT": 1.090,
-                "LOCK": 1.085,
-                "TRAVEL": 1.105,
-                "CONNECT": 1.110,
-                "PROTECT": 1.110,
-                "RESOLVE": 1.115,
-                "REVEAL": 1.120,
-            }.get(action, 1.105)
-            return vx * 0.050, vy * 0.050 - 0.014, payoff_scale + 0.015 * focus_strength
-        return 0.0, 0.0, 1.0
+        """Return the bounded transform selected by the approved reference gesture language."""
+        _gesture, dx, dy, scale = ReferenceGestureLibrary.event_accent(
+            stage=phase.stage.value,
+            semantic_action=str(phase.semantic_action or ""),
+            involvement=str(phase.involvement or ""),
+            vector=vector,
+            focus_strength=focus_strength,
+        )
+        return dx, dy, scale
 
     @staticmethod
     def _event_phase_chain(
@@ -2446,6 +2387,7 @@ class MotionPlanner:
     def _apply_choreography_pattern(
         program: MotionProgram,
         *,
+        action: str,
         pattern: ChoreographyPattern,
         participant_role: str,
         primary: bool,
@@ -2457,144 +2399,48 @@ class MotionPlanner:
         energy: float,
         cohort_gain: float = 1.0,
     ) -> MotionProgram:
-        """Add one meaning-bearing pre-settle accent without reintroducing wobble.
+        """Apply one reference-style accent for fallback choreography only.
 
-        The accepted stability rule remains absolute: Composition owns the destination
-        and every asset is fully still from semantic settle through beat end. Stronger
-        reference-style choreography therefore happens once *before* settle.
+        Explicit semantic timelines use dedicated MotionSegments. This fallback keeps the
+        same reference invariant: one accent before settle, then a complete hold.
         """
-        if pattern == ChoreographyPattern.STANDARD and not momentary_focus:
+        del energy
+        selected = None
+        if pattern == ChoreographyPattern.STANDARD and not momentary_focus and primary:
+            selected = ReferenceGestureLibrary.fallback_action_accent(
+                action=action,
+                interaction_vector=interaction_vector,
+                focus_strength=focus_strength,
+            )
+        if selected is None:
+            selected = ReferenceGestureLibrary.pattern_accent(
+                pattern=pattern.value,
+                participant_role=participant_role,
+                primary=primary,
+                momentary_focus=momentary_focus,
+                focus_role=focus_role,
+                focus_strength=focus_strength,
+                state_target=state_target,
+                interaction_vector=interaction_vector,
+            )
+        if selected is None:
             return program
 
+        gesture, dx, dy, scale = selected
         first = program.keyframes[0]
         settle = max(0.78, program.settle_progress)
-        accent_progress = max(0.42, min(settle - 0.10, settle * 0.67))
-        role = str(participant_role or "SUPPORT").upper()
-        focus_role = str(focus_role or role).upper()
-        focus_strength = max(0.0, min(1.0, float(focus_strength)))
-        energy = max(0.35, min(1.0, energy))
-        dx = 0.0
-        dy = 0.0
-        scale = 1.0
-
-        # A Story-owned activation window temporarily grants the currently spoken
-        # semantic unit visual authority. This is intentionally local to the unit's
-        # own cue: once it settles, it returns to authored Composition and becomes
-        # completely static while the next semantic unit takes focus.
-        if pattern == ChoreographyPattern.STANDARD:
-            scale = 1.0 + 0.050 * focus_strength
-            dy = -0.006 * focus_strength
-        elif pattern == ChoreographyPattern.PROGRESSIVE_BUILD:
-            if momentary_focus:
-                scale = 1.0 + 0.078 * focus_strength
-                dy = -0.011 * focus_strength
-            elif primary:
-                scale = 1.040
-                dy = -0.006
-            else:
-                scale = 1.012
-                dy = -0.002
-        elif pattern == ChoreographyPattern.FOCUS_TRANSFER:
-            if momentary_focus:
-                scale = 1.025 + 0.070 * focus_strength
-                dy = -0.012 * focus_strength
-            elif primary:
-                scale = 1.038
-                dy = -0.005
-            else:
-                return program
-        elif pattern == ChoreographyPattern.STATE_TRANSFORM:
-            if state_target:
-                scale = 1.095
-                dy = -0.013
-            elif momentary_focus:
-                scale = 1.020 + 0.050 * focus_strength
-                dy = -0.009 * focus_strength
-            elif primary:
-                scale = 1.030
-            else:
-                return program
-        elif pattern == ChoreographyPattern.CAUSE_EFFECT_CHAIN:
-            vx, vy = interaction_vector
-            if role == "SUBJECT":
-                dx = vx * 0.12
-                dy = vy * 0.12
-                scale = (1.026 + 0.020 * focus_strength) if momentary_focus else 1.026
-            elif role == "OBJECT":
-                scale = (1.045 + 0.022 * focus_strength) if momentary_focus else 1.045
-                dx = -vx * 0.025
-                dy = -vy * 0.025
-            elif role == "RESULT" or focus_role == "RESULT":
-                scale = 1.105
-                dy = -0.014
-            elif role == "ACTOR":
-                scale = (1.025 + 0.018 * focus_strength) if momentary_focus else 1.025
-                dx = vx * 0.04
-                dy = vy * 0.04
-            elif momentary_focus:
-                scale = 1.020 + 0.045 * focus_strength
-                dy = -0.009 * focus_strength
-            elif primary:
-                scale = 1.038
-            else:
-                return program
-
-        # Calibrated attention hierarchy. These are one-shot accents only; the
-        # asset returns to exact authored Composition and then stays still. ACTION is
-        # decisive and short, PRIMARY/OBJECT are stronger concept anchors, and RESULT
-        # receives the largest bounded payoff.
-        if focus_role == "ACTION":
-            scale = max(scale, 1.060)
-            dy = min(dy, -0.009)
-        elif focus_role in {"OBJECT", "SUBJECT"}:
-            scale = max(scale, 1.070)
-            dy = min(dy, -0.010)
-        elif focus_role == "PRIMARY":
-            scale = max(scale, 1.080)
-            dy = min(dy, -0.011)
-        elif focus_role == "STATE":
-            scale = max(scale, 1.095)
-            dy = min(dy, -0.013)
-        elif focus_role == "RESULT":
-            scale = max(scale, 1.105)
-            dy = min(dy, -0.014)
-
-        strength = 0.78 + energy * 0.22
-        # Relationship motion may point across the whole canvas. Keep the semantic
-        # direction, but cap one-shot displacement so sparse scenes cannot create a
-        # collision just because subject/object authored positions are far apart.
-        dx = max(-0.10, min(0.10, dx * strength))
-        dy = max(-0.10, min(0.10, dy * strength))
-        scale = 1.0 + (scale - 1.0) * strength
-        cohort_gain = max(0.0, min(1.0, cohort_gain))
-        dx *= cohort_gain
-        dy *= cohort_gain
-        scale = 1.0 + (scale - 1.0) * cohort_gain
+        accent_progress = max(0.40, min(settle - 0.12, settle * GOLDEN_MAJOR))
+        gain = max(0.0, min(1.0, float(cohort_gain)))
+        dx *= gain
+        dy *= gain
+        scale = 1.0 + (scale - 1.0) * gain
         return MotionProgram(
-            name=f"{pattern.value.lower()}_{program.name}",
+            name=f"reference_{gesture.value.lower()}",
             settle_progress=settle,
             keyframes=(
-                MotionKeyframe(
-                    0.0,
-                    first.dx,
-                    first.dy,
-                    first.scale,
-                    first.easing,
-                ),
-                MotionKeyframe(
-                    accent_progress,
-                    dx,
-                    dy,
-                    scale,
-                    "ease_out_cubic",
-                ),
-                MotionKeyframe(
-                    settle,
-                    0.0,
-                    0.0,
-                    1.0,
-                    "ease_out_cubic",
-                ),
+                MotionKeyframe(0.0, first.dx, first.dy, first.scale, first.easing),
+                MotionKeyframe(accent_progress, dx, dy, scale, "ease_in_out_cubic"),
+                MotionKeyframe(settle, 0.0, 0.0, 1.0, "smoothstep"),
                 MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
             ),
         )

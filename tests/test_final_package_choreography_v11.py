@@ -476,7 +476,9 @@ def test_story_window_promotes_each_ordered_step_to_momentary_focus() -> None:
     )
     for cue in cues:
         scales = [frame["scale"] for frame in cue.params["program"]["keyframes"]]
-        assert max(scales) >= 1.04
+        # Reference motion is a readable one-shot arrival/focus gesture, not a required
+        # >1.04 overshoot. Measure actual scale excursion instead of legacy zoom peak.
+        assert max(scales) - min(scales) >= 0.04
         settle = cue.params["program"]["settle_progress"]
         assert all(
             frame["dx"] == pytest.approx(0.0)
