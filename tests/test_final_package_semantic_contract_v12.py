@@ -232,8 +232,15 @@ def test_v12_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: 
     assert motion["c"].params["semantic_focus"]["role"] == "RESULT"
     assert motion["c"].params["semantic_focus"]["semantic_event_id"] == "E2"
     assert motion["c"].params["motion_order"]["semantic_event_dependency_ids"] == ["E1"]
-    subject_frames = motion["a"].params["program"]["keyframes"]
-    result_frames = motion["c"].params["program"]["keyframes"]
+    # Explicit semantic meaning executes once in its dedicated timeline. ENTRY remains
+    # a clean arrival so the viewer does not receive a micro-interaction immediately
+    # followed by the real INTERACT/PAYOFF accent.
+    assert not str(motion["a"].params["program"]["name"]).startswith("event_chain_")
+    assert not str(motion["c"].params["program"]["name"]).startswith("event_chain_")
+    subject_interact = next(row for row in motion["a"].segments if row.phase == "INTERACT")
+    result_payoff = next(row for row in motion["c"].segments if row.phase == "PAYOFF")
+    subject_frames = subject_interact.program["keyframes"]
+    result_frames = result_payoff.program["keyframes"]
     assert any(float(frame["dx"]) > 0.0 for frame in subject_frames[1:-1])
     assert max(float(frame["scale"]) for frame in result_frames) > 1.0
     assert result_frames[-1]["dx"] == pytest.approx(0.0)
