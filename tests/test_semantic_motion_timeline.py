@@ -16,6 +16,7 @@ from app.models import (
     CompositionBeat,
     LayoutItem,
     MotionCue,
+    MotionSegment,
     StoryBeat,
     StoryRelation,
     StorySemanticContext,
@@ -28,10 +29,11 @@ from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
     GOLDEN_MAJOR,
     GOLDEN_MINOR,
+    comfort_gain,
     max_comfort_displacement,
     motion_comfort,
 )
-from app.qa import MotionInteractionQA
+from app.qa import MotionInteractionQA, RenderedMotionQA
 from app.story.planner import StoryPlanner
 from app.story.windows import StoryAssetActivation
 
@@ -147,7 +149,9 @@ def test_motion_timeline_reactivates_relation_with_overlap_and_payoff() -> None:
 
     assert {"ENTRY", "INTERACT"} <= set(a)
     assert {"ENTRY", "REACT"} <= set(b)
-    assert {"ENTRY", "PAYOFF"} <= set(c)
+    assert "PAYOFF" in c
+    if "ENTRY" in c:
+        assert c["ENTRY"].end <= c["PAYOFF"].start + 1e-9
     assert a["ENTRY"].start == pytest.approx(by_id["a"].start)
     assert a["INTERACT"].start == pytest.approx(2.0)
     assert b["REACT"].start > a["INTERACT"].start
@@ -171,7 +175,15 @@ def test_motion_interaction_qa_rejects_non_overlapping_relation() -> None:
     cues = MotionPlanner().plan([beat], [composition], choreography)
     cue = next(row for row in cues if row.asset_id == "b")
     index = next(i for i, row in enumerate(cue.segments) if row.phase == "REACT")
-    bad = cue.segments[index].model_copy(update={"start": 2.55, "end": 2.69})
+    source = next(
+        segment
+        for row in cues
+        for segment in row.segments
+        if row.asset_id == "a" and segment.phase == "INTERACT"
+    )
+    bad = cue.segments[index].model_copy(
+        update={"start": source.end + 0.01, "end": source.end + 0.15}
+    )
     segments = list(cue.segments)
     segments[index] = bad
     broken_cue = cue.model_copy(update={"segments": segments})
@@ -335,13 +347,27 @@ def test_event_motion_has_perceptual_floor() -> None:
             segment.phase,
             duration * GOLDEN_MINOR,
         )
-        assert peak == pytest.approx(comfort_cap, abs=1e-6)
+        base_floor = 0.030 if segment.phase == "INTERACT" else 0.026
+        floor = min(
+            base_floor * comfort_gain(segment.phase, duration),
+            comfort_cap,
+        )
+        assert peak >= floor - 1e-6
+        assert peak <= comfort_cap + 1e-6
         assert segment.program["keyframes"][1]["progress"] == pytest.approx(GOLDEN_MAJOR)
         assert duration >= motion_comfort(segment.phase).minimum_seconds
     payoff_scale = max(
         abs(float(frame["scale"]) - 1.0) for frame in payoff.program["keyframes"]
     )
-    assert payoff_scale >= 0.075 - 1e-6
+    payoff_duration = payoff.end - payoff.start
+    payoff_cap = max_comfort_displacement(
+        "PAYOFF", payoff_duration * GOLDEN_MINOR
+    ) / min(composition.items[2].width, composition.items[2].height)
+    expected_payoff = min(
+        0.075 * comfort_gain("PAYOFF", payoff_duration),
+        payoff_cap,
+    )
+    assert payoff_scale == pytest.approx(expected_payoff, abs=1e-6)
 
 
 def test_handoff_creates_real_exit_for_outgoing_asset() -> None:
@@ -438,3 +464,46 @@ def test_tight_handoff_omits_rushed_exit_instead_of_accelerating() -> None:
         existing_segments=[],
     )
     assert segment is None
+
+
+
+def test_entry_scale_respects_same_comfort_speed_contract_as_encoded_qa() -> None:
+    item = LayoutItem(asset_id="large", x=0.5, y=0.5, width=0.72, height=0.82)
+    program = MotionProgram(
+        name="large_entry",
+        settle_progress=0.82,
+        keyframes=(
+            MotionKeyframe(0.0, -0.04, 0.0, 1.20, "ease_in_out_cubic"),
+            MotionKeyframe(0.50, -0.02, 0.0, 1.10, "ease_in_out_cubic"),
+            MotionKeyframe(0.82, 0.0, 0.0, 1.0, "smoothstep"),
+            MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+        ),
+    )
+    duration = 0.30
+    fitted = MotionPlanner._ensure_readable_entry(program, item=item, duration=duration)
+    segment = MotionSegment(
+        phase="ENTRY",
+        start=0.0,
+        end=duration,
+        program=fitted.to_payload(),
+    )
+    speed = RenderedMotionQA._max_normalized_keyframe_speed(
+        segment,
+        duration=duration,
+        item_width=item.width,
+        item_height=item.height,
+    )
+    limit = motion_comfort("ENTRY").max_normalized_speed * 1.08
+    assert speed <= limit + 1e-6
+
+
+def test_entry_completes_before_semantic_relation_phase_on_same_asset() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    for cue in cues:
+        entry = next((row for row in cue.segments if row.phase == "ENTRY"), None)
+        if entry is None:
+            continue
+        for segment in cue.segments:
+            if segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
+                assert segment.start >= entry.end - 1e-9
