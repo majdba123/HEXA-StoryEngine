@@ -31,6 +31,7 @@ class FFmpegRenderer:
         text_font_family: str = "Noto Kufi Arabic",
     ) -> None:
         self.ffmpeg_bin = ffmpeg_bin
+        self._filter_complex_file_option_cache: str | None = None
         self.text_renderer = TextRenderer(font_family=text_font_family)
         self.transition_policy = VisualTransitionPolicy()
         self.motion_adapter = FFmpegMotionAdapter()
@@ -745,8 +746,8 @@ class FFmpegRenderer:
         if not output.exists() or output.stat().st_size == 0:
             raise StageFailedError("renderer produced no output")
 
-    @staticmethod
     def _encode_args(
+        self,
         filters: list[str],
         target: Path,
         fps: int,
@@ -761,7 +762,7 @@ class FFmpegRenderer:
         filter_script = target.parent / f"{target.stem}-filter-complex.ffgraph"
         filter_script.write_text(";\n".join(filters) + "\n", encoding="utf-8")
         return [
-            "-/filter_complex",
+            self._filter_complex_file_option(),
             str(filter_script),
             "-map",
             "[vout]",
@@ -782,6 +783,42 @@ class FFmpegRenderer:
             str(frame_count),
             str(target),
         ]
+
+
+    def _filter_complex_file_option(self) -> str:
+        """Select the file-backed complex-filter option FFmpeg actually supports.
+
+        FFmpeg 6 exposes -filter_complex_script. Newer FFmpeg releases support the
+        generic file-option form -/filter_complex, while FFmpeg 9 builds may remove
+        the deprecated script alias entirely. Probe capabilities once per renderer
+        instance instead of hardcoding an FFmpeg major version.
+        """
+        if self._filter_complex_file_option_cache is not None:
+            return self._filter_complex_file_option_cache
+
+        try:
+            result = run_hidden(
+                [self.ffmpeg_bin, "-hide_banner", "-h", "full"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise DependencyUnavailableError("ffmpeg is not available") from exc
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise StageFailedError(
+                "failed to inspect ffmpeg filter-file capabilities",
+                details={"error": str(exc)},
+            ) from exc
+
+        help_text = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+        option = (
+            "-filter_complex_script"
+            if "filter_complex_script" in help_text
+            else "-/filter_complex"
+        )
+        self._filter_complex_file_option_cache = option
+        return option
 
     @staticmethod
     def _time_to_frame(value: float, fps: int, total_frames: int) -> int:
