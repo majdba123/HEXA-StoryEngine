@@ -752,9 +752,17 @@ class FFmpegRenderer:
         fps: int,
         frame_count: int,
     ) -> list[str]:
+        # Never place a production filter graph directly on the process command
+        # line. Dense scenes can generate many overlays/motion expressions and
+        # exceed Windows CreateProcess limits (WinError 206) long before FFmpeg
+        # itself sees the request. A per-segment script keeps command length
+        # bounded on every platform and also leaves useful render diagnostics.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        filter_script = target.parent / f"{target.stem}-filter-complex.ffgraph"
+        filter_script.write_text(";\n".join(filters) + "\n", encoding="utf-8")
         return [
-            "-filter_complex",
-            ";".join(filters),
+            "-filter_complex_script",
+            str(filter_script),
             "-map",
             "[vout]",
             "-an",
@@ -796,7 +804,24 @@ class FFmpegRenderer:
     def _run(command: list[str], message: str) -> None:
         try:
             run_hidden(command, check=True, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise DependencyUnavailableError("ffmpeg is not available") from exc
+        except OSError as exc:
+            # Windows may surface CreateProcess command-line overflow as a
+            # FileNotFoundError subclass with WinError 206. That is not a missing
+            # FFmpeg dependency and must never be misreported as one.
+            if getattr(exc, "winerror", None) == 206:
+                raise StageFailedError(
+                    "render process command exceeded the Windows process limit",
+                    details={
+                        "winerror": 206,
+                        "argument_count": len(command),
+                        "command_characters": sum(len(str(arg)) + 1 for arg in command),
+                    },
+                ) from exc
+            if isinstance(exc, FileNotFoundError):
+                raise DependencyUnavailableError("ffmpeg is not available") from exc
+            raise StageFailedError(
+                message,
+                details={"os_error": str(exc), "errno": getattr(exc, "errno", None)},
+            ) from exc
         except subprocess.CalledProcessError as exc:
             raise StageFailedError(message, details={"stderr": (exc.stderr or "")[-6000:]}) from exc
