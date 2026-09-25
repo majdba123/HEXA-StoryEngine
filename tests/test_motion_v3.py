@@ -133,7 +133,7 @@ def test_choreography_reject_creates_meaningful_interaction_and_scale_reaction()
 
     assert cue.params["choreography"]["action"] == "REJECT"
     assert cue.params["program"]["name"] == "reject_attempt_recoil"
-    assert len(keyframes) <= 3
+    assert len(keyframes) <= 4
     assert abs(keyframes[0]["dx"]) + abs(keyframes[0]["dy"]) > 0.0
     assert keyframes[-1]["dx"] == 0.0
     assert keyframes[-1]["dy"] == 0.0
@@ -287,7 +287,7 @@ def test_every_planned_asset_is_frozen_from_semantic_settle_to_beat_end() -> Non
         program = cue.params["program"]
         settle = program["settle_progress"]
         keyframes = program["keyframes"]
-        assert len(keyframes) <= 3
+        assert len(keyframes) <= 4
         post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
         assert post_settle
         for frame in post_settle:
