@@ -8,7 +8,12 @@ import cv2
 import numpy as np
 
 from app.models import MotionSegment, RenderPlan
-from app.motion.timing import comfort_gain, motion_comfort
+from app.motion.timing import (
+    GOLDEN_MINOR,
+    comfort_gain,
+    max_comfort_displacement,
+    motion_comfort,
+)
 from app.shared.errors import StageFailedError
 
 
@@ -287,7 +292,23 @@ class RenderedMotionQA:
             return 0.0
         asset_px = max(1.0, min(width * item_width, height * item_height))
         base = max(6.0, min(36.0, width * ratio, asset_px * 0.25))
-        return base * comfort_gain(phase, duration)
+        readable = base * comfort_gain(phase, duration)
+
+        # Readability and comfort must form a satisfiable contract. Semantic
+        # out-and-back accents have only the shorter golden leg (38.2%) to return
+        # to Composition, so a short Story window may not physically support the
+        # nominal pixel floor without exceeding the comfort-speed ceiling.
+        if phase in {"INTERACT", "REACT", "PAYOFF"}:
+            comfort_seconds = duration * GOLDEN_MINOR
+        else:
+            comfort_seconds = duration
+        comfort_budget_px = width * max_comfort_displacement(
+            phase,
+            comfort_seconds,
+        )
+        if comfort_budget_px > 0.0:
+            readable = min(readable, comfort_budget_px)
+        return readable
 
     @staticmethod
     def _expected_activity_px(
