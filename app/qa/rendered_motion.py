@@ -102,6 +102,14 @@ class RenderedMotionQA:
                         and cue.params.get("render_constraints", {}).get("geometry_lock")
                         == "authored_footprint"
                     )
+                    if geometry_locked:
+                        # Renderer intentionally suppresses translation/scale for these
+                        # family-canvas members. Requiring encoded transform activity
+                        # here contradicts the render contract and creates a false hard
+                        # failure. Visibility/timing remains covered by StorySync and
+                        # scene-continuity QA.
+                        skipped += 1
+                        continue
                     program_name = str(segment.program.get("name") or "")
                     enforce_floor = not geometry_locked and "compound_unit" not in program_name
                     floor_px = self._perceptual_floor_px(
@@ -136,28 +144,25 @@ class RenderedMotionQA:
                         ))
                         continue
                     if enforce_floor:
-                        speed_px = self._max_keyframe_speed_px(
+                        normalized_speed = self._max_normalized_keyframe_speed(
                             segment,
                             duration=duration,
-                            width=plan.width,
-                            height=plan.height,
                             item_width=item.width,
                             item_height=item.height,
                         )
-                        speed_limit_px = (
-                            plan.width
-                            * motion_comfort(segment.phase).max_normalized_speed
-                            * 1.08
+                        speed_limit = (
+                            motion_comfort(segment.phase).max_normalized_speed * 1.08
                         )
-                        if speed_px > speed_limit_px + 1e-6:
+                        if normalized_speed > speed_limit + 1e-6:
                             violations.append(RenderedMotionViolation(
                                 code="MOTION_TOO_FAST",
                                 beat_id=cue.beat_id,
                                 asset_id=cue.asset_id,
                                 phase=segment.phase,
                                 detail=(
-                                    f"expected peak speed {speed_px:.1f}px/s exceeds "
-                                    f"comfort limit {speed_limit_px:.1f}px/s"
+                                    f"expected normalized peak speed "
+                                    f"{normalized_speed:.4f}/s exceeds comfort limit "
+                                    f"{speed_limit:.4f}/s"
                                 ),
                             ))
                             continue
@@ -166,42 +171,72 @@ class RenderedMotionQA:
                         continue
 
                     checked += 1
-                    baseline_time = max(
-                        float(beat.start),
-                        float(segment.start) - max(2.0 / plan.fps, 0.045),
-                    )
-                    peak_time = min(
-                        float(segment.end) - 1.0 / plan.fps,
-                        float(segment.start) + duration * peak_progress,
-                    )
-                    if peak_time <= baseline_time + 1.0 / plan.fps:
-                        peak_time = min(
-                            float(segment.end) - 0.5 / plan.fps,
-                            float(segment.start) + duration * 0.5,
+                    baseline_time = (
+                        max(float(beat.start), float(segment.start))
+                        if segment.phase == "ENTRY"
+                        else max(
+                            float(beat.start),
+                            float(segment.start) - max(2.0 / plan.fps, 0.045),
                         )
-
+                    )
                     before = frame_at(round(baseline_time * plan.fps))
-                    peak = frame_at(round(peak_time * plan.fps))
-                    if before is None or peak is None:
+                    if before is None:
                         violations.append(RenderedMotionViolation(
                             code="RENDERED_SEGMENT_FRAME_MISSING",
                             beat_id=cue.beat_id,
                             asset_id=cue.asset_id,
                             phase=segment.phase,
                             detail=(
-                                f"could not decode evidence frames around "
+                                f"could not decode baseline evidence frame around "
                                 f"{segment.start:.3f}-{segment.end:.3f}s"
                             ),
                         ))
                         continue
 
-                    crop_before, crop_peak = self._crop_pair(
-                        before,
-                        peak,
-                        item=item,
-                        expected_px=expected_px,
-                    )
-                    if crop_before.size == 0 or crop_peak.size == 0:
+                    evidence_progress = self._evidence_progresses(segment, peak_progress)
+                    best_mean = 0.0
+                    best_ratio = 0.0
+                    decoded_candidates = 0
+                    roi_valid = False
+                    for progress_value in evidence_progress:
+                        candidate_time = min(
+                            float(segment.end) - 0.5 / plan.fps,
+                            float(segment.start) + duration * progress_value,
+                        )
+                        if candidate_time <= baseline_time + 0.25 / plan.fps:
+                            continue
+                        candidate = frame_at(round(candidate_time * plan.fps))
+                        if candidate is None:
+                            continue
+                        decoded_candidates += 1
+                        crop_before, crop_candidate = self._crop_pair(
+                            before,
+                            candidate,
+                            item=item,
+                            expected_px=expected_px,
+                        )
+                        if crop_before.size == 0 or crop_candidate.size == 0:
+                            continue
+                        roi_valid = True
+                        gray_before = cv2.cvtColor(crop_before, cv2.COLOR_BGR2GRAY)
+                        gray_candidate = cv2.cvtColor(crop_candidate, cv2.COLOR_BGR2GRAY)
+                        delta = cv2.absdiff(gray_before, gray_candidate)
+                        best_mean = max(best_mean, float(np.mean(delta)))
+                        best_ratio = max(best_ratio, float(np.mean(delta >= 8)))
+
+                    if decoded_candidates == 0:
+                        violations.append(RenderedMotionViolation(
+                            code="RENDERED_SEGMENT_FRAME_MISSING",
+                            beat_id=cue.beat_id,
+                            asset_id=cue.asset_id,
+                            phase=segment.phase,
+                            detail=(
+                                f"could not decode candidate evidence frames around "
+                                f"{segment.start:.3f}-{segment.end:.3f}s"
+                            ),
+                        ))
+                        continue
+                    if not roi_valid:
                         violations.append(RenderedMotionViolation(
                             code="RENDERED_SEGMENT_ROI_EMPTY",
                             beat_id=cue.beat_id,
@@ -211,16 +246,10 @@ class RenderedMotionQA:
                         ))
                         continue
 
-                    gray_before = cv2.cvtColor(crop_before, cv2.COLOR_BGR2GRAY)
-                    gray_peak = cv2.cvtColor(crop_peak, cv2.COLOR_BGR2GRAY)
-                    delta = cv2.absdiff(gray_before, gray_peak)
-                    mean_delta = float(np.mean(delta))
-                    changed_ratio = float(np.mean(delta >= 8))
-
                     # H.264 noise on a static white-backed frame is far below these
                     # thresholds. A genuine 1px+ transform changes edge occupancy by
                     # materially more, even for small sparse icons.
-                    if mean_delta < 0.35 and changed_ratio < 0.0015:
+                    if best_mean < 0.35 and best_ratio < 0.0015:
                         violations.append(RenderedMotionViolation(
                             code="RENDERED_SEGMENT_INACTIVE",
                             beat_id=cue.beat_id,
@@ -230,8 +259,8 @@ class RenderedMotionQA:
                                 f"timeline expects ~{expected_px:.2f}px semantic motion "
                                 "but encoded ROI is effectively static"
                             ),
-                            mean_delta=mean_delta,
-                            changed_ratio=changed_ratio,
+                            mean_delta=best_mean,
+                            changed_ratio=best_ratio,
                         ))
         finally:
             capture.release()
@@ -243,6 +272,28 @@ class RenderedMotionQA:
         )
 
 
+
+
+    @staticmethod
+    def _evidence_progresses(
+        segment: MotionSegment,
+        expected_peak: float,
+    ) -> tuple[float, ...]:
+        """Sample several legal points so frame quantization cannot hide real motion."""
+        values = [expected_peak, 0.25, 0.50, 0.75, 0.90]
+        keyframes = segment.program.get("keyframes")
+        if isinstance(keyframes, list):
+            for frame in keyframes:
+                try:
+                    values.append(float(frame.get("progress", 0.5)))
+                except (TypeError, ValueError):
+                    continue
+        output: list[float] = []
+        for value in values:
+            clipped = max(0.08, min(0.94, float(value)))
+            if not any(abs(clipped - existing) < 0.02 for existing in output):
+                output.append(clipped)
+        return tuple(output)
 
 
     @staticmethod
@@ -307,6 +358,51 @@ class RenderedMotionQA:
 
         pixel_factor = max(translation_factor, scale_factor)
         return normalized_budget * pixel_factor if pixel_factor > 0.0 else 0.0
+
+    @staticmethod
+    def _max_normalized_keyframe_speed(
+        segment: MotionSegment,
+        *,
+        duration: float,
+        item_width: float,
+        item_height: float,
+    ) -> float:
+        """Measure the same normalized velocity budget enforced by MotionPlanner.
+
+        Comparing planner-normalized motion against a width-only pixel ceiling creates
+        false failures for diagonal movement, portrait assets and scale pulses. Use
+        the canonical Composition-space contract instead: translation magnitude plus
+        scale converted through the asset's normalized extent.
+        """
+        keyframes = segment.program.get("keyframes")
+        if not isinstance(keyframes, list) or len(keyframes) < 2:
+            return 0.0
+        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
+        rows: list[tuple[float, float, float, float]] = []
+        for frame in keyframes:
+            try:
+                rows.append((
+                    float(frame.get("progress", 0.0)),
+                    float(frame.get("dx", 0.0)),
+                    float(frame.get("dy", 0.0)),
+                    float(frame.get("scale", 1.0)),
+                ))
+            except (TypeError, ValueError):
+                continue
+        rows.sort(key=lambda row: row[0])
+        peak_speed = 0.0
+        for left, right in zip(rows, rows[1:]):
+            seconds = max(1e-6, (right[0] - left[0]) * duration)
+            translation = float(np.hypot(
+                right[1] - left[1],
+                right[2] - left[2],
+            ))
+            scale_motion = abs(right[3] - left[3]) * asset_extent
+            peak_speed = max(
+                peak_speed,
+                max(translation, scale_motion) / seconds,
+            )
+        return peak_speed
 
     @staticmethod
     def _max_keyframe_speed_px(
