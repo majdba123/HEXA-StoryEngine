@@ -268,3 +268,91 @@ def test_rendered_motion_qa_skips_transform_check_for_geometry_locked_asset(tmp_
     assert report.ok, report.violations
     assert report.checked_segments == 0
     assert report.skipped_static_segments == 1
+
+
+
+def test_directional_comfort_budget_uses_dominant_vertical_translation_channel() -> None:
+    duration = 0.50
+    segment = MotionSegment(
+        phase="REACT",
+        start=1.0,
+        end=1.0 + duration,
+        program={
+            "name": "semantic_segment_react",
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {
+                    "progress": GOLDEN_MAJOR,
+                    "dx": 0.0,
+                    "dy": -0.022,
+                    "scale": 1.003,
+                    "easing": "ease_in_out_cubic",
+                },
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
+            ],
+        },
+        semantic_event_id="E1",
+        semantic_action="REACT",
+        involvement="TARGET",
+    )
+
+    budget = RenderedMotionQA._directional_comfort_budget_px(
+        segment,
+        duration=duration,
+        width=1920,
+        height=1080,
+        item_width=0.20,
+        item_height=0.30,
+    )
+    normalized_budget = max_comfort_displacement(
+        "REACT",
+        duration * GOLDEN_MINOR,
+    )
+
+    assert budget == pytest.approx(normalized_budget * 1080, abs=1e-6)
+
+
+def test_directional_comfort_budget_uses_scale_channel_when_scale_is_visually_dominant() -> None:
+    duration = 0.50
+    segment = MotionSegment(
+        phase="REACT",
+        start=1.0,
+        end=1.0 + duration,
+        program={
+            "name": "semantic_segment_react_scale",
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {
+                    "progress": GOLDEN_MAJOR,
+                    "dx": 0.0,
+                    "dy": -0.002,
+                    "scale": 1.05,
+                    "easing": "ease_in_out_cubic",
+                },
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
+            ],
+        },
+        semantic_event_id="E1",
+        semantic_action="REACT",
+        involvement="TARGET",
+    )
+
+    budget = RenderedMotionQA._directional_comfort_budget_px(
+        segment,
+        duration=duration,
+        width=1920,
+        height=1080,
+        item_width=0.20,
+        item_height=0.30,
+    )
+    normalized_budget = max_comfort_displacement(
+        "REACT",
+        duration * GOLDEN_MINOR,
+    )
+    asset_extent = 0.20
+    asset_px = min(1920 * 0.20, 1080 * 0.30)
+
+    assert budget == pytest.approx(
+        normalized_budget * (asset_px / asset_extent),
+        abs=1e-6,
+    )
