@@ -761,7 +761,7 @@ class FFmpegRenderer:
         filter_script = target.parent / f"{target.stem}-filter-complex.ffgraph"
         filter_script.write_text(";\n".join(filters) + "\n", encoding="utf-8")
         return [
-            "-filter_complex_script",
+            "-/filter_complex",
             str(filter_script),
             "-map",
             "[vout]",
