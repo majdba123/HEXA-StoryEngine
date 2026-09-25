@@ -410,21 +410,66 @@ def test_handoff_creates_real_exit_for_outgoing_asset() -> None:
     assert report.ok, report.violations
 
 
-def test_motion_interaction_qa_rejects_new_collision_from_stronger_motion() -> None:
+def test_motion_planner_auto_fits_new_collision_from_stronger_motion() -> None:
     beat, composition, choreography = _fixture()
     close_composition = CompositionBeat(
         beat_id=composition.beat_id,
         items=[
-            # Authored boxes remain separate by 0.5% of canvas width; the stronger
-            # relation motion should be what creates the collision.
+            # Authored boxes remain separate by 0.5% of canvas width. Relation motion
+            # is allowed to stay strong only up to the collision-safe amplitude.
             LayoutItem(asset_id="a", x=0.315, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
         ],
     )
     cues = MotionPlanner().plan([beat], [close_composition], choreography)
+    limited = [
+        segment
+        for cue in cues
+        for segment in cue.segments
+        if bool(segment.program.get("collision_limited"))
+    ]
+    assert limited
+    assert all(0.0 <= float(row.program["collision_gain"]) < 1.0 for row in limited)
+
     report = MotionInteractionQA().inspect(
         story=[beat], motion=cues, composition=[close_composition],
+    )
+    assert report.ok, report.violations
+
+
+def test_motion_interaction_qa_still_rejects_collision_if_planner_fit_is_bypassed() -> None:
+    beat, composition, choreography = _fixture()
+    close_composition = CompositionBeat(
+        beat_id=composition.beat_id,
+        items=[
+            LayoutItem(asset_id="a", x=0.315, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
+        ],
+    )
+    cues = MotionPlanner().plan([beat], [close_composition], choreography)
+    broken: list[MotionCue] = []
+    for cue in cues:
+        rows = []
+        for segment in cue.segments:
+            if segment.phase not in {"INTERACT", "REACT"}:
+                rows.append(segment)
+                continue
+            program = dict(segment.program)
+            keyframes = [dict(frame) for frame in program["keyframes"]]
+            for frame in keyframes:
+                frame["dx"] = float(frame.get("dx", 0.0)) * 4.0
+                frame["dy"] = float(frame.get("dy", 0.0)) * 4.0
+                scale = float(frame.get("scale", 1.0))
+                frame["scale"] = 1.0 + (scale - 1.0) * 4.0
+            program["keyframes"] = keyframes
+            program.pop("collision_limited", None)
+            rows.append(segment.model_copy(update={"program": program}))
+        broken.append(cue.model_copy(update={"segments": rows}))
+
+    report = MotionInteractionQA().inspect(
+        story=[beat], motion=broken, composition=[close_composition],
     )
     assert not report.ok
     assert any(row.code == "MOTION_CREATES_COLLISION" for row in report.violations)

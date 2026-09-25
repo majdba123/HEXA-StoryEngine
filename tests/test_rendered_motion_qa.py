@@ -148,6 +148,28 @@ def test_rendered_motion_qa_rejects_visually_tiny_motion(tmp_path: Path) -> None
     assert any(row.code == "MOTION_BELOW_PERCEPTUAL_FLOOR" for row in report.violations)
 
 
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_collision_limited_motion_may_go_below_floor_but_must_render(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=True)
+    cue = plan.motion[0]
+    program = _program(dx=0.015)
+    program["collision_limited"] = True
+    program["collision_gain"] = 0.5
+    segment = cue.segments[0].model_copy(update={"program": program})
+    plan = plan.model_copy(update={
+        "motion": [cue.model_copy(update={"segments": [segment]})],
+    })
+    video = tmp_path / "collision-limited.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+
+    assert report.ok, report.violations
+    assert report.checked_segments == 1
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 def test_rendered_exit_moves_then_disappears(tmp_path: Path) -> None:
     asset = tmp_path / "asset.png"

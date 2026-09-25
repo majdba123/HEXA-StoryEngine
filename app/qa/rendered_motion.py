@@ -111,7 +111,16 @@ class RenderedMotionQA:
                         skipped += 1
                         continue
                     program_name = str(segment.program.get("name") or "")
-                    enforce_floor = not geometry_locked and "compound_unit" not in program_name
+                    collision_limited = bool(segment.program.get("collision_limited"))
+                    enforce_floor = (
+                        not geometry_locked
+                        and "compound_unit" not in program_name
+                        and not collision_limited
+                    )
+                    enforce_speed = (
+                        not geometry_locked
+                        and "compound_unit" not in program_name
+                    )
                     floor_px = self._perceptual_floor_px(
                         phase=segment.phase,
                         width=plan.width,
@@ -143,7 +152,7 @@ class RenderedMotionQA:
                             ),
                         ))
                         continue
-                    if enforce_floor:
+                    if enforce_speed:
                         normalized_speed = self._max_normalized_keyframe_speed(
                             segment,
                             duration=duration,

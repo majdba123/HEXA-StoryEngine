@@ -4,6 +4,7 @@ from math import hypot
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
+from app.motion.collision import fit_relation_collisions
 from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
@@ -52,6 +53,7 @@ class MotionPlanner:
         previous_layout: CompositionBeat | None = None
 
         for beat_index, beat in enumerate(beats):
+            beat_cue_start = len(cues)
             layout = by_beat.get(beat.id)
             if layout is None or not layout.items:
                 continue
@@ -549,6 +551,11 @@ class MotionPlanner:
                         cohort_gain=cohort_gain,
                         directive=directive,
                     )
+            if len(cues) > beat_cue_start:
+                cues[beat_cue_start:] = fit_relation_collisions(
+                    cues[beat_cue_start:],
+                    layout,
+                )
             previous_layout = layout
         return cues
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.choreography import ChoreographyPlan
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
+from app.motion.collision import authored_overlap_ratio, max_relation_overlap
 from app.shared.errors import StageFailedError
 
 
@@ -248,16 +249,12 @@ class MotionInteractionQA:
         overlap_end = min(float(source.end), float(target.end))
         if overlap_end <= overlap_start + 1e-6:
             return
-        sample_time = overlap_start + (overlap_end - overlap_start) * 0.50
-        source_transform = cls._segment_transform_at(source, sample_time)
-        target_transform = cls._segment_transform_at(target, sample_time)
-        authored = cls._overlap_ratio(
-            cls._box(source_item, (0.0, 0.0, 1.0)),
-            cls._box(target_item, (0.0, 0.0, 1.0)),
-        )
-        animated = cls._overlap_ratio(
-            cls._box(source_item, source_transform),
-            cls._box(target_item, target_transform),
+        authored = authored_overlap_ratio(source_item, target_item)
+        animated = max_relation_overlap(
+            source=source,
+            target=target,
+            source_item=source_item,
+            target_item=target_item,
         )
         if authored <= 0.02 and animated > 0.12 and animated > authored + 0.08:
             violations.append(MotionInteractionViolation(
