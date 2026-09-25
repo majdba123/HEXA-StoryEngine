@@ -13,6 +13,7 @@ from app.motion.timing import (
     comfort_gain,
     max_comfort_displacement,
     motion_comfort,
+    semantic_readability_floor,
 )
 from app.shared.errors import StageFailedError
 
@@ -121,37 +122,51 @@ class RenderedMotionQA:
                         not geometry_locked
                         and "compound_unit" not in program_name
                     )
-                    floor_px = self._perceptual_floor_px(
-                        phase=segment.phase,
-                        width=plan.width,
-                        item_width=item.width,
-                        item_height=item.height,
-                        height=plan.height,
-                        duration=duration,
-                    )
-                    if enforce_floor:
-                        directional_budget = self._directional_comfort_budget_px(
+                    if enforce_floor and segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
+                        normalized_activity = self._expected_activity_normalized(
                             segment,
-                            duration=duration,
-                            width=plan.width,
-                            height=plan.height,
                             item_width=item.width,
                             item_height=item.height,
                         )
-                        if directional_budget > 0.0:
-                            floor_px = min(floor_px, directional_budget)
-                    if enforce_floor and expected_px + 1e-6 < floor_px:
-                        violations.append(RenderedMotionViolation(
-                            code="MOTION_BELOW_PERCEPTUAL_FLOOR",
-                            beat_id=cue.beat_id,
-                            asset_id=cue.asset_id,
+                        normalized_floor = semantic_readability_floor(
+                            segment.phase,
+                            item_width=item.width,
+                            item_height=item.height,
+                            duration=duration,
+                        )
+                        if normalized_activity + 1e-9 < normalized_floor:
+                            violations.append(RenderedMotionViolation(
+                                code="MOTION_BELOW_PERCEPTUAL_FLOOR",
+                                beat_id=cue.beat_id,
+                                asset_id=cue.asset_id,
+                                phase=segment.phase,
+                                detail=(
+                                    f"expected normalized motion {normalized_activity:.5f} "
+                                    f"is below shared readability floor {normalized_floor:.5f}"
+                                ),
+                            ))
+                            continue
+                    elif enforce_floor:
+                        floor_px = self._perceptual_floor_px(
                             phase=segment.phase,
-                            detail=(
-                                f"expected motion {expected_px:.2f}px is below readable "
-                                f"floor {floor_px:.2f}px"
-                            ),
-                        ))
-                        continue
+                            width=plan.width,
+                            item_width=item.width,
+                            item_height=item.height,
+                            height=plan.height,
+                            duration=duration,
+                        )
+                        if expected_px + 1e-6 < floor_px:
+                            violations.append(RenderedMotionViolation(
+                                code="MOTION_BELOW_PERCEPTUAL_FLOOR",
+                                beat_id=cue.beat_id,
+                                asset_id=cue.asset_id,
+                                phase=segment.phase,
+                                detail=(
+                                    f"expected motion {expected_px:.2f}px is below readable "
+                                    f"floor {floor_px:.2f}px"
+                                ),
+                            ))
+                            continue
                     if enforce_speed:
                         normalized_speed = self._max_normalized_keyframe_speed(
                             segment,
@@ -304,6 +319,34 @@ class RenderedMotionQA:
                 output.append(clipped)
         return tuple(output)
 
+
+
+    @staticmethod
+    def _expected_activity_normalized(
+        segment: MotionSegment,
+        *,
+        item_width: float,
+        item_height: float,
+    ) -> float:
+        """Measure authored semantic activity in Planner's Composition-space units."""
+        keyframes = segment.program.get("keyframes")
+        if not isinstance(keyframes, list) or not keyframes:
+            return 0.0
+        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
+        best = 0.0
+        for frame in keyframes:
+            if not isinstance(frame, dict):
+                continue
+            try:
+                translation = float(np.hypot(
+                    float(frame.get("dx", 0.0)),
+                    float(frame.get("dy", 0.0)),
+                ))
+                scale = abs(float(frame.get("scale", 1.0)) - 1.0) * asset_extent
+            except (TypeError, ValueError):
+                continue
+            best = max(best, translation, scale)
+        return best
 
     @staticmethod
     def _directional_comfort_budget_px(
