@@ -102,10 +102,23 @@ class MotionCompiler:
                     * (settle_progress - target_peak)
                 )
 
-            frames = []
-            for frame in payload["keyframes"]:
-                if frame["progress"] <= program.settle_progress:
-                    frames.append({**frame, "progress": retime(frame["progress"])})
+            source_frames = [
+                frame
+                for frame in payload["keyframes"]
+                if frame["progress"] <= program.settle_progress
+            ]
+            if window.duration < 0.05 and len(source_frames) > 2:
+                # The renderer intentionally uses a 50ms minimum interpolation window.
+                # A sub-50ms Story-owned activation cannot perceptually express an
+                # interior golden checkpoint and rounding can move that checkpoint
+                # across the exact semantic settle. Preserve Story timing authority:
+                # one transform leg to the authored settle, then hold Composition.
+                source_frames = [source_frames[0], source_frames[-1]]
+
+            frames = [
+                {**frame, "progress": retime(frame["progress"])}
+                for frame in source_frames
+            ]
             if settle_progress < 1.0:
                 frames.append({**payload["keyframes"][-1], "progress": 1.0})
             payload["keyframes"] = frames
