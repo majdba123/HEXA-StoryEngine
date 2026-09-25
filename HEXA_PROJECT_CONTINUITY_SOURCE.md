@@ -7558,3 +7558,232 @@ narration.
 
 The diagnostic class from job `8aba2e6c825246c18c27eeed0e3657ef` should not recur regardless of
 filter-graph size.
+
+
+## MONTAGE26 FFMPEG CAPABILITY PREFLIGHT + REAL-RENDER CLOSURE GATE — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`8da84eb266ec3863eaab90e4f0b206463e4f486b`
+`[test] Gate pipeline on early FFmpeg render preflight`
+
+### Production diagnostic that opened this checkpoint
+
+Diagnostic:
+`HEXA-diagnostic-b99c42c3.zip`
+
+Job:
+`b99c42c311294de29e455a8805bd8722`
+
+Runtime commit:
+`d95f9f3d3227505ef1946473f1f20a8de9ce0cf2`
+
+Environment:
+- Windows 10;
+- Python 3.11.9;
+- FFmpeg 9.0.2 full build;
+- NVIDIA GeForce 930MX;
+- 4 CPU cores.
+
+The pipeline successfully reached render after:
+- Pass1: 157 authored assets / 40 scenes;
+- Pass2: 179 assets (+22);
+- Story: 40 beats;
+- Composition: 87 text cues;
+- Motion authoring QA:
+  - 179 semantic sync anchors;
+  - 14 relation timelines;
+  - 0 visual-layout violations;
+  - 0 text-layout violations;
+  - 0 short-motion violations.
+
+The failure was therefore renderer transport compatibility, not Final Package semantics, Motion QA,
+Composition or extraction.
+
+Exact FFmpeg stderr:
+```
+Unrecognized option 'filter_complex_script'.
+Error splitting the argument list: Option not found
+```
+
+### Root cause
+
+MONTAGE25 correctly moved large filter graphs out of the Windows process command line to prevent
+WinError 206.
+
+However it used the deprecated:
+`-filter_complex_script <file>`
+
+FFmpeg 9.0.2 in the operator environment no longer accepts that alias.
+
+Current FFmpeg uses the generic file-option syntax:
+`-/filter_complex <file>`
+
+Meanwhile the Ubuntu CI environment uses FFmpeg 6.1.1, which does not understand the newer generic
+file-option syntax and still requires the legacy alias.
+
+Therefore hardcoding either spelling is not production-safe.
+
+### Generic capability adapter
+
+Behavior commits:
+- `936fd43a0b6a64dd6b5468e568afb95f402e1570`
+  `[render] Adapt complex-filter file syntax to FFmpeg capability`
+- `85686563cb1b4c6a6d2da72c1bc2e04d62de5907`
+  `[test] Cover FFmpeg filter-file capability adaptation`
+
+Renderer now probes:
+`ffmpeg -hide_banner -h full`
+
+once per renderer instance.
+
+Selection:
+- if FFmpeg advertises `filter_complex_script` => use `-filter_complex_script`;
+- otherwise => use `-/filter_complex`.
+
+This is capability-driven rather than package-driven or OS-driven.
+
+The filter graph is still always externalized to a UTF-8 `.ffgraph` file, so Windows command length
+remains bounded regardless of:
+- asset count;
+- Pass2 density;
+- relation count;
+- Motion keyframe complexity;
+- text/ASS filters;
+- scene-continuity expressions.
+
+### Fail-fast real render preflight
+
+Behavior commits:
+- `da499ca73e66af3ed88eeca3ed2da07bdbf02e6a`
+  `[render] Add real FFmpeg preflight before expensive generation`
+- `9ac00699ece41105e1aafe2dd8305f608e2e2ffa`
+  `[pipeline] Fail fast on incompatible FFmpeg render path`
+- `0970d2b50a0f576e7f64ac9ff852df6dbccdae2c`
+  `[test] Require real renderer preflight encode`
+- `8da84eb266ec3863eaab90e4f0b206463e4f486b`
+  `[test] Gate pipeline on early FFmpeg render preflight`
+
+Every generation job now performs a real two-frame H.264 encode before Final Package parsing,
+transcription, vision or cutout work.
+
+Preflight validates the actual production path:
+- installed FFmpeg executable;
+- supported filter-file option;
+- external filter graph parsing;
+- libx264 availability;
+- CRF 18 encode path;
+- yuv420p;
+- 30fps;
+- real non-empty MP4 output.
+
+If this path is incompatible, the job fails immediately instead of spending several minutes in
+transcription / vision / extraction before reaching Render.
+
+Preflight artifact:
+`<workspace>/preflight/ffmpeg-render-preflight.mp4`
+
+### Quality-preservation contract
+
+This diagnostic was fixed only by changing how the filter graph reaches FFmpeg.
+
+No production visual/audio quality parameter was changed:
+- codec remains libx264;
+- CRF remains 18;
+- pixel format remains yuv420p;
+- fps remains 30;
+- Motion data unchanged;
+- Story timing unchanged;
+- Composition geometry unchanged;
+- text content/placement logic unchanged by this fix;
+- Pass1 + Pass2 unchanged;
+- no Pass3 / Layer3;
+- no asset count reduction;
+- no scene simplification;
+- no QA threshold was weakened.
+
+Regression:
+`test_filter_file_transport_does_not_change_export_quality_contract`
+
+locks:
+- libx264;
+- CRF 18;
+- yuv420p;
+- 30fps.
+
+### Real encoded-render verification after CI
+
+GitHub CI on behavior HEAD:
+Run `36155844761`
+
+Result:
+**SUCCESS**
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **363 passed, 12 warnings in 8.60s**
+- tested source snapshot uploaded successfully.
+
+The exact tested source snapshot was downloaded and independently exercised outside GitHub CI.
+
+Local FFmpeg:
+`7.1.5`
+
+Real release smoke:
+`FFmpegRenderer -> H.264 -> audio mux -> final-media QA`
+=> PASS.
+
+Dense real-package smoke:
+- 12 actual PNG scene images from the uploaded corrected Black-Hat Final Package;
+- 12 independent renderer inputs;
+- real Composition grid;
+- real reveal cues;
+- one-second H.264 output;
+- 640x360;
+- yuv420p;
+- 30fps.
+
+Two renders were produced from the exact same RenderPlan:
+
+A. adaptive capability selection:
+`-filter_complex_script`
+
+B. forced modern syntax:
+`-/filter_complex`
+
+Both outputs:
+- H.264;
+- 640x360;
+- yuv420p;
+- 30fps;
+- 1.000 seconds;
+- 43,090 bytes.
+
+Both had the exact same SHA-256:
+`0b524e82344d4cfa089c2101ed7818aab1d66e6d652c5b5c810ba7fc03731915`
+
+Therefore filter transport changed neither encoded pixels nor export quality in this verification.
+
+### Permanent production-bug closure protocol
+
+From this checkpoint forward, a production diagnostic is not considered closed merely because code
+compiles or unit tests pass.
+
+For every reproducible production failure:
+
+1. inspect the real diagnostic and identify the root-cause class;
+2. implement a package-agnostic engine fix;
+3. forbid scene ids, asset ids, topic nouns or package-specific timing hardcodes;
+4. add a regression reproducing the failure class;
+5. keep QA strict unless the QA contract itself is proven contradictory;
+6. run full Compile + Ruff + Pytest CI;
+7. run an actual encoded render smoke through FFmpeg;
+8. for renderer/export failures, exercise a dense or representative real-media path when possible;
+9. verify codec/fps/pixel-format/quality settings and semantic content were not reduced merely to pass QA;
+10. only then record the checkpoint as production-ready.
+
+If safety/geometry requires Motion adaptation, the engine must preserve the strongest safe motion and
+record the limiting reason; it must not globally weaken Motion or lower QA thresholds.
+
+State:
+**The b99c42c3 FFmpeg-9 compatibility failure is closed generically, early render compatibility is now
+tested by the product itself, and the fix was independently real-rendered without any export-quality
+change.**
