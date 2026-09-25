@@ -19,6 +19,7 @@ from app.models import (
     StorySemanticContext,
     VisualAsset,
 )
+from app.motion.timing import GOLDEN_MINOR
 from app.recovery.detector import RecoveryDetector
 from app.render.renderer import FFmpegRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
@@ -740,10 +741,21 @@ def test_blur_bridge_window_stays_short_around_delayed_incoming_reveal() -> None
         preferred_duration=0.36,
     )
 
-    assert 1.00 < start < 1.20
+    assert start == pytest.approx(1.20 - 0.36 * GOLDEN_MINOR)
     assert start < 1.20 < end
     assert end - start == pytest.approx(0.36)
     assert start > 0.9  # the preceding narration gap remains crisp, not blurred
+
+
+def test_scene_bridge_progress_is_smooth_not_linear() -> None:
+    expression = FFmpegRenderer._bridge_progress_expression(
+        start=0.20,
+        duration=0.40,
+    )
+    assert "3*" in expression
+    assert "-2*" in expression
+    assert "gte(t,0.600000)" in expression
+    assert "/0.400000" in expression
 
 
 def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics_without_global_blur() -> None:
