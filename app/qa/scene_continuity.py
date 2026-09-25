@@ -73,6 +73,7 @@ class SceneContinuityQA:
             distinct_outgoing = previous_ids - current_ids
 
             if distinct_outgoing and decision.mode not in {
+                SceneTransitionMode.OBJECT_HANDOFF,
                 SceneTransitionMode.MOTION_HANDOFF,
                 SceneTransitionMode.BLUR_BRIDGE,
             }:
@@ -88,6 +89,7 @@ class SceneContinuityQA:
                 continue
 
             if decision.mode in {
+                SceneTransitionMode.OBJECT_HANDOFF,
                 SceneTransitionMode.MOTION_HANDOFF,
                 SceneTransitionMode.BLUR_BRIDGE,
             }:
@@ -109,6 +111,13 @@ class SceneContinuityQA:
 
             if decision.mode == SceneTransitionMode.BLUR_BRIDGE:
                 blurred += 1
+                if decision.reason != "explicit_blur_intent":
+                    violations.append(SceneContinuityViolation(
+                        code="BLUR_NOT_EXPLICITLY_AUTHORED",
+                        from_beat_id=previous.id,
+                        to_beat_id=current.id,
+                        detail=f"blur reason was {decision.reason!r}",
+                    ))
                 if decision.blur_sigma <= 0:
                     violations.append(SceneContinuityViolation(
                         code="BLUR_BRIDGE_WITHOUT_BLUR",
