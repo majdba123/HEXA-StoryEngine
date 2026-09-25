@@ -77,4 +77,11 @@ def test_pipeline_generates_final_video(tmp_path: Path) -> None:
 
     assert output.is_file()
     assert output.stat().st_size > 0
+    assert (
+        tmp_path
+        / "work"
+        / "integration-job"
+        / "preflight"
+        / "ffmpeg-render-preflight.mp4"
+    ).is_file()
     assert (tmp_path / "work" / "integration-job" / "render-plan.json").is_file()
