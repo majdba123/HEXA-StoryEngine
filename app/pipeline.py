@@ -115,6 +115,10 @@ class StoryEnginePipeline:
         workspace.mkdir(parents=True, exist_ok=True)
 
         self._check_cancel(cancelled)
+        self._progress(progress, Stage.input, 0.01, "Checking FFmpeg render path")
+        self.renderer.preflight(workspace / "preflight")
+
+        self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.04, "Reading Final Package")
         package = self.loader.load(package_path, workspace, script_path)
         audio_path = audio_path.expanduser().resolve()
