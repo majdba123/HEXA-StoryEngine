@@ -159,11 +159,15 @@ class StoryPlanner:
             if relation.trigger_char_start is None or relation.trigger_char_end is None:
                 relations.append(relation)
                 continue
+            # Semantic-binding script_span is validated by FinalPackageLoader as
+            # half-open [start, end). _timing_for_span is a legacy helper whose
+            # char_end parameter is inclusive, so convert only at this boundary.
+            inclusive_end = relation.trigger_char_end - 1
             spoken_start, spoken_end, _ = cls._timing_for_span(
                 transcript,
                 script,
                 relation.trigger_char_start,
-                relation.trigger_char_end,
+                inclusive_end,
                 relation.trigger_text,
             )
             start = max(lower, min(upper, float(spoken_start)))

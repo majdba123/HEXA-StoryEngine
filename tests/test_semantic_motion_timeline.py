@@ -43,8 +43,9 @@ def test_relation_script_span_resolves_to_spoken_window() -> None:
             target_unit_id="B",
             kind="ATTACKS",
             authority="FINAL_PACKAGE_ASSET_RELATION",
+            trigger_text="attacks",
             trigger_char_start=2,
-            trigger_char_end=10,
+            trigger_char_end=9,
         )
     ])
     resolved = StoryPlanner._resolve_relation_timing(
@@ -53,7 +54,7 @@ def test_relation_script_span_resolves_to_spoken_window() -> None:
     )
     relation = resolved.relations[0]
     assert relation.spoken_start == pytest.approx(2.00)
-    assert relation.spoken_end == pytest.approx(2.55)
+    assert relation.spoken_end == pytest.approx(2.28)
 
 
 def _activation(asset_id: str, *, spoken_start: float, spoken_end: float, roles: list[str]):
