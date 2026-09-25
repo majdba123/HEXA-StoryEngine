@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from app.models import (
     AssetActivation,
     CompositionBeat,
     LayoutItem,
+    RenderPlan,
     StoryBeat,
     Transcript,
     TranscriptWord,
@@ -20,6 +22,8 @@ from app.models import (
 )
 from app.motion import MotionPlanner
 from app.motion.order import MotionOrderResolver
+from app.qa import MotionInteractionQA, RenderedMotionQA
+from app.render.renderer import FFmpegRenderer
 from app.story.planner import StoryPlanner
 from app.story.windows import schedule_windows
 from app.text.planner import TextPlanner
@@ -343,3 +347,72 @@ def test_v12_event_leader_wins_same_time_attention_over_context() -> None:
     assert cues["leader"].params["semantic_focus"]["cohort_role"] in {"leader", "leader_member"}
     assert cues["leader"].params["semantic_focus"]["cohort_gain"] == pytest.approx(1.0)
     assert cues["context"].params["semantic_focus"]["cohort_role"] == "quiet"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_v12_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) -> None:
+    """Prove the rich V1.2 contract survives through a real encoded MP4.
+
+    This is intentionally broader than the metadata contract test above:
+    FinalPackageLoader -> Story -> Choreography -> Motion segments -> FFmpeg ->
+    encoded semantic-motion QA.
+    """
+    package = FinalPackageLoader().load(_write_package(tmp_path), tmp_path / "work-render")
+    scene = package.scenes[0]
+
+    cutout_root = tmp_path / "cutouts"
+    cutout_root.mkdir()
+    specs = (
+        ("a", (215, 55, 55, 255), 0.20, 0.50),
+        ("b", (45, 115, 220, 255), 0.50, 0.50),
+        ("c", (55, 175, 85, 255), 0.80, 0.50),
+    )
+    assets: list[VisualAsset] = []
+    items: list[LayoutItem] = []
+    for index, (asset_id, color, x, y) in enumerate(specs):
+        path = cutout_root / f"{asset_id}.png"
+        Image.new("RGBA", (140, 140), color).save(path)
+        assets.append(VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=path,
+            extraction_method="v12-render-contract",
+            source_area_ratio=0.30 - index * 0.05,
+        ))
+        items.append(LayoutItem(
+            asset_id=asset_id,
+            x=x,
+            y=y,
+            width=0.18,
+            height=0.28,
+            z=10 + index,
+        ))
+
+    transcript = _transcript()
+    story = StoryPlanner().plan(package, transcript, assets)
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    composition = [CompositionBeat(beat_id=story[0].id, items=items)]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+
+    interaction = MotionInteractionQA().inspect(story=story, motion=motion)
+    assert interaction.ok, interaction.violations
+    assert interaction.checked_relations >= 1
+
+    plan = RenderPlan(
+        width=640,
+        height=360,
+        fps=30,
+        duration=transcript.duration,
+        story=story,
+        composition=composition,
+        motion=motion,
+        assets=assets,
+    )
+    output = tmp_path / "v12-semantic-motion.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+
+    assert output.is_file() and output.stat().st_size > 0
+    encoded = RenderedMotionQA().inspect(video=output, plan=plan)
+    assert encoded.ok, encoded.violations
+    assert encoded.checked_segments >= 2
