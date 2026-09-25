@@ -602,6 +602,11 @@ class MotionPlanner:
         )
         if entry_segment is not None:
             segments.append(entry_segment)
+        motion_ready_start = (
+            float(entry_segment.end)
+            if entry_segment is not None
+            else float(cue.start)
+        )
 
         phases = list(assignment.phase_chain)
         react_keys = {
@@ -627,15 +632,59 @@ class MotionPlanner:
             if key in seen:
                 continue
             seen.add(key)
+            relation_phase = (
+                phase.stage in {
+                    EventFlowStage.INTERACT,
+                    EventFlowStage.REACT,
+                    EventFlowStage.PAYOFF,
+                }
+                and phase.authority in {
+                    "FINAL_PACKAGE_ASSET_RELATION",
+                    "FINAL_PACKAGE_INTERACTION_TARGET",
+                }
+            )
+            phase_deadline = float(beat.end) if relation_phase else deadline
+            source_activation_start = next(
+                (
+                    float(row.spoken_start)
+                    for row in beat.asset_activations
+                    if row.asset_id == phase.source_asset_id
+                    and row.spoken_start is not None
+                ),
+                None,
+            )
             window = cls._event_segment_window(
                 phase=phase,
                 activation=activation,
                 cue=cue,
                 beat=beat,
                 # Semantic relation timing outranks decorative release. Do not shorten
-                # INTERACT/REACT/PAYOFF just to force an EXIT into the same handoff.
-                deadline=deadline,
+                # authored cross-event INTERACT/REACT at an event handoff; their own
+                # spoken relation span is the authority. PAYOFF retains event deadline.
+                deadline=phase_deadline,
+                relation_source_start=source_activation_start,
+                motion_ready_start=motion_ready_start,
             )
+            if window is None and relation_phase and entry_segment is not None:
+                # A short authored relation may start immediately when the visual is
+                # spoken, leaving no room to run both ENTRY and the semantic action as
+                # separate transforms. Never overlap them (FFmpeg would make one hide
+                # the other). Semantic meaning wins: drop the decorative ENTRY and
+                # execute the authored relation from the Story reveal boundary.
+                retry = cls._event_segment_window(
+                    phase=phase,
+                    activation=activation,
+                    cue=cue,
+                    beat=beat,
+                    deadline=phase_deadline,
+                    relation_source_start=source_activation_start,
+                    motion_ready_start=float(cue.start),
+                )
+                if retry is not None:
+                    segments = [row for row in segments if row.phase != "ENTRY"]
+                    entry_segment = None
+                    motion_ready_start = float(cue.start)
+                    window = retry
             if window is None:
                 continue
             vector = cls._phase_interaction_vector(
@@ -667,7 +716,11 @@ class MotionPlanner:
                     source_asset_id=phase.source_asset_id,
                     target_asset_id=phase.target_asset_id,
                     result_asset_id=phase.result_asset_id,
-                    handoff_deadline=deadline,
+                    handoff_deadline=(
+                        min(phase_deadline, float(phase.spoken_end))
+                        if relation_phase and phase.spoken_end is not None
+                        else phase_deadline
+                    ),
                 )
             )
 
@@ -792,7 +845,22 @@ class MotionPlanner:
         if max_peak > 0.0:
             desired_peak = min(desired_peak, max_peak)
         gain = desired_peak / peak if peak > 1e-6 else 1.0
-        max_scale_delta = min(0.08, max(0.012, duration * 0.20))
+        asset_extent = max(
+            1e-6,
+            min(item.width, item.height) if item is not None else 0.18,
+        )
+        # Translation and scale must share the same normalized speed budget. Without
+        # this asset-aware cap a large visual can satisfy translation comfort but still
+        # produce a rushed zoom that encoded-video QA correctly rejects.
+        max_scale_delta = min(
+            0.08,
+            max_peak / asset_extent if max_peak > 0.0 else 0.0,
+        )
+        scale_gain = (
+            min(1.0, max_scale_delta / scale_peak)
+            if scale_peak > 1e-9
+            else 1.0
+        )
         frames = tuple(
             MotionKeyframe(
                 progress=frame.progress,
@@ -800,10 +868,7 @@ class MotionPlanner:
                 dy=max(-0.075, min(0.075, frame.dy * gain)),
                 scale=(
                     1.0
-                    + max(
-                        -max_scale_delta,
-                        min(max_scale_delta, frame.scale - 1.0),
-                    )
+                    + (frame.scale - 1.0) * scale_gain
                     if peak > 1e-6 or scale_peak >= 0.045
                     else 1.0
                     - (
@@ -816,10 +881,49 @@ class MotionPlanner:
             )
             for frame in program.keyframes
         )
+        frames = MotionPlanner._cap_entry_leg_speed(
+            frames,
+            duration=duration,
+            asset_extent=asset_extent,
+        )
         return MotionProgram(
             name=f"{program.name}_readable",
             keyframes=frames,
             settle_progress=program.settle_progress,
+        )
+
+    @staticmethod
+    def _cap_entry_leg_speed(
+        frames: tuple[MotionKeyframe, ...],
+        *,
+        duration: float,
+        asset_extent: float,
+    ) -> tuple[MotionKeyframe, ...]:
+        """Ensure no individual ENTRY keyframe leg exceeds the comfort ceiling."""
+        if len(frames) < 2 or duration <= 1e-6:
+            return frames
+        speed_limit = motion_comfort("ENTRY").max_normalized_speed
+        peak_speed = 0.0
+        for left, right in zip(frames, frames[1:]):
+            seconds = max(1e-6, (right.progress - left.progress) * duration)
+            translation = hypot(right.dx - left.dx, right.dy - left.dy)
+            scale_motion = abs(right.scale - left.scale) * asset_extent
+            peak_speed = max(
+                peak_speed,
+                max(translation, scale_motion) / seconds,
+            )
+        if peak_speed <= speed_limit + 1e-9:
+            return frames
+        gain = max(0.0, min(1.0, speed_limit / peak_speed))
+        return tuple(
+            MotionKeyframe(
+                progress=frame.progress,
+                dx=frame.dx * gain,
+                dy=frame.dy * gain,
+                scale=1.0 + (frame.scale - 1.0) * gain,
+                easing=frame.easing,
+            )
+            for frame in frames
         )
 
     @staticmethod
@@ -830,47 +934,74 @@ class MotionPlanner:
         cue: MotionCue,
         beat: StoryBeat,
         deadline: float,
+        relation_source_start: float | None = None,
+        motion_ready_start: float | None = None,
     ) -> tuple[float, float] | None:
         relation_start = phase.spoken_start
         relation_end = phase.spoken_end
         profile = motion_comfort(phase.stage.value)
+        lower = max(
+            float(cue.start),
+            float(beat.start),
+            float(motion_ready_start)
+            if motion_ready_start is not None
+            else float(cue.start),
+        )
+        upper = min(float(beat.end), float(deadline))
+
         if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
             if relation_start is None or relation_end is None or relation_end <= relation_start:
                 return None
+            relation_start = float(relation_start)
+            relation_end = float(relation_end)
+            upper = min(upper, relation_end)
             span = relation_end - relation_start
+
             if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
-                start = relation_start
+                # The source owns the whole authored relation phrase. Keeping the
+                # source active through the relation guarantees a later-appearing
+                # target can visibly react instead of producing two disconnected
+                # gestures. Speed caps still bound how much the source moves.
+                start = max(lower, relation_start)
+                end = upper
             elif phase.stage == EventFlowStage.REACT:
                 reaction_delay = min(
                     span * GOLDEN_MINOR,
                     profile.target_seconds * GOLDEN_MINOR,
                 )
-                start = relation_start + reaction_delay
+                start = max(
+                    lower,
+                    relation_start + reaction_delay,
+                    float(relation_source_start)
+                    if relation_source_start is not None
+                    else relation_start,
+                )
+                # If the target becomes visible after the nominal reaction onset,
+                # shift the complete reaction window forward instead of truncating it
+                # to an imperceptible remainder. The authored relation end is hard.
+                end = min(upper, start + profile.target_seconds)
             else:
                 acknowledgement_delay = min(
                     span * GOLDEN_MINOR * 0.5,
                     profile.target_seconds * GOLDEN_MINOR * 0.5,
                 )
-                start = relation_start + acknowledgement_delay
-            end = start + profile.target_seconds
+                start = max(lower, relation_start + acknowledgement_delay)
+                end = min(upper, start + profile.target_seconds)
         elif phase.stage == EventFlowStage.PAYOFF:
             if relation_start is not None and relation_end is not None and relation_end > relation_start:
+                relation_start = float(relation_start)
+                relation_end = float(relation_end)
                 span = relation_end - relation_start
-                start = relation_start + span * GOLDEN_MAJOR
+                upper = min(upper, relation_end)
+                start = max(lower, relation_start + span * GOLDEN_MAJOR)
             elif activation is not None and activation.spoken_start is not None:
-                start = float(activation.spoken_start)
+                start = max(lower, float(activation.spoken_start))
             else:
                 return None
-            if activation is not None and activation.spoken_start is not None:
-                start = max(start, float(activation.spoken_start))
-            end = start + profile.target_seconds
+            end = min(upper, start + profile.target_seconds)
         else:
             return None
 
-        lower = max(float(cue.start), float(beat.start))
-        upper = min(float(beat.end), float(deadline))
-        start = max(lower, float(start))
-        end = min(upper, float(end))
         if end - start < 0.06:
             return None
         return start, end
@@ -1543,7 +1674,14 @@ class MotionPlanner:
         Very short narration windows therefore collapse safely to the dominant phase;
         larger windows can express an establish/add beat before interaction/reaction/payoff.
         """
-        phases = list(assignment.phase_chain)
+        # The legacy/compatibility entry program belongs to the asset's dominant Story
+        # event only. Cross-event relation phases are executed later as independent
+        # MotionSegments and must not rewrite the entry program or semantic owner.
+        phases = [
+            phase
+            for phase in assignment.phase_chain
+            if phase.event_id == assignment.event_id
+        ]
         if not phases:
             return ()
 
