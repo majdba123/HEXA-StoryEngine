@@ -6901,3 +6901,291 @@ State:
 **MONTAGE22 is code/CI complete. The remaining acceptance gate is a fresh production render with the
 same real Black-Hat Final Package + narration, followed by visual comparison against the previous
 render and the reference videos.**
+
+
+## MONTAGE23 FINAL-PACKAGE RELATION COVERAGE + ENCODED MOTION CONTRACT CHECKPOINT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`974dbaa5398f2e692cdf3d7c2cd7ecb47d36ad06`
+`[test] Lock cross-event relation execution ownership`
+
+### Why this checkpoint was opened
+
+A new real production render diagnostic from the same Black-Hat V1.2 Final Package failed after
+MONTAGE22.
+
+The package itself was not malformed:
+- FinalPackageLoader accepted the exact ZIP;
+- 40 scenes were present;
+- Pass1 / Pass2 / Story / Composition completed;
+- the failure occurred in semantic Motion / encoded Motion QA.
+
+The diagnostic exposed three generic engine-contract gaps that could recur with future Final Packages:
+
+1. some V1.2 relations had no relation-level `script_span` even though their source/target/result assets
+   had exact authored spans;
+2. some authored relations crossed semantic-event ownership boundaries, but Motion initially restricted
+   an asset to phases belonging only to its own event;
+3. encoded Motion QA could demand visible transform activity from an asset that Renderer intentionally
+   geometry-locks, and ENTRY could be hidden by a later semantic segment starting at the same time.
+
+The fixes below are package-agnostic and do not contain Black-Hat scene ids, nouns or timing literals.
+
+### Relation timing fallback from authored participant spans
+
+Commit:
+`928503f173ee1c19aead8b55fb996180667a05e7`
+`[story] Derive relation timing from authored asset spans`
+
+V1.2 permits an authored relation without its own script span.
+
+New rule:
+- if relation.script_span exists, it remains authoritative;
+- otherwise Story derives the smallest half-open authored envelope covering:
+  - source asset span;
+  - target asset span;
+  - optional result asset span;
+- source + target must both have valid authored spans;
+- otherwise Story abstains rather than inventing timing.
+
+No topic inference, NLP guessing or scene-specific fallback is used.
+
+This restores real spoken timing for package-authored relations that were previously semantically known
+but temporally inert.
+
+### Cross-event authored relations execute without stealing event ownership
+
+Commit:
+`d6131b432b2c5fc2e1ded938e18ad81674c7af06`
+`[motion] Execute authored relations across semantic events`
+
+A semantic visual still owns its original event for ENTRY / establishment / result ownership.
+
+However, if the Final Package explicitly names that visual as source or target of an authored relation
+from another event, Motion may additionally execute only the cross-event relation phases:
+- INTERACT for the authored source;
+- REACT for the authored target.
+
+Cross-event phases:
+- are appended to the phase chain;
+- cannot become the dominant assignment;
+- cannot steal ENTRY ownership;
+- cannot inject unrelated ESTABLISH / ADD / PAYOFF phases.
+
+This is the minimum permission required to execute authored relation semantics across event boundaries.
+
+### ENTRY and semantic phases can never hide each other
+
+Commit:
+`9bdabfe63dc3e0adfaff13395e09fc0dc51cce70`
+`[motion] Preserve entry and relation timelines without overlap`
+
+The production diagnostic showed a class of encoded failure where Motion metadata had an ENTRY, but
+INTERACT / REACT began at the same instant and FFmpeg correctly preferred the later semantic segment,
+making the encoded ENTRY appear static.
+
+New invariant:
+- later semantic motion on the same asset begins no earlier than the actual ENTRY end;
+- if a short authored relation cannot fit both a decorative ENTRY and its semantic action:
+  - semantic meaning wins;
+  - ENTRY is omitted;
+  - relation motion starts at the Story reveal boundary;
+- the engine never retains a metadata-only ENTRY that is guaranteed to be hidden by another segment.
+
+This eliminates the metadata-render disagreement instead of weakening encoded QA.
+
+### Authored relation timing outranks event handoff clipping
+
+Relation phases use their own spoken relation window as timing authority.
+
+A cross-event INTERACT / REACT is no longer truncated merely because an event handoff boundary occurs
+inside the authored relation phrase.
+
+Rules:
+- relation source can remain active through the authored relation span;
+- target REACT is shifted to the target's legal reveal window when needed;
+- target REACT can never begin before the relation source's Story activation;
+- PAYOFF retains causal ordering and authored visibility constraints;
+- no segment may exceed the authored relation end.
+
+This preserves the actual visual sentence rather than slicing it at an unrelated event boundary.
+
+### Geometry-lock render / QA contract aligned
+
+Commit:
+`fd1b9ad5c520e922c22e674e0d8fd4232914d0e3`
+`[qa] Align encoded motion checks with render and comfort contracts`
+
+Renderer intentionally suppresses translation and scaling when:
+`render_constraints.geometry_lock == authored_footprint`
+
+Previously RenderedMotionQA could still demand encoded transform activity from that same asset.
+
+That was a direct contract contradiction.
+
+Now:
+- geometry-locked assets remain timing/visibility validated;
+- encoded transform-activity checks are skipped for transforms Renderer intentionally suppresses;
+- this is not a global QA bypass;
+- normal movable assets still require real encoded motion evidence.
+
+Encoded Motion evidence was also hardened:
+- multiple evidence points are sampled instead of relying on one exact peak frame;
+- ENTRY baseline is sampled from its actual start state;
+- expected motion and comfort checks use the same normalized geometry contract as Planner.
+
+### ENTRY speed contract hardened
+
+Planner now limits the complete ENTRY program by actual per-leg normalized speed, including:
+- translation;
+- scale projected through actual authored asset extent.
+
+If any keyframe leg exceeds the ENTRY comfort ceiling, the complete entry amplitude is reduced
+proportionally.
+
+This prevents a hidden fast scale/translation spike between individually safe keyframes.
+
+### Missing executable relation timeline is now a hard pre-render failure
+
+Commit:
+`a15d6ba64faa31a41f0fd2a662b54df6e2ed5470`
+`[qa] Fail when executable package relations lose motion timelines`
+
+Pipeline integration:
+`8227f75ac6e27e5738c549a944fdfd9fb2f1cec1`
+`[pipeline] Gate authored relation coverage before render`
+
+MotionInteractionQA now receives the complete Choreography plan.
+
+For every executable relation whose authority is:
+- FINAL_PACKAGE_ASSET_RELATION; or
+- FINAL_PACKAGE_INTERACTION_TARGET
+
+QA requires a represented INTERACT source timeline.
+
+Missing coverage produces:
+`MISSING_RELATION_TIMELINE`
+
+This occurs before render.
+
+Therefore the engine can no longer silently report a rich Final Package while rendering zero relation
+timelines.
+
+### First-beat semantic leakage also closed
+
+Commit:
+`8b89d4792c22850651657dd1f36b1cc066a9d6d2`
+`[render] Never reveal first-beat carrier before Story timing`
+
+Regression:
+`424af75539137fc4be6432ca324bb037b0864d44`
+`[test] Prevent first-beat semantic leakage before reveal`
+
+The boundary-carrier recovery mechanism is never allowed to reveal a first-beat semantic visual before
+Story timing.
+
+This keeps continuity recovery from becoming a semantic early-reveal path.
+
+### Regression coverage added
+
+Key regressions:
+- `b841294379782ef4ab4ba420b8d70e7f5fdbb094`
+  `[test] Cover spanless V1.2 relation timing and motion coverage`
+- `fb128f6ce654740cf1f7f50df13e5a880809a0ed`
+  `[test] Cover geometry-locked encoded motion contract`
+- `424af75539137fc4be6432ca324bb037b0864d44`
+  `[test] Prevent first-beat semantic leakage before reveal`
+- `974dbaa5398f2e692cdf3d7c2cd7ecb47d36ad06`
+  `[test] Lock cross-event relation execution ownership`
+
+The V1.2 package regression now explicitly:
+1. removes relation-level script span;
+2. derives timing from authored asset spans;
+3. builds Story;
+4. builds Choreography;
+5. builds Motion;
+6. validates MotionInteractionQA with Choreography coverage;
+7. intentionally strips Motion segments;
+8. proves QA fails with MISSING_RELATION_TIMELINE.
+
+### Exact-package semantic audit
+
+The same Black-Hat Final Package that triggered the diagnostic was audited against the new generic
+contracts.
+
+Package semantics:
+- 15 authored relations;
+- 15/15 relations gained Story timing;
+- 14/14 executable relations produced Motion relation timelines;
+- the remaining relation was descriptive/non-executable;
+- MotionInteractionQA completed with 0 relation violations.
+
+This audit used the package's authored semantic/script spans and deterministic timing alignment to
+exercise package consumption independent of any topic-specific rule.
+
+### CI behavior during the fix
+
+An intermediate CI run:
+`36147055557`
+
+Compile and Ruff passed, but 3 old semantic-motion tests failed because their assertions represented
+the superseded contract:
+- required ENTRY even when a short PAYOFF correctly takes semantic priority;
+- attempted to manufacture a non-overlap at a timestamp that still overlapped the now-correct
+  full-phrase source INTERACT;
+- treated the comfort ceiling as a mandatory amplitude target rather than a maximum.
+
+The tests were corrected to validate the current invariants; no production QA threshold was weakened.
+
+### Final CI
+
+Behavior HEAD:
+`974dbaa5398f2e692cdf3d7c2cd7ecb47d36ad06`
+
+Run:
+`36147220828`
+
+Result:
+**SUCCESS**
+
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **354 passed, 12 warnings in 11.34s**
+
+### Final production contract after MONTAGE23
+
+1. Final Package relation semantics cannot silently disappear before Motion.
+2. Relation-level script span is optional only when source+target authored asset spans can safely define
+   the relation timing envelope.
+3. Cross-event authored relation participants may execute only their explicit INTERACT / REACT roles.
+4. Event ownership for ENTRY / establishment / result remains intact.
+5. ENTRY and relation motion on one visual cannot temporally mask each other.
+6. A short semantic window drops decorative ENTRY rather than hiding semantic action.
+7. Authored relation timing outranks unrelated event handoff clipping.
+8. REACT cannot precede the source's Story activation.
+9. Geometry-locked visuals are never required to produce transforms that Renderer intentionally forbids.
+10. Movable visuals still require encoded Motion evidence.
+11. ENTRY speed is bounded on every keyframe leg.
+12. First-beat recovery cannot reveal semantic visuals before Story timing.
+13. Pass1 + Pass2 extraction architecture remains unchanged.
+14. No Pass3 / Layer3 was introduced.
+15. Composition remains the final geometry authority.
+16. Story / WhisperX remains timing authority.
+17. Final Package remains semantic authority.
+
+### Next production gate
+
+Pull the new `montage` HEAD after this checkpoint documentation commit and rerun the exact same
+Black-Hat Final Package + narration.
+
+The specific previous diagnostic class should not recur:
+- spanless authored relations now execute;
+- geometry-lock no longer creates false encoded-transform failures;
+- ENTRY cannot be metadata-only because another semantic segment hides it;
+- missing executable relations fail before expensive rendering instead of after semantic loss.
+
+If the rerun produces another diagnostic, treat it as a new production gate and do not disable QA.
+
+State:
+**The diagnostic was converted into generic engine contracts and regressions. The same package now has
+full executable relation coverage in the semantic audit, and the complete GitHub CI is green.**
