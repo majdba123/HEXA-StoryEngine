@@ -338,34 +338,40 @@ class RenderedMotionQA:
             return 0.0
 
         translation_factor = 0.0
+        translation_peak_px = 0.0
+        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
+        asset_px = max(1.0, min(width * item_width, height * item_height))
+        scale_peak_px = 0.0
+
         for frame in keyframes:
+            if not isinstance(frame, dict):
+                continue
             try:
                 dx = float(frame.get("dx", 0.0))
                 dy = float(frame.get("dy", 0.0))
+                scale_delta = abs(float(frame.get("scale", 1.0)) - 1.0)
             except (TypeError, ValueError):
                 continue
+
             magnitude = float(np.hypot(dx, dy))
-            if magnitude <= 1e-9:
-                continue
-            translation_factor = max(
-                translation_factor,
-                float(np.hypot(
-                    dx / magnitude * width,
-                    dy / magnitude * height,
-                )),
-            )
+            if magnitude > 1e-9:
+                projected_px = float(np.hypot(dx * width, dy * height))
+                if projected_px > translation_peak_px:
+                    translation_peak_px = projected_px
+                    translation_factor = projected_px / magnitude
+            scale_peak_px = max(scale_peak_px, scale_delta * asset_px)
 
-        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
-        asset_px = max(1.0, min(width * item_width, height * item_height))
-        scale_factor = 0.0
-        if any(
-            abs(float(frame.get("scale", 1.0)) - 1.0) > 1e-9
-            for frame in keyframes
-            if isinstance(frame, dict)
-        ):
-            scale_factor = asset_px / asset_extent
+        # Use the pixel projection of the motion channel that actually dominates the
+        # authored gesture. Taking max(translation_factor, scale_factor) merely because
+        # a small scale pulse also exists can overstate the reachable readability
+        # budget for a vertical/diagonal REACT on a 16:9 canvas.
+        if translation_peak_px >= scale_peak_px and translation_factor > 0.0:
+            pixel_factor = translation_factor
+        elif scale_peak_px > 0.0:
+            pixel_factor = asset_px / asset_extent
+        else:
+            pixel_factor = translation_factor
 
-        pixel_factor = max(translation_factor, scale_factor)
         return normalized_budget * pixel_factor if pixel_factor > 0.0 else 0.0
 
     @staticmethod
