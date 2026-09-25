@@ -10,6 +10,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.models import (
+    AssetActivation,
     CompositionBeat,
     LayoutItem,
     MotionCue,
@@ -771,14 +772,28 @@ def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics_w
         previous, old_layout, new_layout, current_beat=scene_continuation
     ).mode == SceneTransitionMode.MOTION_HANDOFF
 
-    asset_continuation = scene_continuation.model_copy(update={
-        "semantic_context": StorySemanticContext(
-            continuity_by_unit={"new-semantic": {"mode": "TRANSFORM_TO", "target_asset_id": "next"}},
-        )
+    previous_with_continuity = previous.model_copy(update={
+        "asset_activations": [
+            AssetActivation(
+                asset_id="old",
+                semantic_unit_id="old-semantic",
+                continuity={"mode": "TRANSFORM_TO", "target_asset_id": "new-semantic"},
+            )
+        ]
     })
-    assert policy.decide(
-        previous, old_layout, new_layout, current_beat=asset_continuation
-    ).mode == SceneTransitionMode.OBJECT_HANDOFF
+    asset_continuation = scene_continuation.model_copy(update={
+        "asset_activations": [
+            AssetActivation(asset_id="new", semantic_unit_id="new-semantic")
+        ]
+    })
+    decision = policy.decide(
+        previous_with_continuity,
+        old_layout,
+        new_layout,
+        current_beat=asset_continuation,
+    )
+    assert decision.mode == SceneTransitionMode.OBJECT_HANDOFF
+    assert decision.object_handoff_pairs == (("old", "new"),)
 
 
 def test_transition_policy_requires_explicit_blur_style() -> None:
@@ -819,3 +834,21 @@ def test_bridge_exit_offset_is_perceptually_readable_at_1080p() -> None:
     )
     assert dx <= -90
     assert abs(dy) >= 30
+
+
+def test_object_handoff_offset_moves_toward_runtime_target() -> None:
+    plan = RenderPlan(
+        width=1920, height=1080, fps=30, duration=1.0,
+        story=[], composition=[], motion=[], assets=[],
+    )
+    old = LayoutItem(asset_id="old", x=0.20, y=0.45, width=0.2, height=0.3)
+    new = LayoutItem(asset_id="new", x=0.75, y=0.55, width=0.2, height=0.3)
+    dx, dy = FFmpegRenderer._bridge_exit_offset(
+        plan=plan,
+        item=old,
+        mode=SceneTransitionMode.OBJECT_HANDOFF,
+        target_item=new,
+    )
+    assert dx > 0
+    assert dy > 0
+    assert abs(dx) >= 48
