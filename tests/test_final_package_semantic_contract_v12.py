@@ -550,3 +550,90 @@ def test_v12_relation_authority_completes_gray_hat_style_motion_contract(tmp_pat
     assert any(segment.phase == "INTERACT" for segment in by_id["a"].segments)
     assert any(segment.phase == "REACT" for segment in by_id["b"].segments)
     assert any(segment.phase == "PAYOFF" for segment in by_id["c"].segments)
+
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_v12_gray_hat_relation_contract_reaches_encoded_qa(tmp_path: Path) -> None:
+    """Encode the 10f16ca6 failure class; metadata-only success is insufficient."""
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for scene_row in payload["scenes"]:
+            relation = scene_row["relations"][0]
+            relation["relation_type"] = "DISCOVERS"
+            relation.pop("script_span", None)
+            relation.pop("script_text", None)
+            for event in scene_row.get("semantic_events", []):
+                if event["semantic_event_id"] == "E2":
+                    event["result_asset_ids"] = []
+        if filename == "semantic_bindings.json":
+            for event in payload.get("semantic_events", []):
+                if event["semantic_event_id"] == "E2":
+                    event["result_asset_ids"] = []
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(package_path, tmp_path / "work-gray-encoded")
+    scene = package.scenes[0]
+    cutout_root = tmp_path / "gray-cutouts"
+    cutout_root.mkdir()
+    specs = (
+        ("a", (215, 55, 55, 255), 0.20),
+        ("b", (45, 115, 220, 255), 0.50),
+        ("c", (55, 175, 85, 255), 0.80),
+    )
+    assets: list[VisualAsset] = []
+    items: list[LayoutItem] = []
+    for index, (asset_id, color, x) in enumerate(specs):
+        image_path = cutout_root / f"{asset_id}.png"
+        Image.new("RGBA", (140, 140), color).save(image_path)
+        assets.append(VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=image_path,
+            extraction_method="gray-relation-render-contract",
+            source_area_ratio=0.30 - index * 0.05,
+        ))
+        items.append(LayoutItem(
+            asset_id=asset_id,
+            x=x,
+            y=0.50,
+            width=0.18,
+            height=0.28,
+            z=10 + index,
+        ))
+
+    transcript = _transcript()
+    story = StoryPlanner().plan(package, transcript, assets)
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    composition = [CompositionBeat(beat_id=story[0].id, items=items)]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+
+    interaction = MotionInteractionQA().inspect(
+        story=story,
+        motion=motion,
+        composition=composition,
+        choreography=choreography,
+    )
+    assert interaction.ok, interaction.violations
+    assert interaction.checked_relations == 1
+
+    plan = RenderPlan(
+        width=640,
+        height=360,
+        fps=30,
+        duration=transcript.duration,
+        story=story,
+        composition=composition,
+        motion=motion,
+        assets=assets,
+    )
+    output = tmp_path / "gray-relation-contract.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+
+    assert output.is_file() and output.stat().st_size > 0
+    encoded = RenderedMotionQA().inspect(video=output, plan=plan)
+    assert encoded.ok, encoded.violations
+    assert encoded.checked_segments >= 3
