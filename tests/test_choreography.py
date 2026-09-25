@@ -565,3 +565,150 @@ def test_compare_event_is_relational_but_not_mislabeled_as_cause_effect() -> Non
     assert ChoreographyDirector._pattern_for(
         beat, (relation,), (), flows
     ) == ChoreographyPattern.PROGRESSIVE_BUILD
+
+
+
+def test_event_flow_completes_executable_relation_without_redundant_state_or_result_roles() -> None:
+    """Gray-Hat regression: relation authority alone must complete REACT + PAYOFF."""
+    from app.choreography import EventFlowStage, InteractionIntent, SemanticEventFlowPlanner
+    from app.models import AssetActivation
+
+    def row(asset_id: str, role: str, start: float) -> AssetActivation:
+        return AssetActivation(
+            asset_id=asset_id,
+            semantic_unit_id=asset_id,
+            semantic_event_id="E1",
+            semantic_event_order=1,
+            semantic_event_roles=[role],
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            spoken_start=start,
+            spoken_end=start + 0.35,
+            confidence=0.99,
+        )
+
+    beat = StoryBeat(
+        id="gray-relation",
+        scene_id="scene-gray",
+        start=0.0,
+        end=2.0,
+        audio_start=0.0,
+        audio_end=1.9,
+        narration="source discovers target and produces result",
+        primary_asset_ids=["source"],
+        support_asset_ids=["target", "result"],
+        action="EXPLAIN",
+        asset_activations=[
+            row("source", "LEADER", 0.10),
+            row("target", "PARTICIPANT", 0.55),
+            # Intentionally not RESULT: the explicit relation result is the authority.
+            row("result", "PARTICIPANT", 1.05),
+        ],
+    )
+    relation = InteractionIntent(
+        semantic_action="EXPLAIN",
+        relationship="DISCOVERS",
+        subject_asset_id="source",
+        object_asset_id="target",
+        result_asset_id="result",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.99,
+        executable=True,
+        # Intentionally false: visual relation completeness must not depend on this
+        # redundant flag when the Final Package already authored a distinct target.
+        requires_state_change=False,
+    )
+
+    flows = SemanticEventFlowPlanner().compile(
+        beat=beat,
+        interactions=(relation,),
+        transitions=(),
+    )
+
+    assert len(flows) == 1
+    flow = flows[0]
+    assert EventFlowStage.INTERACT in flow.stages
+    assert EventFlowStage.REACT in flow.stages
+    assert EventFlowStage.PAYOFF in flow.stages
+    assert "result" in flow.result_asset_ids
+    assert any(
+        step.stage == EventFlowStage.REACT and step.target_asset_id == "target"
+        for step in flow.steps
+    )
+    assert any(
+        step.stage == EventFlowStage.PAYOFF and step.result_asset_id == "result"
+        for step in flow.steps
+    )
+
+
+def test_relation_result_payoff_stays_with_result_story_event_without_result_role() -> None:
+    """Explicit relation result must pay off in its Story-owned event, not steal timing."""
+    from app.choreography import EventFlowStage, InteractionIntent, SemanticEventFlowPlanner
+    from app.models import AssetActivation
+
+    def row(
+        asset_id: str,
+        *,
+        event_id: str,
+        order: int,
+        role: str,
+        start: float,
+    ) -> AssetActivation:
+        return AssetActivation(
+            asset_id=asset_id,
+            semantic_unit_id=asset_id,
+            semantic_event_id=event_id,
+            semantic_event_order=order,
+            semantic_event_roles=[role],
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            spoken_start=start,
+            spoken_end=start + 0.30,
+            confidence=0.99,
+        )
+
+    beat = StoryBeat(
+        id="gray-cross-event-result",
+        scene_id="scene-gray",
+        start=0.0,
+        end=2.2,
+        audio_start=0.0,
+        audio_end=2.0,
+        narration="source acts on target then result appears",
+        primary_asset_ids=["source"],
+        support_asset_ids=["target", "result"],
+        action="EXPLAIN",
+        asset_activations=[
+            row("source", event_id="E1", order=1, role="LEADER", start=0.10),
+            row("target", event_id="E1", order=1, role="PARTICIPANT", start=0.50),
+            # The result belongs to E2 but is intentionally only a LEADER there.
+            row("result", event_id="E2", order=2, role="LEADER", start=1.20),
+        ],
+    )
+    relation = InteractionIntent(
+        semantic_action="RESOLVE",
+        relationship="REPAIRS",
+        subject_asset_id="source",
+        object_asset_id="target",
+        result_asset_id="result",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.99,
+        executable=True,
+        requires_state_change=True,
+    )
+
+    flows = SemanticEventFlowPlanner().compile(
+        beat=beat,
+        interactions=(relation,),
+        transitions=(),
+    )
+
+    by_id = {flow.event_id: flow for flow in flows}
+    assert "result" not in by_id["E1"].result_asset_ids
+    assert "result" in by_id["E2"].result_asset_ids
+    payoff = next(
+        step for step in by_id["E2"].steps
+        if step.stage == EventFlowStage.PAYOFF and step.result_asset_id == "result"
+    )
+    assert payoff.relationship == "REPAIRS"
+    assert payoff.semantic_action == "RESOLVE"
