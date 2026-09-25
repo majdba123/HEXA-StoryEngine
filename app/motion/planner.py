@@ -579,22 +579,18 @@ class MotionPlanner:
         directive,
     ) -> MotionCue:
         """Attach later semantic actions while keeping one backward-compatible cue."""
-        base_program = entry_program.to_payload()
         deadline = cls._event_handoff_deadline(
             beat=beat, assignment=assignment, directive=directive
         )
-        segments: list[MotionSegment] = [
-            MotionSegment(
-                phase="ENTRY",
-                start=cue.start,
-                end=cue.end,
-                program=base_program,
-                semantic_event_id=assignment.event_id,
-                semantic_action=assignment.semantic_action,
-                involvement=assignment.involvement,
-                handoff_deadline=deadline,
-            )
-        ]
+        segments: list[MotionSegment] = []
+        entry_segment = cls._entry_segment_before_handoff(
+            cue=cue,
+            entry_program=entry_program,
+            assignment=assignment,
+            deadline=deadline,
+        )
+        if entry_segment is not None:
+            segments.append(entry_segment)
 
         phases = list(assignment.phase_chain)
         react_keys = {
@@ -660,6 +656,78 @@ class MotionPlanner:
                 )
             )
         return cue.model_copy(update={"segments": segments})
+
+
+    @classmethod
+    def _entry_segment_before_handoff(
+        cls,
+        *,
+        cue: MotionCue,
+        entry_program: MotionProgram,
+        assignment: MotionEventAssignment,
+        deadline: float,
+    ) -> MotionSegment | None:
+        """Fit ENTRY entirely before the next semantic handoff.
+
+        Story owns reveal timing and the next semantic event owns its handoff boundary.
+        If the legacy cue would cross that boundary, compress the entry window and
+        reduce transform amplitude rather than letting two semantic actions fight.
+        With effectively no legal entry window, snap to Composition by omitting ENTRY;
+        later semantic segments still execute normally from identity.
+        """
+        start = float(cue.start)
+        original_end = float(cue.end)
+        end = min(original_end, float(deadline))
+        if end <= start + 1e-6:
+            return None
+
+        original_duration = max(1e-6, original_end - start)
+        fitted_duration = end - start
+        fitted_program = cls._fit_entry_program(
+            entry_program,
+            original_duration=original_duration,
+            fitted_duration=fitted_duration,
+        )
+        return MotionSegment(
+            phase="ENTRY",
+            start=start,
+            end=end,
+            program=fitted_program.to_payload(),
+            semantic_event_id=assignment.event_id,
+            semantic_action=assignment.semantic_action,
+            involvement=assignment.involvement,
+            handoff_deadline=deadline,
+        )
+
+    @staticmethod
+    def _fit_entry_program(
+        program: MotionProgram,
+        *,
+        original_duration: float,
+        fitted_duration: float,
+    ) -> MotionProgram:
+        """Reduce displacement when an entry is compressed by a semantic handoff."""
+        if fitted_duration >= original_duration - 1e-6:
+            return program
+
+        ratio = max(0.0, min(1.0, fitted_duration / max(original_duration, 1e-6)))
+        absolute_gain = max(0.0, min(1.0, fitted_duration / 0.18))
+        gain = max(0.20, min(1.0, ratio, absolute_gain))
+        keyframes = tuple(
+            MotionKeyframe(
+                progress=frame.progress,
+                dx=frame.dx * gain,
+                dy=frame.dy * gain,
+                scale=1.0 + (frame.scale - 1.0) * gain,
+                easing=frame.easing,
+            )
+            for frame in program.keyframes
+        )
+        return MotionProgram(
+            name=f"{program.name}_handoff_fit",
+            keyframes=keyframes,
+            settle_progress=program.settle_progress,
+        )
 
     @staticmethod
     def _event_segment_window(

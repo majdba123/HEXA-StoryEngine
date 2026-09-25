@@ -15,6 +15,7 @@ from app.choreography import (
 from app.models import (
     CompositionBeat,
     LayoutItem,
+    MotionCue,
     StoryBeat,
     StoryRelation,
     StorySemanticContext,
@@ -22,6 +23,8 @@ from app.models import (
     TranscriptWord,
 )
 from app.motion import MotionPlanner
+from app.motion.event_flow import MotionEventAssignment
+from app.motion.models import MotionKeyframe, MotionProgram
 from app.qa import MotionInteractionQA
 from app.story.planner import StoryPlanner
 from app.story.windows import StoryAssetActivation
@@ -194,3 +197,115 @@ def test_motion_interaction_qa_rejects_geometry_drift() -> None:
     )
     assert not report.ok
     assert any(row.code == "SEGMENT_GEOMETRY_DRIFT" for row in report.violations)
+
+
+@pytest.mark.parametrize(
+    ("cue_end", "handoff_deadline"),
+    [
+        (37.759, 37.087),
+        (46.037, 45.749),
+        (58.410, 57.572),
+        (87.734, 87.117),
+    ],
+)
+def test_entry_is_fitted_before_real_diagnostic_handoff(
+    cue_end: float,
+    handoff_deadline: float,
+) -> None:
+    """Regression for diagnostic job 3d5bd61b707b43fe8507eeca5e73bbe4."""
+    cue_start = handoff_deadline - 0.16
+    cue = MotionCue(
+        beat_id="beat",
+        asset_id="asset",
+        kind="program_v3",
+        start=cue_start,
+        end=cue_end,
+        params={"engine_version": 3},
+    )
+    program = MotionProgram(
+        name="entry",
+        settle_progress=1.0,
+        keyframes=(
+            MotionKeyframe(0.0, -0.05, 0.0, 0.92, "ease_out_cubic"),
+            MotionKeyframe(0.55, -0.02, 0.0, 0.98, "ease_out_cubic"),
+            MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+        ),
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id="asset",
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+        involvement="FOCUS",
+    )
+
+    segment = MotionPlanner._entry_segment_before_handoff(
+        cue=cue,
+        entry_program=program,
+        assignment=assignment,
+        deadline=handoff_deadline,
+    )
+
+    assert segment is not None
+    assert segment.start == pytest.approx(cue_start)
+    assert segment.end == pytest.approx(handoff_deadline)
+    assert segment.end <= handoff_deadline
+    assert segment.end < cue.end
+    final = segment.program["keyframes"][-1]
+    assert final["dx"] == pytest.approx(0.0)
+    assert final["dy"] == pytest.approx(0.0)
+    assert final["scale"] == pytest.approx(1.0)
+    assert abs(segment.program["keyframes"][0]["dx"]) < 0.05
+
+    report = MotionInteractionQA().inspect(
+        story=[],
+        motion=[cue.model_copy(update={"segments": [segment]})],
+    )
+    assert report.ok, report.violations
+
+
+def test_entry_with_no_pre_handoff_time_snaps_to_composition() -> None:
+    cue = MotionCue(
+        beat_id="beat",
+        asset_id="asset",
+        kind="program_v3",
+        start=10.0,
+        end=10.4,
+        params={"engine_version": 3},
+    )
+    program = MotionProgram(
+        name="entry",
+        settle_progress=1.0,
+        keyframes=(
+            MotionKeyframe(0.0, -0.04, 0.0, 0.95),
+            MotionKeyframe(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id="asset",
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+        involvement="FOCUS",
+    )
+
+    assert MotionPlanner._entry_segment_before_handoff(
+        cue=cue,
+        entry_program=program,
+        assignment=assignment,
+        deadline=10.0,
+    ) is None
