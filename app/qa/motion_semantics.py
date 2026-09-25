@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from app.choreography import ChoreographyPlan
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.shared.errors import StageFailedError
 
@@ -39,6 +40,7 @@ class MotionInteractionQA:
         story: list[StoryBeat],
         motion: list[MotionCue],
         composition: list[CompositionBeat] | None = None,
+        choreography: ChoreographyPlan | None = None,
     ) -> MotionInteractionReport:
         violations: list[MotionInteractionViolation] = []
         checked_segments = 0
@@ -76,6 +78,55 @@ class MotionInteractionQA:
                     segment.relationship,
                 )
                 relations.setdefault(key, segment)
+
+        if choreography is not None:
+            represented = {
+                (beat_id, source_id, target_id, result_id, relationship)
+                for (
+                    beat_id,
+                    _event_id,
+                    source_id,
+                    target_id,
+                    result_id,
+                    relationship,
+                ) in relations
+            }
+            expected: set[
+                tuple[str, str | None, str | None, str | None, str | None]
+            ] = set()
+            for directive in choreography.directives:
+                interactions = directive.interactions or (
+                    (directive.interaction,) if directive.interaction is not None else ()
+                )
+                for interaction in interactions:
+                    if not interaction.executable:
+                        continue
+                    if interaction.authority not in {
+                        "FINAL_PACKAGE_ASSET_RELATION",
+                        "FINAL_PACKAGE_INTERACTION_TARGET",
+                    }:
+                        continue
+                    expected.add((
+                        directive.beat_id,
+                        interaction.subject_asset_id,
+                        interaction.object_asset_id,
+                        interaction.result_asset_id,
+                        interaction.relationship,
+                    ))
+            for relation_key in sorted(expected - represented, key=str):
+                beat_id, source_id, target_id, result_id, relationship = relation_key
+                violations.append(MotionInteractionViolation(
+                    code="MISSING_RELATION_TIMELINE",
+                    beat_id=beat_id,
+                    asset_id=source_id,
+                    event_id=None,
+                    detail=(
+                        f"{relationship or 'relation'}: executable authored relation "
+                        f"{source_id}->{target_id}"
+                        + (f"->{result_id}" if result_id else "")
+                        + " has no INTERACT source timeline"
+                    ),
+                ))
 
         checked_relations = 0
         for key, source in relations.items():
