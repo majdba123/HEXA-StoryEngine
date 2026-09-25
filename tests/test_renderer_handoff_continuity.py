@@ -852,3 +852,68 @@ def test_object_handoff_offset_moves_toward_runtime_target() -> None:
     assert dx > 0
     assert dy > 0
     assert abs(dx) >= 48
+
+
+def test_soft_continuation_word_alone_does_not_author_blur() -> None:
+    policy = VisualTransitionPolicy()
+    previous = StoryBeat(
+        id="old-soft", scene_id="scene-old", start=0.0, end=1.0,
+        narration="old", primary_asset_ids=["old"], action="INTRODUCE",
+    )
+    current = StoryBeat(
+        id="new-soft", scene_id="scene-new", start=1.0, end=2.0,
+        narration="new", primary_asset_ids=["new"], action="HANDOFF",
+        semantic_context=StorySemanticContext(
+            continuity_relation="SOFT_CONTINUATION",
+        ),
+    )
+    old_layout = CompositionBeat(
+        beat_id=previous.id,
+        items=[LayoutItem(asset_id="old", x=0.3, y=0.5, width=0.3, height=0.4)],
+    )
+    new_layout = CompositionBeat(
+        beat_id=current.id,
+        items=[LayoutItem(asset_id="new", x=0.7, y=0.5, width=0.3, height=0.4)],
+    )
+    decision = policy.decide(previous, old_layout, new_layout, current_beat=current)
+    assert decision.mode == SceneTransitionMode.MOTION_HANDOFF
+    assert decision.blur_sigma == 0.0
+
+
+def test_object_handoff_keeps_unpaired_outgoing_visuals_for_exit() -> None:
+    policy = VisualTransitionPolicy()
+    previous = StoryBeat(
+        id="old-full", scene_id="scene-old", start=0.0, end=1.0,
+        narration="old", primary_asset_ids=["old"], support_asset_ids=["extra"],
+        action="INTRODUCE",
+        asset_activations=[
+            AssetActivation(
+                asset_id="old",
+                semantic_unit_id="old-semantic",
+                continuity={"mode": "TRANSFORM_TO", "target_asset_id": "new-semantic"},
+            ),
+            AssetActivation(asset_id="extra", semantic_unit_id="extra-semantic"),
+        ],
+    )
+    current = StoryBeat(
+        id="new-full", scene_id="scene-new", start=1.0, end=2.2,
+        narration="new", primary_asset_ids=["new"], action="REVEAL_DETAIL",
+        asset_activations=[
+            AssetActivation(asset_id="new", semantic_unit_id="new-semantic"),
+        ],
+    )
+    old_layout = CompositionBeat(
+        beat_id=previous.id,
+        items=[
+            LayoutItem(asset_id="old", x=0.25, y=0.5, width=0.25, height=0.4),
+            LayoutItem(asset_id="extra", x=0.65, y=0.5, width=0.2, height=0.3),
+        ],
+    )
+    new_layout = CompositionBeat(
+        beat_id=current.id,
+        items=[LayoutItem(asset_id="new", x=0.75, y=0.5, width=0.25, height=0.4)],
+    )
+    decision = policy.decide(previous, old_layout, new_layout, current_beat=current)
+    assert decision.mode == SceneTransitionMode.OBJECT_HANDOFF
+    assert decision.object_handoff_pairs == (("old", "new"),)
+    assert decision.carry_outgoing_asset_ids == frozenset({"old", "extra"})
