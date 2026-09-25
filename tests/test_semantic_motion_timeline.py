@@ -372,7 +372,9 @@ def test_motion_interaction_qa_rejects_new_collision_from_stronger_motion() -> N
     close_composition = CompositionBeat(
         beat_id=composition.beat_id,
         items=[
-            LayoutItem(asset_id="a", x=0.30, y=0.50, width=0.18, height=0.22),
+            # Authored boxes remain separate by 0.5% of canvas width; the stronger
+            # relation motion should be what creates the collision.
+            LayoutItem(asset_id="a", x=0.315, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
         ],
