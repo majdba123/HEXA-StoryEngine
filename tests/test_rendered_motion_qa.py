@@ -122,3 +122,55 @@ def test_rendered_motion_qa_rejects_metadata_only_motion(tmp_path: Path) -> None
 
     assert not report.ok
     assert any(row.code == "RENDERED_SEGMENT_INACTIVE" for row in report.violations)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_rendered_motion_qa_rejects_visually_tiny_motion(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=True)
+    cue = plan.motion[0]
+    weak_segment = cue.segments[0].model_copy(update={"program": _program(dx=0.005)})
+    plan = plan.model_copy(update={
+        "motion": [cue.model_copy(update={"segments": [weak_segment]})],
+    })
+    video = tmp_path / "weak.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+    assert not report.ok
+    assert any(row.code == "MOTION_BELOW_PERCEPTUAL_FLOOR" for row in report.violations)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_rendered_exit_moves_then_disappears(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=True)
+    cue = plan.motion[0]
+    exit_program = {
+        "name": "semantic_release_exit",
+        "settle_progress": 1.0,
+        "keyframes": [
+            {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+            {"progress": 1.0, "dx": 0.06, "dy": 0.0, "scale": 0.95, "easing": "linear"},
+        ],
+    }
+    exit_segment = cue.segments[0].model_copy(update={
+        "phase": "EXIT", "start": 0.45, "end": 0.82, "program": exit_program,
+    })
+    plan = plan.model_copy(update={
+        "motion": [cue.model_copy(update={"segments": [exit_segment]})],
+    })
+    video = tmp_path / "exit.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+    assert report.ok, report.violations
+
+    import cv2
+    capture = cv2.VideoCapture(str(video))
+    capture.set(cv2.CAP_PROP_POS_MSEC, 1000.0)
+    ok, frame = capture.read()
+    capture.release()
+    assert ok and frame is not None
+    roi = frame[45:135, 95:225]
+    assert float(roi.mean()) > 245.0
