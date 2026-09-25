@@ -8,6 +8,7 @@ from PIL import Image
 
 from app.choreography import ChoreographyDirector, ChoreographyPlan, ChoreographyPattern
 from app.input.loader import FinalPackageLoader
+from app.diagnostics.storytelling import StorytellingValidator
 from app.models import (
     AssetActivation,
     CompositionBeat,
@@ -234,6 +235,21 @@ def test_v12_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: 
     assert result_frames[-1]["dx"] == pytest.approx(0.0)
     assert result_frames[-1]["dy"] == pytest.approx(0.0)
     assert result_frames[-1]["scale"] == pytest.approx(1.0)
+
+    coverage = StorytellingValidator.inspect(
+        package=package,
+        story=story,
+        choreography=choreography,
+        composition=composition,
+        motion=list(motion.values()),
+        text=text,
+        text_motion=[],
+    )
+    assert coverage.explicit_relationships >= 1
+    assert coverage.represented_relationships >= coverage.explicit_relationships
+    assert coverage.authored_semantic_events == 2
+    assert coverage.represented_semantic_events == 2
+    assert coverage.missing_semantic_events == ()
 
 
 def test_v12_compound_required_multi_cutout_unit_never_internal_staggers() -> None:
