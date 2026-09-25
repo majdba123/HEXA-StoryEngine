@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, StorySemanticContext
+from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, StoryBeat, StorySemanticContext
 from app.qa import SceneContinuityQA
 
 
@@ -78,15 +78,21 @@ def test_scene_continuity_qa_accepts_object_handoff_without_blur() -> None:
         StoryBeat(
             id="a", scene_id="scene-a", start=0.0, end=1.0,
             narration="a", primary_asset_ids=["old"], action="INTRODUCE",
+            asset_activations=[
+                AssetActivation(
+                    asset_id="old",
+                    semantic_unit_id="old-semantic",
+                    continuity={"mode": "TRANSFORM_TO", "target_asset_id": "new-semantic"},
+                )
+            ],
         ),
         StoryBeat(
             id="b", scene_id="scene-b", start=1.0, end=2.2,
             narration="b", primary_asset_ids=["new"], action="REVEAL_DETAIL",
-            semantic_context=StorySemanticContext(
-                continuity_by_unit={
-                    "semantic-unit": {"mode": "TRANSFORM_TO", "target_asset_id": "new"},
-                }
-            ),
+            semantic_context=StorySemanticContext(),
+            asset_activations=[
+                AssetActivation(asset_id="new", semantic_unit_id="new-semantic")
+            ],
         ),
     ]
     motion = [
