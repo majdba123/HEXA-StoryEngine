@@ -693,7 +693,13 @@ class MotionPlanner:
         """
         start = float(cue.start)
         original_end = float(cue.end)
-        end = min(original_end, float(deadline))
+        needs_exit = bool(
+            (assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
+            and cue.asset_id not in set(assignment.handoff_to_asset_ids)
+        )
+        available = float(deadline) - start
+        exit_reserve = 0.18 if needs_exit and available >= 0.34 else 0.0
+        end = min(original_end, float(deadline) - exit_reserve)
         if end <= start + 1e-6:
             return None
 
