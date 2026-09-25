@@ -9,7 +9,14 @@ from app.choreography import ChoreographyDirector
 from app.assets import AssetManager
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
-from app.qa import (AuthoringVisualQA, MotionInteractionQA, RenderedMotionQA, RenderedVisualQA, SceneContinuityQA)
+from app.qa import (
+    AuthoringVisualQA,
+    ChoreographyRhythmQA,
+    MotionInteractionQA,
+    RenderedMotionQA,
+    RenderedVisualQA,
+    SceneContinuityQA,
+)
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
@@ -90,6 +97,7 @@ class StoryEnginePipeline:
         self.text_motion = TextMotionPlanner()
         self.authoring_qa = AuthoringVisualQA(self.reference.profile)
         self.motion_interaction_qa = MotionInteractionQA()
+        self.choreography_rhythm_qa = ChoreographyRhythmQA()
         self.scene_continuity_qa = SceneContinuityQA()
         self.rendered_motion_qa = RenderedMotionQA()
         self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
@@ -215,6 +223,17 @@ class StoryEnginePipeline:
         )
         self.motion_interaction_qa.require(motion_interaction_report)
 
+        rhythm_report = self.choreography_rhythm_qa.inspect(
+            story=story,
+            motion=motion,
+            choreography=choreography,
+        )
+        self.choreography_rhythm_qa.write(
+            rhythm_report,
+            workspace / "diagnostics" / "choreography-rhythm-qa.json",
+        )
+        self.choreography_rhythm_qa.require(rhythm_report)
+
         sync_report = self.story_sync_qa.inspect(story=story, motion=motion)
         self.story_sync_qa.write(
             sync_report,
@@ -288,7 +307,8 @@ class StoryEnginePipeline:
                 f"{sync_report.anchored_assets} semantic sync anchors, "
                 f"{sync_report.fallback_assets} conservative fallbacks; "
                 f"{motion_interaction_report.checked_relations} relation timelines; "
-                "0 visual layout, 0 text layout, 0 short-motion violations"
+                f"{rhythm_report.checked_entry_cohorts} focus cohorts; "
+                "0 rhythm, visual layout, text layout, or short-motion violations"
             ),
         )
 
