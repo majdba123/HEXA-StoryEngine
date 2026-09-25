@@ -120,7 +120,14 @@ class RenderedMotionQA:
                         ))
                         continue
                     if enforce_floor:
-                        speed_px = expected_px / duration
+                        speed_px = self._max_keyframe_speed_px(
+                            segment,
+                            duration=duration,
+                            width=plan.width,
+                            height=plan.height,
+                            item_width=item.width,
+                            item_height=item.height,
+                        )
                         speed_limit_px = (
                             plan.width
                             * motion_comfort(segment.phase).max_normalized_speed
@@ -219,6 +226,44 @@ class RenderedMotionQA:
             violations=tuple(violations),
         )
 
+
+
+    @staticmethod
+    def _max_keyframe_speed_px(
+        segment: MotionSegment,
+        *,
+        duration: float,
+        width: int,
+        height: int,
+        item_width: float,
+        item_height: float,
+    ) -> float:
+        keyframes = segment.program.get("keyframes")
+        if not isinstance(keyframes, list) or len(keyframes) < 2:
+            return 0.0
+        asset_px = max(1.0, min(width * item_width, height * item_height))
+        rows: list[tuple[float, float, float, float]] = []
+        for frame in keyframes:
+            try:
+                rows.append((
+                    float(frame.get("progress", 0.0)),
+                    float(frame.get("dx", 0.0)),
+                    float(frame.get("dy", 0.0)),
+                    float(frame.get("scale", 1.0)),
+                ))
+            except (TypeError, ValueError):
+                continue
+        rows.sort(key=lambda row: row[0])
+        peak_speed = 0.0
+        for left, right in zip(rows, rows[1:]):
+            seconds = max(1e-6, (right[0] - left[0]) * duration)
+            travel_px = max(
+                abs(right[1] - left[1]) * width,
+                abs(right[2] - left[2]) * height,
+                abs(right[3] - left[3]) * asset_px,
+            )
+            peak_speed = max(peak_speed, travel_px / seconds)
+        return peak_speed
 
     @staticmethod
     def _perceptual_floor_px(
