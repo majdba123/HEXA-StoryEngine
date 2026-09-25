@@ -337,9 +337,12 @@ class RenderedMotionQA:
         peak_speed = 0.0
         for left, right in zip(rows, rows[1:]):
             seconds = max(1e-6, (right[0] - left[0]) * duration)
+            translation_px = float(np.hypot(
+                (right[1] - left[1]) * width,
+                (right[2] - left[2]) * height,
+            ))
             travel_px = max(
-                abs(right[1] - left[1]) * width,
-                abs(right[2] - left[2]) * height,
+                translation_px,
                 abs(right[3] - left[3]) * asset_px,
             )
             peak_speed = max(peak_speed, travel_px / seconds)
@@ -402,13 +405,14 @@ class RenderedMotionQA:
         asset_px = max(1.0, min(width * item_width, height * item_height))
         for frame in keyframes:
             try:
-                dx = abs(float(frame.get("dx", 0.0))) * width
-                dy = abs(float(frame.get("dy", 0.0))) * height
+                dx = float(frame.get("dx", 0.0)) * width
+                dy = float(frame.get("dy", 0.0)) * height
+                translation = float(np.hypot(dx, dy))
                 scale = abs(float(frame.get("scale", 1.0)) - 1.0) * asset_px
                 progress = float(frame.get("progress", 0.5))
             except (TypeError, ValueError):
                 continue
-            activity = max(dx, dy, scale)
+            activity = max(translation, scale)
             if activity > best_px:
                 best_px = activity
                 best_progress = max(0.05, min(0.95, progress))
