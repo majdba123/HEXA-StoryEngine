@@ -597,7 +597,6 @@ class MotionPlanner:
             assignment=assignment,
             deadline=deadline,
         )
-        activity_deadline = max(float(cue.start), float(deadline) - exit_reserve)
         segments: list[MotionSegment] = []
         entry_segment = cls._entry_segment_before_handoff(
             cue=cue,
@@ -638,7 +637,9 @@ class MotionPlanner:
                 activation=activation,
                 cue=cue,
                 beat=beat,
-                deadline=activity_deadline,
+                # Semantic relation timing outranks decorative release. Do not shorten
+                # INTERACT/REACT/PAYOFF just to force an EXIT into the same handoff.
+                deadline=deadline,
             )
             if window is None:
                 continue
@@ -788,7 +789,11 @@ class MotionPlanner:
         peak = max((hypot(frame.dx, frame.dy) for frame in program.keyframes), default=0.0)
         scale_peak = max((abs(frame.scale - 1.0) for frame in program.keyframes), default=0.0)
         desired_peak = max(peak, floor)
-        max_peak = max_comfort_displacement("ENTRY", duration)
+        effective_travel = duration * max(
+            0.20,
+            min(1.0, float(program.settle_progress)),
+        )
+        max_peak = max_comfort_displacement("ENTRY", effective_travel)
         if max_peak > 0.0:
             desired_peak = min(desired_peak, max_peak)
         gain = desired_peak / peak if peak > 1e-6 else 1.0
@@ -940,7 +945,13 @@ class MotionPlanner:
         size_floor = min(0.042, min(item.width, item.height) * 0.14)
         temporal_gain = comfort_gain(phase.stage.value, duration)
         floor = max(stage_floor, size_floor) * temporal_gain
-        max_displacement = max_comfort_displacement(phase.stage.value, duration)
+        # The semantic accent is reached at GOLDEN_MAJOR, so speed must be capped
+        # against that leg rather than against the full out-and-back segment.
+        accent_duration = duration * GOLDEN_MAJOR
+        max_displacement = max_comfort_displacement(
+            phase.stage.value,
+            accent_duration,
+        )
         magnitude = hypot(dx, dy)
         desired = max(magnitude, floor)
         if max_displacement > 0.0:
@@ -952,7 +963,7 @@ class MotionPlanner:
         elif floor > 0 and phase.stage != EventFlowStage.PAYOFF:
             dy = -min(floor, max_displacement or floor)
 
-        scale_cap = max(0.012, min(0.095, duration * 0.22))
+        scale_cap = max(0.012, min(0.095, accent_duration * 0.22))
         if phase.stage == EventFlowStage.PAYOFF:
             desired_scale = min(0.075 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
