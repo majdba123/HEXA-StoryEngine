@@ -454,3 +454,54 @@ def test_vertical_react_at_shared_floor_survives_encoded_qa(tmp_path: Path) -> N
 
     assert report.ok, report.violations
     assert report.checked_segments == 1
+
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_rendered_motion_qa_checks_base_entry_without_semantic_segments(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=False)
+    cue = plan.motion[0]
+    moving = cue.model_copy(update={
+        "end": 0.70,
+        "params": {**cue.params, "program": _program(dx=0.025)},
+    })
+    plan = plan.model_copy(update={"motion": [moving]})
+    video = tmp_path / "base-entry.mp4"
+
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+
+    assert report.ok, report.violations
+    assert report.checked_segments == 1
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_rendered_motion_qa_rejects_missing_encoded_base_entry(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    expected = _plan(asset, rendered_segment=False)
+    expected_cue = expected.motion[0]
+    expected = expected.model_copy(update={
+        "motion": [expected_cue.model_copy(update={
+            "end": 0.70,
+            "params": {**expected_cue.params, "program": _program(dx=0.025)},
+        })],
+    })
+
+    static = _plan(asset, rendered_segment=False)
+    static_cue = static.motion[0]
+    static = static.model_copy(update={
+        "motion": [static_cue.model_copy(update={
+            "end": 0.70,
+            "params": {**static_cue.params, "program": _program(dx=0.0)},
+        })],
+    })
+    video = tmp_path / "base-entry-static.mp4"
+    FFmpegRenderer("ffmpeg").render(static, video)
+
+    report = RenderedMotionQA().inspect(video=video, plan=expected)
+
+    assert not report.ok
+    assert any(row.code == "RENDERED_SEGMENT_INACTIVE" for row in report.violations)
