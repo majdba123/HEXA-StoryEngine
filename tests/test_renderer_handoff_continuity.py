@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
+import app.render.renderer as renderer_module
+
 from app.models import (
     AssetActivation,
     CompositionBeat,
@@ -21,6 +23,7 @@ from app.models import (
 )
 from app.motion.timing import GOLDEN_MINOR
 from app.recovery.detector import RecoveryDetector
+from app.shared.errors import StageFailedError
 from app.render.renderer import FFmpegRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 
@@ -962,3 +965,50 @@ def test_first_beat_never_uses_boundary_visual_carrier_before_story_reveal(tmp_p
     frames = _read_frames(output)
     assert _mean_white_distance(frames[0]) < 1.0
     assert _mean_white_distance(frames[7]) > 5.0
+
+
+
+def test_encode_args_externalizes_large_filter_graph_to_script(tmp_path: Path) -> None:
+    target = tmp_path / "dense-scene.mp4"
+    filters = [
+        f"[v{i}]null[v{i + 1}]" + ("x" * 400)
+        for i in range(120)
+    ]
+    args = FFmpegRenderer._encode_args(
+        filters,
+        target,
+        fps=30,
+        frame_count=90,
+    )
+
+    assert "-filter_complex" not in args
+    script_index = args.index("-filter_complex_script")
+    script_path = Path(args[script_index + 1])
+    assert script_path.exists()
+    assert script_path.parent == target.parent
+    script = script_path.read_text(encoding="utf-8")
+    assert script == ";\n".join(filters) + "\n"
+    # The command remains bounded even though the filter graph itself is > 48 KiB.
+    assert len(script) > 48_000
+    assert sum(len(str(arg)) + 1 for arg in args) < 2_000
+
+
+def test_renderer_does_not_misreport_windows_command_overflow_as_missing_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_winerror_206(*args, **kwargs):
+        exc = FileNotFoundError("The filename or extension is too long")
+        exc.winerror = 206
+        raise exc
+
+    monkeypatch.setattr(renderer_module, "run_hidden", raise_winerror_206)
+
+    with pytest.raises(StageFailedError) as caught:
+        FFmpegRenderer._run(
+            ["ffmpeg", "-filter_complex", "x" * 40_000],
+            "render segment failed",
+        )
+
+    assert "Windows process limit" in str(caught.value)
+    assert caught.value.details["winerror"] == 206
+    assert caught.value.details["command_characters"] > 40_000
