@@ -32,14 +32,36 @@ class VisualTransitionPolicy:
     pale ghost silhouettes that motivated the original no-carry policy.
     """
 
-    _BLUR_CONTINUITY = {
-        "CONTINUE",
-        "CONTINUATION",
+    _BLUR_CONTINUITY_TOKENS = (
+        "CONTINU",
         "HANDOFF",
         "CAUSE_EFFECT",
-        "RESULT",
         "PAYOFF",
-    }
+        "RESULT",
+    )
+
+    @classmethod
+    def _has_authored_blur_continuity(cls, beat: StoryBeat) -> bool:
+        context = beat.semantic_context
+        continuity = (
+            str(context.continuity_relation or "").strip().upper()
+            if context is not None
+            else ""
+        )
+        if any(token in continuity for token in cls._BLUR_CONTINUITY_TOKENS):
+            return True
+
+        # Asset-level Final Package continuity is semantic intent, not a geometry
+        # instruction. It may justify a visual bridge, but Composition remains the
+        # only authority for where either scene finally lives.
+        if context is not None:
+            for spec in context.continuity_by_unit.values():
+                if not isinstance(spec, dict):
+                    continue
+                mode = str(spec.get("mode") or "").strip().upper()
+                if mode in {"PERSIST", "TRANSFORM_TO"}:
+                    return True
+        return False
 
     def decide(
         self,
@@ -85,11 +107,11 @@ class VisualTransitionPolicy:
                 reason="no_distinct_outgoing_assets",
             )
 
-        continuity = ""
-        if current_beat.semantic_context is not None:
-            continuity = str(current_beat.semantic_context.continuity_relation or "").upper()
         action = str(current_beat.action or "").upper()
-        explicit_blur = action == "HANDOFF" or continuity in self._BLUR_CONTINUITY
+        explicit_blur = (
+            action == "HANDOFF"
+            or self._has_authored_blur_continuity(current_beat)
+        )
 
         beat_duration = max(0.0, float(current_beat.end) - float(current_beat.start))
         if explicit_blur:

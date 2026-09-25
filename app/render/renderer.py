@@ -170,18 +170,18 @@ class FFmpegRenderer:
             duration=duration,
             motion=motion,
         )
-        bridge_duration = 0.0
+        bridge_start = 0.0
+        bridge_end = 0.0
         if outgoing_items and transition.mode in {
             SceneTransitionMode.MOTION_HANDOFF,
             SceneTransitionMode.BLUR_BRIDGE,
         }:
-            bridge_duration = min(
-                duration,
-                max(
-                    float(transition.bridge_duration),
-                    incoming_start + min(0.18, max(0.10, duration * 0.08)),
-                ),
+            bridge_start, bridge_end = self._scene_bridge_window(
+                incoming_start=incoming_start,
+                segment_duration=duration,
+                preferred_duration=float(transition.bridge_duration),
             )
+        bridge_duration = max(0.0, bridge_end - bridge_start)
         visual_carrier_id = (
             None
             if bridge_duration > 0
@@ -220,9 +220,12 @@ class FFmpegRenderer:
         composite_label = "base0"
 
         if bridge_duration > 0:
+            # Keep the outgoing scene crisp while waiting for a later Story-owned
+            # incoming reveal. Only the short handoff interval receives exit motion
+            # and optional blur; a narration gap must never become a long blurred hold.
             filters.append(
                 f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:"
-                f"d={bridge_duration:.6f},format=rgba[oldbase0]"
+                f"d={bridge_end:.6f},format=rgba[oldbase0]"
             )
             old_label = "oldbase0"
             input_offset = len(ordered_items)
@@ -235,34 +238,46 @@ class FFmpegRenderer:
                     f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:"
                     f"force_divisible_by=2,"
                     f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
-                    f"loop=loop=-1:size=1:start=0,trim=duration={bridge_duration:.6f},"
+                    f"loop=loop=-1:size=1:start=0,trim=duration={bridge_end:.6f},"
                     f"setpts=PTS-STARTPTS[{source_label}]"
                 )
                 horizontal = -34 if item.x < 0.46 else 34 if item.x > 0.54 else 0
                 vertical = -10 if item.y <= 0.5 else 10
-                progress_expr = f"(t/{max(bridge_duration, 0.05):.6f})"
+                progress_expr = (
+                    f"if(lt(t,{bridge_start:.6f}),0,"
+                    f"(t-{bridge_start:.6f})/{max(bridge_duration, 0.05):.6f})"
+                )
                 next_old = f"oldmix{bridge_index}"
                 filters.append(
                     f"[{old_label}][{source_label}]overlay="
                     f"x='{target_x}+({horizontal})*{progress_expr}':"
                     f"y='{target_y}+({vertical})*{progress_expr}':"
-                    f"enable='between(t,0,{bridge_duration:.6f})':"
+                    f"enable='between(t,0,{bridge_end:.6f})':"
                     f"eof_action=pass:shortest=0[{next_old}]"
                 )
                 old_label = next_old
 
-            old_fx = "oldfx"
             if transition.mode == SceneTransitionMode.BLUR_BRIDGE:
+                filters.append(f"[{old_label}]split=2[oldcrisp][oldblurbase]")
                 filters.append(
-                    f"[{old_label}]gblur=sigma={transition.blur_sigma:.3f}:steps=2[{old_fx}]"
+                    f"[oldblurbase]gblur=sigma={transition.blur_sigma:.3f}:steps=2[oldfx]"
+                )
+                filters.append(
+                    f"[{composite_label}][oldcrisp]overlay=x=0:y=0:"
+                    f"enable='between(t,0,{bridge_start:.6f})':"
+                    f"eof_action=pass:shortest=0[oldhold]"
+                )
+                filters.append(
+                    f"[oldhold][oldfx]overlay=x=0:y=0:"
+                    f"enable='between(t,{bridge_start:.6f},{bridge_end:.6f})':"
+                    f"eof_action=pass:shortest=0[bridgebase]"
                 )
             else:
-                filters.append(f"[{old_label}]null[{old_fx}]")
-            filters.append(
-                f"[{composite_label}][{old_fx}]overlay=x=0:y=0:"
-                f"enable='between(t,0,{bridge_duration:.6f})':"
-                f"eof_action=pass:shortest=0[bridgebase]"
-            )
+                filters.append(
+                    f"[{composite_label}][{old_label}]overlay=x=0:y=0:"
+                    f"enable='between(t,0,{bridge_end:.6f})':"
+                    f"eof_action=pass:shortest=0[bridgebase]"
+                )
             composite_label = "bridgebase"
 
         for layer_index, item in enumerate(ordered_items):
@@ -378,6 +393,32 @@ class FFmpegRenderer:
         filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
+
+
+    @staticmethod
+    def _scene_bridge_window(
+        *,
+        incoming_start: float,
+        segment_duration: float,
+        preferred_duration: float,
+    ) -> tuple[float, float]:
+        """Place a bounded bridge around the first Story-owned incoming reveal.
+
+        A delayed semantic reveal keeps the old scene crisp until shortly before the
+        new visual enters. The bridge itself remains short, so blur never turns a
+        narration gap into a long soft background hold.
+        """
+        duration = max(0.0, float(segment_duration))
+        if duration <= 0.0 or preferred_duration <= 0.0:
+            return 0.0, 0.0
+        bridge = min(duration, max(0.20, float(preferred_duration)))
+        incoming = max(0.0, min(duration, float(incoming_start)))
+        lead = min(0.16, max(0.10, bridge * 0.40))
+        start = max(0.0, incoming - lead)
+        end = min(duration, start + bridge)
+        if incoming < duration and end <= incoming:
+            end = min(duration, incoming + min(0.12, duration - incoming))
+        return start, max(start, end)
 
     @classmethod
     def _visual_carrier_asset_id(

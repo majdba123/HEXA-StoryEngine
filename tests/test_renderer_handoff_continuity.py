@@ -15,6 +15,7 @@ from app.models import (
     MotionCue,
     RenderPlan,
     StoryBeat,
+    StorySemanticContext,
     VisualAsset,
 )
 from app.recovery.detector import RecoveryDetector
@@ -730,3 +731,52 @@ def test_transition_policy_blurs_only_authored_handoff_not_every_scene_change() 
     assert authored_decision.mode == SceneTransitionMode.BLUR_BRIDGE
     assert authored_decision.blur_sigma > 0
     assert authored_decision.bridge_duration >= 0.30
+
+
+def test_blur_bridge_window_stays_short_around_delayed_incoming_reveal() -> None:
+    start, end = FFmpegRenderer._scene_bridge_window(
+        incoming_start=1.20,
+        segment_duration=2.0,
+        preferred_duration=0.36,
+    )
+
+    assert 1.00 < start < 1.20
+    assert start < 1.20 < end
+    assert end - start == pytest.approx(0.36)
+    assert start > 0.9  # the preceding narration gap remains crisp, not blurred
+
+
+def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics() -> None:
+    policy = VisualTransitionPolicy()
+    previous = StoryBeat(
+        id="old-beat", scene_id="old-scene", start=0.0, end=1.0,
+        narration="old", primary_asset_ids=["old"], action="INTRODUCE",
+    )
+    old_layout = CompositionBeat(
+        beat_id=previous.id,
+        items=[LayoutItem(asset_id="old", x=0.5, y=0.5, width=0.4, height=0.4)],
+    )
+    new_layout = CompositionBeat(
+        beat_id="new-beat",
+        items=[LayoutItem(asset_id="new", x=0.5, y=0.5, width=0.4, height=0.4)],
+    )
+
+    scene_continuation = StoryBeat(
+        id="new-beat", scene_id="new-scene", start=1.0, end=2.0,
+        narration="new", primary_asset_ids=["new"], action="REVEAL_DETAIL",
+        semantic_context=StorySemanticContext(
+            continuity_relation="CONTINUES_EXPLANATION",
+        ),
+    )
+    assert policy.decide(
+        previous, old_layout, new_layout, current_beat=scene_continuation
+    ).mode == SceneTransitionMode.BLUR_BRIDGE
+
+    asset_continuation = scene_continuation.model_copy(update={
+        "semantic_context": StorySemanticContext(
+            continuity_by_unit={"new-semantic": {"mode": "TRANSFORM_TO", "target_asset_id": "next"}},
+        )
+    })
+    assert policy.decide(
+        previous, old_layout, new_layout, current_beat=asset_continuation
+    ).mode == SceneTransitionMode.BLUR_BRIDGE
