@@ -203,6 +203,7 @@ class StoryEnginePipeline:
             story=story,
             motion=motion,
             composition=composition,
+            choreography=choreography,
         )
         self.motion_interaction_qa.write(
             motion_interaction_report,
