@@ -230,10 +230,14 @@ def test_qa_rejects_early_final_keyframe_despite_matching_metadata():
     beat, cues = plan(activation())
     cue = deepcopy(cues[0])
     frames = cue.params["program"]["keyframes"]
-    frames.insert(-1, {**frames[-1], "progress": 0.5})
+    previous = float(frames[-2]["progress"])
+    final = float(frames[-1]["progress"])
+    early_progress = previous + (final - previous) * 0.5
+    frames.insert(-1, {**frames[-1], "progress": early_progress})
     report = StorySyncQA().inspect(story=[beat], motion=[cue])
     assert not report.passed
-    assert report.entries[0].actual_visual_settle == pytest.approx(5.25)
+    expected = cue.start + max(0.05, cue.end - cue.start) * early_progress
+    assert report.entries[0].actual_visual_settle == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("damage", ["missing_program", "nonfinite_metadata", "wrong_reveal"])
