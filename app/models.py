@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class JobState(StrEnum):
@@ -146,6 +146,8 @@ class StoryRelation(BaseModel):
     trigger_text: str | None = None
     trigger_char_start: int | None = None
     trigger_char_end: int | None = None
+    spoken_start: float | None = Field(default=None, ge=0)
+    spoken_end: float | None = Field(default=None, ge=0)
     confidence: float = Field(default=1.0, ge=0, le=1)
     causal: bool = False
 
@@ -245,6 +247,29 @@ class CompositionBeat(BaseModel):
     state_evidence: list[str] = Field(default_factory=list)
 
 
+class MotionSegment(BaseModel):
+    """Absolute semantic re-activation window inside one visual Motion cue."""
+
+    phase: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    program: dict[str, Any] = Field(default_factory=dict)
+    semantic_event_id: str | None = None
+    semantic_action: str | None = None
+    relationship: str | None = None
+    involvement: str | None = None
+    source_asset_id: str | None = None
+    target_asset_id: str | None = None
+    result_asset_id: str | None = None
+    handoff_deadline: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> "MotionSegment":
+        if self.end <= self.start:
+            raise ValueError("motion segment end must be after start")
+        return self
+
+
 class MotionCue(BaseModel):
     beat_id: str
     asset_id: str
@@ -252,6 +277,7 @@ class MotionCue(BaseModel):
     start: float
     end: float
     params: dict[str, Any] = Field(default_factory=dict)
+    segments: list[MotionSegment] = Field(default_factory=list)
 
 
 class TextTokenCue(BaseModel):

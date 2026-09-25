@@ -21,6 +21,10 @@ class MotionEventPhase:
     relationship: str | None
     semantic_action: str | None
     authority: str
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
 
     def to_payload(self) -> dict[str, object | None]:
         return {
@@ -36,6 +40,10 @@ class MotionEventPhase:
             "relationship": self.relationship,
             "semantic_action": self.semantic_action,
             "authority": self.authority,
+            "trigger_char_start": self.trigger_char_start,
+            "trigger_char_end": self.trigger_char_end,
+            "spoken_start": self.spoken_start,
+            "spoken_end": self.spoken_end,
         }
 
 
@@ -67,6 +75,10 @@ class MotionEventAssignment:
     handoff_to_asset_ids: tuple[str, ...] = ()
     handoff_to_event_id: str | None = None
     handoff_to_asset_id: str | None = None
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
     phase_chain: tuple[MotionEventPhase, ...] = ()
 
     def to_payload(self) -> dict[str, object | None]:
@@ -90,6 +102,10 @@ class MotionEventAssignment:
             "handoff_to_asset_ids": list(self.handoff_to_asset_ids),
             "handoff_to_event_id": self.handoff_to_event_id,
             "handoff_to_asset_id": self.handoff_to_asset_id,
+            "trigger_char_start": self.trigger_char_start,
+            "trigger_char_end": self.trigger_char_end,
+            "spoken_start": self.spoken_start,
+            "spoken_end": self.spoken_end,
             "phase_chain": [phase.to_payload() for phase in self.phase_chain],
         }
 
@@ -169,6 +185,10 @@ class MotionEventFlowResolver:
                     relationship=step.relationship,
                     semantic_action=step.semantic_action,
                     authority=step.authority,
+                    trigger_char_start=step.trigger_char_start,
+                    trigger_char_end=step.trigger_char_end,
+                    spoken_start=step.spoken_start,
+                    spoken_end=step.spoken_end,
                 )
                 owned_phases.append(phase)
                 role_bonus = self._role_bonus(step.stage, involvement)
@@ -196,6 +216,10 @@ class MotionEventFlowResolver:
                         handoff_to_asset_ids=flow.handoff_to_asset_ids,
                         handoff_to_event_id=flow.handoff_to_event_id,
                         handoff_to_asset_id=flow.handoff_to_asset_id,
+                        trigger_char_start=step.trigger_char_start,
+                        trigger_char_end=step.trigger_char_end,
+                        spoken_start=step.spoken_start,
+                        spoken_end=step.spoken_end,
                     ),
                 ))
 
@@ -222,6 +246,10 @@ class MotionEventFlowResolver:
             handoff_to_asset_ids=dominant.handoff_to_asset_ids,
             handoff_to_event_id=dominant.handoff_to_event_id,
             handoff_to_asset_id=dominant.handoff_to_asset_id,
+            trigger_char_start=dominant.trigger_char_start,
+            trigger_char_end=dominant.trigger_char_end,
+            spoken_start=dominant.spoken_start,
+            spoken_end=dominant.spoken_end,
             phase_chain=tuple(owned_phases),
         )
 

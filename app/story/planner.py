@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
+from app.models import PackageModel, SceneSource, StoryBeat, StorySemanticContext, Transcript, VisualAsset
 
 from .activation import SemanticActivationPlanner
 from .graph import StoryGraph, StoryGraphBuilder
@@ -99,6 +99,13 @@ class StoryPlanner:
                     is_first_beat=(beat_number == 1),
                     semantic_binding_scene=semantic_binding_by_scene.get(scene.id),
                 )
+                semantic_context = self._resolve_relation_timing(
+                    semantic_context,
+                    transcript=transcript,
+                    script=package.script,
+                    beat_start=audio_start,
+                    beat_end=audio_end,
+                )
                 beats.append(StoryBeat(
                     id=f"beat-{beat_number:03d}",
                     scene_id=scene.id,
@@ -129,6 +136,45 @@ class StoryPlanner:
             preserve_spoken_completion=bool(package.semantic_bindings),
         )
         return self.activation.enrich(package, transcript, assets, beats)
+
+
+    @classmethod
+    def _resolve_relation_timing(
+        cls,
+        context: StorySemanticContext,
+        *,
+        transcript: Transcript,
+        script: str | None,
+        beat_start: float,
+        beat_end: float,
+    ) -> StorySemanticContext:
+        """Resolve authored relation char spans onto Story's narration clock."""
+        if not context.relations:
+            return context
+
+        lower = max(0.0, float(beat_start))
+        upper = max(lower, min(float(beat_end), float(transcript.duration)))
+        relations = []
+        for relation in context.relations:
+            if relation.trigger_char_start is None or relation.trigger_char_end is None:
+                relations.append(relation)
+                continue
+            spoken_start, spoken_end, _ = cls._timing_for_span(
+                transcript,
+                script,
+                relation.trigger_char_start,
+                relation.trigger_char_end,
+                relation.trigger_text,
+            )
+            start = max(lower, min(upper, float(spoken_start)))
+            end = max(start, min(upper, float(spoken_end)))
+            if end - start < 0.025:
+                relations.append(relation)
+                continue
+            relations.append(
+                relation.model_copy(update={"spoken_start": start, "spoken_end": end})
+            )
+        return context.model_copy(update={"relations": relations})
 
     def _assign_visual_timeline(
         self,

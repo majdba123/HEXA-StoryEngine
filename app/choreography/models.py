@@ -116,6 +116,10 @@ class InteractionIntent:
     confidence: float = 0.0
     executable: bool = False
     requires_state_change: bool = False
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
     evidence: tuple[str, ...] = ()
 
     @property
@@ -146,6 +150,10 @@ class EventFlowStep:
     relationship: str | None = None
     semantic_action: str | None = None
     authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

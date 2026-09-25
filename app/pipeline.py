@@ -9,7 +9,7 @@ from app.choreography import ChoreographyDirector
 from app.assets import AssetManager
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
-from app.qa import AuthoringVisualQA, RenderedVisualQA
+from app.qa import AuthoringVisualQA, MotionInteractionQA, RenderedVisualQA
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
@@ -89,6 +89,7 @@ class StoryEnginePipeline:
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.text_motion = TextMotionPlanner()
         self.authoring_qa = AuthoringVisualQA(self.reference.profile)
+        self.motion_interaction_qa = MotionInteractionQA()
         self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
@@ -196,6 +197,16 @@ class StoryEnginePipeline:
             visual_motion=motion,
         )
 
+        motion_interaction_report = self.motion_interaction_qa.inspect(
+            story=story,
+            motion=motion,
+        )
+        self.motion_interaction_qa.write(
+            motion_interaction_report,
+            workspace / "diagnostics" / "motion-interaction-qa.json",
+        )
+        self.motion_interaction_qa.require(motion_interaction_report)
+
         sync_report = self.story_sync_qa.inspect(story=story, motion=motion)
         self.story_sync_qa.write(
             sync_report,
@@ -268,6 +279,7 @@ class StoryEnginePipeline:
                 "Authoring QA passed: "
                 f"{sync_report.anchored_assets} semantic sync anchors, "
                 f"{sync_report.fallback_assets} conservative fallbacks; "
+                f"{motion_interaction_report.checked_relations} relation timelines; "
                 "0 visual layout, 0 text layout, 0 short-motion violations"
             ),
         )

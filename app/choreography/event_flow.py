@@ -287,6 +287,10 @@ class SemanticEventFlowPlanner:
                 relationship=interaction.relationship,
                 semantic_action=interaction.semantic_action,
                 authority=interaction.authority,
+                trigger_char_start=interaction.trigger_char_start,
+                trigger_char_end=interaction.trigger_char_end,
+                spoken_start=interaction.spoken_start,
+                spoken_end=interaction.spoken_end,
             ))
             target_has_state_change = bool(
                 interaction.object_asset_id
@@ -307,6 +311,10 @@ class SemanticEventFlowPlanner:
                     relationship=interaction.relationship,
                     semantic_action=interaction.semantic_action,
                     authority=interaction.authority,
+                    trigger_char_start=interaction.trigger_char_start,
+                    trigger_char_end=interaction.trigger_char_end,
+                    spoken_start=interaction.spoken_start,
+                    spoken_end=interaction.spoken_end,
                 ))
 
         for unit in result_units:
@@ -329,6 +337,18 @@ class SemanticEventFlowPlanner:
                     result_interaction.authority
                     if result_interaction
                     else "FINAL_PACKAGE_SEMANTIC_EVENT"
+                ),
+                trigger_char_start=(
+                    result_interaction.trigger_char_start if result_interaction else None
+                ),
+                trigger_char_end=(
+                    result_interaction.trigger_char_end if result_interaction else None
+                ),
+                spoken_start=(
+                    result_interaction.spoken_start if result_interaction else None
+                ),
+                spoken_end=(
+                    result_interaction.spoken_end if result_interaction else None
                 ),
             ))
 

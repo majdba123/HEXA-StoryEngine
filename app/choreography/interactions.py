@@ -152,6 +152,10 @@ class InteractionCompiler:
                     requires_state_change=(
                         executable_relation and action in _MEANING_ACTIONS
                     ),
+                    trigger_char_start=relation.trigger_char_start,
+                    trigger_char_end=relation.trigger_char_end,
+                    spoken_start=relation.spoken_start,
+                    spoken_end=relation.spoken_end,
                     evidence=tuple((context.evidence if context else [])[:8]),
                 )
             )

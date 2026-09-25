@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
-from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
+from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
@@ -302,8 +302,12 @@ class MotionPlanner:
                         for row in directive.state_transitions
                     )
                 )
+                explicit_event_timeline = bool(
+                    assignment is not None
+                    and self._has_explicit_event_timeline(assignment, activation)
+                )
                 if not family_secondary and not compound_unit_locked:
-                    if assignment is not None:
+                    if assignment is not None and not explicit_event_timeline:
                         has_story_window, event_story_window = story_activation_window(activation, beat)
                         active_seconds = (
                             max(0.0, event_story_window.settle_at - event_story_window.reveal_start)
@@ -321,7 +325,7 @@ class MotionPlanner:
                             energy=intensity,
                             cohort_gain=cohort_gain,
                         )
-                    else:
+                    elif assignment is None:
                         program = self._apply_choreography_pattern(
                             program,
                             pattern=pattern,
@@ -519,8 +523,247 @@ class MotionPlanner:
                         ),
                     )
                 )
+                if explicit_event_timeline and assignment is not None:
+                    cues[-1] = self._attach_event_timeline(
+                        cue=cues[-1],
+                        beat=beat,
+                        assignment=assignment,
+                        activation=activation,
+                        item=item,
+                        items_by_id=items_by_id,
+                        fallback_vector=interaction_vector,
+                        focus_strength=focus_strength,
+                        energy=intensity,
+                        cohort_gain=cohort_gain,
+                        directive=directive,
+                    )
             previous_layout = layout
         return cues
+
+    @staticmethod
+    def _has_explicit_event_timeline(
+        assignment: MotionEventAssignment,
+        activation: AssetActivation | None,
+    ) -> bool:
+        for phase in assignment.phase_chain:
+            if (
+                phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}
+                and phase.spoken_start is not None
+                and phase.spoken_end is not None
+            ):
+                return True
+            if phase.stage == EventFlowStage.PAYOFF and (
+                (phase.spoken_start is not None and phase.spoken_end is not None)
+                or (activation is not None and activation.spoken_start is not None)
+            ):
+                return True
+        return False
+
+    @classmethod
+    def _attach_event_timeline(
+        cls,
+        *,
+        cue: MotionCue,
+        beat: StoryBeat,
+        assignment: MotionEventAssignment,
+        activation: AssetActivation | None,
+        item: LayoutItem,
+        items_by_id: dict[str, LayoutItem],
+        fallback_vector: tuple[float, float],
+        focus_strength: float,
+        energy: float,
+        cohort_gain: float,
+        directive,
+    ) -> MotionCue:
+        """Attach later semantic actions while keeping one backward-compatible cue."""
+        base_program = cue.params.get("program")
+        if not isinstance(base_program, dict):
+            return cue
+        deadline = cls._event_handoff_deadline(
+            beat=beat, assignment=assignment, directive=directive
+        )
+        segments: list[MotionSegment] = [
+            MotionSegment(
+                phase="ENTRY",
+                start=cue.start,
+                end=cue.end,
+                program=base_program,
+                semantic_event_id=assignment.event_id,
+                semantic_action=assignment.semantic_action,
+                involvement=assignment.involvement,
+                handoff_deadline=deadline,
+            )
+        ]
+
+        phases = list(assignment.phase_chain)
+        react_keys = {
+            (phase.event_id, phase.target_asset_id)
+            for phase in phases
+            if phase.stage == EventFlowStage.REACT
+        }
+        phases = [
+            phase for phase in phases
+            if not (
+                phase.stage == EventFlowStage.INTERACT
+                and phase.involvement == "TARGET"
+                and (phase.event_id, phase.target_asset_id) in react_keys
+            )
+        ]
+        seen: set[tuple[str, int, str, str]] = set()
+        for phase in phases:
+            if phase.stage not in {
+                EventFlowStage.INTERACT, EventFlowStage.REACT, EventFlowStage.PAYOFF
+            }:
+                continue
+            key = (phase.event_id, phase.step_index, phase.stage.value, phase.involvement)
+            if key in seen:
+                continue
+            seen.add(key)
+            window = cls._event_segment_window(
+                phase=phase,
+                activation=activation,
+                cue=cue,
+                beat=beat,
+                deadline=deadline,
+            )
+            if window is None:
+                continue
+            vector = cls._phase_interaction_vector(
+                phase=phase,
+                incoming_from_asset_id=assignment.incoming_from_asset_id,
+                item=item,
+                items_by_id=items_by_id,
+                fallback=fallback_vector,
+            )
+            program = cls._event_segment_program(
+                phase=phase,
+                vector=vector,
+                focus_strength=focus_strength,
+                energy=energy,
+                cohort_gain=cohort_gain,
+            )
+            segments.append(
+                MotionSegment(
+                    phase=phase.stage.value,
+                    start=window[0],
+                    end=window[1],
+                    program=program.to_payload(),
+                    semantic_event_id=phase.event_id,
+                    semantic_action=phase.semantic_action,
+                    relationship=phase.relationship,
+                    involvement=phase.involvement,
+                    source_asset_id=phase.source_asset_id,
+                    target_asset_id=phase.target_asset_id,
+                    result_asset_id=phase.result_asset_id,
+                    handoff_deadline=deadline,
+                )
+            )
+        return cue.model_copy(update={"segments": segments})
+
+    @staticmethod
+    def _event_segment_window(
+        *,
+        phase: MotionEventPhase,
+        activation: AssetActivation | None,
+        cue: MotionCue,
+        beat: StoryBeat,
+        deadline: float,
+    ) -> tuple[float, float] | None:
+        relation_start = phase.spoken_start
+        relation_end = phase.spoken_end
+        if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
+            if relation_start is None or relation_end is None or relation_end <= relation_start:
+                return None
+            span = relation_end - relation_start
+            if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
+                start, end = relation_start, relation_start + span * 0.70
+            elif phase.stage == EventFlowStage.REACT:
+                start, end = relation_start + span * 0.20, relation_start + span * 0.84
+            else:
+                start, end = relation_start + span * 0.18, relation_start + span * 0.76
+        elif phase.stage == EventFlowStage.PAYOFF:
+            if relation_start is not None and relation_end is not None and relation_end > relation_start:
+                span = relation_end - relation_start
+                start = relation_start + span * 0.72
+            elif activation is not None and activation.spoken_start is not None:
+                start = float(activation.spoken_start)
+                span = max(0.18, float((activation.spoken_end or start + 0.24) - start))
+            else:
+                return None
+            if activation is not None and activation.spoken_start is not None:
+                start = max(start, float(activation.spoken_start))
+            end = start + max(0.18, min(0.34, span * 0.55))
+        else:
+            return None
+
+        lower = max(float(cue.start), float(beat.start))
+        upper = min(float(beat.end), float(deadline))
+        start = max(lower, float(start))
+        end = min(upper, float(end))
+        if end - start < 0.06:
+            return None
+        return start, end
+
+    @classmethod
+    def _event_segment_program(
+        cls,
+        *,
+        phase: MotionEventPhase,
+        vector: tuple[float, float],
+        focus_strength: float,
+        energy: float,
+        cohort_gain: float,
+    ) -> MotionProgram:
+        dx, dy, scale = cls._phase_transform(
+            phase=phase, vector=vector, focus_strength=max(0.0, min(1.0, focus_strength))
+        )
+        strength = max(0.30, min(1.0, energy)) * max(0.25, min(1.0, cohort_gain))
+        dx = max(-0.06, min(0.06, dx * strength))
+        dy = max(-0.06, min(0.06, dy * strength))
+        scale = 1.0 + (scale - 1.0) * strength
+        return MotionProgram(
+            name=(
+                f"semantic_segment_{phase.stage.value.lower()}_"
+                f"{str(phase.semantic_action or 'event').lower()}"
+            ),
+            settle_progress=1.0,
+            keyframes=(
+                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_out_cubic"),
+                MotionKeyframe(0.48, dx, dy, scale, "ease_out_cubic"),
+                MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+            ),
+        )
+
+    @staticmethod
+    def _event_handoff_deadline(*, beat: StoryBeat, assignment: MotionEventAssignment, directive) -> float:
+        candidates = [float(beat.end)]
+        target_event_ids = set(assignment.handoff_to_event_ids)
+        if assignment.handoff_to_event_id:
+            target_event_ids.add(assignment.handoff_to_event_id)
+        for activation in beat.asset_activations:
+            if activation.spoken_start is None or not activation.semantic_event_id:
+                continue
+            if activation.semantic_event_id in target_event_ids:
+                candidates.append(float(activation.spoken_start))
+            elif (
+                assignment.event_order is not None
+                and activation.semantic_event_order is not None
+                and activation.semantic_event_order > assignment.event_order
+            ):
+                candidates.append(float(activation.spoken_start))
+        if directive is not None and assignment.event_order is not None:
+            for flow in directive.event_flows:
+                if flow.order is None or flow.order <= assignment.event_order:
+                    continue
+                starts = [
+                    float(row.spoken_start)
+                    for row in beat.asset_activations
+                    if row.semantic_event_id == flow.event_id and row.spoken_start is not None
+                ]
+                if starts:
+                    candidates.append(min(starts))
+        valid = [value for value in candidates if value > float(beat.start) + 1e-6]
+        return min(valid) if valid else float(beat.end)
 
     @staticmethod
     def _compound_unit_motion_locked(
