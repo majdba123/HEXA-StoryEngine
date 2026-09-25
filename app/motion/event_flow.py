@@ -161,16 +161,27 @@ class MotionEventFlowResolver:
         owned_phases: list[MotionEventPhase] = []
 
         for flow_index, flow in enumerate(directive.event_flows):
-            # Story owns the actual semantic activation. If a visual participates in an
-            # earlier relation and is later reused as another event's leader/result,
-            # Motion must execute the event Story actually activated rather than picking
-            # a stronger stage from a different event.
-            if semantic_event_id and flow.event_id != semantic_event_id:
-                continue
+            owns_event = not semantic_event_id or flow.event_id == semantic_event_id
             incoming_from = self._incoming_focus_asset(directive, flow.event_id, asset_id)
             for step_index, step in enumerate(flow.steps):
                 involvement = self._involvement_for_stage(step, asset_id)
                 if involvement is None or step.stage == EventFlowStage.RELEASE:
+                    continue
+                # Story still owns the asset's primary semantic event. The only legal
+                # cross-event participation is an explicit authored relation phase: a
+                # source may INTERACT with a later event and a target may REACT to an
+                # earlier event. This is required for V1.2 event dependency chains and
+                # does not grant unrelated ADD/ESTABLISH/PAYOFF ownership.
+                cross_event_relation = (
+                    not owns_event
+                    and step.authority in {
+                        "FINAL_PACKAGE_ASSET_RELATION",
+                        "FINAL_PACKAGE_INTERACTION_TARGET",
+                    }
+                    and step.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}
+                    and involvement in {"SOURCE", "TARGET"}
+                )
+                if not owns_event and not cross_event_relation:
                     continue
                 phase = MotionEventPhase(
                     event_id=flow.event_id,
@@ -191,6 +202,10 @@ class MotionEventFlowResolver:
                     spoken_end=step.spoken_end,
                 )
                 owned_phases.append(phase)
+                if not owns_event:
+                    # Cross-event relation phases are executable timeline additions,
+                    # never the dominant assignment that owns ENTRY/handoff metadata.
+                    continue
                 role_bonus = self._role_bonus(step.stage, involvement)
                 candidates.append((
                     self._STAGE_PRIORITY[step.stage] + role_bonus,
