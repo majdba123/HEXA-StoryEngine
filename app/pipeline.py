@@ -9,7 +9,7 @@ from app.choreography import ChoreographyDirector
 from app.assets import AssetManager
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
-from app.qa import AuthoringVisualQA, MotionInteractionQA, RenderedVisualQA
+from app.qa import AuthoringVisualQA, MotionInteractionQA, RenderedVisualQA, SceneContinuityQA
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
@@ -90,6 +90,7 @@ class StoryEnginePipeline:
         self.text_motion = TextMotionPlanner()
         self.authoring_qa = AuthoringVisualQA(self.reference.profile)
         self.motion_interaction_qa = MotionInteractionQA()
+        self.scene_continuity_qa = SceneContinuityQA()
         self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
@@ -309,6 +310,16 @@ class StoryEnginePipeline:
             cancelled=cancelled,
         )
         AssetUsageValidator.validate(plan)
+        continuity_report = self.scene_continuity_qa.inspect(
+            story=plan.story,
+            composition=plan.composition,
+            motion=plan.motion,
+        )
+        self.scene_continuity_qa.write(
+            continuity_report,
+            workspace / "diagnostics" / "scene-continuity-qa.json",
+        )
+        self.scene_continuity_qa.require(continuity_report)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.76, "Rendering story")
