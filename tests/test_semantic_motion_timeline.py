@@ -25,6 +25,7 @@ from app.models import (
 from app.motion import MotionPlanner
 from app.motion.event_flow import MotionEventAssignment
 from app.motion.models import MotionKeyframe, MotionProgram
+from app.motion.timing import GOLDEN_MAJOR, motion_comfort
 from app.qa import MotionInteractionQA
 from app.story.planner import StoryPlanner
 from app.story.windows import StoryAssetActivation
@@ -325,6 +326,8 @@ def test_event_motion_has_perceptual_floor() -> None:
             for frame in segment.program["keyframes"]
         )
         assert peak >= floor - 1e-6
+        assert segment.program["keyframes"][1]["progress"] == pytest.approx(GOLDEN_MAJOR)
+        assert segment.end - segment.start >= motion_comfort(segment.phase).minimum_seconds
     payoff_scale = max(
         abs(float(frame["scale"]) - 1.0) for frame in payoff.program["keyframes"]
     )
@@ -358,7 +361,11 @@ def test_handoff_creates_real_exit_for_outgoing_asset() -> None:
     assert segment is not None
     assert segment.phase == "EXIT"
     assert segment.end == pytest.approx(2.0)
+    assert segment.end - segment.start >= motion_comfort("EXIT").minimum_seconds
+    golden = segment.program["keyframes"][1]
+    assert golden["progress"] == pytest.approx(GOLDEN_MAJOR)
     final = segment.program["keyframes"][-1]
+    assert float(golden["dx"]) == pytest.approx(float(final["dx"]) * GOLDEN_MAJOR)
     assert float(final["dx"]) < -0.035
     assert float(final["scale"]) < 1.0
     report = MotionInteractionQA().inspect(
@@ -394,3 +401,30 @@ def test_motion_interaction_qa_accepts_readable_motion_with_safe_spacing() -> No
         story=[beat], motion=cues, composition=[composition],
     )
     assert report.ok, report.violations
+
+
+def test_tight_handoff_omits_rushed_exit_instead_of_accelerating() -> None:
+    cue = MotionCue(
+        beat_id="beat", asset_id="old", kind="program_v3",
+        start=1.0, end=1.18, params={"engine_version": 3},
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1", event_order=1, stage=EventFlowStage.INTERACT,
+        step_index=1, focus_asset_id="old",
+        source_asset_id="old", target_asset_id="target", result_asset_id=None,
+        relationship="CONNECTS", semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION", involvement="SOURCE",
+        handoff_to_event_ids=("E2",), handoff_to_asset_ids=("new",),
+        handoff_to_event_id="E2", handoff_to_asset_id="new",
+    )
+    old = LayoutItem(asset_id="old", x=0.25, y=0.5, width=0.2, height=0.3)
+    new = LayoutItem(asset_id="new", x=0.75, y=0.5, width=0.2, height=0.3)
+    segment = MotionPlanner._exit_segment_before_handoff(
+        cue=cue,
+        assignment=assignment,
+        deadline=1.50,
+        item=old,
+        items_by_id={"old": old, "new": new},
+        existing_segments=[],
+    )
+    assert segment is None
