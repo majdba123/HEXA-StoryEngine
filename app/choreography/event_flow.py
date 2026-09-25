@@ -5,6 +5,7 @@ from math import inf
 
 from app.models import AssetActivation, StoryBeat
 
+from .relation_contract import relation_requires_reaction
 from .models import (
     EventFlowStage,
     EventFlowStep,
@@ -24,7 +25,6 @@ class SemanticEventFlowPlanner:
     """
 
     _PACKAGE_SOURCE = "final_package_semantic_binding"
-    _NO_AUTOMATIC_REACTION_ACTIONS = {"COMPARE", "LOOP"}
 
     def compile(
         self,
@@ -61,6 +61,11 @@ class SemanticEventFlowPlanner:
             event_assets,
             interactions,
         )
+        result_interactions_by_event = self._assign_result_interactions(
+            ordered_groups,
+            event_assets,
+            interactions,
+        )
         reaction_asset_ids = {
             row.asset_id for row in transitions if row.meaningful
         }
@@ -71,12 +76,18 @@ class SemanticEventFlowPlanner:
             leader_units = self._role_units(rows, "LEADER")
             participant_units = self._role_units(rows, "PARTICIPANT")
             context_units = self._role_units(rows, "CONTEXT")
-            result_units = self._role_units(rows, "RESULT")
+            authored_result_units = self._role_units(rows, "RESULT")
+            result_interactions = result_interactions_by_event.get(event_id, ())
+            result_units = self._relation_result_units(
+                authored_result_units,
+                result_interactions,
+            )
             text_anchor_units = self._role_units(rows, "TEXT_ANCHOR")
             metadata.append({
                 "event_id": event_id,
                 "rows": rows,
                 "interactions": interactions_by_event.get(event_id, ()),
+                "result_interactions": result_interactions,
                 "leader_units": leader_units,
                 "participant_units": participant_units,
                 "context_units": context_units,
@@ -107,7 +118,9 @@ class SemanticEventFlowPlanner:
             rows = item["rows"]
             assert isinstance(rows, list)
             event_interactions = item["interactions"]
+            payoff_interactions = item["result_interactions"]
             assert isinstance(event_interactions, tuple)
+            assert isinstance(payoff_interactions, tuple)
             leader_ids = item["leaders"]
             participant_ids = item["participants"]
             context_ids = item["contexts"]
@@ -144,6 +157,7 @@ class SemanticEventFlowPlanner:
                 participant_units=participant_units,
                 result_units=result_units,
                 interactions=event_interactions,
+                payoff_interactions=payoff_interactions,
                 reaction_asset_ids=reaction_asset_ids,
                 handoff_to_asset_ids=handoff_to_asset_ids,
             )
@@ -169,7 +183,10 @@ class SemanticEventFlowPlanner:
                     handoff_to_asset_id=singular_asset,
                     confidence=max((row.confidence for row in rows), default=0.0),
                     authority="FINAL_PACKAGE_SEMANTIC_EVENT",
-                    evidence=self._evidence(rows, event_interactions),
+                    evidence=self._evidence(
+                        rows,
+                        tuple(dict.fromkeys((*event_interactions, *payoff_interactions))),
+                    ),
                 )
             )
         return tuple(flows)
@@ -237,6 +254,58 @@ class SemanticEventFlowPlanner:
         return {event_id: tuple(rows) for event_id, rows in assigned.items()}
 
     @classmethod
+    def _assign_result_interactions(
+        cls,
+        ordered_groups: list[tuple[str, list[AssetActivation]]],
+        event_assets: dict[str, set[str]],
+        interactions: tuple[InteractionIntent, ...],
+    ) -> dict[str, tuple[InteractionIntent, ...]]:
+        """Route each explicit relation result to the Story event that owns the asset.
+
+        A Final Package relation may explicitly name a result even when the package did
+        not redundantly mark that visual with a RESULT event role. The relation itself
+        is semantic authority, so the result still needs one PAYOFF phase. We attach
+        that payoff to the result asset's existing Story event rather than moving the
+        asset into the source event or inventing new timing.
+        """
+        assigned: dict[str, list[InteractionIntent]] = defaultdict(list)
+        order_index = {event_id: index for index, (event_id, _rows) in enumerate(ordered_groups)}
+        for interaction in interactions:
+            if (
+                not interaction.executable
+                or interaction.authority not in {
+                    "FINAL_PACKAGE_ASSET_RELATION",
+                    "FINAL_PACKAGE_INTERACTION_TARGET",
+                }
+                or not interaction.result_asset_id
+            ):
+                continue
+            owners = [
+                event_id
+                for event_id, assets in event_assets.items()
+                if interaction.result_asset_id in assets
+            ]
+            if not owners:
+                continue
+            owner = min(owners, key=lambda event_id: order_index[event_id])
+            assigned[owner].append(interaction)
+        return {event_id: tuple(rows) for event_id, rows in assigned.items()}
+
+    @staticmethod
+    def _relation_result_units(
+        authored_units: tuple[tuple[str, ...], ...],
+        interactions: tuple[InteractionIntent, ...],
+    ) -> tuple[tuple[str, ...], ...]:
+        units = list(authored_units)
+        represented = {asset_id for unit in units for asset_id in unit}
+        for interaction in interactions:
+            result_id = interaction.result_asset_id
+            if result_id and result_id not in represented:
+                units.append((result_id,))
+                represented.add(result_id)
+        return tuple(units)
+
+    @classmethod
     def _steps(
         cls,
         *,
@@ -244,6 +313,7 @@ class SemanticEventFlowPlanner:
         participant_units: tuple[tuple[str, ...], ...],
         result_units: tuple[tuple[str, ...], ...],
         interactions: tuple[InteractionIntent, ...],
+        payoff_interactions: tuple[InteractionIntent, ...],
         reaction_asset_ids: set[str],
         handoff_to_asset_ids: tuple[str, ...],
     ) -> tuple[EventFlowStep, ...]:
@@ -319,7 +389,10 @@ class SemanticEventFlowPlanner:
 
         for unit in result_units:
             result_id = unit[0]
-            result_interaction = cls._interaction_for_result(result_id, interactions)
+            result_interaction = cls._interaction_for_result(
+                result_id,
+                tuple(dict.fromkeys((*interactions, *payoff_interactions))),
+            )
             steps.append(EventFlowStep(
                 stage=EventFlowStage.PAYOFF,
                 focus_asset_id=result_id,
@@ -380,10 +453,12 @@ class SemanticEventFlowPlanner:
         interaction: InteractionIntent,
         target_has_state_change: bool,
     ) -> bool:
-        action = str(interaction.semantic_action or "").upper()
-        if action in cls._NO_AUTOMATIC_REACTION_ACTIONS:
-            return target_has_state_change
-        return bool(interaction.requires_state_change or target_has_state_change)
+        return relation_requires_reaction(
+            semantic_action=interaction.semantic_action,
+            executable=interaction.executable,
+            target_asset_id=interaction.object_asset_id,
+            target_has_state_change=target_has_state_change,
+        )
 
     @staticmethod
     def _interaction_for_result(
