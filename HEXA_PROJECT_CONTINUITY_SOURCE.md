@@ -8612,3 +8612,69 @@ Therefore:
 - do not change the Final Package merely to satisfy Motion;
 - do not reopen MONTAGE27 readability fixes unless a new diagnostic proves a regression.
 
+
+
+## CURRENT OFFICIAL HANDOFF STATE AFTER MONTAGE28 — 2026-09-25
+
+Official branch:
+`montage`
+
+Current behavior HEAD:
+`9bdca4bfde5da542367bb501c8fec582e068f32e`
+`[test] Encode Gray-Hat relation completeness regression`
+
+Current documentation HEAD before this status commit:
+`8ad3cf42c1d506ffa5172c59b48236c6279a684e`
+`[continuity] Record MONTAGE28 relation completeness gate`
+
+### CI proof
+
+Behavior-head CI:
+Run `36167480737` — SUCCESS
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: 372 passed, 12 warnings in 14.10s
+- tested source snapshot upload: SUCCESS
+
+Documentation-head CI:
+Run `36168094299` — SUCCESS
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: 372 passed, 12 warnings in 13.63s
+- tested source snapshot upload: SUCCESS
+
+### Diagnostic archive content verification
+
+The exact uploaded diagnostic `HEXA-diagnostic-10f16ca6.zip` was inspected again.
+
+It contains only:
+- `report.json`
+- `report.md`
+- `recovery-events.json`
+- `workspace-manifest.json`
+
+It does NOT contain the raw Gray-Hat Final Package ZIP, narration MP3, package scene images, extracted assets, or the generation workspace bytes.
+
+The workspace manifest proves those files existed on the operator machine during the failed run, including the normalized package directory and all 35 scene images, but only filenames/sizes are present in the diagnostic archive. The bytes are not recoverable from the diagnostic alone.
+
+Therefore exact 35-scene post-fix Gray-Hat rerender still requires the operator-side original package + narration.
+
+### Current MONTAGE28 state
+
+Validated:
+- generic authored-relation completeness fix;
+- shared Choreography/QA target-reaction contract;
+- explicit relation result -> PAYOFF coverage without redundant RESULT role;
+- cross-event result ownership;
+- Story-owned fallback timing for valid spanless source/target relations;
+- full green CI;
+- real FFmpeg encoded regression from exact CI-tested source;
+- no extraction, Composition geometry, global Motion-strength, export-quality, or QA weakening.
+
+Still pending:
+- rerun the exact corrected Gray-Hat package with its original narration on the production Windows environment;
+- verify that the original six violations do not recur;
+- complete final encoded render/QA;
+- only then mark diagnostic `10f16ca6` fully CLOSED.
+
+No further production-code change is justified until that exact rerender or a new diagnostic provides new evidence.
