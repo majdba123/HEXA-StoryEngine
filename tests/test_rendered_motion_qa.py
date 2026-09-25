@@ -220,3 +220,29 @@ def test_short_react_readability_floor_never_requires_rushed_motion() -> None:
         duration * GOLDEN_MINOR,
     )
     assert floor <= comfort_budget + 1e-9
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_rendered_motion_qa_skips_transform_check_for_geometry_locked_asset(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=True)
+    cue = plan.motion[0]
+    locked = cue.model_copy(update={
+        "params": {
+            **cue.params,
+            "render_constraints": {
+                "geometry_lock": "authored_footprint",
+                "reveal_mode": "alpha_only",
+            },
+        }
+    })
+    plan = plan.model_copy(update={"motion": [locked]})
+    video = tmp_path / "locked.mp4"
+
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+
+    assert report.ok, report.violations
+    assert report.checked_segments == 0
+    assert report.skipped_static_segments == 1
