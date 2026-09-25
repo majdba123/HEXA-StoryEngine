@@ -9,7 +9,7 @@ from app.choreography import ChoreographyDirector
 from app.assets import AssetManager
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
-from app.qa import AuthoringVisualQA, MotionInteractionQA, RenderedVisualQA, SceneContinuityQA
+from app.qa import (AuthoringVisualQA, MotionInteractionQA, RenderedMotionQA, RenderedVisualQA, SceneContinuityQA)
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
@@ -91,6 +91,7 @@ class StoryEnginePipeline:
         self.authoring_qa = AuthoringVisualQA(self.reference.profile)
         self.motion_interaction_qa = MotionInteractionQA()
         self.scene_continuity_qa = SceneContinuityQA()
+        self.rendered_motion_qa = RenderedMotionQA()
         self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
@@ -324,6 +325,12 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.76, "Rendering story")
         video_only = self.renderer.render(plan, workspace / "render" / "video-only.mp4")
+        rendered_motion_report = self.rendered_motion_qa.inspect(video=video_only, plan=plan)
+        self.rendered_motion_qa.write(
+            rendered_motion_report,
+            workspace / "diagnostics" / "rendered-motion-qa.json",
+        )
+        self.rendered_motion_qa.require(rendered_motion_report)
 
         self._check_cancel(cancelled)
         output_file = self._output_path(package.package_id, output_name)
