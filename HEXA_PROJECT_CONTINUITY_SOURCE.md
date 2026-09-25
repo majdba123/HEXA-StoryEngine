@@ -7377,3 +7377,184 @@ repaired in Motion Planner rather than stopping the render.
 
 If another diagnostic appears, keep QA strict and treat it as the next generic production contract to
 close.
+
+
+## MONTAGE25 WINDOWS-SAFE FFMPEG COMMAND TRANSPORT CHECKPOINT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`115af7d72d74b60560cefdb78f12d30393ebd84f`
+`[test] Guard Windows-safe FFmpeg filter scripts`
+
+### Production diagnostic that opened this checkpoint
+
+Diagnostic:
+`HEXA-diagnostic-8aba2e6c.zip`
+
+Job:
+`8aba2e6c825246c18c27eeed0e3657ef`
+
+Runtime commit:
+`2f28e484197fce2d23186c6f9b44885ccbdc0588`
+
+The exact Black-Hat Final Package completed:
+- input;
+- transcription;
+- vision;
+- Pass1: 157 authored assets / 40 scenes;
+- Pass2: 179 assets (+22);
+- Story: 40 beats;
+- Text recovery;
+- Composition: 87 text cues;
+- Motion authoring QA:
+  - 179 semantic sync anchors;
+  - 0 conservative fallbacks;
+  - 14 relation timelines;
+  - 0 visual-layout violations;
+  - 0 text-layout violations;
+  - 0 short-motion violations.
+
+The failure occurred only after render compilation began.
+
+### Actual root cause
+
+The diagnostic displayed:
+`DependencyUnavailableError: ffmpeg is not available`
+
+That message was incorrect.
+
+The underlying Windows exception was:
+```
+FileNotFoundError: [WinError 206] The filename or extension is too long
+```
+
+FFmpeg was installed and detected correctly:
+- FFmpeg 9.0.2 available;
+- ffprobe available.
+
+The real failure was Windows CreateProcess rejecting an oversized process command line.
+
+Dense production scenes generate large FFmpeg `filter_complex` graphs containing:
+- many asset overlays;
+- per-segment x/y expressions;
+- semantic Motion keyframes;
+- scene-continuity transforms;
+- text/ASS filtering.
+
+Previously the complete graph was placed inline as:
+```
+-filter_complex "<very large graph>"
+```
+
+This can exceed Windows command-line limits even though FFmpeg itself can execute the graph.
+
+This failure class is generic and can recur with any sufficiently dense Final Package.
+
+### Generic renderer fix
+
+Commit:
+`f37c9b2552151b7e802c96a98d41881c63ce3a91`
+`[render] Move complex filters out of Windows command line`
+
+Renderer no longer places production filter graphs inline.
+
+For every rendered beat segment:
+1. the complete filter graph is written as UTF-8 to:
+   `<segment-stem>-filter-complex.ffgraph`
+2. FFmpeg receives:
+   `-filter_complex_script <script-path>`
+3. the process command contains only the small script filename rather than the complete graph.
+
+This is used unconditionally, not only after a command becomes too long.
+
+Benefits:
+- Windows command length remains bounded independent of visual density;
+- no retry after an expensive CreateProcess failure;
+- identical behavior on Windows/Linux;
+- the filter graph remains available in the workspace for diagnostics;
+- thread safety is preserved because every beat target has a unique segment stem.
+
+### Error classification corrected
+
+The old renderer caught all `FileNotFoundError` exceptions and translated them to:
+`DependencyUnavailableError("ffmpeg is not available")`
+
+Windows can expose CreateProcess WinError 206 through that same exception hierarchy.
+
+New behavior:
+- `winerror == 206` => `StageFailedError` describing Windows process-command overflow;
+- genuine executable-not-found => `DependencyUnavailableError`;
+- other OSError cases retain their real OS error metadata.
+
+Therefore a future process-launch problem cannot falsely tell the operator to reinstall FFmpeg when the
+binary is already available.
+
+### Regression coverage
+
+Commit:
+`115af7d72d74b60560cefdb78f12d30393ebd84f`
+`[test] Guard Windows-safe FFmpeg filter scripts`
+
+Regression 1 creates a filter graph larger than 48 KiB.
+
+Required behavior:
+- `-filter_complex` is absent from process args;
+- `-filter_complex_script` is present;
+- script bytes contain the complete graph;
+- final process command remains below 2 KiB.
+
+Regression 2 simulates:
+`FileNotFoundError(winerror=206)`
+
+Required behavior:
+- renderer raises `StageFailedError`;
+- error identifies Windows process limit;
+- it is never reported as missing FFmpeg.
+
+Existing FFmpeg integration tests also now execute through `-filter_complex_script`, proving that:
+- normal visual filters remain valid;
+- scene transitions remain valid;
+- motion expressions remain valid;
+- ASS/text filtering remains valid;
+- final MP4 rendering still works.
+
+### Final CI
+
+Behavior HEAD:
+`115af7d72d74b60560cefdb78f12d30393ebd84f`
+
+Run:
+`36152841146`
+
+Result:
+**SUCCESS**
+
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **358 passed, 12 warnings in 8.75s**
+
+### Locked production invariant
+
+After MONTAGE25:
+
+**Production FFmpeg filter complexity must not scale the Windows process command line. Filter graphs are
+transported through files, so increasing scene density, semantic Motion complexity or text filtering
+cannot reproduce WinError 206 through inline filter_complex growth.**
+
+No Final Package-specific rule was added:
+- no Black-Hat logic;
+- no scene ids;
+- no asset ids;
+- no package-specific thresholds;
+- Pass1 + Pass2 unchanged;
+- no Pass3 / Layer3;
+- Story remains timing authority;
+- Composition remains final geometry authority;
+- Final Package remains semantic authority.
+
+### Next production gate
+
+Pull the new montage HEAD after this documentation commit and rerun the exact same Final Package +
+narration.
+
+The diagnostic class from job `8aba2e6c825246c18c27eeed0e3657ef` should not recur regardless of
+filter-graph size.
