@@ -15,6 +15,7 @@ from app.models import (
     StoryBeat,
     VisualAsset,
 )
+from app.motion.timing import GOLDEN_MAJOR
 from app.qa import RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
 
@@ -32,7 +33,13 @@ def _program(dx: float = 0.0) -> dict:
         "settle_progress": 1.0,
         "keyframes": [
             {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
-            {"progress": 0.48, "dx": dx, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+            {
+                "progress": GOLDEN_MAJOR,
+                "dx": dx,
+                "dy": 0.0,
+                "scale": 1.0,
+                "easing": "ease_in_out_cubic",
+            },
             {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
         ],
     }
@@ -54,7 +61,7 @@ def _plan(path: Path, *, rendered_segment: bool) -> RenderPlan:
         phase="INTERACT",
         start=0.40,
         end=0.82,
-        program=_program(dx=0.04),
+        program=_program(dx=0.025),
         semantic_event_id="E1",
         semantic_action="CONNECT",
         involvement="SOURCE",
