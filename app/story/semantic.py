@@ -167,6 +167,10 @@ class PackageStoryInterpreter:
             for row in (semantic_binding_scene or {}).get("assets", [])
             if isinstance(row, dict) and row.get("asset_id")
         ]
+        binding_assets_by_id = {
+            str(row.get("asset_id")): row
+            for row in binding_assets
+        }
         semantic_events = [
             row
             for row in (semantic_binding_scene or {}).get("semantic_events", [])
@@ -203,6 +207,11 @@ class PackageStoryInterpreter:
             if not source or not target or not relationship:
                 continue
             span = relation.get("script_span")
+            if not isinstance(span, dict):
+                span = self._relation_span_from_assets(
+                    relation,
+                    binding_assets_by_id,
+                )
             relations.append(
                 StoryRelation(
                     source_unit_id=source,
@@ -633,6 +642,58 @@ class PackageStoryInterpreter:
             for relation in relations
         )
         return PackageStoryInterpreter._unique(output)
+
+    @classmethod
+    def _relation_span_from_assets(
+        cls,
+        relation: dict,
+        assets_by_id: dict[str, dict],
+    ) -> dict[str, int] | None:
+        """Derive relation timing only from authored participant spans.
+
+        V1.2 permits a relation without its own script_span while the related semantic
+        assets remain exactly anchored to narration. In that case the smallest envelope
+        covering source/target/result is authoritative enough to schedule interaction
+        without inventing topic-specific timing.
+        """
+        participant_ids = (
+            relation.get("subject_asset_id"),
+            relation.get("object_asset_id"),
+            relation.get("result_asset_id"),
+        )
+        spans: list[tuple[int, int]] = []
+        required = 0
+        resolved_required = 0
+        for index, asset_id in enumerate(participant_ids):
+            if not asset_id:
+                continue
+            if index < 2:
+                required += 1
+            asset = assets_by_id.get(str(asset_id))
+            asset_span = asset.get("script_span") if isinstance(asset, dict) else None
+            if not isinstance(asset_span, dict):
+                continue
+            start = cls._int_or_none(
+                asset_span.get("char_start")
+                if asset_span.get("char_start") is not None
+                else asset_span.get("global_char_start")
+            )
+            end = cls._int_or_none(
+                asset_span.get("char_end")
+                if asset_span.get("char_end") is not None
+                else asset_span.get("global_char_end")
+            )
+            if start is None or end is None or end <= start:
+                continue
+            spans.append((start, end))
+            if index < 2:
+                resolved_required += 1
+        if required < 2 or resolved_required < required or not spans:
+            return None
+        return {
+            "global_char_start": min(start for start, _end in spans),
+            "global_char_end": max(end for _start, end in spans),
+        }
 
     @classmethod
     def _contains_any(cls, value: str, needles: frozenset[str]) -> bool:
