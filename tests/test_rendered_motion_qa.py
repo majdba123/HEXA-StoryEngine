@@ -66,7 +66,7 @@ def _plan(path: Path, *, rendered_segment: bool) -> RenderPlan:
         phase="INTERACT",
         start=0.40,
         end=0.82,
-        program=_program(dx=0.020),
+        program=_program(dx=0.024),
         semantic_event_id="E1",
         semantic_action="CONNECT",
         involvement="SOURCE",
