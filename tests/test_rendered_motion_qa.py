@@ -156,7 +156,7 @@ def test_rendered_exit_moves_then_disappears(tmp_path: Path) -> None:
         ],
     }
     exit_segment = cue.segments[0].model_copy(update={
-        "phase": "EXIT", "start": 0.45, "end": 0.82, "program": exit_program,
+        "phase": "EXIT", "start": 0.45, "end": 0.90, "program": exit_program,
     })
     plan = plan.model_copy(update={
         "motion": [cue.model_copy(update={"segments": [exit_segment]})],
@@ -174,3 +174,24 @@ def test_rendered_exit_moves_then_disappears(tmp_path: Path) -> None:
     assert ok and frame is not None
     roi = frame[45:135, 95:225]
     assert float(roi.mean()) > 245.0
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_rendered_motion_qa_rejects_rushed_motion_even_when_visible(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=True)
+    cue = plan.motion[0]
+    rushed = cue.segments[0].model_copy(update={
+        "start": 0.40,
+        "end": 0.52,
+        "program": _program(dx=0.04),
+    })
+    plan = plan.model_copy(update={
+        "motion": [cue.model_copy(update={"segments": [rushed]})],
+    })
+    video = tmp_path / "rushed.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+    assert not report.ok
+    assert any(row.code == "MOTION_TOO_FAST" for row in report.violations)
