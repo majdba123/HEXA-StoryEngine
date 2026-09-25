@@ -5,7 +5,7 @@ import pytest
 from app.models import CompositionBeat, LayoutItem, StoryBeat
 from app.motion import MotionPlanner
 from app.motion.easing import sample_easing
-from app.motion.timing import MotionTimingPolicy
+from app.motion.timing import GOLDEN_MAJOR, GOLDEN_MINOR, MotionTimingPolicy
 
 
 def _beat(
@@ -73,9 +73,14 @@ def test_result_program_uses_one_clean_entry_then_holds() -> None:
     keyframes = program["keyframes"]
 
     assert program["name"] == "result_impact"
-    assert len(keyframes) <= 3
-    assert keyframes[0]["easing"] == "ease_out_cubic"
+    assert len(keyframes) <= 4
+    assert keyframes[0]["easing"] == "ease_in_out_cubic"
     assert program["settle_progress"] >= 0.78
+    assert keyframes[1]["progress"] == pytest.approx(
+        program["settle_progress"] * GOLDEN_MAJOR
+    )
+    assert keyframes[1]["dx"] == pytest.approx(keyframes[0]["dx"] * GOLDEN_MINOR)
+    assert keyframes[1]["dy"] == pytest.approx(keyframes[0]["dy"] * GOLDEN_MINOR)
     settle = program["settle_progress"]
     post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
     assert post_settle
