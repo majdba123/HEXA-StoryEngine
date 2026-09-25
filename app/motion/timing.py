@@ -6,6 +6,45 @@ from typing import TYPE_CHECKING
 
 from app.models import AssetActivation, StoryBeat
 
+GOLDEN_MAJOR = 0.6180339887498949
+GOLDEN_MINOR = 1.0 - GOLDEN_MAJOR
+
+
+@dataclass(frozen=True, slots=True)
+class MotionComfortProfile:
+    target_seconds: float
+    minimum_seconds: float
+    max_normalized_speed: float
+
+
+_MOTION_COMFORT: dict[str, MotionComfortProfile] = {
+    "ENTRY": MotionComfortProfile(0.42, 0.26, 0.14),
+    "INTERACT": MotionComfortProfile(0.40, 0.28, 0.13),
+    "REACT": MotionComfortProfile(0.36, 0.26, 0.12),
+    "PAYOFF": MotionComfortProfile(0.42, 0.30, 0.11),
+    "EXIT": MotionComfortProfile(0.40, 0.32, 0.14),
+}
+
+
+def motion_comfort(phase: str) -> MotionComfortProfile:
+    return _MOTION_COMFORT.get(
+        str(phase).upper(),
+        MotionComfortProfile(0.36, 0.24, 0.13),
+    )
+
+
+def comfort_gain(phase: str, duration: float) -> float:
+    """Scale amplitude down when Story cannot provide a comfortable motion window."""
+    profile = motion_comfort(phase)
+    duration = max(0.0, float(duration))
+    return max(0.0, min(1.0, duration / max(profile.minimum_seconds, 1e-6)))
+
+
+def max_comfort_displacement(phase: str, duration: float) -> float:
+    profile = motion_comfort(phase)
+    return max(0.0, float(duration)) * profile.max_normalized_speed
+
+
 if TYPE_CHECKING:
     from app.story.windows import StoryAssetActivation
 
