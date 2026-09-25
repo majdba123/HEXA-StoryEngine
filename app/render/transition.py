@@ -34,7 +34,8 @@ class VisualTransitionPolicy:
     pale ghost silhouettes that motivated the original no-carry policy.
     """
 
-    _EXPLICIT_BLUR_TOKENS = ("BLUR", "SOFT", "DEFOCUS", "DEPTH_BRIDGE")
+    _EXPLICIT_BLUR_TOKENS = ("BLUR", "DEFOCUS", "DEPTH_BRIDGE")
+    _STYLE_BLUR_TOKENS = (*_EXPLICIT_BLUR_TOKENS, "SOFT")
 
     @classmethod
     def _has_explicit_blur_intent(cls, beat: StoryBeat) -> bool:
@@ -43,16 +44,20 @@ class VisualTransitionPolicy:
         if context is None:
             return False
 
-        candidates = [str(context.continuity_relation or "")]
+        continuity = str(context.continuity_relation or "").strip().upper()
+        if any(token in continuity for token in cls._EXPLICIT_BLUR_TOKENS):
+            return True
+
+        style_candidates: list[str] = []
         for metadata in (context.scene_metadata, context.event_metadata):
             for key in ("transition", "transition_style", "handoff_style", "bridge_style"):
                 value = metadata.get(key)
                 if value is not None:
-                    candidates.append(str(value))
+                    style_candidates.append(str(value).strip().upper())
         return any(
-            token in candidate.strip().upper()
-            for candidate in candidates
-            for token in cls._EXPLICIT_BLUR_TOKENS
+            token in candidate
+            for candidate in style_candidates
+            for token in cls._STYLE_BLUR_TOKENS
         )
 
     @staticmethod
@@ -169,7 +174,10 @@ class VisualTransitionPolicy:
             bridge_duration = min(0.42, max(0.26, beat_duration * 0.18))
             return VisualTransitionDecision(
                 persistent_asset_ids=persistent,
-                carry_outgoing_asset_ids=paired_outgoing or outgoing,
+                # Keep every outgoing visual alive for the short handoff so the rest
+                # of the old scene exits instead of hard-cutting. Only paired assets
+                # receive target-seeking object motion; unpaired assets recede normally.
+                carry_outgoing_asset_ids=outgoing,
                 object_handoff_pairs=object_pairs,
                 mode=SceneTransitionMode.OBJECT_HANDOFF,
                 bridge_duration=bridge_duration,
