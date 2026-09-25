@@ -318,7 +318,9 @@ class MotionPlanner:
                 )
                 explicit_event_timeline = bool(
                     assignment is not None
-                    and self._has_explicit_event_timeline(assignment, activation)
+                    and self._has_explicit_event_timeline(
+                        assignment, activation, beat=beat
+                    )
                 )
                 if not family_secondary and not compound_unit_locked:
                     if assignment is not None:
@@ -564,14 +566,19 @@ class MotionPlanner:
     def _has_explicit_event_timeline(
         assignment: MotionEventAssignment,
         activation: AssetActivation | None,
+        *,
+        beat: StoryBeat,
     ) -> bool:
         for phase in assignment.phase_chain:
-            if (
-                phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}
-                and phase.spoken_start is not None
-                and phase.spoken_end is not None
-            ):
-                return True
+            if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
+                if (
+                    phase.spoken_start is not None
+                    and phase.spoken_end is not None
+                    and phase.spoken_end > phase.spoken_start
+                ):
+                    return True
+                if MotionPlanner._relation_story_envelope(phase=phase, beat=beat) is not None:
+                    return True
             if phase.stage == EventFlowStage.PAYOFF and (
                 (phase.spoken_start is not None and phase.spoken_end is not None)
                 or (activation is not None and activation.spoken_start is not None)
@@ -935,6 +942,38 @@ class MotionPlanner:
         )
 
     @staticmethod
+    def _relation_story_envelope(
+        *,
+        phase: MotionEventPhase,
+        beat: StoryBeat,
+    ) -> tuple[float, float] | None:
+        """Derive a relation window only from Story-owned participant timing.
+
+        Some valid packages bind a relation to Pass2 sub-assets without repeating a
+        relation-level script span. Story still owns spoken windows for the bound source
+        and target. Motion may use their authored envelope as timing evidence; it never
+        invents a timestamp or moves a relation before either Story/beat boundary.
+        """
+        participant_ids = {
+            asset_id
+            for asset_id in (phase.source_asset_id, phase.target_asset_id)
+            if asset_id
+        }
+        windows = [
+            (float(row.spoken_start), float(row.spoken_end))
+            for row in beat.asset_activations
+            if (
+                row.asset_id in participant_ids
+                and row.spoken_start is not None
+                and row.spoken_end is not None
+                and row.spoken_end > row.spoken_start
+            )
+        ]
+        if not windows:
+            return None
+        return min(start for start, _end in windows), max(end for _start, end in windows)
+
+    @staticmethod
     def _event_segment_window(
         *,
         phase: MotionEventPhase,
@@ -958,10 +997,19 @@ class MotionPlanner:
         upper = min(float(beat.end), float(deadline))
 
         if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
+            story_envelope = MotionPlanner._relation_story_envelope(phase=phase, beat=beat)
             if relation_start is None or relation_end is None or relation_end <= relation_start:
-                return None
-            relation_start = float(relation_start)
-            relation_end = float(relation_end)
+                if story_envelope is None:
+                    return None
+                relation_start, relation_end = story_envelope
+            else:
+                relation_start = float(relation_start)
+                relation_end = float(relation_end)
+                # A word-level relation span can be too short to render a readable
+                # semantic gesture. Extend only through Story-authored participant
+                # timing; never beyond the beat or by a package/topic-specific value.
+                if relation_end - relation_start < 0.06 and story_envelope is not None:
+                    relation_end = max(relation_end, story_envelope[1])
             upper = min(upper, relation_end)
             span = relation_end - relation_start
 
