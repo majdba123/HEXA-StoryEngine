@@ -36,6 +36,40 @@ class FFmpegRenderer:
         self.transition_policy = VisualTransitionPolicy()
         self.motion_adapter = FFmpegMotionAdapter()
 
+
+    def preflight(self, root: Path) -> Path:
+        """Run a real H.264 encode before expensive StoryEngine stages begin.
+
+        This validates the installed FFmpeg binary, the selected file-backed complex
+        filter syntax, libx264, pixel format, and the same CRF/fps path used by real
+        beat segments. It intentionally renders only two tiny frames.
+        """
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / "ffmpeg-render-preflight.mp4"
+        command = [
+            self.ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=white:s=160x90:r=30:d=0.10",
+        ]
+        command.extend(
+            self._encode_args(
+                ["[0:v]format=yuv420p[vout]"],
+                target,
+                fps=30,
+                frame_count=2,
+            )
+        )
+        self._run(command, "ffmpeg render preflight failed")
+        if not target.exists() or target.stat().st_size == 0:
+            raise StageFailedError("ffmpeg render preflight produced no output")
+        return target
+
     def render(
         self,
         plan: RenderPlan,
