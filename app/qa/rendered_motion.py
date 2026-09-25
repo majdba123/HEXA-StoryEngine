@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from app.models import MotionSegment, RenderPlan
+from app.motion.timing import comfort_gain, motion_comfort
 from app.shared.errors import StageFailedError
 
 
@@ -83,6 +84,7 @@ class RenderedMotionQA:
                 for segment in cue.segments:
                     if segment.phase not in self._PHASES:
                         continue
+                    duration = max(1e-6, float(segment.end) - float(segment.start))
                     expected_px, peak_progress = self._expected_activity_px(
                         segment,
                         width=plan.width,
@@ -103,6 +105,7 @@ class RenderedMotionQA:
                         item_width=item.width,
                         item_height=item.height,
                         height=plan.height,
+                        duration=duration,
                     )
                     if enforce_floor and expected_px + 1e-6 < floor_px:
                         violations.append(RenderedMotionViolation(
@@ -116,12 +119,30 @@ class RenderedMotionQA:
                             ),
                         ))
                         continue
+                    if enforce_floor:
+                        speed_px = expected_px / duration
+                        speed_limit_px = (
+                            plan.width
+                            * motion_comfort(segment.phase).max_normalized_speed
+                            * 1.08
+                        )
+                        if speed_px > speed_limit_px + 1e-6:
+                            violations.append(RenderedMotionViolation(
+                                code="MOTION_TOO_FAST",
+                                beat_id=cue.beat_id,
+                                asset_id=cue.asset_id,
+                                phase=segment.phase,
+                                detail=(
+                                    f"expected peak speed {speed_px:.1f}px/s exceeds "
+                                    f"comfort limit {speed_limit_px:.1f}px/s"
+                                ),
+                            ))
+                            continue
                     if expected_px < 0.75:
                         skipped += 1
                         continue
 
                     checked += 1
-                    duration = max(1e-6, float(segment.end) - float(segment.start))
                     baseline_time = max(
                         float(beat.start),
                         float(segment.start) - max(2.0 / plan.fps, 0.045),
@@ -207,6 +228,7 @@ class RenderedMotionQA:
         height: int,
         item_width: float,
         item_height: float,
+        duration: float,
     ) -> float:
         ratios = {
             "ENTRY": 0.010,
@@ -219,7 +241,8 @@ class RenderedMotionQA:
         if ratio <= 0:
             return 0.0
         asset_px = max(1.0, min(width * item_width, height * item_height))
-        return max(6.0, min(36.0, width * ratio, asset_px * 0.25))
+        base = max(6.0, min(36.0, width * ratio, asset_px * 0.25))
+        return base * comfort_gain(phase, duration)
 
     @staticmethod
     def _expected_activity_px(
