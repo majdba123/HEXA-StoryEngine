@@ -997,7 +997,8 @@ class SemanticActivationPlanner:
                 if isinstance(value, str) and value
             ]
             compound_visual_classification = (
-                str(row.get("compound_visual_classification")).upper()                if row.get("compound_visual_classification") is not None
+                str(row.get("compound_visual_classification")).upper()
+                if row.get("compound_visual_classification") is not None
                 else None
             )
             internal_progression_unavailable = bool(

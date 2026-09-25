@@ -997,7 +997,8 @@ class MotionPlanner:
             entry_program,
             original_duration=original_duration,
             fitted_duration=fitted_duration,
-        )        geometry_locked = (
+        )
+        geometry_locked = (
             isinstance(cue.params, dict)
             and cue.params.get("render_constraints", {}).get("geometry_lock")
             == "authored_footprint"
@@ -1996,6 +1997,7 @@ class MotionPlanner:
             items_by_id=items_by_id,
             fallback=fallback,
         )
+
     @staticmethod
     def _phase_transform(
         *,
