@@ -99,6 +99,8 @@ class TextMotionPlanner:
                             "asset_id": cue.anchor_asset_id,
                             "semantic_settle": sync["semantic_settle"],
                             "focus_role": sync["focus_role"],
+                            "cohort_role": sync["cohort_role"],
+                            "cohort_gain": sync["cohort_gain"],
                         },
                     },
                     tokens=tokens,
@@ -165,6 +167,8 @@ class TextMotionPlanner:
                 "entry_duration": default_duration,
                 "semantic_settle": None,
                 "focus_role": None,
+                "cohort_role": None,
+                "cohort_gain": 1.0,
             }
 
         focus = anchor_motion.params.get("semantic_focus") or {}
@@ -192,6 +196,27 @@ class TextMotionPlanner:
         else:
             strength = 0.42
 
+        # Text follows the same temporal attention hierarchy as its visual anchor. A
+        # support/participant keyword must not hit as hard as the current Hero simply
+        # because both are narration-aligned. Result peers remain intentionally strong.
+        try:
+            cohort_gain = float(focus.get("cohort_gain", 1.0))
+        except (TypeError, ValueError):
+            cohort_gain = 1.0
+        cohort_gain = max(0.0, min(1.0, cohort_gain))
+        cohort_role = str(focus.get("cohort_role") or "independent")
+        if cohort_role == "result_peer":
+            text_attention_gain = max(0.82, cohort_gain)
+        elif cohort_role in {"leader", "leader_member", "independent"}:
+            text_attention_gain = max(0.86, cohort_gain)
+        elif cohort_role == "participant":
+            text_attention_gain = min(0.76, 0.46 + cohort_gain * 0.45)
+        elif cohort_role == "secondary":
+            text_attention_gain = min(0.62, 0.38 + cohort_gain * 0.42)
+        else:
+            text_attention_gain = min(0.48, 0.28 + cohort_gain * 0.55)
+        strength *= text_attention_gain
+
         raw_settle = anchor_motion.params.get("semantic_settle_time")
         try:
             semantic_settle = float(raw_settle) if raw_settle is not None else None
@@ -212,6 +237,8 @@ class TextMotionPlanner:
             "entry_duration": duration,
             "semantic_settle": semantic_settle,
             "focus_role": role,
+            "cohort_role": cohort_role,
+            "cohort_gain": cohort_gain,
         }
 
     @staticmethod
