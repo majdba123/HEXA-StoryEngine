@@ -929,3 +929,36 @@ def test_object_handoff_keeps_unpaired_outgoing_visuals_for_exit() -> None:
     assert decision.mode == SceneTransitionMode.OBJECT_HANDOFF
     assert decision.object_handoff_pairs == (("old", "new"),)
     assert decision.carry_outgoing_asset_ids == frozenset({"old", "extra"})
+
+
+
+def test_first_beat_never_uses_boundary_visual_carrier_before_story_reveal(tmp_path: Path) -> None:
+    asset_path = tmp_path / "first.png"
+    _write_rgba_asset(asset_path, (230, 40, 40, 255))
+    story = [
+        StoryBeat(
+            id="first", scene_id="scene-first", start=0.0, end=1.0,
+            narration="first", primary_asset_ids=["a"], action="INTRODUCE",
+        )
+    ]
+    plan = RenderPlan(
+        width=320, height=180, fps=30, duration=1.0,
+        story=story,
+        composition=[CompositionBeat(
+            beat_id="first",
+            items=[LayoutItem(asset_id="a", x=0.5, y=0.5, width=0.35, height=0.55)],
+        )],
+        motion=[MotionCue(
+            beat_id="first", asset_id="a", kind="reveal_in",
+            start=0.20, end=0.45,
+        )],
+        assets=[VisualAsset(
+            id="a", scene_id="scene-first", role="primary", image_path=asset_path,
+            extraction_method="test", source_area_ratio=0.2,
+        )],
+    )
+    output = tmp_path / "first-beat.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, output)
+    frames = _read_frames(output)
+    assert _mean_white_distance(frames[0]) < 1.0
+    assert _mean_white_distance(frames[7]) > 5.0
