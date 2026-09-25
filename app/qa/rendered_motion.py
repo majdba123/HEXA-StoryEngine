@@ -87,7 +87,37 @@ class RenderedMotionQA:
                 beat = story.get(cue.beat_id)
                 if item is None or beat is None:
                     continue
-                for segment in cue.segments:
+                segments = list(cue.segments)
+                if not segments and isinstance(cue.params, dict):
+                    # Standard Motion V3 cues render their base program directly when
+                    # there is no explicit semantic timeline. Those ENTRY gestures are
+                    # real encoded motion and must not sit outside encoded QA coverage.
+                    # Mark the synthetic QA segment so intentional attention-damped
+                    # support/context entries are checked for actual pixels + speed
+                    # without being judged against a second full-strength floor.
+                    base_program = cue.params.get("program")
+                    keyframes = (
+                        base_program.get("keyframes")
+                        if isinstance(base_program, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(keyframes, list)
+                        and len(keyframes) >= 2
+                        and float(cue.end) > float(cue.start) + 1e-9
+                    ):
+                        qa_program = dict(base_program)
+                        qa_program["qa_base_entry"] = True
+                        focus = cue.params.get("semantic_focus") or {}
+                        segments.append(MotionSegment(
+                            phase="ENTRY",
+                            start=float(cue.start),
+                            end=float(cue.end),
+                            program=qa_program,
+                            semantic_event_id=focus.get("semantic_event_id"),
+                        ))
+
+                for segment in segments:
                     if segment.phase not in self._PHASES:
                         continue
                     duration = max(1e-6, float(segment.end) - float(segment.start))
@@ -113,10 +143,12 @@ class RenderedMotionQA:
                         continue
                     program_name = str(segment.program.get("name") or "")
                     collision_limited = bool(segment.program.get("collision_limited"))
+                    qa_base_entry = bool(segment.program.get("qa_base_entry"))
                     enforce_floor = (
                         not geometry_locked
                         and "compound_unit" not in program_name
                         and not collision_limited
+                        and not qa_base_entry
                     )
                     enforce_speed = (
                         not geometry_locked
