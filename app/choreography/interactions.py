@@ -120,7 +120,11 @@ class InteractionCompiler:
         for relation in relations:
             subject_asset = unit_map.get(relation.source_unit_id)
             object_asset = unit_map.get(relation.target_unit_id)
-            result_unit = relation.result_unit_id or fallback_result_unit
+            # Relation-level result authority is explicit only. A semantic event may
+            # independently own RESULT assets, but borrowing one here would fabricate
+            # a causal payoff for relations such as COMPARE/CONTRAST that authored no
+            # result. Event-flow PAYOFF still comes from the event's RESULT role.
+            result_unit = relation.result_unit_id
             result_asset = unit_map.get(result_unit) if result_unit else None
             canonical = self._canonical(relation.kind)
             relation_action = _RELATION_ACTIONS.get(canonical)

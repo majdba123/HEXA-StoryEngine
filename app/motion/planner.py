@@ -21,6 +21,7 @@ from app.motion.timing import (
     GOLDEN_MINOR,
     MotionTimingPolicy,
     comfort_gain,
+    golden_window_around_peak,
     max_comfort_displacement,
     motion_comfort,
     semantic_readability_floor,
@@ -625,6 +626,14 @@ class MotionPlanner:
                 or (activation is not None and activation.spoken_start is not None)
             ):
                 return True
+            if (
+                phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+                and phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
+                and phase.spoken_start is not None
+                and phase.spoken_end is not None
+                and phase.spoken_end > phase.spoken_start
+            ):
+                return True
         return False
 
     @staticmethod
@@ -679,6 +688,15 @@ class MotionPlanner:
         )
 
         phases = list(assignment.phase_chain)
+        has_story_window, story_window = story_activation_window(activation, beat)
+        story_peak = (
+            float(story_window.semantic_peak)
+            if has_story_window
+            and story_window is not None
+            and story_window.semantic_peak is not None
+            else None
+        )
+        aligned_semantic_phase = False
         react_keys = {
             (phase.event_id, phase.target_asset_id)
             for phase in phases
@@ -694,9 +712,17 @@ class MotionPlanner:
         ]
         seen: set[tuple[str, int, str, str]] = set()
         for phase in phases:
-            if phase.stage not in {
-                EventFlowStage.INTERACT, EventFlowStage.REACT, EventFlowStage.PAYOFF
-            }:
+            if (
+                phase.stage not in {
+                    EventFlowStage.INTERACT,
+                    EventFlowStage.REACT,
+                    EventFlowStage.PAYOFF,
+                }
+                and not (
+                    phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+                    and phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
+                )
+            ):
                 continue
             key = (phase.event_id, phase.step_index, phase.stage.value, phase.involvement)
             if key in seen:
@@ -713,7 +739,26 @@ class MotionPlanner:
                     "FINAL_PACKAGE_INTERACTION_TARGET",
                 }
             )
-            phase_deadline = float(beat.end) if relation_phase else deadline
+            compound_proxy_phase = phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+            phase_deadline = (
+                float(beat.end)
+                if relation_phase or compound_proxy_phase
+                else deadline
+            )
+            if (
+                phase.stage == EventFlowStage.PAYOFF
+                and has_story_window
+                and story_window is not None
+            ):
+                # Story owns the result's readable timing. Semantic events may overlap
+                # intentionally, so a later event's reveal is not permission to cut a
+                # trusted PAYOFF before its own Story settle boundary. The result may
+                # finish while the next event begins, but it still returns to exact
+                # Composition and remains bounded by the beat.
+                phase_deadline = min(
+                    float(beat.end),
+                    max(float(phase_deadline), float(story_window.settle_at)),
+                )
             source_activation_start = next(
                 (
                     float(row.spoken_start)
@@ -722,6 +767,9 @@ class MotionPlanner:
                     and row.spoken_start is not None
                 ),
                 None,
+            )
+            phase_story_peak = (
+                None if compound_proxy_phase else story_peak
             )
             window = cls._event_segment_window(
                 phase=phase,
@@ -734,13 +782,20 @@ class MotionPlanner:
                 deadline=phase_deadline,
                 relation_source_start=source_activation_start,
                 motion_ready_start=motion_ready_start,
+                semantic_peak_target=phase_story_peak,
+                align_to_peak=(
+                    not aligned_semantic_phase and phase_story_peak is not None
+                ),
             )
-            if window is None and relation_phase and entry_segment is not None:
-                # A short authored relation may start immediately when the visual is
-                # spoken, leaving no room to run both ENTRY and the semantic action as
-                # separate transforms. Never overlap them (FFmpeg would make one hide
-                # the other). Semantic meaning wins: drop the decorative ENTRY and
-                # execute the authored relation from the Story reveal boundary.
+            if (
+                window is None
+                and (relation_phase or compound_proxy_phase)
+                and entry_segment is not None
+            ):
+                # A short authored relation/proxy may start immediately when the visual
+                # is spoken, leaving no room to run both ENTRY and the semantic action
+                # as separate transforms. Semantic meaning wins: retry from the cue
+                # boundary and remove decorative ENTRY if the authored accent fits.
                 retry = cls._event_segment_window(
                     phase=phase,
                     activation=activation,
@@ -749,6 +804,8 @@ class MotionPlanner:
                     deadline=phase_deadline,
                     relation_source_start=source_activation_start,
                     motion_ready_start=float(cue.start),
+                    semantic_peak_target=story_peak,
+                    align_to_peak=not aligned_semantic_phase and story_peak is not None,
                 )
                 if retry is not None:
                     segments = [row for row in segments if row.phase != "ENTRY"]
@@ -757,12 +814,80 @@ class MotionPlanner:
                     window = retry
             if window is None:
                 continue
+
+            align_current_phase = (
+                not aligned_semantic_phase and phase_story_peak is not None
+            )
+            story_aligned = bool(
+                align_current_phase
+                and phase_story_peak is not None
+                and float(window[0]) + 1e-9
+                < float(phase_story_peak)
+                < float(window[1]) - 1e-9
+            )
+            if story_aligned and entry_segment is not None and entry_segment.end > window[0] + 1e-9:
+                # Semantic focus timing outranks decorative ENTRY. Keep a standalone
+                # arrival only when at least two encoded frames fit before the Story
+                # accent; otherwise the renderer's normal reveal fade carries the
+                # appearance and the semantic gesture starts cleanly.
+                entry_end = float(window[0])
+                if entry_end - float(cue.start) >= 2.0 / 30.0:
+                    fitted = cls._fit_entry_program(
+                        entry_program,
+                        original_duration=max(1e-6, float(cue.end) - float(cue.start)),
+                        fitted_duration=entry_end - float(cue.start),
+                    )
+                    fitted = cls._ensure_readable_entry(
+                        fitted, item=item, duration=entry_end - float(cue.start)
+                    )
+                    entry_segment = entry_segment.model_copy(update={
+                        "end": entry_end,
+                        "program": fitted.to_payload(),
+                    })
+                    segments = [
+                        entry_segment if row.phase == "ENTRY" else row
+                        for row in segments
+                    ]
+                else:
+                    segments = [row for row in segments if row.phase != "ENTRY"]
+                    entry_segment = None
+                motion_ready_start = float(window[0])
+
             vector = cls._phase_interaction_vector(
                 phase=phase,
                 incoming_from_asset_id=assignment.incoming_from_asset_id,
                 item=item,
                 items_by_id=items_by_id,
                 fallback=fallback_vector,
+            )
+            segment_duration = float(window[1]) - float(window[0])
+            phase_peak_time: float | None = (
+                float(phase_story_peak)
+                if story_aligned and phase_story_peak is not None else None
+            )
+            if (
+                phase_peak_time is None
+                and phase.stage == EventFlowStage.INTERACT
+                and phase.involvement == "SOURCE"
+                and segment_duration > 1e-9
+            ):
+                # When the source was introduced earlier than the authored relation,
+                # do not wait until 61.8% of the whole relation phrase to show cause.
+                # Put the action pulse near relation onset, then let the source hold
+                # while the target performs its later REACT.
+                profile = motion_comfort("INTERACT")
+                phase_peak_time = min(
+                    float(window[1]) - 1e-4,
+                    float(window[0])
+                    + min(
+                        profile.minimum_seconds * GOLDEN_MINOR,
+                        segment_duration * GOLDEN_MINOR * 0.5,
+                    ),
+                )
+            semantic_peak_progress = (
+                (phase_peak_time - float(window[0])) / segment_duration
+                if phase_peak_time is not None and segment_duration > 1e-9
+                else GOLDEN_MAJOR
             )
             program = cls._event_segment_program(
                 phase=phase,
@@ -771,14 +896,37 @@ class MotionPlanner:
                 focus_strength=focus_strength,
                 energy=energy,
                 cohort_gain=cohort_gain,
-                duration=window[1] - window[0],
+                duration=segment_duration,
+                semantic_peak_progress=semantic_peak_progress,
+            )
+            program_payload = program.to_payload()
+            program_payload["semantic_peak_progress"] = semantic_peak_progress
+            identity_progress = [
+                frame.progress
+                for frame in program.keyframes
+                if (
+                    abs(frame.dx) <= 1e-9
+                    and abs(frame.dy) <= 1e-9
+                    and abs(frame.scale - 1.0) <= 1e-9
+                )
+            ]
+            left_identity = max(
+                (value for value in identity_progress if value < semantic_peak_progress),
+                default=0.0,
+            )
+            right_identity = min(
+                (value for value in identity_progress if value > semantic_peak_progress),
+                default=1.0,
+            )
+            program_payload["semantic_active_duration"] = max(
+                0.0, segment_duration * (right_identity - left_identity)
             )
             segments.append(
                 MotionSegment(
                     phase=phase.stage.value,
                     start=window[0],
                     end=window[1],
-                    program=program.to_payload(),
+                    program=program_payload,
                     semantic_event_id=phase.event_id,
                     semantic_action=phase.semantic_action,
                     relationship=phase.relationship,
@@ -788,11 +936,18 @@ class MotionPlanner:
                     result_asset_id=phase.result_asset_id,
                     handoff_deadline=(
                         min(phase_deadline, float(phase.spoken_end))
-                        if relation_phase and phase.spoken_end is not None
+                        if (
+                            relation_phase
+                            and phase.stage != EventFlowStage.PAYOFF
+                            and phase.spoken_end is not None
+                        )
                         else phase_deadline
                     ),
                 )
             )
+            if story_aligned:
+                aligned_semantic_phase = True
+            motion_ready_start = max(motion_ready_start, float(window[1]))
 
         exit_segment = cls._exit_segment_before_handoff(
             cue=cue,
@@ -1078,18 +1233,50 @@ class MotionPlanner:
         deadline: float,
         relation_source_start: float | None = None,
         motion_ready_start: float | None = None,
+        semantic_peak_target: float | None = None,
+        align_to_peak: bool = False,
     ) -> tuple[float, float] | None:
         relation_start = phase.spoken_start
         relation_end = phase.spoken_end
         profile = motion_comfort(phase.stage.value)
+        base_lower = max(float(cue.start), float(beat.start))
         lower = max(
-            float(cue.start),
-            float(beat.start),
+            base_lower,
             float(motion_ready_start)
             if motion_ready_start is not None
-            else float(cue.start),
+            else base_lower,
         )
         upper = min(float(beat.end), float(deadline))
+        relation_bounds: tuple[float, float] | None = None
+        has_story_window, story_window = story_activation_window(activation, beat)
+
+        if (
+            phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+            and phase.stage in {
+                EventFlowStage.ESTABLISH,
+                EventFlowStage.ADD,
+                EventFlowStage.PAYOFF,
+            }
+        ):
+            if (
+                relation_start is None
+                or relation_end is None
+                or relation_end <= relation_start
+            ):
+                return None
+            start_bound = max(lower, float(relation_start))
+            end_bound = min(upper, float(relation_end))
+            if end_bound - start_bound < 0.06:
+                return None
+            proxy_peak = start_bound + (end_bound - start_bound) * GOLDEN_MAJOR
+            aligned = golden_window_around_peak(
+                peak=proxy_peak,
+                earliest=start_bound,
+                latest=end_bound,
+                preferred_duration=profile.target_seconds,
+                minimum_duration=0.06,
+            )
+            return aligned or (start_bound, end_bound)
 
         if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
             story_envelope = MotionPlanner._relation_story_envelope(phase=phase, beat=beat)
@@ -1100,20 +1287,66 @@ class MotionPlanner:
             else:
                 relation_start = float(relation_start)
                 relation_end = float(relation_end)
-                # A word-level relation span can be too short to render a readable
-                # semantic gesture. Extend only through Story-authored participant
-                # timing; never beyond the beat or by a package/topic-specific value.
                 if relation_end - relation_start < 0.06 and story_envelope is not None:
                     relation_end = max(relation_end, story_envelope[1])
             upper = min(upper, relation_end)
-            span = relation_end - relation_start
+            relation_bounds = (float(relation_start), float(relation_end))
+
+        elif phase.stage == EventFlowStage.PAYOFF:
+            if relation_start is not None and relation_end is not None and relation_end > relation_start:
+                relation_bounds = (float(relation_start), float(relation_end))
+            # The result's Story window owns when the consequence is readable. A
+            # relation phrase may end before the spoken/result visual itself peaks, so
+            # do not incorrectly use relation_end as a PAYOFF deadline when Story has
+            # a trusted activation window for this exact result asset.
+            if not (has_story_window and story_window is not None) and relation_bounds is not None:
+                upper = min(upper, relation_bounds[1])
+
+        if align_to_peak and semantic_peak_target is not None:
+            peak = float(semantic_peak_target)
+            peak_lower = base_lower
+            peak_upper = upper
+            if relation_bounds is not None:
+                peak_lower = max(peak_lower, relation_bounds[0])
+            if (
+                relation_source_start is not None
+                and phase.stage in {EventFlowStage.REACT, EventFlowStage.PAYOFF}
+            ):
+                # A target/result may already be visible before the causal source is
+                # introduced. Visibility may stay early, but causal REACT/PAYOFF must
+                # never execute before the source exists in Story timing.
+                peak_lower = max(peak_lower, float(relation_source_start))
+            if phase.stage == EventFlowStage.PAYOFF and has_story_window and story_window is not None:
+                peak_lower = max(peak_lower, float(story_window.reveal_start))
+                peak_upper = min(peak_upper, float(story_window.settle_at))
 
             if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
-                # The source owns the whole authored relation phrase. Keeping the
-                # source active through the relation guarantees a later-appearing
-                # target can visibly react instead of producing two disconnected
-                # gestures. Speed caps still bound how much the source moves.
-                start = max(lower, relation_start)
+                # A source relation must remain logically active through the target's
+                # reaction window. Keep the authored relation interval for continuity;
+                # _event_segment_program localizes the visible pulse around Story peak
+                # and then holds Composition, so this does not create slow continuous
+                # drift across the whole phrase.
+                if peak_lower + 1e-9 < peak < peak_upper - 1e-9:
+                    start = max(base_lower, relation_bounds[0] if relation_bounds else base_lower)
+                    end = peak_upper
+                    if end - start >= 0.06:
+                        return start, end
+            else:
+                aligned = golden_window_around_peak(
+                    peak=peak,
+                    earliest=peak_lower,
+                    latest=peak_upper,
+                    preferred_duration=profile.target_seconds,
+                    minimum_duration=0.06,
+                )
+                if aligned is not None:
+                    return aligned
+
+        if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
+            assert relation_start is not None and relation_end is not None
+            span = float(relation_end) - float(relation_start)
+            if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
+                start = max(lower, float(relation_start))
                 end = upper
             elif phase.stage == EventFlowStage.REACT:
                 reaction_delay = min(
@@ -1122,29 +1355,30 @@ class MotionPlanner:
                 )
                 start = max(
                     lower,
-                    relation_start + reaction_delay,
+                    float(relation_start) + reaction_delay,
                     float(relation_source_start)
                     if relation_source_start is not None
-                    else relation_start,
+                    else float(relation_start),
                 )
-                # If the target becomes visible after the nominal reaction onset,
-                # shift the complete reaction window forward instead of truncating it
-                # to an imperceptible remainder. The authored relation end is hard.
                 end = min(upper, start + profile.target_seconds)
             else:
                 acknowledgement_delay = min(
                     span * GOLDEN_MINOR * 0.5,
                     profile.target_seconds * GOLDEN_MINOR * 0.5,
                 )
-                start = max(lower, relation_start + acknowledgement_delay)
+                start = max(lower, float(relation_start) + acknowledgement_delay)
                 end = min(upper, start + profile.target_seconds)
         elif phase.stage == EventFlowStage.PAYOFF:
-            if relation_start is not None and relation_end is not None and relation_end > relation_start:
-                relation_start = float(relation_start)
-                relation_end = float(relation_end)
-                span = relation_end - relation_start
-                upper = min(upper, relation_end)
-                start = max(lower, relation_start + span * GOLDEN_MAJOR)
+            causal_floor = (
+                float(relation_source_start)
+                if relation_source_start is not None
+                else lower
+            )
+            if has_story_window and story_window is not None:
+                start = max(lower, causal_floor, float(story_window.reveal_start))
+            elif relation_bounds is not None:
+                span = relation_bounds[1] - relation_bounds[0]
+                start = max(lower, causal_floor, relation_bounds[0] + span * GOLDEN_MAJOR)
             elif activation is not None and activation.spoken_start is not None:
                 start = max(lower, float(activation.spoken_start))
             else:
@@ -1157,6 +1391,7 @@ class MotionPlanner:
             return None
         return start, end
 
+
     @classmethod
     def _event_segment_program(
         cls,
@@ -1168,7 +1403,27 @@ class MotionPlanner:
         energy: float,
         cohort_gain: float,
         duration: float,
+        semantic_peak_progress: float | None = None,
     ) -> MotionProgram:
+        duration = max(1e-6, float(duration))
+        peak_progress = (
+            GOLDEN_MAJOR
+            if semantic_peak_progress is None
+            else max(1e-4, min(1.0 - 1e-4, float(semantic_peak_progress)))
+        )
+        before = peak_progress * duration
+        after = (1.0 - peak_progress) * duration
+        active_duration = min(
+            motion_comfort(phase.stage.value).target_seconds,
+            before / GOLDEN_MAJOR,
+            after / GOLDEN_MINOR,
+        )
+        if active_duration < 0.06:
+            active_duration = duration
+            peak_progress = GOLDEN_MAJOR
+        active_start = max(0.0, peak_progress - (active_duration * GOLDEN_MAJOR) / duration)
+        active_end = min(1.0, peak_progress + (active_duration * GOLDEN_MINOR) / duration)
+
         dx, dy, scale = cls._phase_transform(
             phase=phase, vector=vector, focus_strength=max(0.0, min(1.0, focus_strength))
         )
@@ -1182,25 +1437,36 @@ class MotionPlanner:
             dx=dx,
             dy=dy,
             scale=scale,
-            duration=duration,
+            duration=active_duration,
         )
+
+        frames: list[MotionKeyframe] = [
+            MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_in_out_cubic")
+        ]
+        if active_start > 1e-6:
+            frames.append(
+                MotionKeyframe(active_start, 0.0, 0.0, 1.0, "ease_in_out_cubic")
+            )
+        frames.append(
+            MotionKeyframe(peak_progress, dx, dy, scale, "ease_in_out_cubic")
+        )
+        if active_end < 1.0 - 1e-6:
+            frames.append(
+                MotionKeyframe(active_end, 0.0, 0.0, 1.0, "smoothstep")
+            )
+            frames.append(MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"))
+            settle_progress = active_end
+        else:
+            frames.append(MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"))
+            settle_progress = 1.0
+
         return MotionProgram(
             name=(
                 f"semantic_segment_{phase.stage.value.lower()}_"
                 f"{str(phase.semantic_action or 'event').lower()}"
             ),
-            settle_progress=1.0,
-            keyframes=(
-                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_in_out_cubic"),
-                MotionKeyframe(
-                    GOLDEN_MAJOR,
-                    dx,
-                    dy,
-                    scale,
-                    "ease_in_out_cubic",
-                ),
-                MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
-            ),
+            settle_progress=settle_progress,
+            keyframes=tuple(frames),
         )
 
 

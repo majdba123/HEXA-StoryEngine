@@ -570,7 +570,6 @@ def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
 
 
 
-
 def test_text_motion_respects_visual_cohort_attention_hierarchy() -> None:
     script = "الرصيد الظاهر 1000 ريال لكن 300 ريال محجوزة لعملية سابقة"
     transcript = _transcript(script)

@@ -456,7 +456,6 @@ def test_vertical_react_at_shared_floor_survives_encoded_qa(tmp_path: Path) -> N
     assert report.checked_segments == 1
 
 
-
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 def test_rendered_motion_qa_checks_base_entry_without_semantic_segments(tmp_path: Path) -> None:
     asset = tmp_path / "asset.png"
@@ -505,3 +504,19 @@ def test_rendered_motion_qa_rejects_missing_encoded_base_entry(tmp_path: Path) -
 
     assert not report.ok
     assert any(row.code == "RENDERED_SEGMENT_INACTIVE" for row in report.violations)
+
+
+def test_rendered_motion_frame_cache_is_bounded_for_long_full_hd_video() -> None:
+    from collections import OrderedDict
+    import numpy as np
+
+    cache = OrderedDict()
+    qa = RenderedMotionQA()
+    for index in range(qa._FRAME_CACHE_LIMIT * 4):
+        qa._remember_frame(cache, index, np.zeros((8, 8, 3), dtype=np.uint8))
+
+    assert len(cache) == qa._FRAME_CACHE_LIMIT
+    assert list(cache) == list(range(
+        qa._FRAME_CACHE_LIMIT * 3,
+        qa._FRAME_CACHE_LIMIT * 4,
+    ))

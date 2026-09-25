@@ -644,3 +644,167 @@ def test_v12_gray_hat_relation_contract_reaches_encoded_qa(tmp_path: Path) -> No
     encoded = RenderedMotionQA().inspect(video=output, plan=plan)
     assert encoded.ok, encoded.violations
     assert encoded.checked_segments >= 3
+
+
+
+def test_v12_relation_without_explicit_result_does_not_borrow_event_result(tmp_path: Path) -> None:
+    """Relation and semantic-event result are independent Final Package authorities."""
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        scene = payload["scenes"][0]
+        relation = scene["relations"][0]
+        relation.pop("result_asset_id", None)
+        relation["relation_type"] = "CONTRASTS_WITH"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(package_path, tmp_path / "work-no-relation-result")
+    scene = package.scenes[0]
+    assets = [
+        VisualAsset(
+            id=asset_id, scene_id=scene.id, role="support",
+            image_path=scene.image_path, extraction_method="test",
+            source_area_ratio=area,
+        )
+        for asset_id, area in (("a", 0.50), ("b", 0.30), ("c", 0.20))
+    ]
+    story = StoryPlanner().plan(package, _transcript(), assets)
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    directive = choreography.for_beat(story[0].id)
+    assert directive is not None and directive.interaction is not None
+
+    assert directive.interaction.relationship == "CONTRASTS_WITH"
+    assert directive.interaction.result_asset_id is None
+
+    by_event = {flow.event_id: flow for flow in directive.event_flows}
+    assert by_event["E2"].result_asset_ids == ("c",)
+    payoff = next(
+        step for step in by_event["E2"].steps
+        if step.stage.value == "PAYOFF" and step.result_asset_id == "c"
+    )
+    assert payoff.relationship is None
+
+    composition = [CompositionBeat(
+        beat_id=story[0].id,
+        items=[
+            LayoutItem(asset_id="a", x=0.20, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.15, height=0.20),
+        ],
+    )]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+    report = MotionInteractionQA().inspect(
+        story=story, motion=motion, composition=composition, choreography=choreography,
+    )
+    assert report.ok, report.violations
+    assert any(
+        segment.phase == "PAYOFF"
+        for cue in motion if cue.asset_id == "c"
+        for segment in cue.segments
+    )
+
+
+def test_v12_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_path: Path) -> None:
+    """Unextracted authored child events refocus their explicit compound parent."""
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        scenes = payload["scenes"]
+        for scene in scenes:
+            for asset in scene.get("assets", []):
+                if asset.get("asset_id") == "b":
+                    asset["binding_type"] = "PARENT"
+                    asset["children_asset_ids"] = ["c"]
+                if asset.get("asset_id") == "c":
+                    asset["binding_type"] = "SUPPORT"
+                    asset["parent_asset_id"] = "b"
+                    asset["visual_locator"] = None
+            scene["relations"] = []
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(package_path, tmp_path / "work-compound-proxy")
+    scene = package.scenes[0]
+    assets = [
+        VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=scene.image_path,
+            extraction_method="test",
+            source_area_ratio=area,
+        )
+        for asset_id, area in (("a", 0.50), ("b", 0.30))
+    ]
+    story = StoryPlanner().plan(package, _transcript(), assets)
+    beat = story[0]
+
+    assert {row.asset_id for row in beat.asset_activations} == {"a", "b"}
+    assert len(beat.semantic_event_proxies) == 1
+    proxy = beat.semantic_event_proxies[0]
+    assert proxy.asset_id == "b"
+    assert proxy.semantic_unit_id == "c"
+    assert proxy.semantic_parent_id == "b"
+    assert proxy.semantic_event_id == "E2"
+    assert proxy.reveal_start >= proxy.spoken_start
+
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    directive = choreography.directives[0]
+    assert {flow.event_id for flow in directive.event_flows} == {"E1", "E2"}
+    proxy_flow = next(flow for flow in directive.event_flows if flow.event_id == "E2")
+    assert proxy_flow.leader_asset_ids == ("b",)
+    proxy_steps = [
+        step for step in proxy_flow.steps
+        if step.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+    ]
+    assert len(proxy_steps) == 1
+    assert proxy_steps[0].stage.value == "PAYOFF"
+
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="a", x=0.30, y=0.50, width=0.20, height=0.30),
+            LayoutItem(asset_id="b", x=0.70, y=0.50, width=0.20, height=0.30),
+        ],
+    )]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+    b_cue = next(cue for cue in motion if cue.asset_id == "b")
+    proxy_segments = [
+        segment for segment in b_cue.segments
+        if segment.semantic_event_id == "E2"
+    ]
+    assert len(proxy_segments) == 1
+    assert proxy_segments[0].phase == "PAYOFF"
+
+    from app.story import StorySyncQA
+
+    sync = StorySyncQA().inspect(story=story, motion=motion)
+    assert not [
+        violation for violation in sync.violations
+        if proxy.semantic_event_id in violation and "proxy_" in violation
+    ], sync.violations
+    assert any(
+        entry.activation_policy == "COMPOUND_PROXY"
+        and entry.semantic_unit_id == "c"
+        for entry in sync.entries
+    )
+
+    text = TextPlanner().plan(
+        transcript=_transcript(),
+        story=story,
+        assets=assets,
+        package=package,
+        choreography=choreography,
+    )
+    report = StorytellingValidator().inspect(
+        package=package,
+        story=story,
+        choreography=choreography,
+        composition=composition,
+        motion=motion,
+        text=text,
+        text_motion=[],
+    )
+    assert report.missing_semantic_events == ()
+    assert report.represented_semantic_events == report.authored_semantic_events

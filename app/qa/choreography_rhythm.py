@@ -98,6 +98,9 @@ class ChoreographyRhythmQA:
                 ))
             previous_tier = tier
 
+            # Consume the same overlap contract used by MotionPlanner. Attention
+            # competition is about intervals that visibly move at the same time, not
+            # merely cues whose start timestamps happen to be close.
             entries: list[tuple[float, float, MotionCue]] = []
             for cue in cues:
                 segment = next((row for row in cue.segments if row.phase == "ENTRY"), None)

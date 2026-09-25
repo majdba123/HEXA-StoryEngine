@@ -148,14 +148,24 @@ def test_motion_timeline_reactivates_relation_with_overlap_and_payoff() -> None:
     c = {row.phase: row for row in by_id["c"].segments}
 
     assert {"ENTRY", "INTERACT"} <= set(a)
-    assert {"ENTRY", "REACT"} <= set(b)
+    assert "REACT" in b
+    if "ENTRY" in b:
+        assert b["ENTRY"].end <= b["REACT"].start + 1e-9
     assert "PAYOFF" in c
     if "ENTRY" in c:
         assert c["ENTRY"].end <= c["PAYOFF"].start + 1e-9
     assert a["ENTRY"].start == pytest.approx(by_id["a"].start)
     assert a["INTERACT"].start == pytest.approx(2.0)
-    assert b["REACT"].start > a["INTERACT"].start
-    assert min(a["INTERACT"].end, b["REACT"].end) > max(a["INTERACT"].start, b["REACT"].start)
+    source_peak = a["INTERACT"].start + (
+        a["INTERACT"].end - a["INTERACT"].start
+    ) * float(a["INTERACT"].program["semantic_peak_progress"])
+    target_peak = b["REACT"].start + (
+        b["REACT"].end - b["REACT"].start
+    ) * float(b["REACT"].program["semantic_peak_progress"])
+    assert source_peak < target_peak
+    assert min(a["INTERACT"].end, b["REACT"].end) > max(
+        a["INTERACT"].start, b["REACT"].start
+    )
     assert c["PAYOFF"].start >= 2.6
 
     for cue in cues:
@@ -343,28 +353,37 @@ def test_event_motion_has_perceptual_floor() -> None:
             for frame in segment.program["keyframes"]
         )
         duration = segment.end - segment.start
+        active_duration = float(segment.program.get("semantic_active_duration", duration))
         comfort_cap = max_comfort_displacement(
             segment.phase,
-            duration * GOLDEN_MINOR,
+            active_duration * GOLDEN_MINOR,
         )
         base_floor = 0.030 if segment.phase == "INTERACT" else 0.026
         floor = min(
-            base_floor * comfort_gain(segment.phase, duration),
+            base_floor * comfort_gain(segment.phase, active_duration),
             comfort_cap,
         )
         assert peak >= floor - 1e-6
         assert peak <= comfort_cap + 1e-6
-        assert segment.program["keyframes"][1]["progress"] == pytest.approx(GOLDEN_MAJOR)
-        assert duration >= motion_comfort(segment.phase).minimum_seconds
+        peak_progress = float(segment.program["semantic_peak_progress"])
+        assert 0.0 < peak_progress < 1.0
+        assert any(
+            float(frame["progress"]) == pytest.approx(peak_progress)
+            for frame in segment.program["keyframes"]
+        )
+        assert active_duration >= 0.06
     payoff_scale = max(
         abs(float(frame["scale"]) - 1.0) for frame in payoff.program["keyframes"]
     )
     payoff_duration = payoff.end - payoff.start
+    payoff_active_duration = float(
+        payoff.program.get("semantic_active_duration", payoff_duration)
+    )
     payoff_cap = max_comfort_displacement(
-        "PAYOFF", payoff_duration * GOLDEN_MINOR
+        "PAYOFF", payoff_active_duration * GOLDEN_MINOR
     ) / min(composition.items[2].width, composition.items[2].height)
     expected_payoff = min(
-        0.075 * comfort_gain("PAYOFF", payoff_duration),
+        0.075 * comfort_gain("PAYOFF", payoff_active_duration),
         payoff_cap,
     )
     assert payoff_scale == pytest.approx(expected_payoff, abs=1e-6)
@@ -415,9 +434,9 @@ def test_motion_planner_auto_fits_new_collision_from_stronger_motion() -> None:
     close_composition = CompositionBeat(
         beat_id=composition.beat_id,
         items=[
-            # Authored boxes remain separate by 0.5% of canvas width. Relation motion
-            # is allowed to stay strong only up to the collision-safe amplitude.
-            LayoutItem(asset_id="a", x=0.315, y=0.50, width=0.18, height=0.22),
+            # Authored boxes just touch without overlap. The relation pulse would cross
+            # the collision envelope, so the planner must fit amplitude safely.
+            LayoutItem(asset_id="a", x=0.320, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
         ],

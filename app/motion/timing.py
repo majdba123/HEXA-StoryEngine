@@ -45,6 +45,44 @@ def max_comfort_displacement(phase: str, duration: float) -> float:
     return max(0.0, float(duration)) * profile.max_normalized_speed
 
 
+def golden_window_around_peak(
+    *,
+    peak: float,
+    earliest: float,
+    latest: float,
+    preferred_duration: float,
+    minimum_duration: float = 0.06,
+) -> tuple[float, float] | None:
+    """Fit a Golden-ratio gesture around a Story-owned semantic peak.
+
+    Story owns ``peak``. Motion only chooses how much executable time can fit around
+    it while preserving the 61.8% outbound / 38.2% return relationship. This avoids
+    the common failure where a long ENTRY pushes INTERACT/REACT/PAYOFF after the
+    spoken emphasis, and it gives Planner/QA one deterministic timing shape.
+    """
+    peak = float(peak)
+    earliest = float(earliest)
+    latest = float(latest)
+    preferred_duration = max(0.0, float(preferred_duration))
+    minimum_duration = max(0.0, float(minimum_duration))
+    if not all(isfinite(value) for value in (peak, earliest, latest, preferred_duration)):
+        return None
+    if latest <= earliest or peak <= earliest or peak >= latest:
+        return None
+
+    before_capacity = (peak - earliest) / GOLDEN_MAJOR
+    after_capacity = (latest - peak) / GOLDEN_MINOR
+    duration = min(preferred_duration, before_capacity, after_capacity)
+    if duration < minimum_duration - 1e-9:
+        return None
+
+    start = peak - duration * GOLDEN_MAJOR
+    end = peak + duration * GOLDEN_MINOR
+    if start < earliest - 1e-9 or end > latest + 1e-9:
+        return None
+    return max(earliest, start), min(latest, end)
+
+
 def semantic_readability_floor(
     phase: str,
     *,

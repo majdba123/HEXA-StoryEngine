@@ -25,6 +25,7 @@ class SemanticEventFlowPlanner:
     """
 
     _PACKAGE_SOURCE = "final_package_semantic_binding"
+    _COMPOUND_PROXY_SOURCE = "FINAL_PACKAGE_COMPOUND_PROXY"
 
     def compile(
         self,
@@ -44,6 +45,28 @@ class SemanticEventFlowPlanner:
             ):
                 continue
             groups[activation.semantic_event_id].append(activation)
+        for proxy in beat.semantic_event_proxies:
+            if proxy.asset_id not in renderable_ids:
+                continue
+            groups[proxy.semantic_event_id].append(AssetActivation(
+                asset_id=proxy.asset_id,
+                semantic_unit_id=proxy.semantic_unit_id,
+                trigger_text=proxy.trigger_text,
+                trigger_char_start=proxy.trigger_char_start,
+                trigger_char_end=proxy.trigger_char_end,
+                spoken_start=proxy.reveal_start,
+                spoken_end=proxy.settle_at,
+                confidence=proxy.confidence,
+                source=self._COMPOUND_PROXY_SOURCE,
+                policy="EXPLICIT",
+                semantic_parent_id=proxy.semantic_parent_id,
+                visual_focus=proxy.visual_focus,
+                semantic_event_id=proxy.semantic_event_id,
+                semantic_event_order=proxy.semantic_event_order,
+                semantic_event_roles=proxy.semantic_event_roles,
+                semantic_event_dependency_ids=proxy.semantic_event_dependency_ids,
+                evidence=list(proxy.evidence),
+            ))
 
         if not groups:
             return ()
@@ -160,6 +183,7 @@ class SemanticEventFlowPlanner:
                 payoff_interactions=payoff_interactions,
                 reaction_asset_ids=reaction_asset_ids,
                 handoff_to_asset_ids=handoff_to_asset_ids,
+                event_rows=rows,
             )
             stages = tuple(dict.fromkeys(step.stage for step in steps))
             flows.append(
@@ -316,23 +340,61 @@ class SemanticEventFlowPlanner:
         payoff_interactions: tuple[InteractionIntent, ...],
         reaction_asset_ids: set[str],
         handoff_to_asset_ids: tuple[str, ...],
+        event_rows: list[AssetActivation],
     ) -> tuple[EventFlowStep, ...]:
         steps: list[EventFlowStep] = []
 
         # Each semantic visual unit gets its own authored focus step. If one semantic
         # intent resolves to multiple cutouts, they stay in the same step so Choreography
         # never invents internal order for a compound/multi-cutout visual.
+        proxy_result_ids = {
+            asset_id
+            for unit in result_units
+            if cls._compound_proxy_row(unit, event_rows) is not None
+            for asset_id in unit
+        }
+        proxy_leader_ids = {
+            asset_id
+            for unit in leader_units
+            if cls._compound_proxy_row(unit, event_rows) is not None
+            for asset_id in unit
+        }
         for unit in leader_units:
+            proxy = cls._compound_proxy_row(unit, event_rows)
+            if proxy is not None and any(asset_id in proxy_result_ids for asset_id in unit):
+                continue
             steps.append(EventFlowStep(
                 stage=EventFlowStage.ESTABLISH,
                 focus_asset_id=unit[0],
                 participant_asset_ids=unit,
+                authority=(
+                    cls._COMPOUND_PROXY_SOURCE if proxy is not None
+                    else "FINAL_PACKAGE_SEMANTIC_EVENT"
+                ),
+                trigger_char_start=(proxy.trigger_char_start if proxy is not None else None),
+                trigger_char_end=(proxy.trigger_char_end if proxy is not None else None),
+                spoken_start=(proxy.spoken_start if proxy is not None else None),
+                spoken_end=(proxy.spoken_end if proxy is not None else None),
             ))
         for unit in participant_units:
+            proxy = cls._compound_proxy_row(unit, event_rows)
+            if proxy is not None and any(
+                asset_id in proxy_result_ids or asset_id in proxy_leader_ids
+                for asset_id in unit
+            ):
+                continue
             steps.append(EventFlowStep(
                 stage=EventFlowStage.ADD,
                 focus_asset_id=unit[0],
                 participant_asset_ids=unit,
+                authority=(
+                    cls._COMPOUND_PROXY_SOURCE if proxy is not None
+                    else "FINAL_PACKAGE_SEMANTIC_EVENT"
+                ),
+                trigger_char_start=(proxy.trigger_char_start if proxy is not None else None),
+                trigger_char_end=(proxy.trigger_char_end if proxy is not None else None),
+                spoken_start=(proxy.spoken_start if proxy is not None else None),
+                spoken_end=(proxy.spoken_end if proxy is not None else None),
             ))
 
         for interaction in interactions:
@@ -393,6 +455,7 @@ class SemanticEventFlowPlanner:
                 result_id,
                 tuple(dict.fromkeys((*interactions, *payoff_interactions))),
             )
+            proxy = cls._compound_proxy_row(unit, event_rows)
             steps.append(EventFlowStep(
                 stage=EventFlowStage.PAYOFF,
                 focus_asset_id=result_id,
@@ -409,19 +472,25 @@ class SemanticEventFlowPlanner:
                 authority=(
                     result_interaction.authority
                     if result_interaction
+                    else cls._COMPOUND_PROXY_SOURCE
+                    if proxy is not None
                     else "FINAL_PACKAGE_SEMANTIC_EVENT"
                 ),
                 trigger_char_start=(
-                    result_interaction.trigger_char_start if result_interaction else None
+                    result_interaction.trigger_char_start
+                    if result_interaction else proxy.trigger_char_start if proxy is not None else None
                 ),
                 trigger_char_end=(
-                    result_interaction.trigger_char_end if result_interaction else None
+                    result_interaction.trigger_char_end
+                    if result_interaction else proxy.trigger_char_end if proxy is not None else None
                 ),
                 spoken_start=(
-                    result_interaction.spoken_start if result_interaction else None
+                    result_interaction.spoken_start
+                    if result_interaction else proxy.spoken_start if proxy is not None else None
                 ),
                 spoken_end=(
-                    result_interaction.spoken_end if result_interaction else None
+                    result_interaction.spoken_end
+                    if result_interaction else proxy.spoken_end if proxy is not None else None
                 ),
             ))
 
@@ -446,6 +515,25 @@ class SemanticEventFlowPlanner:
                 ),
             ))
         return tuple(steps)
+
+    @classmethod
+    def _compound_proxy_row(
+        cls,
+        unit: tuple[str, ...],
+        rows: list[AssetActivation],
+    ) -> AssetActivation | None:
+        candidates = [
+            row for row in rows
+            if row.source == cls._COMPOUND_PROXY_SOURCE
+            and row.asset_id in unit
+        ]
+        return min(
+            candidates,
+            key=lambda row: (
+                row.spoken_start if row.spoken_start is not None else inf,
+                row.asset_id,
+            ),
+        ) if candidates else None
 
     @classmethod
     def _should_react(

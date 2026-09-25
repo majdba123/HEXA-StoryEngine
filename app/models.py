@@ -212,6 +212,49 @@ class AssetActivation(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
+class SemanticEventProxy(BaseModel):
+    """Story-owned semantic event rendered through an existing compound parent.
+
+    A Final Package may author a meaningful child inside a compound visual even when
+    Pass1/Pass2 correctly keep that child attached to its parent. This record preserves
+    the child event and narration timing without fabricating a new cutout or adding a
+    second AssetActivation for the same rendered asset.
+    """
+
+    asset_id: str
+    semantic_unit_id: str
+    semantic_parent_id: str
+    semantic_event_id: str
+    semantic_event_order: int | None = Field(default=None, ge=1)
+    semantic_event_roles: list[str] = Field(default_factory=list)
+    semantic_event_dependency_ids: list[str] = Field(default_factory=list)
+    trigger_text: str
+    trigger_char_start: int
+    trigger_char_end: int
+    spoken_start: float = Field(ge=0)
+    spoken_end: float = Field(gt=0)
+    reveal_start: float = Field(ge=0)
+    semantic_peak: float = Field(ge=0)
+    settle_at: float = Field(gt=0)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    authority: str = "FINAL_PACKAGE_COMPOUND_PROXY"
+    visual_focus: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_proxy_window(self) -> "SemanticEventProxy":
+        if self.trigger_char_end <= self.trigger_char_start:
+            raise ValueError("semantic event proxy script span must be increasing")
+        if self.spoken_end <= self.spoken_start:
+            raise ValueError("semantic event proxy spoken span must be increasing")
+        if not (
+            self.spoken_start <= self.reveal_start
+            <= self.semantic_peak <= self.settle_at
+        ):
+            raise ValueError("semantic event proxy visual window must follow Story timing")
+        return self
+
+
 class StoryBeat(BaseModel):
     id: str
     scene_id: str
@@ -227,6 +270,7 @@ class StoryBeat(BaseModel):
     semantic_targets: list[str] = Field(default_factory=list)
     semantic_context: StorySemanticContext | None = None
     asset_activations: list[AssetActivation] = Field(default_factory=list)
+    semantic_event_proxies: list[SemanticEventProxy] = Field(default_factory=list)
 
 
 class LayoutItem(BaseModel):

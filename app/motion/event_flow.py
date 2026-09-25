@@ -181,7 +181,17 @@ class MotionEventFlowResolver:
                     and step.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}
                     and involvement in {"SOURCE", "TARGET"}
                 )
-                if not owns_event and not cross_event_relation:
+                cross_event_proxy = (
+                    not owns_event
+                    and step.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+                    and step.stage in {
+                        EventFlowStage.ESTABLISH,
+                        EventFlowStage.ADD,
+                        EventFlowStage.PAYOFF,
+                    }
+                    and involvement in {"FOCUS", "RESULT"}
+                )
+                if not owns_event and not cross_event_relation and not cross_event_proxy:
                     continue
                 phase = MotionEventPhase(
                     event_id=flow.event_id,
@@ -203,7 +213,7 @@ class MotionEventFlowResolver:
                 )
                 owned_phases.append(phase)
                 if not owns_event:
-                    # Cross-event relation phases are executable timeline additions,
+                    # Cross-event relation/proxy phases are executable timeline additions,
                     # never the dominant assignment that owns ENTRY/handoff metadata.
                     continue
                 role_bonus = self._role_bonus(step.stage, involvement)
@@ -272,18 +282,20 @@ class MotionEventFlowResolver:
     def _involvement_for_stage(step: EventFlowStep, asset_id: str) -> str | None:
         """Return only the participant that semantically owns this phase."""
         if step.stage == EventFlowStage.PAYOFF:
+            # PAYOFF belongs only to the authored result/focus. General relation
+            # participants must not receive a second celebratory accent merely because
+            # they are listed as context for the relation.
             if step.result_asset_id == asset_id:
                 return "RESULT"
             if step.focus_asset_id == asset_id:
                 return "FOCUS"
-            if asset_id in step.participant_asset_ids:
-                return "RESULT_MEMBER"
             return None
         if step.stage == EventFlowStage.REACT:
+            # REACT belongs to the target. A distinct result expresses the consequence
+            # once, in PAYOFF; giving it both REACT and PAYOFF creates the exact
+            # micro-motion double-hit that makes dense edits feel nervous.
             if step.target_asset_id == asset_id:
                 return "TARGET"
-            if step.result_asset_id == asset_id:
-                return "RESULT"
             if step.focus_asset_id == asset_id:
                 return "FOCUS"
             return None

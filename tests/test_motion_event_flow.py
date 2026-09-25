@@ -552,3 +552,92 @@ def test_cross_event_relation_phase_executes_without_stealing_story_event_owner(
     assert min(cross_source[0].end, cross_target[0].end) > max(
         cross_source[0].start, cross_target[0].start
     )
+
+
+def test_trusted_payoff_survives_overlapping_next_event_handoff() -> None:
+    """A later event may start before an earlier result reaches its Story peak.
+
+    Story owns the result's readable PAYOFF window; event handoff must not erase it.
+    This reproduces the real Black-Hat scene-38 failure class without scene hardcodes.
+    """
+    result = _activation(
+        "result", start=0.40, peak=0.68, settle=0.96, end=1.05,
+        event_id="E1", event_order=1, roles=["PARTICIPANT", "RESULT"],
+    )
+    next_asset = _activation(
+        "next", start=0.40, peak=0.82, settle=1.04, end=1.10,
+        event_id="E2", event_order=2, roles=["LEADER"],
+    )
+    beat = StoryBeat(
+        id="beat-overlap-payoff",
+        scene_id="scene",
+        start=0.0,
+        end=1.25,
+        audio_start=0.0,
+        audio_end=1.15,
+        narration="result while the next event begins",
+        primary_asset_ids=["result"],
+        support_asset_ids=["next"],
+        action="RESULT",
+        asset_activations=[result, next_asset],
+    )
+    composition = CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="result", x=0.35, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="next", x=0.70, y=0.50, width=0.18, height=0.22),
+        ],
+    )
+    e1 = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        participant_asset_ids=("result",),
+        result_asset_ids=("result",),
+        stages=(EventFlowStage.ADD, EventFlowStage.PAYOFF, EventFlowStage.RELEASE),
+        steps=(
+            EventFlowStep(EventFlowStage.ADD, focus_asset_id="result", participant_asset_ids=("result",)),
+            EventFlowStep(
+                EventFlowStage.PAYOFF,
+                focus_asset_id="result",
+                participant_asset_ids=("result",),
+                result_asset_id="result",
+            ),
+            EventFlowStep(EventFlowStage.RELEASE, focus_asset_id="result", participant_asset_ids=("result",)),
+        ),
+        handoff_to_event_id="E2",
+        handoff_to_asset_id="next",
+    )
+    e2 = SemanticEventFlow(
+        event_id="E2",
+        order=2,
+        dependency_ids=("E1",),
+        leader_asset_ids=("next",),
+        stages=(EventFlowStage.ESTABLISH, EventFlowStage.RELEASE),
+        steps=(
+            EventFlowStep(EventFlowStage.ESTABLISH, focus_asset_id="next", participant_asset_ids=("next",)),
+            EventFlowStep(EventFlowStage.RELEASE, focus_asset_id="next", participant_asset_ids=("next",)),
+        ),
+    )
+    choreography = ChoreographyPlan(directives=(ChoreographyDirective(
+        beat_id=beat.id,
+        sequence_id="sequence-overlap",
+        phase=SequencePhase.CONSEQUENCE,
+        action="RESULT",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.OPEN,
+        energy=0.8,
+        primary_asset_id="result",
+        event_flows=(e1, e2),
+    ),))
+
+    cues = {cue.asset_id: cue for cue in MotionPlanner().plan(
+        [beat], [composition], choreography
+    )}
+    payoff = next(row for row in cues["result"].segments if row.phase == "PAYOFF")
+    peak = payoff.start + (payoff.end - payoff.start) * float(
+        payoff.program["semantic_peak_progress"]
+    )
+
+    assert payoff.end > next_asset.reveal_start
+    assert peak == pytest.approx(result.semantic_peak, abs=1 / 30)
+    assert payoff.end <= result.settle_at + 1e-9

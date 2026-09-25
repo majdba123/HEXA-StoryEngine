@@ -197,33 +197,12 @@ class StorySyncQA:
                         if moving:
                             arrival = program.keyframes[moving[-1] + 1].progress
                             actual = cue.start + max(0.05, cue.end - cue.start) * arrival
-                        focus_frames = [
-                            row for row in program.keyframes
-                            if row.progress <= program.settle_progress + 1e-9
-                        ]
-                        attention_frames = [
-                            row
-                            for row in focus_frames
-                            if (
-                                abs(row.dx) > 1e-9
-                                or abs(row.dy) > 1e-9
-                                or abs(row.scale - 1.0) > 1e-9
-                            )
-                        ]
-                        # Footprint-locked Pass2 family layers are intentionally
-                        # alpha-only/static: they have a reveal time but no spatial
-                        # gesture peak. Do not manufacture a late peak from the last
-                        # neutral keyframe; reveal/settle contracts still apply.
-                        if attention_frames:
-                            peak_frame = max(
-                                attention_frames,
-                                key=lambda row: (
-                                    max(0.0, row.scale - 1.0),
-                                    abs(row.dx) + abs(row.dy),
-                                    row.progress,
-                                ),
-                            )
-                            actual_peak = cue.start + max(0.05, cue.end - cue.start) * peak_frame.progress
+                        actual_peak = self._semantic_motion_peak(
+                            cue=cue,
+                            activation=activation,
+                            expected_peak=float(window.semantic_peak),
+                            fallback_program=program,
+                        )
                     except (KeyError, TypeError, ValueError, OverflowError):
                         violations.append(f"{beat.id}:{activation.asset_id}:invalid_visual_settle")
                         actual = None
@@ -558,6 +537,77 @@ class StorySyncQA:
                         "visual_unit_final_member_missed_story_settle"
                     )
 
+        # Compound semantic proxies preserve authored child events without creating a
+        # second AssetActivation for the same rendered parent. Validate their explicit
+        # semantic pulse independently so an event cannot count as represented merely
+        # because Choreography metadata exists.
+        for beat in story:
+            for proxy in beat.semantic_event_proxies:
+                cue = cues.get((beat.id, proxy.asset_id))
+                if cue is None:
+                    violations.append(
+                        f"{beat.id}:{proxy.asset_id}:{proxy.semantic_event_id}:proxy_missing_motion_cue"
+                    )
+                    continue
+                proxy_segments = [
+                    segment for segment in cue.segments
+                    if segment.semantic_event_id == proxy.semantic_event_id
+                    and segment.phase in {"ESTABLISH", "ADD", "PAYOFF"}
+                ]
+                if not proxy_segments:
+                    violations.append(
+                        f"{beat.id}:{proxy.asset_id}:{proxy.semantic_event_id}:proxy_missing_semantic_segment"
+                    )
+                    continue
+                segment = min(proxy_segments, key=lambda row: (row.start, row.end))
+                if segment.start < proxy.reveal_start - self._SYNC_TOLERANCE_SECONDS:
+                    violations.append(
+                        f"{beat.id}:{proxy.asset_id}:{proxy.semantic_event_id}:proxy_precedes_story_reveal"
+                    )
+                if segment.end > proxy.settle_at + self._SYNC_TOLERANCE_SECONDS:
+                    violations.append(
+                        f"{beat.id}:{proxy.asset_id}:{proxy.semantic_event_id}:proxy_exceeds_story_settle"
+                    )
+                try:
+                    peak_progress = float(
+                        segment.program.get("semantic_peak_progress", 0.61803398875)
+                    )
+                    actual_peak = float(segment.start) + (
+                        float(segment.end) - float(segment.start)
+                    ) * peak_progress
+                except (TypeError, ValueError):
+                    actual_peak = float("nan")
+                delta = (
+                    abs(actual_peak - float(proxy.semantic_peak))
+                    if isfinite(actual_peak) else float("inf")
+                )
+                max_delta = max(max_delta, delta if isfinite(delta) else 0.0)
+                if delta > self._SYNC_TOLERANCE_SECONDS + 1e-9:
+                    violations.append(
+                        f"{beat.id}:{proxy.asset_id}:{proxy.semantic_event_id}:proxy_peak_mismatch"
+                    )
+                anchored += 1
+                explicit += 1
+                entries.append(StorySyncEntry(
+                    beat_id=beat.id,
+                    asset_id=proxy.asset_id,
+                    semantic_unit_id=proxy.semantic_unit_id,
+                    trigger_text=proxy.trigger_text,
+                    policy="EXPLICIT",
+                    source="final_package_compound_proxy",
+                    confidence=proxy.confidence,
+                    spoken_start=round(proxy.spoken_start, 6),
+                    motion_settle=round(float(segment.end), 6),
+                    settle_delta_seconds=round(delta, 6) if isfinite(delta) else None,
+                    activation_policy="COMPOUND_PROXY",
+                    reveal_start=round(proxy.reveal_start, 6),
+                    semantic_peak=round(proxy.semantic_peak, 6),
+                    settle_target=round(proxy.settle_at, 6),
+                    actual_visual_settle=round(float(segment.end), 6),
+                    actual_reveal=round(float(segment.start), 6),
+                    actual_peak=round(actual_peak, 6) if isfinite(actual_peak) else None,
+                ))
+
         return StorySyncReport(
             anchored_assets=anchored,
             semantic_assets=semantic,
@@ -588,6 +638,131 @@ class StorySyncQA:
                     "max_settle_delta_seconds": report.max_settle_delta_seconds,
                 },
             )
+
+    @classmethod
+    def _semantic_motion_peak(
+        cls,
+        *,
+        cue: MotionCue,
+        activation: AssetActivation,
+        expected_peak: float,
+        fallback_program,
+    ) -> float | None:
+        """Return the real visual-attention peak nearest Story's authored peak.
+
+        A cue can legitimately contain an arrival plus one or more explicit semantic
+        phases. StorySync validates the *visible* focus moment, while MotionInteractionQA
+        separately validates semantic ownership. Considering both ENTRY and semantic
+        segments prevents two opposite mistakes: treating a clean ENTRY as the action
+        when INTERACT/REACT/PAYOFF is closer, or forcing a later relation pulse to own
+        an earlier Story introduction when the relation has not started yet.
+        """
+        candidates: list[tuple[float, int, float]] = []
+        activation_event = activation.semantic_event_id
+        dependency_ids = set(activation.semantic_event_dependency_ids)
+        for segment in cue.segments:
+            if segment.phase not in {"INTERACT", "REACT", "PAYOFF"}:
+                continue
+            peak = cls._program_peak_time(
+                program_payload=segment.program,
+                start=float(segment.start),
+                end=float(segment.end),
+            )
+            if peak is None:
+                continue
+            event_id = segment.semantic_event_id
+            ownership_rank = (
+                0
+                if activation_event is not None and event_id == activation_event
+                else 1
+                if event_id is not None and event_id in dependency_ids
+                else 2
+            )
+            candidates.append((abs(peak - expected_peak), ownership_rank, peak))
+
+        base_peak = cls._program_peak_time(
+            program_payload={
+                "semantic_peak_progress": None,
+                "keyframes": [
+                    {
+                        "progress": row.progress,
+                        "dx": row.dx,
+                        "dy": row.dy,
+                        "scale": row.scale,
+                    }
+                    for row in fallback_program.keyframes
+                ],
+            },
+            start=float(cue.start),
+            end=float(cue.end),
+        )
+        if base_peak is not None:
+            # Base ENTRY is a valid focus candidate but loses exact ties to an explicit
+            # semantic segment. Temporal proximity remains the primary Story contract.
+            candidates.append((abs(base_peak - expected_peak), 3, base_peak))
+
+        if not candidates:
+            return None
+        return min(candidates, key=lambda row: (row[0], row[1], row[2]))[2]
+
+    @staticmethod
+    def _program_peak_time(
+        *,
+        program_payload: dict,
+        start: float,
+        end: float,
+    ) -> float | None:
+        keyframes = program_payload.get("keyframes")
+        if not isinstance(keyframes, list) or len(keyframes) < 2 or end <= start:
+            return None
+        active: list[tuple[float, float]] = []
+        for frame in keyframes:
+            try:
+                progress = float(frame.get("progress", 0.0))
+                dx = float(frame.get("dx", 0.0))
+                dy = float(frame.get("dy", 0.0))
+                scale = float(frame.get("scale", 1.0))
+            except (TypeError, ValueError):
+                continue
+            activity = max(
+                abs(dx),
+                abs(dy),
+                abs(scale - 1.0) * 0.20,
+            )
+            if activity > 1e-9:
+                active.append((progress, activity))
+        if not active:
+            return None
+
+        declared = program_payload.get("semantic_peak_progress")
+        try:
+            declared_progress = float(declared)
+        except (TypeError, ValueError):
+            declared_progress = None
+        if declared_progress is not None and 0.0 <= declared_progress <= 1.0:
+            nearest = min(active, key=lambda row: abs(row[0] - declared_progress))
+            progress = nearest[0]
+        else:
+            # Preserve the historical semantic-focus interpretation for ordinary
+            # ENTRY programs: positive emphasis scale outranks raw entrance distance.
+            # This lets a large off-canvas start remain an arrival, while the authored
+            # scale/translation accent later in the trajectory remains the focus peak.
+            ranked: list[tuple[float, float, float]] = []
+            for frame in keyframes:
+                try:
+                    progress_value = float(frame.get("progress", 0.0))
+                    dx = float(frame.get("dx", 0.0))
+                    dy = float(frame.get("dy", 0.0))
+                    scale = float(frame.get("scale", 1.0))
+                except (TypeError, ValueError):
+                    continue
+                if abs(dx) <= 1e-9 and abs(dy) <= 1e-9 and abs(scale - 1.0) <= 1e-9:
+                    continue
+                ranked.append((max(0.0, scale - 1.0), abs(dx) + abs(dy), progress_value))
+            if not ranked:
+                return None
+            progress = max(ranked)[2]
+        return start + (end - start) * progress
 
     @staticmethod
     def write(report: StorySyncReport, path: Path) -> None:

@@ -341,6 +341,7 @@ def test_fallback_event_flow_can_still_express_semantics_inside_entry() -> None:
         stages=(EventFlowStage.ESTABLISH, EventFlowStage.INTERACT, EventFlowStage.RELEASE),
         steps=(
             EventFlowStep(EventFlowStage.ESTABLISH, focus_asset_id="hero", participant_asset_ids=("hero",)),
+            # No spoken timing and no Story activation: this is intentionally fallback-only.
             EventFlowStep(
                 EventFlowStage.INTERACT,
                 focus_asset_id="hero",
