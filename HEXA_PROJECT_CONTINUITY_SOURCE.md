@@ -6103,3 +6103,77 @@ State:
 Motion, Scene Continuity and encoded-video QA. A synthetic rich V1.2 package completes a real FFmpeg
 render in CI. The remaining unknown is only the operator's exact unseen production ZIP/environment,
 which must be validated by the next real render.**
+
+
+## MONTAGE20 REAL BLACK-HAT DIAGNOSTIC ENTRY/HANDOFF FIX — 2026-09-25
+
+Real production diagnostic:
+- Job: `3d5bd61b707b43fe8507eeca5e73bbe4`
+- Final Package: `HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2.zip`
+- Audio: ElevenLabs Ahmed narration used by operator
+- Runtime platform: Windows 10 / Python 3.11.9 / FFmpeg 9.0.2
+- Input package, transcription, vision, Pass1, Pass2, Story, Text and Composition all completed.
+- Pass1: 157 authored assets across 40 scenes.
+- Pass2: 179 assets (+22).
+- Story: 40 beats.
+- Composition: Final Package geometry locked; 87 text cues placed.
+- Failure occurred only at MotionInteractionQA before FFmpeg render.
+
+Observed violations:
+- `beat-017 / SCENE_017:asset-02`: ENTRY 37.759 > handoff 37.087
+- `beat-021 / SCENE_021:asset-03`: ENTRY 46.037 > handoff 45.749
+- `beat-027 / SCENE_027:asset-01`: ENTRY 58.410 > handoff 57.572
+- `beat-038 / SCENE_038:asset-03`: ENTRY 87.734 > handoff 87.117
+
+Root cause:
+the semantic timeline correctly computed the next event handoff deadline, but the ENTRY segment still
+copied legacy `cue.end` unchanged. Therefore an otherwise valid Story-owned reveal could continue
+moving after the next semantic event had already taken ownership.
+
+Fix:
+`c8f64aac6c9ba06fef6cf6950d0b1b6ef2311462`
+`[motion] Fit entry before semantic handoff`
+
+New contract:
+```
+ENTRY.start = Story-owned cue.start
+ENTRY.end   = min(legacy cue.end, semantic handoff deadline)
+```
+
+When clipping is required:
+- the ENTRY trajectory is time-compressed only inside the legal pre-handoff window;
+- transform amplitude is reduced based on the available duration to avoid a violent fast entry;
+- the last ENTRY keyframe remains exact Composition identity;
+- the next semantic event can start with no transform overlap or accumulated drift.
+
+If there is effectively no positive interval before handoff:
+- ENTRY is omitted;
+- the visual snaps directly to its authored Composition geometry at reveal;
+- later semantic INTERACT/REACT/PAYOFF segments still execute normally;
+- the system does not cross the handoff merely to preserve an entrance animation.
+
+Important:
+- MotionInteractionQA was NOT weakened.
+- `SEGMENT_PAST_HANDOFF` remains a hard failure.
+- no scene-specific ids, timings or Black-Hat topic rules were added to production code.
+- the exact four real diagnostic end/deadline pairs are now regression test cases.
+
+Regression coverage:
+- 4 parameterized tests reproduce all real diagnostic violation pairs.
+- each verifies ENTRY ends exactly at the handoff deadline.
+- each verifies exact Composition settle at the final keyframe.
+- each verifies clipped displacement is reduced.
+- each verifies MotionInteractionQA passes afterward.
+- zero-pre-handoff-time fallback is tested separately.
+
+CI:
+- Run: `36088489474`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **332 passed, 12 warnings in 10.11s**
+
+Production state:
+**The real Black-Hat diagnostic Motion failure is fixed at the scheduler, not hidden in QA. Pull the
+new montage HEAD and rerun the exact same Final Package + audio. Any subsequent failure should be
+treated as the next real production gate and diagnosed from its new diagnostic ZIP.**
