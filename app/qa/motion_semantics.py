@@ -39,10 +39,14 @@ class MotionInteractionQA:
         story: list[StoryBeat],
         motion: list[MotionCue],
     ) -> MotionInteractionReport:
-        del story
         violations: list[MotionInteractionViolation] = []
         checked_segments = 0
         by_asset = {(cue.beat_id, cue.asset_id): cue for cue in motion}
+        activation_by_asset = {
+            (beat.id, activation.asset_id): activation
+            for beat in story
+            for activation in beat.asset_activations
+        }
 
         for cue in motion:
             for segment in cue.segments:
@@ -102,12 +106,24 @@ class MotionInteractionQA:
                     ))
 
             if result_id:
-                payoff = self._find_segment(
+                payoff_event_ids = {event_id}
+                result_activation = activation_by_asset.get((beat_id, result_id))
+                if (
+                    result_activation is not None
+                    and result_activation.semantic_event_id
+                    and (
+                        result_activation.semantic_event_id == event_id
+                        or (
+                            event_id is not None
+                            and event_id in result_activation.semantic_event_dependency_ids
+                        )
+                    )
+                ):
+                    payoff_event_ids.add(result_activation.semantic_event_id)
+
+                payoff = self._find_payoff_segment(
                     by_asset.get((beat_id, result_id)),
-                    event_id=event_id,
-                    phases={"PAYOFF"},
-                    source_id=source_id,
-                    target_id=target_id,
+                    event_ids=payoff_event_ids,
                 )
                 if payoff is None:
                     violations.append(MotionInteractionViolation(
@@ -134,6 +150,28 @@ class MotionInteractionQA:
             checked_relations=checked_relations,
             violations=tuple(violations),
         )
+
+
+    @staticmethod
+    def _find_payoff_segment(
+        cue: MotionCue | None,
+        *,
+        event_ids: set[str | None],
+    ) -> MotionSegment | None:
+        """Find a result payoff in the relation event or its authored dependent event.
+
+        Final Package V1.2 may model cause and result as separate semantic events:
+        E1 interaction -> E2 result, where E2 depends on E1. In that case the PAYOFF
+        correctly belongs to E2 and does not need to duplicate E1 source/target fields.
+        """
+        if cue is None:
+            return None
+        rows = [
+            row
+            for row in cue.segments
+            if row.phase == "PAYOFF" and row.semantic_event_id in event_ids
+        ]
+        return min(rows, key=lambda row: (row.start, row.end)) if rows else None
 
     @staticmethod
     def _find_segment(
