@@ -10,7 +10,15 @@ from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
 from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
-from app.motion.timing import MotionTimingPolicy, story_activation_window
+from app.motion.timing import (
+    GOLDEN_MAJOR,
+    GOLDEN_MINOR,
+    MotionTimingPolicy,
+    comfort_gain,
+    max_comfort_displacement,
+    motion_comfort,
+    story_activation_window,
+)
 
 
 class MotionPlanner:
@@ -584,6 +592,12 @@ class MotionPlanner:
         deadline = cls._event_handoff_deadline(
             beat=beat, assignment=assignment, directive=directive
         )
+        exit_reserve = cls._exit_reserve_seconds(
+            cue=cue,
+            assignment=assignment,
+            deadline=deadline,
+        )
+        activity_deadline = max(float(cue.start), float(deadline) - exit_reserve)
         segments: list[MotionSegment] = []
         entry_segment = cls._entry_segment_before_handoff(
             cue=cue,
@@ -624,7 +638,7 @@ class MotionPlanner:
                 activation=activation,
                 cue=cue,
                 beat=beat,
-                deadline=deadline,
+                deadline=activity_deadline,
             )
             if window is None:
                 continue
@@ -642,6 +656,7 @@ class MotionPlanner:
                 focus_strength=focus_strength,
                 energy=energy,
                 cohort_gain=cohort_gain,
+                duration=window[1] - window[0],
             )
             segments.append(
                 MotionSegment(
@@ -693,12 +708,11 @@ class MotionPlanner:
         """
         start = float(cue.start)
         original_end = float(cue.end)
-        needs_exit = bool(
-            (assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
-            and cue.asset_id not in set(assignment.handoff_to_asset_ids)
+        exit_reserve = cls._exit_reserve_seconds(
+            cue=cue,
+            assignment=assignment,
+            deadline=deadline,
         )
-        available = float(deadline) - start
-        exit_reserve = 0.18 if needs_exit and available >= 0.34 else 0.0
         end = min(original_end, float(deadline) - exit_reserve)
         if end <= start + 1e-6:
             return None
@@ -769,21 +783,34 @@ class MotionPlanner:
         duration: float,
     ) -> MotionProgram:
         size = min(item.width, item.height) if item is not None else 0.18
-        floor = max(0.018, min(0.038, size * 0.16))
-        if duration < 0.14:
-            floor *= 0.72
+        temporal_gain = comfort_gain("ENTRY", duration)
+        floor = max(0.018, min(0.038, size * 0.16)) * temporal_gain
         peak = max((hypot(frame.dx, frame.dy) for frame in program.keyframes), default=0.0)
         scale_peak = max((abs(frame.scale - 1.0) for frame in program.keyframes), default=0.0)
-        gain = min(2.8, floor / peak) if 1e-6 < peak < floor else 1.0
+        desired_peak = max(peak, floor)
+        max_peak = max_comfort_displacement("ENTRY", duration)
+        if max_peak > 0.0:
+            desired_peak = min(desired_peak, max_peak)
+        gain = desired_peak / peak if peak > 1e-6 else 1.0
+        max_scale_delta = min(0.08, max(0.012, duration * 0.20))
         frames = tuple(
             MotionKeyframe(
                 progress=frame.progress,
                 dx=max(-0.075, min(0.075, frame.dx * gain)),
                 dy=max(-0.075, min(0.075, frame.dy * gain)),
                 scale=(
-                    frame.scale
+                    1.0
+                    + max(
+                        -max_scale_delta,
+                        min(max_scale_delta, frame.scale - 1.0),
+                    )
                     if peak > 1e-6 or scale_peak >= 0.045
-                    else 1.0 + (-0.045 if frame.progress < program.settle_progress else 0.0)
+                    else 1.0
+                    - (
+                        min(0.045 * temporal_gain, max_scale_delta)
+                        if frame.progress < program.settle_progress
+                        else 0.0
+                    )
                 ),
                 easing=frame.easing,
             )
@@ -806,28 +833,37 @@ class MotionPlanner:
     ) -> tuple[float, float] | None:
         relation_start = phase.spoken_start
         relation_end = phase.spoken_end
+        profile = motion_comfort(phase.stage.value)
         if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
             if relation_start is None or relation_end is None or relation_end <= relation_start:
                 return None
             span = relation_end - relation_start
             if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
-                start, end = relation_start, relation_start + span * 0.70
+                start = relation_start
             elif phase.stage == EventFlowStage.REACT:
-                start, end = relation_start + span * 0.20, relation_start + span * 0.84
+                reaction_delay = min(
+                    span * GOLDEN_MINOR,
+                    profile.target_seconds * GOLDEN_MINOR,
+                )
+                start = relation_start + reaction_delay
             else:
-                start, end = relation_start + span * 0.18, relation_start + span * 0.76
+                acknowledgement_delay = min(
+                    span * GOLDEN_MINOR * 0.5,
+                    profile.target_seconds * GOLDEN_MINOR * 0.5,
+                )
+                start = relation_start + acknowledgement_delay
+            end = start + profile.target_seconds
         elif phase.stage == EventFlowStage.PAYOFF:
             if relation_start is not None and relation_end is not None and relation_end > relation_start:
                 span = relation_end - relation_start
-                start = relation_start + span * 0.72
+                start = relation_start + span * GOLDEN_MAJOR
             elif activation is not None and activation.spoken_start is not None:
                 start = float(activation.spoken_start)
-                span = max(0.18, float((activation.spoken_end or start + 0.24) - start))
             else:
                 return None
             if activation is not None and activation.spoken_start is not None:
                 start = max(start, float(activation.spoken_start))
-            end = start + max(0.18, min(0.34, span * 0.55))
+            end = start + profile.target_seconds
         else:
             return None
 
@@ -849,6 +885,7 @@ class MotionPlanner:
         focus_strength: float,
         energy: float,
         cohort_gain: float,
+        duration: float,
     ) -> MotionProgram:
         dx, dy, scale = cls._phase_transform(
             phase=phase, vector=vector, focus_strength=max(0.0, min(1.0, focus_strength))
@@ -858,7 +895,12 @@ class MotionPlanner:
         dy = max(-0.075, min(0.075, dy * strength))
         scale = 1.0 + (scale - 1.0) * strength
         dx, dy, scale = cls._enforce_event_readability(
-            phase=phase, item=item, dx=dx, dy=dy, scale=scale
+            phase=phase,
+            item=item,
+            dx=dx,
+            dy=dy,
+            scale=scale,
+            duration=duration,
         )
         return MotionProgram(
             name=(
@@ -867,8 +909,14 @@ class MotionPlanner:
             ),
             settle_progress=1.0,
             keyframes=(
-                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_out_cubic"),
-                MotionKeyframe(0.48, dx, dy, scale, "ease_out_cubic"),
+                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_in_out_cubic"),
+                MotionKeyframe(
+                    GOLDEN_MAJOR,
+                    dx,
+                    dy,
+                    scale,
+                    "ease_in_out_cubic",
+                ),
                 MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
             ),
         )
@@ -882,6 +930,7 @@ class MotionPlanner:
         dx: float,
         dy: float,
         scale: float,
+        duration: float,
     ) -> tuple[float, float, float]:
         stage_floor = {
             EventFlowStage.INTERACT: 0.030,
@@ -889,20 +938,52 @@ class MotionPlanner:
             EventFlowStage.PAYOFF: 0.020,
         }.get(phase.stage, 0.0)
         size_floor = min(0.042, min(item.width, item.height) * 0.14)
-        floor = max(stage_floor, size_floor)
+        temporal_gain = comfort_gain(phase.stage.value, duration)
+        floor = max(stage_floor, size_floor) * temporal_gain
+        max_displacement = max_comfort_displacement(phase.stage.value, duration)
         magnitude = hypot(dx, dy)
-        if floor > 0 and 1e-6 < magnitude < floor:
-            gain = min(2.8, floor / magnitude)
+        desired = max(magnitude, floor)
+        if max_displacement > 0.0:
+            desired = min(desired, max_displacement)
+        if magnitude > 1e-6:
+            gain = desired / magnitude
             dx = max(-0.075, min(0.075, dx * gain))
             dy = max(-0.075, min(0.075, dy * gain))
-        elif floor > 0 and magnitude <= 1e-6 and phase.stage != EventFlowStage.PAYOFF:
-            dy = -floor
+        elif floor > 0 and phase.stage != EventFlowStage.PAYOFF:
+            dy = -min(floor, max_displacement or floor)
 
-        if phase.stage == EventFlowStage.PAYOFF and abs(scale - 1.0) < 0.075:
-            scale = 1.075 if scale >= 1.0 else 0.925
-        elif phase.stage == EventFlowStage.REACT and abs(scale - 1.0) < 0.045:
-            scale = 1.045
+        scale_cap = max(0.012, min(0.095, duration * 0.22))
+        if phase.stage == EventFlowStage.PAYOFF:
+            desired_scale = min(0.075 * temporal_gain, scale_cap)
+            if abs(scale - 1.0) < desired_scale:
+                scale = 1.0 + desired_scale if scale >= 1.0 else 1.0 - desired_scale
+        elif phase.stage == EventFlowStage.REACT:
+            desired_scale = min(0.045 * temporal_gain, scale_cap)
+            if abs(scale - 1.0) < desired_scale:
+                scale = 1.0 + desired_scale
         return dx, dy, max(0.90, min(1.14, scale))
+
+
+    @staticmethod
+    def _exit_reserve_seconds(
+        *,
+        cue: MotionCue,
+        assignment: MotionEventAssignment,
+        deadline: float,
+    ) -> float:
+        has_handoff = bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
+        if not has_handoff or cue.asset_id in set(assignment.handoff_to_asset_ids):
+            return 0.0
+        entry_profile = motion_comfort("ENTRY")
+        exit_profile = motion_comfort("EXIT")
+        available = max(0.0, float(deadline) - float(cue.start))
+        if available < entry_profile.minimum_seconds + exit_profile.minimum_seconds:
+            return 0.0
+        golden_reserve = available * GOLDEN_MINOR
+        return min(
+            exit_profile.target_seconds,
+            max(exit_profile.minimum_seconds, golden_reserve),
+        )
 
     @staticmethod
     def _exit_direction(
@@ -947,9 +1028,19 @@ class MotionPlanner:
             return None
 
         end = float(deadline)
-        latest = max((float(segment.end) for segment in existing_segments), default=float(cue.end))
-        start = max(latest, end - 0.28, float(cue.start))
-        if end - start < 0.10:
+        reserve = cls._exit_reserve_seconds(
+            cue=cue,
+            assignment=assignment,
+            deadline=deadline,
+        )
+        if reserve <= 0.0:
+            return None
+        latest = max(
+            (float(segment.end) for segment in existing_segments),
+            default=float(cue.end),
+        )
+        start = max(latest, end - reserve, float(cue.start))
+        if end - start < motion_comfort("EXIT").minimum_seconds - 1e-6:
             return None
 
         dx, dy = cls._exit_direction(
@@ -957,6 +1048,13 @@ class MotionPlanner:
             assignment=assignment,
             items_by_id=items_by_id,
         )
+        duration = end - start
+        max_distance = max_comfort_displacement("EXIT", duration)
+        magnitude = hypot(dx, dy)
+        if magnitude > max_distance > 0.0:
+            speed_gain = max_distance / magnitude
+            dx *= speed_gain
+            dy *= speed_gain
         program = {
             "name": "semantic_release_exit",
             "settle_progress": 1.0,
@@ -970,10 +1068,10 @@ class MotionPlanner:
                     "easing": "ease_in_out_cubic",
                 },
                 {
-                    "progress": 0.60,
-                    "dx": dx * 0.62,
-                    "dy": dy * 0.62,
-                    "scale": 0.985,
+                    "progress": GOLDEN_MAJOR,
+                    "dx": dx * GOLDEN_MAJOR,
+                    "dy": dy * GOLDEN_MAJOR,
+                    "scale": 1.0 - 0.045 * GOLDEN_MAJOR,
                     "easing": "ease_in_out_cubic",
                 },
                 {
