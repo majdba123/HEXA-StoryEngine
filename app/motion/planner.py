@@ -18,6 +18,7 @@ from app.motion.timing import (
     comfort_gain,
     max_comfort_displacement,
     motion_comfort,
+    semantic_readability_floor,
     story_activation_window,
 )
 
@@ -1070,14 +1071,13 @@ class MotionPlanner:
         scale: float,
         duration: float,
     ) -> tuple[float, float, float]:
-        stage_floor = {
-            EventFlowStage.INTERACT: 0.030,
-            EventFlowStage.REACT: 0.026,
-            EventFlowStage.PAYOFF: 0.020,
-        }.get(phase.stage, 0.0)
-        size_floor = min(0.042, min(item.width, item.height) * 0.14)
         temporal_gain = comfort_gain(phase.stage.value, duration)
-        floor = max(stage_floor, size_floor) * temporal_gain
+        floor = semantic_readability_floor(
+            phase.stage.value,
+            item_width=item.width,
+            item_height=item.height,
+            duration=duration,
+        )
         # Event accents travel out and then return to Composition. The return leg is
         # the shorter golden section (38.2%), so it is the actual speed bottleneck.
         # Cap displacement against that leg; otherwise the outbound average can look
