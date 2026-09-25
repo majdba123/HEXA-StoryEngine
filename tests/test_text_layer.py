@@ -568,3 +568,65 @@ def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
     discovery = next(cue for cue in plan.cues if cue.text == "تكتشفها")
     assert discovery.priority > company.priority
 
+
+
+
+def test_text_motion_respects_visual_cohort_attention_hierarchy() -> None:
+    script = "الرصيد الظاهر 1000 ريال لكن 300 ريال محجوزة لعملية سابقة"
+    transcript = _transcript(script)
+    beat = _beat(transcript)
+    text = TextPlanner().plan(transcript=transcript, story=[beat], assets=_assets())
+    visual = [
+        CompositionBeat(
+            beat_id=beat.id,
+            items=[
+                LayoutItem(asset_id="wallet", x=0.35, y=0.5, width=0.3, height=0.4, z=20),
+                LayoutItem(asset_id="lock", x=0.70, y=0.5, width=0.2, height=0.3, z=21),
+            ],
+        )
+    ]
+    text_composition = TextCompositionPlanner().plan([beat], visual, text.cues)
+    first = text.cues[0]
+
+    def anchor_motion(role: str, gain: float) -> MotionCue:
+        return MotionCue(
+            beat_id=beat.id,
+            asset_id="wallet",
+            kind="program_v3",
+            start=first.spoken_start,
+            end=first.spoken_start + 0.7,
+            params={
+                "semantic_settle_time": first.spoken_start + 0.5,
+                "semantic_focus": {
+                    "active": True,
+                    "role": "ACTIVE_FOCUS",
+                    "source": "story_activation_window",
+                    "cohort_role": role,
+                    "cohort_gain": gain,
+                },
+            },
+        )
+
+    leader = TextMotionPlanner().plan(
+        [beat],
+        text.cues,
+        text_composition,
+        visual_motion=[anchor_motion("leader", 1.0)],
+    )
+    participant = TextMotionPlanner().plan(
+        [beat],
+        text.cues,
+        text_composition,
+        visual_motion=[anchor_motion("participant", 0.58)],
+    )
+
+    leader_cue = next(row for row in leader if row.text_cue_id == first.id)
+    participant_cue = next(row for row in participant if row.text_cue_id == first.id)
+    assert leader_cue.params["entry_strength"] > participant_cue.params["entry_strength"]
+    assert leader_cue.params["visual_sync"]["cohort_role"] == "leader"
+    assert participant_cue.params["visual_sync"]["cohort_role"] == "participant"
+    # Text timing remains narration-owned; only presentation energy changes.
+    assert leader_cue.start == participant_cue.start == first.spoken_start
+    assert [token.start for token in leader_cue.tokens] == [
+        token.start for token in participant_cue.tokens
+    ]
