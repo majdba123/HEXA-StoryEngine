@@ -8678,3 +8678,317 @@ Still pending:
 - only then mark diagnostic `10f16ca6` fully CLOSED.
 
 No further production-code change is justified until that exact rerender or a new diagnostic provides new evidence.
+
+
+## MONTAGE29 REFERENCE CHOREOGRAPHY PROFESSIONALIZATION CHECKPOINT — 2026-09-25
+
+Official development branch:
+`montage`
+
+Current live behavior/documentation base before this handoff commit:
+`3c667d73e2c050f4c7047e9de8972ce134ec5df6`
+`[transport] Restore paginated source newlines`
+
+Primary quality behavior commit:
+`d1000edd997c709a5ffa7f13e734a892bcc18879`
+`[motion] Complete reference choreography and semantic focus hardening`
+
+The two commits above `d1000...` only restored comments/newline transport after connector pagination.
+AST comparison of all ten changed production Python files between the CI-tested/rendered `d1000...`
+artifact and current live `3c667d...` is **identical for every file**. No runtime behavior changed.
+
+### Objective
+
+This phase was not a render-unblocking patch. Its purpose was to move HEXA-StoryEngine from
+"technically moving correctly" toward the pacing, focus hierarchy, interaction grammar, and visual
+breathing of the accepted reference-video family while remaining generic across Final Packages.
+
+Reference videos were treated as one visual-editing grammar rather than copied scene-by-scene.
+
+### Sprint 1 — cross-beat pacing / rhythm
+
+Implemented a reference rhythm policy that:
+- keeps the existing narration/Story timing authority;
+- smooths isolated pace whiplash between adjacent beats;
+- preserves deliberate authored hook/re-hook contrast;
+- constrains pacing to a small stable tier set instead of letting each beat feel unrelated;
+- keeps Golden-ratio timing as an actual motion relationship, not decorative metadata.
+
+No global slowdown was introduced.
+
+### Sprint 2 — readable holds and focus arbitration
+
+Implemented semantic attention cohorts:
+- overlapping visuals compete for one dominant Hero/focus leader;
+- participants/support assets receive bounded secondary emphasis;
+- context assets become quieter;
+- sequential authored semantic events retain independent full focus even when windows touch;
+- dense scenes with many assets remain supported without asset deletion;
+- text motion consumes the same visual focus hierarchy so labels do not fight the Hero.
+
+This directly targets the prior "everything moves with similar importance" failure.
+
+### Sprint 3 — remove micro-motion duplication
+
+Explicit semantic timelines now separate appearance from semantic action:
+- ENTRY is a clean arrival;
+- INTERACT / REACT / PAYOFF execute in their own authored phases;
+- the same interaction is not hidden inside ENTRY and then repeated as a second pulse;
+- fallback-only flows may still express semantics inside ENTRY when no precise Story/event timing exists.
+
+This removes a major source of nervous double-hits.
+
+### Sprint 4 — interaction / reaction / payoff grammar
+
+The relation grammar is now stricter and causal:
+- SOURCE owns INTERACT;
+- TARGET owns REACT;
+- RESULT owns PAYOFF;
+- a distinct result does not automatically receive both REACT and PAYOFF;
+- general relation participants do not receive accidental PAYOFF;
+- relation-level result authority is explicit only;
+- an event RESULT is never borrowed to fabricate a causal relation result;
+- REACT/PAYOFF cannot execute before the causal source exists;
+- trusted PAYOFF remains readable through its Story-owned peak/settle even if the next semantic event
+  begins concurrently.
+
+The visual order is therefore cause -> reaction -> consequence instead of "several things move."
+
+### Sprint 5 — Golden semantic peaks and compound Final Package semantics
+
+The first precise semantic accent is shaped around Story's `semantic_peak` using a Golden-ratio
+outbound/return window.
+
+If decorative ENTRY would collide with the semantic peak:
+- ENTRY is shortened when a readable arrival still fits;
+- otherwise ENTRY is removed and semantic meaning wins;
+- Motion never invents a new spoken timestamp.
+
+For meaningful Final Package children that correctly remain inside a compound parent after Pass1/Pass2,
+Story now has a dedicated `SemanticEventProxy` channel:
+- no Pass3 / Layer3;
+- no manufactured cutout;
+- no duplicate AssetActivation for one rendered asset;
+- the existing parent cutout receives one role-aware refocus/pulse at the child event time;
+- role precedence prevents duplicate ESTABLISH+PAYOFF or REACT+PAYOFF hits.
+
+White-Hat real-package proof:
+- 4 previously unrepresented compound child events now execute as real parent focus pulses;
+- StorySyncQA explicitly validates those proxy pulses rather than counting metadata only;
+- proxy max peak delta: **42.971 ms**, inside the 50 ms semantic sync contract.
+
+### Sprint 6 — encoded QA hardening and performance
+
+RenderedMotionQA now covers:
+- ENTRY
+- ESTABLISH
+- ADD
+- INTERACT
+- REACT
+- PAYOFF
+- EXIT
+
+Acceptance thresholds were not weakened.
+
+The encoded evidence path was changed from repeated H.264 random seeking to:
+- collect exact frame requests first;
+- decode the video once in frame order;
+- retrieve only requested frames;
+- keep a bounded working cache.
+
+This keeps the same frames, ROIs, readability floors, speed limits, and encoded-activity thresholds while
+making dense full-package QA production-usable.
+
+On the final Black-Hat gate, RenderedMotionQA completed in approximately **3.45 s** while checking
+170 segments.
+
+### Reference-family perceptual measurements
+
+Same 10 fps luma-difference analysis, current full Black-Hat render versus previous Black-Hat render and
+the three reference videos treated as one family:
+
+- mean visual change:
+  - previous: **8.797**
+  - current: **7.057**
+  - reference-family mean: **5.391**
+- strong-motion share (>8 luma-delta):
+  - previous: **32.474%**
+  - current: **24.433%**
+  - reference-family mean: **24.467%**
+- median readable hold:
+  - previous: **0.25 s**
+  - current: **0.30 s**
+  - reference-family mean: **0.333 s**
+- raw luma jerk mean:
+  - previous: **6.944**
+  - current: **6.301**
+  - reference-family mean: **2.343**
+
+Interpretation:
+- global motion strength is now essentially on the reference family distribution;
+- holds and breathing space moved materially toward the references;
+- average visual activity decreased without globally weakening semantic actions;
+- raw pixel jerk remains higher than the references because this package has dense opaque cutout reveals,
+  40 scene changes, and different artwork/cut density. This metric is retained as perceptual evidence and
+  is NOT "fixed" by adding blanket blur or weakening Motion.
+
+The professional baseline therefore targets reference choreography/focus/rhythm, not pixel-statistical
+cloning of unrelated reference artwork.
+
+### Final CI
+
+Current live HEAD:
+`3c667d73e2c050f4c7047e9de8972ce134ec5df6`
+
+V2 CI:
+Run `36186574627`
+
+Result:
+**SUCCESS**
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **389 passed, 12 warnings in 10.61 s**
+- tested source snapshot upload: SUCCESS
+
+Current tested-source artifact:
+`hexa-storyengine-source-d083ba30b4955d23d86cfb2321cb41b3a7dba642`
+
+Artifact digest:
+`sha256:6927a04b67cdd87f53cd4c63daf7de966906fbdc4bc88ded2683f42f4d2c37a8`
+
+The behavior commit `d1000...` also passed full CI:
+Run `36186274369`
+- 389 passed, 12 warnings
+- source artifact digest:
+  `sha256:c593ae138239b8f60c9b129344899eb6d59e685efc383a5836e35ee14b4f2489`
+
+### Exact CI-tested Black-Hat full-package gate
+
+Source:
+exact tested artifact from behavior commit `d1000...`.
+
+Package:
+`HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+
+Validation timing limitation:
+sandbox production WhisperX/E5 and standalone original ElevenLabs MP3 were unavailable, so controlled
+alignment / recovered narration carrier was used. This proves engine/package/render/QA integrity, not exact
+Windows ML-timing parity.
+
+Result:
+- 40 / 40 scene segments frame-count verified;
+- 179 Story sync anchors;
+- 55 / 55 authored semantic events represented;
+- 15 / 15 explicit relationships represented;
+- 14 executable relation timelines;
+- MotionInteractionQA: 77 checked segments / 14 relations / 0 violations;
+- ChoreographyRhythmQA: 40 beats / 14 entry cohorts / 0 violations;
+- SceneContinuityQA: 39 / 39 boundaries bridged / 0 blur boundaries / 0 violations;
+- visual/text/short-motion authoring violations: 0;
+- RenderedMotionQA: **170 checked / 26 intentional static skips / 0 violations**;
+- RenderedMotionQA runtime: approximately **3.45 s**;
+- final video: H.264, 1920x1080, yuv420p, 30fps;
+- audio: AAC mono 44.1 kHz;
+- duration: **97.0667 s**;
+- full FFmpeg decode: PASS;
+- SHA-256:
+  `2814cb9f5d0a1e53c9cee6d42598119a6f9db56bc05f21bb501ecb84cc159e68`.
+
+This hash is identical to the final local pre-push gate, proving deterministic behavior across the reconciled
+source and exact CI-tested source.
+
+### Exact CI-tested White-Hat full-package gate
+
+Package:
+`HEXA_WHITE_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED_SEMANTIC_PROGRESSION_FIXED.zip`
+
+Same validation timing limitation applies; controlled timing carrier was used, not a production WhisperX/E5
+parity claim.
+
+Result:
+- 35 / 35 scene segments frame-count verified;
+- 137 Story sync anchors;
+- 51 / 51 authored semantic events represented;
+- 4 compound child semantic proxies explicitly executed and StorySync-validated;
+- proxy max timing delta: **42.971 ms**;
+- MotionInteractionQA: 78 checked segments / 11 relations / 0 violations;
+- ChoreographyRhythmQA: 35 beats / 7 entry cohorts / 0 violations;
+- SceneContinuityQA: 34 / 34 boundaries bridged / 0 blur boundaries / 0 violations;
+- visual/text/short-motion authoring violations: 0;
+- RenderedMotionQA: **146 checked / 15 intentional static skips / 0 violations**;
+- final video: H.264, 1920x1080, yuv420p, 30fps;
+- audio: AAC mono 44.1 kHz;
+- duration: **97.0667 s**;
+- full FFmpeg decode: PASS;
+- SHA-256:
+  `7f628c1b5443431336db2f00d07afe4733cdd849f00142b1f38ca9558452c271`.
+
+The White package still emits a non-blocking choreography asset-requirement warning for abstract
+`UNIT_001/UNIT_002` scene-level semantic entities that do not map one-to-one to independent cutouts.
+This is not semantic-event loss:
+- all 51 authored semantic events are represented;
+- all reported explicit relationships are represented;
+- child intents that lack independent cutouts execute through explicit parent proxies;
+- no extraction change is permitted merely to silence this diagnostic warning.
+
+### Quality and architecture locks preserved
+
+Unchanged:
+- Final Package semantic authority;
+- Story / WhisperX timing authority;
+- Composition final geometry authority;
+- Pass1 + Pass2 only;
+- no Pass3 / Layer3;
+- no extraction changes;
+- no asset deletion to satisfy QA;
+- no relation deletion;
+- no global Motion weakening;
+- no global QA bypass;
+- 1920x1080;
+- libx264;
+- CRF 18;
+- yuv420p;
+- 30fps;
+- collision safety;
+- exact Composition settle for normal semantic motion.
+
+### Current quality status
+
+**REFERENCE CHOREOGRAPHY PROFESSIONAL BASELINE: VALIDATED**
+
+This means the engine is now validated as a professional production baseline for:
+- stable cross-beat pacing;
+- readable holds;
+- one clear visual attention leader during competing motion;
+- Final Package-driven focus order;
+- explicit INTERACT -> REACT -> PAYOFF causal grammar;
+- Golden-ratio semantic peak shaping;
+- compound child semantic utilization without extra extraction;
+- collision-safe execution;
+- text-vs-visual attention hierarchy;
+- encoded semantic-motion visibility;
+- deterministic full-package rendering on two materially different real packages.
+
+It does NOT mean frame-by-frame imitation of the reference videos, and it does not replace the final
+operator-side Windows parity run with original narration + production WhisperX/E5.
+
+### Remaining operator parity gate
+
+Run current live `montage` on Windows with:
+- original target Final Package;
+- original ElevenLabs narration;
+- production WhisperX;
+- production multilingual semantic model;
+- FFmpeg 9.0.2.
+
+For Gray-Hat diagnostic `10f16ca6`, exact package/audio bytes are still absent from this sandbox, so the
+operator rerender remains required to close that specific production package gate.
+
+If the Windows render completes, perform perceptual A/B against:
+1. previous render;
+2. current render;
+3. reference-video family.
+
+Do not change production code merely because a scalar pixel-motion statistic is not identical to unrelated
+reference artwork. Open a new code change only when visual review or a new diagnostic identifies a concrete
+general failure class.
