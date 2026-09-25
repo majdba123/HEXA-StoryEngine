@@ -1184,13 +1184,21 @@ class MotionPlanner:
         # much distance into the first few frames once the program is reduced to
         # one clean entry. Normalize that single entry segment to cubic ease-out:
         # fast enough to feel intentional, but with a long, smooth settle.
+        golden_checkpoint = settle_progress * GOLDEN_MAJOR
         frames = [
             MotionKeyframe(
                 0.0,
                 first.dx,
                 first.dy,
                 first.scale,
-                "ease_out_cubic",
+                "ease_in_out_cubic",
+            ),
+            MotionKeyframe(
+                golden_checkpoint,
+                first.dx * GOLDEN_MINOR,
+                first.dy * GOLDEN_MINOR,
+                1.0 + (first.scale - 1.0) * GOLDEN_MINOR,
+                "ease_in_out_cubic",
             ),
         ]
         if settle_progress < 1.0 - 1e-9:
@@ -1200,7 +1208,7 @@ class MotionPlanner:
                     0.0,
                     0.0,
                     1.0,
-                    settle.easing,
+                    "smoothstep",
                 )
             )
         frames.append(MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"))
