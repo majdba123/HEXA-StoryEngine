@@ -188,7 +188,7 @@ class FFmpegRenderer:
         bridge_duration = max(0.0, bridge_end - bridge_start)
         visual_carrier_id = (
             None
-            if bridge_duration > 0
+            if bridge_duration > 0 or previous_beat is None
             else self._visual_carrier_asset_id(
                 beat=beat,
                 ordered_items=ordered_items,
