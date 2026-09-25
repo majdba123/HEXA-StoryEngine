@@ -7189,3 +7189,191 @@ If the rerun produces another diagnostic, treat it as a new production gate and 
 State:
 **The diagnostic was converted into generic engine contracts and regressions. The same package now has
 full executable relation coverage in the semantic audit, and the complete GitHub CI is green.**
+
+
+## MONTAGE24 COLLISION-SAFE RELATION MOTION CHECKPOINT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`af0f15435c5987f57cf7691b2d951ca95ec0e65d`
+`[motion] Auto-fit relation amplitude to prevent collisions`
+
+### Production diagnostic that opened this checkpoint
+
+Diagnostic:
+`HEXA-diagnostic-6384c59e.zip`
+
+Job:
+`6384c59e601a4caeab3a67669c812396`
+
+Input Final Package:
+`HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+
+Runtime commit:
+`2f6cf68c735c1f15e5cea651a58b38f8054cfcc2`
+
+The pipeline successfully completed:
+- input;
+- transcription;
+- vision;
+- Pass1: 157 authored assets / 40 scenes;
+- Pass2: 179 assets (+22);
+- Story: 40 beats;
+- Text;
+- Composition: 87 text cues.
+
+Failure occurred at MotionInteractionQA before render.
+
+Exact violation:
+```
+MOTION_CREATES_COLLISION
+beat: beat-005
+event: SCENE_005_EVENT_02
+source: SCENE_005:asset-03
+target: SCENE_005:asset-02
+authored overlap: 0.000
+animated overlap: 0.224
+```
+
+This was a real Motion-created collision, not a malformed Final Package and not a false-positive QA
+failure.
+
+### Root cause
+
+MONTAGE21/22 intentionally raised INTERACT / REACT readability floors so relation motion would be
+perceptually visible.
+
+Collision QA was correctly added as a hard pre-render gate, but Planner still treated that gate only as
+validation. In tight authored geometry, a strong source/target relation could therefore produce a
+material overlap and stop the render instead of adapting its amplitude.
+
+This failure class could recur with any Final Package whose Composition is valid but whose semantic
+relation motion has less free spatial clearance.
+
+### Generic architecture fix
+
+New module:
+`app/motion/collision.py`
+
+Planner now performs relation-collision fitting immediately after producing the Motion cues for each
+beat.
+
+The fitter:
+1. considers explicit INTERACT source + REACT target pairs;
+2. ignores geometry-locked visuals because Renderer intentionally suppresses their transforms;
+3. computes authored Composition overlap at identity;
+4. only intervenes when the authored boxes were effectively separate;
+5. samples the full simultaneous relation window, including real keyframe times;
+6. measures the maximum animated overlap rather than one midpoint only;
+7. if Motion creates an unsafe new overlap, performs binary search for the strongest safe common
+   amplitude;
+8. uniformly scales relation dx / dy / scale deltas;
+9. preserves:
+   - Story timing;
+   - relation direction;
+   - easing;
+   - Golden 61.8 / 38.2 pacing;
+   - semantic roles;
+   - exact final Composition settle.
+
+Planner target overlap is deliberately stricter than the QA hard-fail threshold, providing safety
+margin.
+
+### Collision priority versus readability floor
+
+A relation may occasionally have so little authored free space that collision safety requires movement
+below the normal perceptual floor.
+
+In that case:
+- collision safety outranks the ordinary readability floor;
+- the segment is explicitly marked:
+  - `collision_limited = true`
+  - `collision_gain`
+  - `collision_policy = preserve_authored_separation`
+  - original/authored overlap diagnostics;
+- RenderedMotionQA does NOT report `MOTION_BELOW_PERCEPTUAL_FLOOR` for that explicitly
+  collision-limited segment;
+- encoded activity is still required when the remaining expected movement is measurable;
+- comfort-speed validation remains active.
+
+This is not a broad QA bypass. Only Planner-proven collision-limited relation segments receive this
+exception.
+
+### QA remains a hard guard
+
+MotionInteractionQA was NOT weakened.
+
+Its collision measurement now uses the same full-window overlap model as Planner rather than checking
+only the midpoint.
+
+Therefore:
+- normal pipeline => Planner auto-fits the collision and QA passes;
+- if Planner fitting is bypassed/regresses => QA still produces `MOTION_CREATES_COLLISION`.
+
+### Regression coverage
+
+Regression 1:
+close-but-authored-separated source/target boxes are given strong relation motion.
+
+Expected:
+- Planner marks relation motion collision-limited;
+- gain remains < 1;
+- MotionInteractionQA passes after fitting.
+
+Regression 2:
+the fitted programs are deliberately amplified again to simulate a Planner regression/bypass.
+
+Expected:
+- MotionInteractionQA still fails with `MOTION_CREATES_COLLISION`.
+
+Regression 3:
+an encoded collision-limited semantic segment is allowed below the normal readability floor but must
+still produce real encoded movement.
+
+This prevents future changes from solving collision failures by either disabling QA or silently making
+metadata-only motion.
+
+### Final CI
+
+Behavior HEAD:
+`af0f15435c5987f57cf7691b2d951ca95ec0e65d`
+
+Run:
+`36150918909`
+
+Result:
+**SUCCESS**
+
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **356 passed, 12 warnings in 11.56s**
+
+### Locked production invariant
+
+After MONTAGE24:
+
+**A valid Final Package with safe authored Composition should not fail merely because semantic Motion
+creates a new relation collision. Planner must first reduce only the offending relation amplitude to
+the strongest collision-safe value. QA remains responsible for catching any collision that escapes
+that repair.**
+
+This behavior is generic:
+- no Black-Hat topic logic;
+- no SCENE_005 hardcode;
+- no asset-id hardcode;
+- no package-specific timing;
+- no Pass3 / Layer3;
+- Pass1 + Pass2 unchanged;
+- Composition remains final geometry authority;
+- Story remains timing authority;
+- Final Package remains semantic authority.
+
+### Next production gate
+
+Pull the new montage HEAD after this documentation commit and rerun the exact same Final Package +
+narration.
+
+The diagnostic class from job `6384c59e601a4caeab3a67669c812396` should now be automatically
+repaired in Motion Planner rather than stopping the render.
+
+If another diagnostic appears, keep QA strict and treat it as the next generic production contract to
+close.
