@@ -940,12 +940,14 @@ class MotionPlanner:
         size_floor = min(0.042, min(item.width, item.height) * 0.14)
         temporal_gain = comfort_gain(phase.stage.value, duration)
         floor = max(stage_floor, size_floor) * temporal_gain
-        # The semantic accent is reached at GOLDEN_MAJOR, so speed must be capped
-        # against that leg rather than against the full out-and-back segment.
-        accent_duration = duration * GOLDEN_MAJOR
+        # Event accents travel out and then return to Composition. The return leg is
+        # the shorter golden section (38.2%), so it is the actual speed bottleneck.
+        # Cap displacement against that leg; otherwise the outbound average can look
+        # comfortable while the settle snaps back too quickly.
+        comfort_leg_duration = duration * GOLDEN_MINOR
         max_displacement = max_comfort_displacement(
             phase.stage.value,
-            accent_duration,
+            comfort_leg_duration,
         )
         magnitude = hypot(dx, dy)
         desired = max(magnitude, floor)
@@ -958,7 +960,7 @@ class MotionPlanner:
         elif floor > 0 and phase.stage != EventFlowStage.PAYOFF:
             dy = -min(floor, max_displacement or floor)
 
-        scale_cap = max(0.012, min(0.095, accent_duration * 0.22))
+        scale_cap = max(0.012, min(0.095, comfort_leg_duration * 0.22))
         if phase.stage == EventFlowStage.PAYOFF:
             desired_scale = min(0.075 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
