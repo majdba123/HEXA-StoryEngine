@@ -1086,3 +1086,20 @@ def test_filter_file_transport_does_not_change_export_quality_contract(tmp_path:
     assert args[args.index("-crf") + 1] == "18"
     assert args[args.index("-pix_fmt") + 1] == "yuv420p"
     assert args[args.index("-r") + 1] == "30"
+
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_renderer_preflight_runs_real_h264_encode(tmp_path: Path) -> None:
+    renderer = FFmpegRenderer("ffmpeg")
+    output = renderer.preflight(tmp_path / "preflight")
+
+    assert output.exists()
+    assert output.stat().st_size > 0
+    assert renderer._filter_complex_file_option_cache in {
+        "-filter_complex_script",
+        "-/filter_complex",
+    }
+    script = output.parent / "ffmpeg-render-preflight-filter-complex.ffgraph"
+    assert script.exists()
+    assert "[0:v]format=yuv420p[vout]" in script.read_text(encoding="utf-8")
