@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat
+from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, StorySemanticContext
 from app.qa import SceneContinuityQA
 
 
@@ -43,7 +43,7 @@ def test_scene_continuity_qa_requires_cross_scene_bridge() -> None:
     assert report.ok, report.violations
     assert report.checked_boundaries == 1
     assert report.bridged_boundaries == 1
-    assert report.blur_boundaries == 1
+    assert report.blur_boundaries == 0
 
 
 def test_scene_continuity_qa_rejects_incoming_before_story_boundary() -> None:
@@ -71,3 +71,35 @@ def test_scene_continuity_qa_rejects_incoming_before_story_boundary() -> None:
 
     assert not report.ok
     assert any(row.code == "INCOMING_BEFORE_STORY" for row in report.violations)
+
+
+def test_scene_continuity_qa_accepts_object_handoff_without_blur() -> None:
+    story = [
+        StoryBeat(
+            id="a", scene_id="scene-a", start=0.0, end=1.0,
+            narration="a", primary_asset_ids=["old"], action="INTRODUCE",
+        ),
+        StoryBeat(
+            id="b", scene_id="scene-b", start=1.0, end=2.2,
+            narration="b", primary_asset_ids=["new"], action="REVEAL_DETAIL",
+            semantic_context=StorySemanticContext(
+                continuity_by_unit={
+                    "semantic-unit": {"mode": "TRANSFORM_TO", "target_asset_id": "new"},
+                }
+            ),
+        ),
+    ]
+    motion = [
+        MotionCue(beat_id="a", asset_id="old", kind="reveal_in", start=0.0, end=0.2),
+        MotionCue(beat_id="b", asset_id="new", kind="reveal_in", start=1.0, end=1.25),
+    ]
+
+    report = SceneContinuityQA().inspect(
+        story=story,
+        composition=_layouts(),
+        motion=motion,
+    )
+
+    assert report.ok, report.violations
+    assert report.bridged_boundaries == 1
+    assert report.blur_boundaries == 0
