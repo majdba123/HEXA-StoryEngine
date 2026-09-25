@@ -42,7 +42,7 @@ class RenderedMotionQA:
     says an interaction exists but the rendered video remains static.
     """
 
-    _PHASES = {"INTERACT", "REACT", "PAYOFF"}
+    _PHASES = {"ENTRY", "INTERACT", "REACT", "PAYOFF", "EXIT"}
 
     def inspect(self, *, video: Path, plan: RenderPlan) -> RenderedMotionReport:
         if not video.is_file() or video.stat().st_size == 0:
@@ -90,6 +90,32 @@ class RenderedMotionQA:
                         item_width=item.width,
                         item_height=item.height,
                     )
+                    geometry_locked = (
+                        isinstance(cue.params, dict)
+                        and cue.params.get("render_constraints", {}).get("geometry_lock")
+                        == "authored_footprint"
+                    )
+                    program_name = str(segment.program.get("name") or "")
+                    enforce_floor = not geometry_locked and "compound_unit" not in program_name
+                    floor_px = self._perceptual_floor_px(
+                        phase=segment.phase,
+                        width=plan.width,
+                        item_width=item.width,
+                        item_height=item.height,
+                        height=plan.height,
+                    )
+                    if enforce_floor and expected_px + 1e-6 < floor_px:
+                        violations.append(RenderedMotionViolation(
+                            code="MOTION_BELOW_PERCEPTUAL_FLOOR",
+                            beat_id=cue.beat_id,
+                            asset_id=cue.asset_id,
+                            phase=segment.phase,
+                            detail=(
+                                f"expected motion {expected_px:.2f}px is below readable "
+                                f"floor {floor_px:.2f}px"
+                            ),
+                        ))
+                        continue
                     if expected_px < 0.75:
                         skipped += 1
                         continue
@@ -171,6 +197,29 @@ class RenderedMotionQA:
             skipped_static_segments=skipped,
             violations=tuple(violations),
         )
+
+
+    @staticmethod
+    def _perceptual_floor_px(
+        *,
+        phase: str,
+        width: int,
+        height: int,
+        item_width: float,
+        item_height: float,
+    ) -> float:
+        ratios = {
+            "ENTRY": 0.010,
+            "INTERACT": 0.015,
+            "REACT": 0.013,
+            "PAYOFF": 0.009,
+            "EXIT": 0.016,
+        }
+        ratio = ratios.get(phase, 0.0)
+        if ratio <= 0:
+            return 0.0
+        asset_px = max(1.0, min(width * item_width, height * item_height))
+        return max(6.0, min(36.0, width * ratio, asset_px * 0.25))
 
     @staticmethod
     def _expected_activity_px(
