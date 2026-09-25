@@ -25,7 +25,12 @@ from app.models import (
 from app.motion import MotionPlanner
 from app.motion.event_flow import MotionEventAssignment
 from app.motion.models import MotionKeyframe, MotionProgram
-from app.motion.timing import GOLDEN_MAJOR, motion_comfort
+from app.motion.timing import (
+    GOLDEN_MAJOR,
+    GOLDEN_MINOR,
+    max_comfort_displacement,
+    motion_comfort,
+)
 from app.qa import MotionInteractionQA
 from app.story.planner import StoryPlanner
 from app.story.windows import StoryAssetActivation
@@ -320,14 +325,19 @@ def test_event_motion_has_perceptual_floor() -> None:
     react = next(row for row in by_id["b"].segments if row.phase == "REACT")
     payoff = next(row for row in by_id["c"].segments if row.phase == "PAYOFF")
 
-    for segment, floor in ((interact, 0.030), (react, 0.026)):
+    for segment in (interact, react):
         peak = max(
             (float(frame["dx"]) ** 2 + float(frame["dy"]) ** 2) ** 0.5
             for frame in segment.program["keyframes"]
         )
-        assert peak >= floor - 1e-6
+        duration = segment.end - segment.start
+        comfort_cap = max_comfort_displacement(
+            segment.phase,
+            duration * GOLDEN_MINOR,
+        )
+        assert peak == pytest.approx(comfort_cap, abs=1e-6)
         assert segment.program["keyframes"][1]["progress"] == pytest.approx(GOLDEN_MAJOR)
-        assert segment.end - segment.start >= motion_comfort(segment.phase).minimum_seconds
+        assert duration >= motion_comfort(segment.phase).minimum_seconds
     payoff_scale = max(
         abs(float(frame["scale"]) - 1.0) for frame in payoff.program["keyframes"]
     )
