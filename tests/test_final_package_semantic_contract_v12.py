@@ -416,3 +416,71 @@ def test_v12_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) 
     encoded = RenderedMotionQA().inspect(video=output, plan=plan)
     assert encoded.ok, encoded.violations
     assert encoded.checked_segments >= 2
+
+
+
+def test_v12_relation_without_own_span_inherits_authored_asset_envelope(tmp_path: Path) -> None:
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        scenes = payload["scenes"]
+        for scene in scenes:
+            for relation in scene.get("relations", []):
+                relation.pop("script_span", None)
+                relation.pop("script_text", None)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(package_path, tmp_path / "work-spanless-relation")
+    scene = package.scenes[0]
+    assets = [
+        VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=scene.image_path,
+            extraction_method="test",
+            source_area_ratio=area,
+        )
+        for asset_id, area in (("a", 0.50), ("b", 0.30), ("c", 0.20))
+    ]
+    story = StoryPlanner().plan(package, _transcript(), assets)
+    beat = story[0]
+    relation = next(
+        row
+        for row in beat.semantic_context.relations
+        if row.authority == "FINAL_PACKAGE_ASSET_RELATION"
+    )
+    assert relation.trigger_char_start == 0
+    assert relation.trigger_char_end == 16
+    assert relation.spoken_start == pytest.approx(0.10)
+    assert relation.spoken_end == pytest.approx(1.20)
+
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="a", x=0.20, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.15, height=0.20),
+        ],
+    )]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+    report = MotionInteractionQA().inspect(
+        story=story,
+        motion=motion,
+        composition=composition,
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
+    assert report.checked_relations >= 1
+
+    stripped = [cue.model_copy(update={"segments": []}) for cue in motion]
+    missing = MotionInteractionQA().inspect(
+        story=story,
+        motion=stripped,
+        composition=composition,
+        choreography=choreography,
+    )
+    assert not missing.ok
+    assert any(row.code == "MISSING_RELATION_TIMELINE" for row in missing.violations)
