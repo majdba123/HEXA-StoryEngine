@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from app.models import MotionCue, RenderPlan, StoryBeat
+from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.motion import FFmpegMotionAdapter
@@ -253,9 +254,9 @@ class FFmpegRenderer:
                     mode=transition.mode,
                     target_item=target_item,
                 )
-                progress_expr = (
-                    f"if(lt(t,{bridge_start:.6f}),0,"
-                    f"(t-{bridge_start:.6f})/{max(bridge_duration, 0.05):.6f})"
+                progress_expr = self._bridge_progress_expression(
+                    start=bridge_start,
+                    duration=bridge_duration,
                 )
                 next_old = f"oldmix{bridge_index}"
                 filters.append(
@@ -452,6 +453,19 @@ class FFmpegRenderer:
         dy = -vertical if item.y <= 0.5 else vertical
         return dx, dy
 
+
+    @staticmethod
+    def _bridge_progress_expression(*, start: float, duration: float) -> str:
+        """Smooth scene-handoff travel instead of a mechanical linear slide."""
+        duration = max(0.05, float(duration))
+        end = float(start) + duration
+        p = f"((t-{float(start):.6f})/{duration:.6f})"
+        smooth = f"(3*({p})*({p})-2*({p})*({p})*({p}))"
+        return (
+            f"if(lt(t,{float(start):.6f}),0,"
+            f"if(gte(t,{end:.6f}),1,{smooth}))"
+        )
+
     @staticmethod
     def _scene_bridge_window(
         *,
@@ -470,7 +484,7 @@ class FFmpegRenderer:
             return 0.0, 0.0
         bridge = min(duration, max(0.20, float(preferred_duration)))
         incoming = max(0.0, min(duration, float(incoming_start)))
-        lead = min(0.16, max(0.10, bridge * 0.40))
+        lead = min(0.16, max(0.10, bridge * GOLDEN_MINOR))
         start = max(0.0, incoming - lead)
         end = min(duration, start + bridge)
         if incoming < duration and end <= incoming:
