@@ -7787,3 +7787,127 @@ State:
 **The b99c42c3 FFmpeg-9 compatibility failure is closed generically, early render compatibility is now
 tested by the product itself, and the fix was independently real-rendered without any export-quality
 change.**
+
+
+## CURRENT OFFICIAL HANDOFF STATE AFTER MONTAGE26 — 2026-09-25
+
+Official branch:
+`montage`
+
+Behavior / implementation checkpoint:
+`8da84eb266ec3863eaab90e4f0b206463e4f486b`
+`[test] Gate pipeline on early FFmpeg render preflight`
+
+MONTAGE26 documentation checkpoint:
+`7e5300606d245b94984c81dbfc9d3eb83d6fac4a`
+`[montage26] Record FFmpeg capability preflight and real-render gate`
+
+Latest CI on the official documentation HEAD:
+Run `36156609706`
+
+Result:
+**SUCCESS**
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **363 passed, 12 warnings in 12.97s**
+- tested source snapshot upload: SUCCESS
+
+### What is finished
+
+The following production failure classes are now closed by generic engine contracts and regressions:
+- semantic segment crossing handoff deadlines;
+- missing V1.2 executable relation coverage;
+- spanless authored relations with valid participant spans;
+- cross-event INTERACT / REACT execution ownership;
+- ENTRY being hidden by a later semantic Motion segment;
+- false encoded-motion failures for geometry-locked authored footprints;
+- first-beat semantic leakage;
+- Motion-created source/target collisions;
+- Windows WinError 206 from oversized inline FFmpeg filter graphs;
+- FFmpeg 6 versus FFmpeg 9 filter-file option incompatibility;
+- late renderer compatibility failures after expensive transcription / vision / cutout work.
+
+Motion remains:
+- Golden-ratio shaped;
+- comfort-speed bounded;
+- collision-safe;
+- semantic-timing controlled;
+- Composition-settling for normal programs;
+- terminal EXIT only where authored timing safely permits.
+
+No quality reduction was used to make QA pass:
+- libx264 unchanged;
+- CRF 18 unchanged;
+- yuv420p unchanged;
+- 30fps unchanged;
+- Pass1 + Pass2 unchanged;
+- no Pass3 / Layer3;
+- no global Motion weakening;
+- no asset-count reduction;
+- no scene simplification;
+- no QA threshold suppression used as a shortcut.
+
+### What is no longer pending
+
+Do NOT wait for another code change before attempting the next production render.
+
+MONTAGE26 has:
+- green full CI;
+- a real FFmpeg preflight integrated into every generation job;
+- real encoded renderer smoke coverage;
+- dense real-package renderer smoke using actual Black-Hat scene images;
+- verified identical output hash between the two supported filter-file transports in the independent render check.
+
+### What we are waiting for now
+
+The only remaining production gate is an operator-side full rerender on the real Windows environment using:
+- the exact corrected Black-Hat Final Package;
+- the exact narration audio;
+- the current `montage` HEAD;
+- the operator's FFmpeg 9.0.2 environment.
+
+The new pipeline must first run the real FFmpeg preflight. If that preflight fails, treat the diagnostic as a renderer-environment failure and do not spend time on the rest of the generation.
+
+If preflight passes, complete the full render and inspect:
+- ENTRY visibility;
+- INTERACT / REACT / PAYOFF readability;
+- EXIT smoothness;
+- collision-safe relation motion;
+- selective rather than pervasive blur;
+- object-level continuity;
+- text timing;
+- no white flashes / ghosting / black frames;
+- encoded quality;
+- overall reference-video spirit.
+
+### Required protocol for the next production bug
+
+If the new full rerender produces any diagnostic:
+1. inspect the exact new diagnostic;
+2. do not assume it is an old failure;
+3. identify the generic root-cause class;
+4. do not hardcode package / scene / asset ids;
+5. preserve quality and semantic intent;
+6. add a regression;
+7. run full CI;
+8. run an actual encoded render smoke;
+9. for renderer/export bugs, use representative or dense real-media input when possible;
+10. only then record a new checkpoint.
+
+### Immediate next action
+
+Operator:
+```bash
+git checkout montage
+git pull origin montage
+git rev-parse HEAD
+```
+
+Expected current documentation checkpoint before this status commit:
+`7e5300606d245b94984c81dbfc9d3eb83d6fac4a`
+
+Then rerun the exact corrected Black-Hat Final Package + narration and return either:
+- the completed MP4 for A/B perceptual review; or
+- the new `HEXA-diagnostic-*.zip` if any new gate stops the run.
+
+The next conversation must continue from this handoff and must not re-open already closed MONTAGE20-26 failures unless a new diagnostic proves a regression.
