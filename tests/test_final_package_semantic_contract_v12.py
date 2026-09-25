@@ -484,3 +484,69 @@ def test_v12_relation_without_own_span_inherits_authored_asset_envelope(tmp_path
     )
     assert not missing.ok
     assert any(row.code == "MISSING_RELATION_TIMELINE" for row in missing.violations)
+
+
+
+def test_v12_relation_authority_completes_gray_hat_style_motion_contract(tmp_path: Path) -> None:
+    """Production regression for diagnostic 10f16ca6 relation-completeness class."""
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        scenes = payload["scenes"]
+        for scene in scenes:
+            relation = scene["relations"][0]
+            relation["relation_type"] = "DISCOVERS"
+            relation.pop("script_span", None)
+            relation.pop("script_text", None)
+            for event in scene.get("semantic_events", []):
+                if event["semantic_event_id"] == "E2":
+                    event["result_asset_ids"] = []
+        if filename == "semantic_bindings.json":
+            for event in payload.get("semantic_events", []):
+                if event["semantic_event_id"] == "E2":
+                    event["result_asset_ids"] = []
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(
+        package_path,
+        tmp_path / "work-gray-relation-contract",
+    )
+    scene = package.scenes[0]
+    assets = [
+        VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=scene.image_path,
+            extraction_method="test",
+            source_area_ratio=area,
+        )
+        for asset_id, area in (("a", 0.50), ("b", 0.30), ("c", 0.20))
+    ]
+    story = StoryPlanner().plan(package, _transcript(), assets)
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    beat = story[0]
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="a", x=0.20, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.15, height=0.20),
+        ],
+    )]
+
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+    report = MotionInteractionQA().inspect(
+        story=story,
+        motion=motion,
+        composition=composition,
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
+    assert report.checked_relations == 1
+
+    by_id = {cue.asset_id: cue for cue in motion}
+    assert any(segment.phase == "INTERACT" for segment in by_id["a"].segments)
+    assert any(segment.phase == "REACT" for segment in by_id["b"].segments)
+    assert any(segment.phase == "PAYOFF" for segment in by_id["c"].segments)
