@@ -592,11 +592,6 @@ class MotionPlanner:
         deadline = cls._event_handoff_deadline(
             beat=beat, assignment=assignment, directive=directive
         )
-        exit_reserve = cls._exit_reserve_seconds(
-            cue=cue,
-            assignment=assignment,
-            deadline=deadline,
-        )
         segments: list[MotionSegment] = []
         entry_segment = cls._entry_segment_before_handoff(
             cue=cue,
@@ -1179,11 +1174,6 @@ class MotionPlanner:
         authored by reaction/bounce primitives while preserving the intended entrance.
         """
         first = program.keyframes[0]
-        settle = next(
-            frame
-            for frame in program.keyframes
-            if abs(frame.progress - program.settle_progress) <= 1e-9
-        )
         # Once post-arrival reactions are removed, an early settle_progress only
         # compresses the visible entrance. Reference-calibrated motion spends most
         # of the available window travelling, then freezes cleanly on the semantic
