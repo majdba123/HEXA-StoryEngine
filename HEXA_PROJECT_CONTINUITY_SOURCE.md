@@ -8439,3 +8439,176 @@ At the start of the next conversation:
 State:
 **MONTAGE27 is the current stable engine checkpoint. No known code blocker remains. We are waiting for
 the exact operator-side Windows production rerender or its next diagnostic.**
+
+
+## MONTAGE28 AUTHORED RELATION COMPLETENESS GATE — 2026-09-25
+
+Development branch:
+`montage`
+
+Behavior HEAD before this documentation commit:
+`9bdca4bfde5da542367bb501c8fec582e068f32e`
+`[test] Encode Gray-Hat relation completeness regression`
+
+### Production diagnostic
+
+Diagnostic:
+`HEXA-diagnostic-10f16ca6.zip`
+
+Job:
+`10f16ca6a86e437ab56c5836f9ae705d`
+
+Runtime source:
+`ead2900e0a157c1dd23383764b0cbe73c8d85462`
+
+Production input reported by the diagnostic:
+`HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+
+The production run reached Motion after:
+- 35 scenes;
+- Pass1: 127 assets;
+- Pass2: 153 assets (+26);
+- Story: 35 beats;
+- Composition: 75 text cues;
+- Final Package geometry locked successfully.
+
+MotionInteractionQA then stopped generation with six authored-relation completeness violations:
+- one `MISSING_RELATION_TIMELINE`;
+- one `MISSING_TARGET_REACTION`;
+- four `MISSING_RESULT_PAYOFF` violations.
+
+This was NOT the MONTAGE27 semantic-readability failure and was NOT an FFmpeg/export failure.
+
+### Root-cause class
+
+The failure exposed a remaining duplicate/incomplete authority for authored relation execution.
+
+Before MONTAGE28:
+- MotionInteractionQA treated an executable authored relation with a distinct target as requiring a visible REACT phase except for intentionally balanced/non-causal actions such as COMPARE/LOOP;
+- Choreography used a narrower condition based on `requires_state_change` / transition metadata, so a valid authored target could be omitted from REACT;
+- an explicit `result_asset_id` did not by itself guarantee PAYOFF if the package omitted a redundant RESULT event role;
+- relation-level timing could still be absent for valid Pass2-bound source/target cutouts even though Story already owned spoken windows for the bound participants.
+
+Therefore different valid Final Packages could expose different omissions even though the authored relation itself was executable.
+
+### Generic architecture fix
+
+A canonical relation execution contract now exists in:
+`app/choreography/relation_contract.py`
+
+Rules:
+- executable authored relation + distinct target => visible REACT by default;
+- COMPARE/LOOP remain non-automatic reactions unless an authored target state transition explicitly requires reaction;
+- Choreography and MotionInteractionQA consume the same reaction contract.
+
+Event-flow completeness:
+- explicit relation result authority can synthesize the required PAYOFF even when the package does not redundantly mark the asset with a RESULT event role;
+- if the result asset belongs to a different Story semantic event, PAYOFF stays in that result asset's Story-owned event instead of stealing source-event timing;
+- relation metadata remains attached to the generated PAYOFF.
+
+Spanless relation timing:
+- if an executable INTERACT/REACT relation has no usable relation-level spoken span, Motion may derive an envelope only from Story-owned spoken windows of the bound source/target participants;
+- Motion does not invent timestamps and does not move relation semantics outside Story/beat timing;
+- very short explicit relation spans may only be extended through that same Story-owned participant evidence.
+
+No package/topic/scene/asset hardcodes were added to production code.
+
+### Regression coverage
+
+New regressions cover:
+- executable target REACT without redundant `requires_state_change`;
+- explicit result PAYOFF without redundant RESULT role;
+- result asset owned by a different semantic event;
+- Pass2-style relation with no relation-level spoken span;
+- V1.2 loader -> Story -> Choreography -> Motion -> MotionInteractionQA integration for the production failure class;
+- real FFmpeg encoded motion QA for the same relation-completeness class.
+
+### Final CI
+
+Current behavior HEAD:
+`9bdca4bfde5da542367bb501c8fec582e068f32e`
+
+V2 CI:
+Run `36167480737`
+
+Result:
+**SUCCESS**
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **372 passed, 12 warnings in 14.10s**
+- tested source snapshot upload: SUCCESS
+
+Tested-source artifact:
+`hexa-storyengine-source-9c0dedfe7d186a48bdfee338be586ba6a11665e3`
+
+Artifact digest:
+`sha256:37507961512c55f84c5071b53298732d131d49e81a4bccabc80843e7a3a023a5`
+
+### Exact CI-tested encoded gate
+
+The exact source artifact uploaded by Run `36167480737` was downloaded and used for an independent encoded gate representing the same failure class.
+
+Observed semantic execution:
+- source: ENTRY + INTERACT;
+- target: ENTRY + REACT;
+- result: ENTRY + PAYOFF.
+
+MotionInteractionQA:
+- ok = true;
+- checked segments = 6;
+- checked relations = 1;
+- violations = 0.
+
+RenderedMotionQA:
+- ok = true;
+- checked segments = 6;
+- skipped static segments = 0;
+- violations = 0.
+
+Encoded output:
+- H.264;
+- 1920x1080;
+- yuv420p;
+- 30 fps;
+- duration 2.000 s;
+- full FFmpeg decode PASS;
+- SHA-256:
+  `2ebacd06a6c7909d93dadddd5ba91ddd7d3a7de3e61fe26b024044eb845e787`.
+
+This gate proves the fixed relation contract reaches real encoded pixels rather than only satisfying metadata QA.
+
+### Protected quality / architecture contract
+
+Unchanged:
+- Final Package semantic authority;
+- Story / WhisperX timing authority;
+- Composition final geometry authority;
+- Pass1 + Pass2 only;
+- no Pass3 / Layer3;
+- no extraction changes;
+- no scene/asset deletion;
+- no relation deletion;
+- no global Motion weakening;
+- no QA bypass;
+- production 1920x1080 / libx264 / CRF 18 / yuv420p / 30fps contract remains protected.
+
+### Closure status
+
+Engine-level fix:
+**VALIDATED**
+
+Exact production-package closure:
+**PENDING OPERATOR RERENDER**
+
+The diagnostic archive does not contain the raw corrected Gray-Hat Final Package ZIP or its narration audio, so the exact 35-scene production package could not be rerun in this validation environment.
+
+The previous corrected Black-Hat Final Package ZIP is also not currently available in the accessible conversation/library files, so a new post-MONTAGE28 full Black-Hat package render was not claimed.
+
+Therefore:
+- do NOT report diagnostic `10f16ca6` as fully production-closed yet;
+- next operator action is to rerun the exact Gray-Hat Final Package + original narration on Windows using the current live `montage` HEAD;
+- if it passes Motion and completes encoded QA, then mark this production gate CLOSED;
+- if a new diagnostic appears, inspect that exact diagnostic as a new production gate;
+- do not change the Final Package merely to satisfy Motion;
+- do not reopen MONTAGE27 readability fixes unless a new diagnostic proves a regression.
+
