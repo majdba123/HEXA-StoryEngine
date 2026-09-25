@@ -295,6 +295,7 @@ class MotionPlanner:
                     primary=(item is primary_item),
                     cohort_gain=cohort_gain,
                 )
+                entry_program = program
                 state_target = bool(
                     directive is not None
                     and any(
@@ -307,7 +308,7 @@ class MotionPlanner:
                     and self._has_explicit_event_timeline(assignment, activation)
                 )
                 if not family_secondary and not compound_unit_locked:
-                    if assignment is not None and not explicit_event_timeline:
+                    if assignment is not None:
                         has_story_window, event_story_window = story_activation_window(activation, beat)
                         active_seconds = (
                             max(0.0, event_story_window.settle_at - event_story_window.reveal_start)
@@ -325,7 +326,7 @@ class MotionPlanner:
                             energy=intensity,
                             cohort_gain=cohort_gain,
                         )
-                    elif assignment is None:
+                    else:
                         program = self._apply_choreography_pattern(
                             program,
                             pattern=pattern,
@@ -526,6 +527,7 @@ class MotionPlanner:
                 if explicit_event_timeline and assignment is not None:
                     cues[-1] = self._attach_event_timeline(
                         cue=cues[-1],
+                        entry_program=entry_program,
                         beat=beat,
                         assignment=assignment,
                         activation=activation,
@@ -564,6 +566,7 @@ class MotionPlanner:
         cls,
         *,
         cue: MotionCue,
+        entry_program: MotionProgram,
         beat: StoryBeat,
         assignment: MotionEventAssignment,
         activation: AssetActivation | None,
@@ -576,9 +579,7 @@ class MotionPlanner:
         directive,
     ) -> MotionCue:
         """Attach later semantic actions while keeping one backward-compatible cue."""
-        base_program = cue.params.get("program")
-        if not isinstance(base_program, dict):
-            return cue
+        base_program = entry_program.to_payload()
         deadline = cls._event_handoff_deadline(
             beat=beat, assignment=assignment, directive=directive
         )
