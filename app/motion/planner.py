@@ -960,7 +960,11 @@ class MotionPlanner:
         elif floor > 0 and phase.stage != EventFlowStage.PAYOFF:
             dy = -min(floor, max_displacement or floor)
 
-        scale_cap = max(0.012, min(0.095, comfort_leg_duration * 0.22))
+        asset_extent = max(1e-6, min(item.width, item.height))
+        scale_cap = min(
+            0.095,
+            max_displacement / asset_extent if max_displacement > 0.0 else 0.0,
+        )
         if phase.stage == EventFlowStage.PAYOFF:
             desired_scale = min(0.075 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
