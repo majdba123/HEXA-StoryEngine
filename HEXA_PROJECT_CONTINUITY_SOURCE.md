@@ -7911,3 +7911,353 @@ Then rerun the exact corrected Black-Hat Final Package + narration and return ei
 - the new `HEXA-diagnostic-*.zip` if any new gate stops the run.
 
 The next conversation must continue from this handoff and must not re-open already closed MONTAGE20-26 failures unless a new diagnostic proves a regression.
+
+
+## MONTAGE27 FULL-PACKAGE RENDER GATE + SHARED SEMANTIC READABILITY CONTRACT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`df2b094a92a4daba35cad9d3e9f2d93ac11e9576`
+`[test] Keep encoded fixture inside shared floor and speed envelope`
+
+### Production diagnostic that opened this checkpoint
+
+Diagnostic:
+`HEXA-diagnostic-ffa3e158.zip`
+
+Job:
+`ffa3e158b72b4604b26abf91f686ae04`
+
+Runtime commit:
+`7e5300606d245b94984c81dbfc9d3eb83d6fac4a`
+
+Environment:
+- Windows 10
+- FFmpeg 9.0.2
+- corrected Black-Hat V1.2 Final Package
+- original ElevenLabs narration on operator machine
+
+The production run completed all structural authoring stages:
+- 40 scenes
+- Pass1: 157 assets
+- Pass2: 179 assets
+- Story: 40 beats
+- 87 text cues in production alignment
+- 14 relation timelines
+- 0 visual-layout violations
+- 0 text-layout violations
+- 0 short-motion violations
+
+The render itself completed, but RenderedMotionQA stopped the job with exactly three REACT readability
+violations:
+
+- beat-027 / SCENE_027:asset-03: expected 24.10px, floor 24.96px
+- beat-029 / SCENE_029:asset-03: expected 24.26px, floor 24.96px
+- beat-037 / SCENE_037:asset-03: expected 24.17px, floor 24.96px
+
+The differences were sub-pixel-scale at the threshold boundary, but the root cause was not treated as a
+request to lower QA.
+
+### Root cause: duplicated semantic readability authorities
+
+MotionPlanner authors semantic INTERACT / REACT / PAYOFF amplitude in normalized Composition space.
+
+RenderedMotionQA still had an independent pixel-space readability rule derived partly from output width.
+
+On a 1920x1080 canvas, vertical/diagonal gestures and mixed translation+scale gestures can therefore
+satisfy the Planner's exact Golden/comfort contract while the QA projects a slightly larger,
+unreachable width-derived floor.
+
+This was a contract mismatch:
+- Planner authority: normalized Composition space;
+- QA authority: a second pixel-derived semantic floor.
+
+The same semantic quantity had two independent definitions.
+
+### Partial diagnostic fix and why it was not enough
+
+Commits:
+- `9d8c392dff62c920a13854cd5584ece08f224f74`
+  `[qa] Project comfort floor through dominant motion channel`
+- `edc481431b2b7f002ff1dfe2f14e19b62aeacb30`
+  `[test] Lock dominant-channel comfort projection`
+
+This corrected one class of projection error by choosing the actual dominant visual channel rather than
+the largest theoretical translation/scale projection.
+
+CI:
+Run `36159638149`
+SUCCESS
+- 365 passed
+- 12 warnings
+
+However, per the permanent production-bug protocol, CI was NOT treated as sufficient.
+
+The exact corrected 40-scene Final Package was then rendered end-to-end in a full-package gate.
+
+That gate reproduced the failure class again:
+- beat-029 REACT
+- beat-037 REACT
+
+Therefore the partial projection fix was correctly rejected as incomplete.
+
+### Final architecture fix: one semantic readability source of truth
+
+New shared function:
+`app.motion.timing.semantic_readability_floor(...)`
+
+Commits:
+- `ab062278c0262b53b5afa446207d62bbe47a473b`
+  `[motion] Share semantic readability floor with QA`
+- `a27504b98526bca0ab89a35747eefa966a6f7317`
+  `[motion] Consume canonical semantic readability floor`
+- `a212344561436d6fb76af0c8003220cb5617a4ae`
+  `[qa] Validate semantic readability in Planner space`
+
+For INTERACT / REACT / PAYOFF:
+- Planner computes the semantic readability floor in normalized Composition units;
+- QA uses the exact same function and units;
+- the floor still includes:
+  - phase-specific minimum readability;
+  - asset-size floor;
+  - Story-duration comfort gain;
+  - Golden-minor return-leg speed ceiling;
+- QA still verifies that the expected encoded semantic motion is above that shared floor;
+- QA still verifies actual encoded frame activity;
+- QA still enforces normalized comfort speed.
+
+Pixel projection remains evidence for encoded visibility, not a second semantic-authoring policy.
+
+No production motion amplitude was weakened by this fix.
+
+### Regression coverage
+
+Commit:
+`539a64299899b05730ff355fb47ac4aac2b84356`
+`[test] Reproduce full-HD vertical REACT floor contract`
+
+Regressions include:
+- shared REACT floor equals the same reachable comfort budget used by Planner;
+- real FFmpeg render of a vertical REACT at the shared floor;
+- encoded QA must accept valid motion at the canonical floor;
+- weak semantic motion still fails;
+- metadata-only motion still fails encoded-activity verification.
+
+Existing encoded test fixtures were updated only to remain valid examples inside the same readability +
+comfort-speed envelope.
+
+Final fixture commit:
+`df2b094a92a4daba35cad9d3e9f2d93ac11e9576`
+`[test] Keep encoded fixture inside shared floor and speed envelope`
+
+No production threshold was weakened to make tests pass.
+
+### Final CI
+
+Run:
+`36161095670`
+
+Result:
+**SUCCESS**
+
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **367 passed, 12 warnings in 13.97s**
+- tested source snapshot uploaded successfully
+
+Tested-source artifact:
+`hexa-storyengine-source-fce82ab71d4f35dc454cdc6056a84d6076ed493a`
+
+The full-package production gate below used the exact tested source snapshot from this CI run, not a
+different working tree.
+
+### Full corrected-Black-Hat package gate
+
+The exact conversation package used:
+`HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED(1).zip`
+
+Because the original standalone ElevenLabs MP3 was not available as a separate file in the current
+sandbox, the narration audio track was extracted from the prior real Black-Hat render:
+`HEXA_BLACK_HAT_HACKER_AR.mp4`
+
+Extracted narration duration:
+approximately 97.097s.
+
+Important limitation:
+- sandbox did not have production WhisperX / multilingual E5 models;
+- the gate explicitly used the controlled alignment/semantic fallback mode;
+- therefore this gate proves engine/package/render/QA integrity, not byte-identical production timing
+  parity with the operator's Windows WhisperX/E5 run;
+- the operator-side exact original MP3 + production models remains the final parity gate.
+
+The full gate ran the real product path:
+- FFmpeg preflight
+- FinalPackageLoader
+- Vision
+- Pass1
+- Pass2
+- Story
+- Choreography
+- Text planner
+- Composition
+- Motion
+- MotionInteractionQA
+- StorySyncQA
+- Authoring QA
+- RenderPlan
+- 40-scene FFmpeg render
+- RenderedMotionQA
+- audio mux
+- final recovery
+- rendered visual QA
+
+Observed full-gate semantics:
+- 40 beats
+- 179 semantic sync anchors
+- 0 conservative fallbacks
+- 15 authored relationships represented
+- 14 executable relation timelines
+- 55/55 authored semantic events represented
+- 0 missing semantic events
+- 0 visual-layout violations
+- 0 text-layout violations
+- 0 short-motion violations
+
+One non-blocking asset-requirement warning remained for a composite/compound semantic requirement:
+`SCENE_038_A02_broken_account_lock:RESULT:COMPARE`
+
+This does not represent dropped event/relation semantics:
+- all 15 relationships are represented;
+- all 55 semantic events are represented;
+- package cardinality remains ZERO_OR_ONE_OR_MANY;
+- no forbidden Pass3 / Layer3 was introduced merely to manufacture an extra independent cutout.
+
+### Full-package encoded QA result
+
+RenderedMotionQA:
+```json
+{
+  "ok": true,
+  "checked_segments": 110,
+  "skipped_static_segments": 7,
+  "violations": []
+}
+```
+
+MotionInteractionQA:
+```json
+{
+  "ok": true,
+  "checked_segments": 117,
+  "checked_relations": 14,
+  "violations": []
+}
+```
+
+SceneContinuityQA:
+```json
+{
+  "ok": true,
+  "checked_boundaries": 39,
+  "bridged_boundaries": 39,
+  "blur_boundaries": 0,
+  "violations": []
+}
+```
+
+The previous ffa3e158 REACT readability class did NOT recur.
+
+### Final encoded file verification
+
+Full-gate output:
+`black-hat-full-package-gate.mp4`
+
+SHA-256:
+`fc164ff27cfa27d655a241042dc336e30a1f35eab916592254b29fa8711581e2`
+
+Full decode through FFmpeg:
+PASS with no decode errors.
+
+ffprobe:
+- video codec: H.264
+- resolution: 1920x1080
+- pixel format: yuv420p
+- frame rate: 30/1
+- audio codec: AAC
+- sample rate: 44.1 kHz
+- channels: mono
+- duration: 97.100s
+- file size: 22,409,008 bytes
+
+Rendered visual contact sheet was generated successfully.
+
+### Quality-preservation proof
+
+This diagnostic was NOT fixed by reducing video quality or weakening production Motion.
+
+Unchanged:
+- output resolution 1920x1080;
+- H.264 export;
+- CRF 18 encoder contract;
+- yuv420p;
+- 30fps;
+- Story timing ownership;
+- Composition final geometry;
+- Pass1 + Pass2;
+- no Pass3 / Layer3;
+- no asset-count reduction;
+- no scene simplification;
+- no global Motion amplitude reduction;
+- no relation deletion;
+- no blur substitution;
+- no global QA bypass.
+
+The fix removes a duplicate semantic threshold and makes Planner + QA use the same authoring contract.
+
+Encoded QA remains strict about:
+- actual encoded movement;
+- motion speed;
+- geometry-lock rules;
+- collision-limited exceptions;
+- metadata-only motion;
+- relation coverage.
+
+### Mandatory production-bug closure protocol — strengthened
+
+From MONTAGE27 forward, a reproducible production bug is NOT closed by unit tests or CI alone.
+
+Required closure sequence:
+1. inspect the real production diagnostic;
+2. identify the generic root-cause class;
+3. implement a package-agnostic fix;
+4. prohibit scene-id / asset-id / topic hardcodes;
+5. add regression coverage;
+6. run Compile + Ruff + full Pytest;
+7. use the exact CI-tested source snapshot;
+8. if the failing Final Package is available, run that full package end-to-end;
+9. reach the exact stage that previously failed and prove it passes;
+10. finish final mux and media QA where the environment permits;
+11. verify export specs and quality contracts are unchanged;
+12. only then document the bug as closed.
+
+If the exact production ML stack is not available in the validation environment, the handoff must state
+that limitation explicitly and keep the operator-side production parity rerender as the final gate.
+
+### Current production status
+
+The engine-level failure from diagnostic `ffa3e158` is closed by:
+- one shared semantic readability contract;
+- 367-test green CI;
+- a full 40-scene corrected-Black-Hat render using the exact CI-tested source snapshot;
+- 110 encoded semantic segments checked with zero violations;
+- successful final mux and decode;
+- unchanged export-quality settings.
+
+Remaining parity gate:
+rerun the exact corrected Black-Hat Final Package on the operator Windows environment with:
+- original ElevenLabs MP3;
+- production WhisperX alignment;
+- production semantic model;
+- FFmpeg 9.0.2.
+
+Any new diagnostic after that run must be treated as a NEW production gate, not assumed to be one of the
+already-closed MONTAGE20-27 classes.
