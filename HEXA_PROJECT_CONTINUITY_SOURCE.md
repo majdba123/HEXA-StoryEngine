@@ -6177,3 +6177,386 @@ Production state:
 **The real Black-Hat diagnostic Motion failure is fixed at the scheduler, not hidden in QA. Pull the
 new montage HEAD and rerun the exact same Final Package + audio. Any subsequent failure should be
 treated as the next real production gate and diagnosed from its new diagnostic ZIP.**
+
+
+## MONTAGE21 PERCEPTUAL MOTION + SELECTIVE CONTINUITY SPRINT CHECKPOINT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`6b7705e8a458ddec469f2f0e3b411ab391a28faf`
+`[lint] Remove obsolete paired outgoing temporary`
+
+### Why this sprint was opened
+
+The operator supplied the real rendered Black-Hat MP4 after the timed semantic-motion / scene
+continuity work. Frame-by-frame visual review showed that the previous architecture was semantically
+richer than the visible result:
+
+- many changes read as appearance / disappearance rather than a clear trajectory;
+- INTERACT / REACT / PAYOFF existed in metadata but were often too small to perceive;
+- RELEASE existed in Choreography but did not become a real visual EXIT;
+- scene continuity was visually dominated by blur;
+- PERSIST / TRANSFORM_TO semantics incorrectly acted like reasons to blur the whole outgoing scene;
+- outgoing scene movement was only about 34px horizontal / 10px vertical and was visually hidden by blur;
+- encoded-video QA proved that pixels changed, but not that the motion was large enough to read.
+
+This sprint was therefore treated as a perceptual-motion architecture correction, not an easing/parameter
+tuning pass.
+
+No extraction architecture changed:
+- Pass1 unchanged.
+- Pass2 unchanged.
+- no Pass3 / Layer3.
+- Composition remains the only final geometry authority.
+- Story / WhisperX remains the only narration timing authority.
+- Final Package semantic events / relations remain the semantic authority.
+
+### Sprint Task 1 — make blur explicit, not a synonym for continuity
+
+Initial transition correction:
+`a644a07f805e17443e04523aa76c66c59c3ca6a4`
+`[render] Make blur explicit and continuity object-level`
+
+Final refinement:
+`3123b6c5f7543a598dffd16870b0e13134e62109`
+`[render] Keep full outgoing continuity and require explicit blur style`
+
+New transition classes:
+- NONE
+- CLEAN_HANDOFF
+- OBJECT_HANDOFF
+- MOTION_HANDOFF
+- BLUR_BRIDGE
+
+Rules:
+- generic HANDOFF does NOT imply blur;
+- CONTINUES_EXPLANATION does NOT imply blur;
+- RESULT / PAYOFF does NOT imply blur;
+- PERSIST / TRANSFORM_TO does NOT imply whole-scene blur;
+- a continuity word such as SOFT_CONTINUATION does not itself authorize blur;
+- BLUR_BRIDGE requires explicit render-style intent such as BLUR / DEFOCUS / DEPTH_BRIDGE or an
+  explicit transition-style field whose value is intentionally soft/blurred.
+
+Blur sigma was also reduced from the earlier 7.5 to 5.5 for the cases where blur is truly authored.
+
+Scene outgoing motion is no longer a fixed tiny 34px / 10px nudge. It is resolution-aware and bounded:
+- MOTION_HANDOFF: approximately 5% horizontal / 3.2% vertical where geometry allows;
+- OBJECT_HANDOFF: approximately 4% / 2.6% fallback;
+- BLUR_BRIDGE remains intentionally smaller so blur does not compete with large travel.
+
+At 1920x1080, tests require ordinary outgoing handoff displacement to be perceptually readable.
+
+### Sprint Task 2 — real object-level continuity
+
+Core runtime pairing:
+`1fa340db55451fccef89780c110d55e0d4da1964`
+`[render] Resolve object continuity to runtime cutout handoffs`
+
+Regression commits:
+`814941b1ad0ebe0eff10c6765e6cde6c11ce9821`
+`[test] Prove runtime object handoff pairing`
+
+`68ef17b60c2f2644910e9e79f79ba0a0cdca5561`
+`[test] Drive object handoff QA from runtime semantic pairing`
+
+PERSIST / TRANSFORM_TO is now resolved from authored semantic ids to actual Pass1/Pass2 runtime cutout
+ids using AssetActivation bindings.
+
+An OBJECT_HANDOFF is allowed only when there is one unambiguous runtime old-cutout -> new-cutout pair.
+Ambiguous mapping abstains rather than inventing a transform.
+
+For an accepted pair:
+- old runtime cutout moves toward the new cutout's authored Composition position;
+- movement uses roughly 55% of the old->new vector, bounded to safe transition displacement;
+- new cutout still enters according to Story timing;
+- Composition still owns the final new position;
+- the old cutout is never allowed to redefine the new layout.
+
+Final code review found an additional visual issue: carrying only the paired old cutout would cause all
+other old-scene visuals to hard-cut. The final policy therefore keeps every outgoing old-scene visual
+alive during the short bridge. The paired visual seeks its target; unpaired visuals perform normal
+recede/exit motion.
+
+Regressions prove:
+- runtime semantic id pairing;
+- target-directed movement;
+- all unpaired outgoing scene visuals remain in the bridge until their short exit;
+- no global blur is required.
+
+### Sprint Task 3 — perceptually readable ENTRY
+
+`9734d6213d15fbc57452381e6c794e9125cfd89d`
+`[motion] Enforce readable semantic entries`
+
+ENTRY now has a size-aware normalized motion floor for normal independent cutouts.
+The floor is reduced for very short windows so compressed timing does not become violent.
+
+Geometry-locked family/compound units are excluded from this strengthening.
+
+The final keyframe remains exact Composition identity.
+
+### Sprint Task 4 — stronger INTERACT / REACT / PAYOFF
+
+`60475ce533729f90b36900055d2304047c862fa6`
+`[motion] Add semantic exits and readable interaction floor`
+
+Event-specific perceptual floors now apply after semantic direction is derived from actual Composition
+geometry:
+
+- INTERACT: minimum normalized movement about 0.030;
+- REACT: minimum about 0.026;
+- PAYOFF: minimum movement/scale emphasis;
+- PAYOFF scale accent: at least about 7.5% where safe for the semantic segment;
+- REACT scale accent: at least about 4.5% where a reaction would otherwise be visually negligible.
+
+The direction is still authored-semantics / Composition-derived:
+- source INTERACT moves relative to target;
+- target REACT responds relative to source;
+- COMPARE / LOOP / BLOCK / REJECT / TRAVEL / CONNECT etc. keep distinct motion character;
+- no generic random direction was introduced.
+
+### Sprint Task 5 — RELEASE becomes a real EXIT
+
+Motion planner now produces EXIT segments for outgoing assets at semantic handoffs.
+
+Renderer implementation:
+`8ce0f8a9fef5dda319774dc26805ffd3a528d623`
+`[render] Hide assets after semantic exit`
+
+EXIT behavior:
+- starts after the asset's prior semantic activity;
+- gets a directional leave trajectory;
+- shrinks slightly while leaving;
+- finishes at the semantic handoff deadline;
+- renderer stops overlaying the asset after EXIT.end.
+
+This means RELEASE is no longer just metadata.
+
+Normal MotionProgram invariant remains:
+all ordinary programs must finish exactly on Composition.
+
+An initial EXIT implementation violated that invariant by trying to encode a non-identity terminal
+keyframe as a normal MotionProgram.
+
+Integration CI:
+- Run `36090768039`
+- FAILURE
+- Compile SUCCESS
+- Ruff SUCCESS
+- Pytest **5 failed, 334 passed, 12 warnings**
+- all 5 failures were the same invariant:
+  `motion program must finish on the Composition target`
+
+Correct fix:
+`884ebac99a0bd3f4b42b228cfe9bc57ee71782d7`
+`[motion] Keep exit terminal behavior outside settle invariant`
+
+EXIT is now an explicit MotionSegment payload with:
+`terminal_behavior = LEAVE`
+
+The strict identity-settle invariant for every normal MotionProgram was NOT weakened.
+
+Final review also found that ENTRY could consume the whole pre-handoff window and leave no readable
+space for EXIT.
+
+Fix:
+`57b014a673f9f28546a3fd9c0644c5e635fd96b7`
+`[motion] Reserve readable exit time before semantic handoff`
+
+When a normal window is large enough (>= about 0.34s), planner reserves about 0.18s for EXIT.
+Tight windows preserve semantic timing instead of forcing a rushed exit.
+
+### Sprint Task 6 — encoded MP4 must prove readable motion, not merely changed pixels
+
+`a0c31fad36e0c8ea1fc78f527765e6eca6cc4bdf`
+`[qa] Enforce perceptual motion floor in encoded video`
+
+RenderedMotionQA now evaluates:
+- ENTRY
+- INTERACT
+- REACT
+- PAYOFF
+- EXIT
+
+It computes expected encoded movement in pixels and applies a phase-specific readable floor, bounded by
+asset size.
+
+Typical floor ratios:
+- ENTRY: ~1.0% canvas width
+- INTERACT: ~1.5%
+- REACT: ~1.3%
+- PAYOFF: ~0.9%
+- EXIT: ~1.6%
+
+The floor is bounded to avoid unreasonable demands on small visuals.
+Geometry-locked / compound-unit motion is conservatively exempt.
+
+New failure:
+`MOTION_BELOW_PERCEPTUAL_FLOOR`
+
+Existing encoded ROI activity verification remains, so a segment must both:
+1. be authored strongly enough to read; and
+2. actually survive FFmpeg encoding as visible pixel activity.
+
+Regression:
+`4fe925f6b604dd24c61845903b6da25d0bd639c7`
+`[test] Reject tiny motion and prove encoded exits`
+
+Tests prove:
+- deliberately tiny 0.5%-class motion is rejected;
+- real encoded EXIT moves and then disappears from the ROI.
+
+### Sprint Task 7 — scene continuity QA updated for object handoff and explicit blur
+
+`f914df14145d22604647d9ebcd4bdc6733727d42`
+`[qa] Accept object handoffs and require explicit blur intent`
+
+SceneContinuityQA now accepts OBJECT_HANDOFF as a real continuity bridge.
+
+BLUR_BRIDGE additionally requires:
+`reason == explicit_blur_intent`
+
+Therefore the renderer cannot silently reintroduce generic continuity blur without breaking QA.
+
+Regression:
+`643d31f0411b9a8a09198c9a34f72e6019ad46ab`
+`[test] Cover object handoff continuity without blur`
+
+Final refinements:
+- soft continuation wording alone is proven not to blur;
+- explicitly styled soft_blur_bridge is still allowed;
+- object handoff with extra old visuals is proven to retain them for exit rather than hard-cutting.
+
+### Sprint Task 8 — stronger motion must not create new collisions
+
+Final independent code review identified one remaining architectural risk:
+raising perceptual floors could create a collision even when Final Package Composition had safe spacing.
+
+Hardening commit:
+`1dc4c778a951baff0e8bfbfd8d580c8dcf9ff27d`
+`[qa] Prevent stronger semantic motion from creating collisions`
+
+MotionInteractionQA now optionally consumes Composition.
+
+For source INTERACT + target REACT:
+- samples the actual simultaneous overlap window;
+- evaluates Motion keyframes/easing at that shared time;
+- computes normalized transformed boxes;
+- compares authored overlap against animated overlap;
+- geometry-locked assets are excluded;
+- pre-existing authored overlap is respected;
+- hard failure occurs only when previously separate artwork gains a material new overlap.
+
+Failure code:
+`MOTION_CREATES_COLLISION`
+
+The first regression fixture did not actually collide and CI correctly refused to fail it:
+- Run `36091396474`
+- FAILURE
+- Compile SUCCESS
+- Ruff SUCCESS
+- **1 failed, 341 passed, 12 warnings**
+- the only failed assertion expected a collision that the geometry correctly showed was still safe.
+
+The test geometry was corrected to remain authored-separated by about 0.5% canvas width while being
+close enough that the stronger relation motion truly creates a collision. QA thresholds were NOT
+weakened.
+
+Regression fix:
+`b7ebbedeb127a3f1a431dad6c7a5120fd32df8f9`
+`[test] Exercise actual motion-created collision geometry`
+
+### Final review cleanup
+
+The final review also tightened blur semantics and full outgoing continuity:
+`3123b6c5f7543a598dffd16870b0e13134e62109`
+`[render] Keep full outgoing continuity and require explicit blur style`
+
+Regression:
+`44e90fe71fa4d9d8163bb152fa8f7e2d288da30a`
+`[test] Guard blur intent and full outgoing object continuity`
+
+That run stopped on one Ruff-only issue: an obsolete local `paired_outgoing` variable remained after
+the policy changed to carry all outgoing visuals.
+
+CI:
+- Run `36091593915`
+- FAILURE
+- Compile SUCCESS
+- Ruff FAILURE: F841 unused `paired_outgoing`
+- Pytest skipped
+
+Cleanup:
+`6b7705e8a458ddec469f2f0e3b411ab391a28faf`
+`[lint] Remove obsolete paired outgoing temporary`
+
+No behavior changed in the cleanup.
+
+### Final integration CI
+
+Run:
+`36091683824`
+
+Result:
+**SUCCESS**
+
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **344 passed, 12 warnings in 10.80s**
+
+### Final independent code review
+
+The sprint was reviewed from the pre-sprint Black-Hat behavior point:
+`5676c907761a153859bbd11ab82504547718842f`
+through:
+`6b7705e8a458ddec469f2f0e3b411ab391a28faf`
+
+Scope:
+- 20 commits
+- production files changed only in Motion / Render / QA / Pipeline integration
+- tests extended accordingly
+- no Pass1 files changed
+- no Pass2 files changed
+- no Composition planner authority changed
+- no Text selection/placement ownership changed
+- no Final Package schema weakened
+
+Reviewed invariants:
+1. Story still owns reveal/relation/handoff timing.
+2. Composition still owns every final in-scene destination.
+3. ordinary MotionProgram still settles exactly to Composition.
+4. EXIT is the only intentional terminal non-settle behavior and disappears immediately afterward.
+5. compound/geometry-locked visuals remain conservative.
+6. interaction direction comes from semantic relation + authored geometry.
+7. source/target overlap in time remains mandatory.
+8. stronger motion cannot cross semantic handoff.
+9. stronger source/target motion cannot introduce a material new collision.
+10. blur is explicit-only, not continuity-by-default.
+11. object continuity resolves semantic intent to actual runtime cutouts and abstains when ambiguous.
+12. unpaired outgoing scene visuals receive short exit continuity instead of hard cuts.
+13. encoded MP4 QA now requires perceptually meaningful motion, not merely nonzero pixels.
+
+No additional code-level blocker was found after the collision and full-outgoing-continuity fixes.
+
+### Production acceptance gate
+
+This checkpoint proves architecture, scheduling, FFmpeg execution, structural QA, encoded-motion QA and
+regression behavior.
+
+It does NOT claim that the visual target is already perceptually accepted until the same real Black-Hat
+Final Package + narration is rerendered and reviewed.
+
+The next production render should specifically be checked for:
+- visible ENTRY trajectories rather than simple pop-ins;
+- obvious but controlled source INTERACT;
+- temporally overlapping target REACT;
+- readable PAYOFF;
+- actual per-element EXIT / disappearance at handoff;
+- old-scene visuals moving/receding rather than vanishing;
+- PERSIST / TRANSFORM_TO reading as an object-level handoff;
+- blur appearing only when explicitly authored and no longer dominating scene continuity;
+- no new collisions, white flashes, ghosting, wobble or geometry drift.
+
+State:
+**The motion/choreography weakness observed in the supplied Black-Hat render has been addressed at the
+architecture, renderer and QA levels. Final CI is green. The remaining gate is a fresh real Black-Hat
+rerender for perceptual comparison against the supplied render and reference videos.**
