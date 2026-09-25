@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.models import MotionCue, MotionSegment, StoryBeat
+from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.shared.errors import StageFailedError
 
 
@@ -38,6 +38,7 @@ class MotionInteractionQA:
         *,
         story: list[StoryBeat],
         motion: list[MotionCue],
+        composition: list[CompositionBeat] | None = None,
     ) -> MotionInteractionReport:
         violations: list[MotionInteractionViolation] = []
         checked_segments = 0
@@ -46,6 +47,11 @@ class MotionInteractionQA:
             (beat.id, activation.asset_id): activation
             for beat in story
             for activation in beat.asset_activations
+        }
+        layout_by_asset = {
+            (row.beat_id, item.asset_id): item
+            for row in (composition or [])
+            for item in row.items
         }
 
         for cue in motion:
@@ -104,6 +110,20 @@ class MotionInteractionQA:
                             f"{target.start:.3f}-{target.end:.3f} do not overlap"
                         ),
                     ))
+                else:
+                    self._validate_relation_collision(
+                        beat_id=beat_id,
+                        event_id=event_id,
+                        source_id=source_id,
+                        target_id=target_id,
+                        source=source,
+                        target=target,
+                        source_cue=by_asset.get((beat_id, source_id)) if source_id else None,
+                        target_cue=by_asset.get((beat_id, target_id)),
+                        source_item=layout_by_asset.get((beat_id, source_id)) if source_id else None,
+                        target_item=layout_by_asset.get((beat_id, target_id)),
+                        violations=violations,
+                    )
 
             if result_id:
                 payoff_event_ids = {event_id}
@@ -151,6 +171,158 @@ class MotionInteractionQA:
             violations=tuple(violations),
         )
 
+
+
+    @classmethod
+    def _validate_relation_collision(
+        cls,
+        *,
+        beat_id: str,
+        event_id: str | None,
+        source_id: str | None,
+        target_id: str,
+        source: MotionSegment,
+        target: MotionSegment,
+        source_cue: MotionCue | None,
+        target_cue: MotionCue | None,
+        source_item: LayoutItem | None,
+        target_item: LayoutItem | None,
+        violations: list[MotionInteractionViolation],
+    ) -> None:
+        if source_item is None or target_item is None:
+            return
+        if cls._geometry_locked(source_cue) or cls._geometry_locked(target_cue):
+            return
+        overlap_start = max(float(source.start), float(target.start))
+        overlap_end = min(float(source.end), float(target.end))
+        if overlap_end <= overlap_start + 1e-6:
+            return
+        sample_time = overlap_start + (overlap_end - overlap_start) * 0.50
+        source_transform = cls._segment_transform_at(source, sample_time)
+        target_transform = cls._segment_transform_at(target, sample_time)
+        authored = cls._overlap_ratio(
+            cls._box(source_item, (0.0, 0.0, 1.0)),
+            cls._box(target_item, (0.0, 0.0, 1.0)),
+        )
+        animated = cls._overlap_ratio(
+            cls._box(source_item, source_transform),
+            cls._box(target_item, target_transform),
+        )
+        if authored <= 0.02 and animated > 0.12 and animated > authored + 0.08:
+            violations.append(MotionInteractionViolation(
+                code="MOTION_CREATES_COLLISION",
+                beat_id=beat_id,
+                asset_id=target_id,
+                event_id=event_id,
+                detail=(
+                    f"{source_id or 'source'}->{target_id} authored overlap "
+                    f"{authored:.3f}, animated overlap {animated:.3f}"
+                ),
+            ))
+
+    @staticmethod
+    def _geometry_locked(cue: MotionCue | None) -> bool:
+        if cue is None or not isinstance(cue.params, dict):
+            return False
+        constraints = cue.params.get("render_constraints")
+        return (
+            isinstance(constraints, dict)
+            and constraints.get("geometry_lock") == "authored_footprint"
+        )
+
+    @classmethod
+    def _segment_transform_at(
+        cls,
+        segment: MotionSegment,
+        absolute_time: float,
+    ) -> tuple[float, float, float]:
+        keyframes = segment.program.get("keyframes")
+        if not isinstance(keyframes, list) or not keyframes:
+            return 0.0, 0.0, 1.0
+        duration = max(1e-6, float(segment.end) - float(segment.start))
+        progress = max(0.0, min(1.0, (float(absolute_time) - float(segment.start)) / duration))
+        rows: list[tuple[float, float, float, float, str]] = []
+        for frame in keyframes:
+            try:
+                rows.append((
+                    float(frame.get("progress", 0.0)),
+                    float(frame.get("dx", 0.0)),
+                    float(frame.get("dy", 0.0)),
+                    float(frame.get("scale", 1.0)),
+                    str(frame.get("easing") or "linear"),
+                ))
+            except (TypeError, ValueError):
+                continue
+        rows.sort(key=lambda row: row[0])
+        if not rows:
+            return 0.0, 0.0, 1.0
+        if progress <= rows[0][0]:
+            return rows[0][1], rows[0][2], rows[0][3]
+        if progress >= rows[-1][0]:
+            return rows[-1][1], rows[-1][2], rows[-1][3]
+        for left, right in zip(rows, rows[1:]):
+            if left[0] <= progress <= right[0]:
+                span = max(1e-6, right[0] - left[0])
+                p = (progress - left[0]) / span
+                e = cls._ease(left[4], p)
+                return (
+                    left[1] + (right[1] - left[1]) * e,
+                    left[2] + (right[2] - left[2]) * e,
+                    left[3] + (right[3] - left[3]) * e,
+                )
+        return rows[-1][1], rows[-1][2], rows[-1][3]
+
+    @staticmethod
+    def _ease(name: str, value: float) -> float:
+        p = max(0.0, min(1.0, value))
+        if name == "linear":
+            return p
+        if name == "ease_in_cubic":
+            return p ** 3
+        if name == "ease_in_out_cubic":
+            return 4 * p ** 3 if p < 0.5 else 1 - ((-2 * p + 2) ** 3) / 2
+        if name == "smoothstep":
+            return 3 * p * p - 2 * p * p * p
+        if name == "ease_out_expo":
+            return 1.0 if p >= 1.0 else 1 - 2 ** (-10 * p)
+        if name == "ease_out_back":
+            c1 = 1.70158
+            c3 = c1 + 1
+            return 1 + c3 * (p - 1) ** 3 + c1 * (p - 1) ** 2
+        return 1 - (1 - p) ** 3
+
+    @staticmethod
+    def _box(
+        item: LayoutItem,
+        transform: tuple[float, float, float],
+    ) -> tuple[float, float, float, float]:
+        dx, dy, scale = transform
+        width = max(0.0, float(item.width) * max(0.0, scale))
+        height = max(0.0, float(item.height) * max(0.0, scale))
+        cx = float(item.x) + dx
+        cy = float(item.y) + dy
+        return (
+            cx - width / 2,
+            cy - height / 2,
+            cx + width / 2,
+            cy + height / 2,
+        )
+
+    @staticmethod
+    def _overlap_ratio(
+        first: tuple[float, float, float, float],
+        second: tuple[float, float, float, float],
+    ) -> float:
+        left = max(first[0], second[0])
+        top = max(first[1], second[1])
+        right = min(first[2], second[2])
+        bottom = min(first[3], second[3])
+        if right <= left or bottom <= top:
+            return 0.0
+        intersection = (right - left) * (bottom - top)
+        first_area = max(1e-9, (first[2] - first[0]) * (first[3] - first[1]))
+        second_area = max(1e-9, (second[2] - second[0]) * (second[3] - second[1]))
+        return intersection / min(first_area, second_area)
 
     @staticmethod
     def _find_payoff_segment(

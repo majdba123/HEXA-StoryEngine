@@ -365,3 +365,30 @@ def test_handoff_creates_real_exit_for_outgoing_asset() -> None:
         story=[], motion=[cue.model_copy(update={"segments": [segment]})],
     )
     assert report.ok, report.violations
+
+
+def test_motion_interaction_qa_rejects_new_collision_from_stronger_motion() -> None:
+    beat, composition, choreography = _fixture()
+    close_composition = CompositionBeat(
+        beat_id=composition.beat_id,
+        items=[
+            LayoutItem(asset_id="a", x=0.30, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
+        ],
+    )
+    cues = MotionPlanner().plan([beat], [close_composition], choreography)
+    report = MotionInteractionQA().inspect(
+        story=[beat], motion=cues, composition=[close_composition],
+    )
+    assert not report.ok
+    assert any(row.code == "MOTION_CREATES_COLLISION" for row in report.violations)
+
+
+def test_motion_interaction_qa_accepts_readable_motion_with_safe_spacing() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    report = MotionInteractionQA().inspect(
+        story=[beat], motion=cues, composition=[composition],
+    )
+    assert report.ok, report.violations

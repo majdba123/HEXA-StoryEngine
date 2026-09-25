@@ -202,6 +202,7 @@ class StoryEnginePipeline:
         motion_interaction_report = self.motion_interaction_qa.inspect(
             story=story,
             motion=motion,
+            composition=composition,
         )
         self.motion_interaction_qa.write(
             motion_interaction_report,
