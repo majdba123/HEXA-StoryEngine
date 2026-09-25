@@ -552,3 +552,85 @@ def test_entry_completes_before_semantic_relation_phase_on_same_asset() -> None:
         for segment in cue.segments:
             if segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
                 assert segment.start >= entry.end - 1e-9
+
+
+
+def test_spanless_relation_timeline_uses_story_participant_envelope() -> None:
+    """Gray-Hat regression: Pass2-bound relations need no relation-level script span."""
+    beat, composition, choreography = _fixture()
+    directive = choreography.directives[0]
+    flow = directive.event_flows[0]
+    steps = tuple(
+        step
+        if step.stage not in {EventFlowStage.INTERACT, EventFlowStage.REACT}
+        else EventFlowStep(
+            stage=step.stage,
+            focus_asset_id=step.focus_asset_id,
+            participant_asset_ids=step.participant_asset_ids,
+            source_asset_id=step.source_asset_id,
+            target_asset_id=step.target_asset_id,
+            result_asset_id=step.result_asset_id,
+            relationship=step.relationship,
+            semantic_action=step.semantic_action,
+            authority=step.authority,
+            spoken_start=None,
+            spoken_end=None,
+        )
+        for step in flow.steps
+    )
+    flow = SemanticEventFlow(
+        event_id=flow.event_id,
+        order=flow.order,
+        dependency_ids=flow.dependency_ids,
+        leader_asset_ids=flow.leader_asset_ids,
+        participant_asset_ids=flow.participant_asset_ids,
+        context_asset_ids=flow.context_asset_ids,
+        result_asset_ids=flow.result_asset_ids,
+        text_anchor_asset_ids=flow.text_anchor_asset_ids,
+        interactions=flow.interactions,
+        stages=flow.stages,
+        steps=steps,
+        progression_type=flow.progression_type,
+        handoff_mode=flow.handoff_mode,
+        handoff_to_event_ids=flow.handoff_to_event_ids,
+        handoff_to_asset_ids=flow.handoff_to_asset_ids,
+        handoff_to_event_id=flow.handoff_to_event_id,
+        handoff_to_asset_id=flow.handoff_to_asset_id,
+        confidence=flow.confidence,
+        authority=flow.authority,
+        evidence=flow.evidence,
+    )
+    choreography = ChoreographyPlan(
+        directives=(
+            ChoreographyDirective(
+                beat_id=directive.beat_id,
+                sequence_id=directive.sequence_id,
+                phase=directive.phase,
+                action=directive.action,
+                pattern=directive.pattern,
+                hook=directive.hook,
+                energy=directive.energy,
+                primary_asset_id=directive.primary_asset_id,
+                event_flows=(flow,),
+            ),
+        )
+    )
+
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    by_id = {cue.asset_id: cue for cue in cues}
+    source = next(segment for segment in by_id["a"].segments if segment.phase == "INTERACT")
+    target = next(segment for segment in by_id["b"].segments if segment.phase == "REACT")
+
+    assert source.start >= beat.asset_activations[0].spoken_start
+    assert source.end <= beat.asset_activations[1].spoken_end
+    assert target.start >= beat.asset_activations[1].spoken_start
+    assert target.end <= beat.asset_activations[1].spoken_end
+    assert min(source.end, target.end) > max(source.start, target.start)
+
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=cues,
+        composition=[composition],
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
