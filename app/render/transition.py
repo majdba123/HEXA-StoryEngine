@@ -168,9 +168,6 @@ class VisualTransitionPolicy:
 
         object_pairs = self._object_handoff_pairs(previous_beat, current_beat)
         if object_pairs:
-            paired_outgoing = frozenset(
-                old_id for old_id, _new_id in object_pairs if old_id in outgoing
-            )
             bridge_duration = min(0.42, max(0.26, beat_duration * 0.18))
             return VisualTransitionDecision(
                 persistent_asset_ids=persistent,
