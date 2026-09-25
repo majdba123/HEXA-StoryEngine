@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.choreography import ChoreographyPlan
+from app.choreography.relation_contract import relation_requires_reaction
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion.collision import authored_overlap_ratio, max_relation_overlap
 from app.shared.errors import StageFailedError
@@ -32,8 +33,6 @@ class MotionInteractionReport:
 
 class MotionInteractionQA:
     """Validate the semantic behavior Motion must express, not just metadata presence."""
-
-    _NO_AUTOMATIC_REACTION_ACTIONS = {"COMPARE", "LOOP"}
 
     def inspect(
         self,
@@ -135,7 +134,11 @@ class MotionInteractionQA:
             beat_id, event_id, source_id, target_id, result_id, relationship = key
             action = str(source.semantic_action or "").upper()
 
-            if target_id and action not in self._NO_AUTOMATIC_REACTION_ACTIONS:
+            if relation_requires_reaction(
+                semantic_action=action,
+                executable=True,
+                target_asset_id=target_id,
+            ):
                 target = self._find_segment(
                     by_asset.get((beat_id, target_id)),
                     event_id=event_id,
@@ -180,17 +183,12 @@ class MotionInteractionQA:
             if result_id:
                 payoff_event_ids = {event_id}
                 result_activation = activation_by_asset.get((beat_id, result_id))
-                if (
-                    result_activation is not None
-                    and result_activation.semantic_event_id
-                    and (
-                        result_activation.semantic_event_id == event_id
-                        or (
-                            event_id is not None
-                            and event_id in result_activation.semantic_event_dependency_ids
-                        )
-                    )
-                ):
+                if result_activation is not None and result_activation.semantic_event_id:
+                    # The explicit relation already names this exact asset as its result.
+                    # If Story owns that asset in another semantic event, its PAYOFF may
+                    # correctly execute there even when the package omitted a redundant
+                    # dependency edge. Accept the result asset's own Story event rather
+                    # than forcing Motion to steal event ownership.
                     payoff_event_ids.add(result_activation.semantic_event_id)
 
                 payoff = self._find_payoff_segment(
