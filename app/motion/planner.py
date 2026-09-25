@@ -951,20 +951,39 @@ class MotionPlanner:
             assignment=assignment,
             items_by_id=items_by_id,
         )
-        program = MotionProgram(
-            name="semantic_release_exit",
-            settle_progress=1.0,
-            keyframes=(
-                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_in_out_cubic"),
-                MotionKeyframe(0.60, dx * 0.62, dy * 0.62, 0.985, "ease_in_out_cubic"),
-                MotionKeyframe(1.0, dx, dy, 0.955, "ease_in_cubic"),
-            ),
-        )
+        program = {
+            "name": "semantic_release_exit",
+            "settle_progress": 1.0,
+            "terminal_behavior": "LEAVE",
+            "keyframes": [
+                {
+                    "progress": 0.0,
+                    "dx": 0.0,
+                    "dy": 0.0,
+                    "scale": 1.0,
+                    "easing": "ease_in_out_cubic",
+                },
+                {
+                    "progress": 0.60,
+                    "dx": dx * 0.62,
+                    "dy": dy * 0.62,
+                    "scale": 0.985,
+                    "easing": "ease_in_out_cubic",
+                },
+                {
+                    "progress": 1.0,
+                    "dx": dx,
+                    "dy": dy,
+                    "scale": 0.955,
+                    "easing": "ease_in_cubic",
+                },
+            ],
+        }
         return MotionSegment(
             phase="EXIT",
             start=start,
             end=end,
-            program=program.to_payload(),
+            program=program,
             semantic_event_id=assignment.event_id,
             semantic_action="RELEASE",
             relationship=assignment.relationship,
