@@ -10,7 +10,7 @@ from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.motion import FFmpegMotionAdapter
 from app.render.text import TextRenderer
-from app.render.transition import VisualTransitionPolicy
+from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 
 
 class FFmpegRenderer:
@@ -18,8 +18,9 @@ class FFmpegRenderer:
 
     Beat segments are encoded independently for bounded render cost and recovery. Visual
     cutouts stay opaque while moving: alpha crossfades on a white canvas create the exact
-    washed-out "ghost" silhouette that looks like a bad mask. True persistent assets are
-    held in place; unrelated outgoing artwork is never carried into the next beat.
+    washed-out "ghost" silhouette that looks like a bad mask. Scene boundaries instead
+    use a bounded opaque outgoing bridge behind crisp incoming artwork; explicit authored
+    handoffs may blur that old full-scene bridge before it is removed.
     """
 
     def __init__(
@@ -144,15 +145,54 @@ class FFmpegRenderer:
 
         ordered_items = sorted(layout.items, key=lambda row: row.z)
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
-        transition = self.transition_policy.decide(previous_beat, previous_layout, layout)
+        transition = self.transition_policy.decide(
+            previous_beat,
+            previous_layout,
+            layout,
+            current_beat=beat,
+        )
         persistent_ids = transition.persistent_asset_ids
-        visual_carrier_id = self._visual_carrier_asset_id(
+        outgoing_items = (
+            sorted(
+                (
+                    item for item in previous_layout.items
+                    if item.asset_id in transition.carry_outgoing_asset_ids
+                ),
+                key=lambda row: row.z,
+            )
+            if previous_layout is not None
+            else []
+        )
+        incoming_start, _incoming_reveal = self._incoming_handoff_window(
             beat=beat,
             ordered_items=ordered_items,
+            segment_start=segment_start,
+            duration=duration,
             motion=motion,
-            persistent_ids=persistent_ids,
-            fps=plan.fps,
-            strict_boundary_coverage=strict_boundary_coverage,
+        )
+        bridge_duration = 0.0
+        if outgoing_items and transition.mode in {
+            SceneTransitionMode.MOTION_HANDOFF,
+            SceneTransitionMode.BLUR_BRIDGE,
+        }:
+            bridge_duration = min(
+                duration,
+                max(
+                    float(transition.bridge_duration),
+                    incoming_start + min(0.18, max(0.10, duration * 0.08)),
+                ),
+            )
+        visual_carrier_id = (
+            None
+            if bridge_duration > 0
+            else self._visual_carrier_asset_id(
+                beat=beat,
+                ordered_items=ordered_items,
+                motion=motion,
+                persistent_ids=persistent_ids,
+                fps=plan.fps,
+                strict_boundary_coverage=strict_boundary_coverage,
+            )
         )
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
@@ -164,12 +204,66 @@ class FFmpegRenderer:
                     details={"asset_id": item.asset_id, "beat_id": beat.id},
                 )
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
+        for item in outgoing_items:
+            asset = assets.get(item.asset_id)
+            if asset is None or not asset.image_path.exists():
+                raise StageFailedError(
+                    "scene bridge references missing outgoing asset",
+                    details={"asset_id": item.asset_id, "beat_id": beat.id},
+                )
+            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
 
         filters: list[str] = [
             f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:d={duration:.6f},"
             "format=rgba[base0]"
         ]
         composite_label = "base0"
+
+        if bridge_duration > 0:
+            filters.append(
+                f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:"
+                f"d={bridge_duration:.6f},format=rgba[oldbase0]"
+            )
+            old_label = "oldbase0"
+            input_offset = len(ordered_items)
+            for bridge_index, item in enumerate(outgoing_items):
+                input_index = input_offset + bridge_index
+                box_w, box_h, target_x, target_y = self._geometry(plan, item)
+                source_label = f"oldasset{bridge_index}"
+                filters.append(
+                    f"[{input_index}:v]format=rgba,setsar=1,"
+                    f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:"
+                    f"force_divisible_by=2,"
+                    f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+                    f"loop=loop=-1:size=1:start=0,trim=duration={bridge_duration:.6f},"
+                    f"setpts=PTS-STARTPTS[{source_label}]"
+                )
+                horizontal = -34 if item.x < 0.46 else 34 if item.x > 0.54 else 0
+                vertical = -10 if item.y <= 0.5 else 10
+                progress_expr = f"(t/{max(bridge_duration, 0.05):.6f})"
+                next_old = f"oldmix{bridge_index}"
+                filters.append(
+                    f"[{old_label}][{source_label}]overlay="
+                    f"x='{target_x}+({horizontal})*{progress_expr}':"
+                    f"y='{target_y}+({vertical})*{progress_expr}':"
+                    f"enable='between(t,0,{bridge_duration:.6f})':"
+                    f"eof_action=pass:shortest=0[{next_old}]"
+                )
+                old_label = next_old
+
+            old_fx = "oldfx"
+            if transition.mode == SceneTransitionMode.BLUR_BRIDGE:
+                filters.append(
+                    f"[{old_label}]gblur=sigma={transition.blur_sigma:.3f}:steps=2[{old_fx}]"
+                )
+            else:
+                filters.append(f"[{old_label}]null[{old_fx}]")
+            filters.append(
+                f"[{composite_label}][{old_fx}]overlay=x=0:y=0:"
+                f"enable='between(t,0,{bridge_duration:.6f})':"
+                f"eof_action=pass:shortest=0[bridgebase]"
+            )
+            composite_label = "bridgebase"
 
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))

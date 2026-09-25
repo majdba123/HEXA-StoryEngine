@@ -19,6 +19,7 @@ from app.models import (
 )
 from app.recovery.detector import RecoveryDetector
 from app.render.renderer import FFmpegRenderer
+from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 
 
 def _write_rgba_asset(path: Path, fill: tuple[int, int, int, int]) -> None:
@@ -192,7 +193,7 @@ def test_white_flash_detector_rejects_real_internal_blank_frame(tmp_path: Path) 
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg required",
 )
-def test_ordered_visual_unit_keeps_first_member_as_boundary_carrier(
+def test_scene_bridge_preserves_previous_scene_until_first_spoken_reveal(
     tmp_path: Path,
 ) -> None:
     previous_path = tmp_path / "previous.png"
@@ -340,15 +341,21 @@ def test_ordered_visual_unit_keeps_first_member_as_boundary_carrier(
     FFmpegRenderer("ffmpeg").render(plan, output)
 
     frames = _read_frames(output)
-    # beat-2 begins at encoded frame 24, while its first Motion cue intentionally
-    # starts 0.20s later. The first ordered member must already cover the white canvas.
+    # beat-2 begins at encoded frame 24 while the first new semantic cue starts
+    # 0.20s later. The previous scene must bridge that gap; new artwork must not leak
+    # before Story's spoken reveal merely to avoid a white boundary.
     boundary = frames[24]
     assert _mean_white_distance(boundary) > 5.0
-    first_pixel = boundary[210, 224]  # BGR, first member at pre-motion offset.
-    assert int(first_pixel[2]) > int(first_pixel[1]) + 50
-    # The second member must still respect its own later reveal.
-    second_pixel = boundary[210, 448]
-    assert min(int(value) for value in second_pixel) > 235
+    center = boundary[180, 320]  # BGR, old blue scene still owns focus.
+    assert int(center[0]) > int(center[2]) + 50
+    first_area = boundary[210, 224]
+    assert int(first_area[2]) < int(first_area[0]) + 35
+
+    # After the authored reveal settles, the old bridge is gone and the first new
+    # member owns its authored position.
+    settled = frames[37]
+    first_settled = settled[180, 224]
+    assert int(first_settled[2]) > int(first_settled[0]) + 50
 
     detector = RecoveryDetector("ffprobe", "ffmpeg")
     assert detector._white_flash_frames(output, duration=1.8) == []
@@ -687,3 +694,39 @@ def test_strict_boundary_carrier_prefers_largest_safe_early_visual() -> None:
     assert strict == "character"
     assert strict != "result"
 
+
+
+def test_transition_policy_blurs_only_authored_handoff_not_every_scene_change() -> None:
+    policy = VisualTransitionPolicy()
+    previous = StoryBeat(
+        id="a", scene_id="scene-a", start=0.0, end=1.0,
+        narration="a", primary_asset_ids=["old"], action="INTRODUCE",
+    )
+    previous_layout = CompositionBeat(
+        beat_id="a",
+        items=[LayoutItem(asset_id="old", x=0.5, y=0.5, width=0.4, height=0.4)],
+    )
+    current_layout = CompositionBeat(
+        beat_id="b",
+        items=[LayoutItem(asset_id="new", x=0.5, y=0.5, width=0.4, height=0.4)],
+    )
+
+    ordinary = StoryBeat(
+        id="b", scene_id="scene-b", start=1.0, end=2.0,
+        narration="b", primary_asset_ids=["new"], action="REVEAL_DETAIL",
+        handoff_from="old",
+    )
+    ordinary_decision = policy.decide(
+        previous, previous_layout, current_layout, current_beat=ordinary
+    )
+    assert ordinary_decision.mode == SceneTransitionMode.MOTION_HANDOFF
+    assert ordinary_decision.blur_sigma == 0.0
+    assert ordinary_decision.carry_outgoing_asset_ids == frozenset({"old"})
+
+    authored = ordinary.model_copy(update={"action": "HANDOFF"})
+    authored_decision = policy.decide(
+        previous, previous_layout, current_layout, current_beat=authored
+    )
+    assert authored_decision.mode == SceneTransitionMode.BLUR_BRIDGE
+    assert authored_decision.blur_sigma > 0
+    assert authored_decision.bridge_duration >= 0.30
