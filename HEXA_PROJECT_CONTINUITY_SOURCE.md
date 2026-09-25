@@ -6560,3 +6560,344 @@ State:
 **The motion/choreography weakness observed in the supplied Black-Hat render has been addressed at the
 architecture, renderer and QA levels. Final CI is green. The remaining gate is a fresh real Black-Hat
 rerender for perceptual comparison against the supplied render and reference videos.**
+
+
+## MONTAGE22 GOLDEN MOTION COMFORT CHECKPOINT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`6f88e218858069c8ae35143dd6a3c2a7ed7613a5`
+`[qa] Measure semantic motion in true pixel travel distance`
+
+This sprint was opened after the operator accepted the stronger semantic-motion architecture but
+correctly identified two remaining perceptual risks:
+
+1. movement could still feel accelerated / rushed, especially exits and short semantic reactions;
+2. Golden Ratio had not yet been formalized as an engine-wide motion timing rule.
+
+The goal was NOT to weaken the stronger motion from MONTAGE21. The goal was to keep motion expressive
+while making its timing smooth, comfortable and internally consistent.
+
+### Locked Golden timing contract
+
+Central constants now live in `app/motion/timing.py`:
+
+- `GOLDEN_MAJOR = 0.6180339887498949`
+- `GOLDEN_MINOR = 0.3819660112501051`
+
+Golden Ratio is no longer an incidental numeric resemblance.
+
+It is consumed by:
+- ENTRY trajectory shaping;
+- semantic INTERACT / REACT / PAYOFF timing;
+- EXIT trajectory shaping;
+- scene-handoff lead timing;
+- rendered-motion comfort QA.
+
+### Central MotionComfortProfile
+
+The engine now has an explicit phase comfort contract:
+
+- ENTRY: target ~0.42s, minimum ~0.26s, normalized speed ceiling ~0.14/s;
+- INTERACT: target ~0.40s, minimum ~0.28s, speed ceiling ~0.13/s;
+- REACT: target ~0.36s, minimum ~0.26s, speed ceiling ~0.12/s;
+- PAYOFF: target ~0.42s, minimum ~0.30s, speed ceiling ~0.11/s;
+- EXIT: target ~0.40s, minimum ~0.32s, speed ceiling ~0.14/s.
+
+These are comfort targets, not permission to violate Story timing.
+
+When Story provides less time:
+- semantic timing remains authoritative;
+- amplitude is reduced to fit the legal speed envelope;
+- a decorative EXIT is omitted when no comfortable exit window remains;
+- the engine does NOT accelerate motion just to preserve a nominal displacement.
+
+### ENTRY — Golden deceleration without wobble
+
+Commit:
+`ffd551cf4b822814f7d3f4602256abc91dca0f82`
+`[motion] Shape entry travel with golden-ratio deceleration`
+
+A normal entry now has:
+- authored start transform;
+- one Golden checkpoint at `settle_progress * 0.618...`;
+- approximately 38.2% of the original remaining displacement at that checkpoint;
+- final semantic settle exactly at Composition;
+- post-settle hold with no recoil/wobble.
+
+The interpolation is smooth (`ease_in_out_cubic` / `smoothstep`) rather than a mechanical snap.
+
+ENTRY readability strengthening is now duration-aware and bounded by the comfort speed budget.
+
+### INTERACT / REACT / PAYOFF — expressive but no rushed return
+
+Core commits:
+`c52f2ef165a1c412a761db3fd221110d3e2666fe`
+`[motion] Apply golden-ratio smooth timing and comfort speed caps`
+
+`f93cc450e55a8b7fdf1125d014d5efca791f7abe`
+`[motion] Cap semantic accents by shorter golden return leg`
+
+Semantic event segments are still real out-and-back reactions:
+- start from Composition identity;
+- reach the semantic accent at 61.8% progress;
+- return to Composition during the final 38.2%.
+
+The important correction is that the final 38.2% is the speed bottleneck.
+Displacement is therefore capped against the shorter Golden return leg, not against the whole segment.
+
+This prevents the previous failure mode:
+a segment could have a comfortable average duration but snap back too quickly after its peak.
+
+Meaning still owns direction:
+- source moves relative to target;
+- target reacts relative to source;
+- compare/loop/block/reject/travel/connect/etc. remain distinct;
+- no random generic vector was introduced.
+
+### Strong scale emphasis remains, but is asset-size aware
+
+Commits:
+`e16026e050b900657afe4389989fe440e7429d3b`
+`[motion] Keep payoff emphasis strong with asset-aware scale speed`
+
+`e9b67c766b5eecb3e38a4433c5028ea1abd445dc`
+`[motion] Bound reaction scale by asset-aware comfort speed`
+
+Scale is not unnecessarily weakened just because translation has a speed limit.
+
+Instead:
+- the allowable scale delta is projected through the actual authored asset extent;
+- PAYOFF can retain a strong emphasis when the object is small enough for it to remain comfortable;
+- REACT/PAYOFF scale is also capped from above, so a semantic primitive cannot inject a fast zoom spike.
+
+Thus the engine preserves expression without allowing scale to bypass the motion-speed contract.
+
+### EXIT — comfortable release, never a forced snap
+
+The prior ~0.18s fixed exit reserve from MONTAGE21 is superseded.
+
+EXIT now uses the central comfort profile:
+- target ~0.40s;
+- minimum ~0.32s;
+- Golden checkpoint at 61.8%;
+- approximately 61.8% of total leave displacement reached at that checkpoint;
+- final 38.2% completes the leave;
+- the proportional distance/time split produces smooth approximately uniform perceived travel before
+  the asset is removed.
+
+If there is insufficient legal time for both the current semantic activity and a comfortable exit:
+- INTERACT / REACT / PAYOFF keep their Story-owned timing;
+- EXIT is omitted instead of stealing time from meaning or accelerating.
+
+Commit:
+`e8143461a87620125600f9f45f8170591fe6c4e0`
+`[motion] Prioritize semantic phases and cap golden-leg speed`
+
+This is a priority invariant:
+**semantic meaning outranks decorative release.**
+
+### Scene handoff — smooth travel instead of linear slide
+
+Commit:
+`dc91fed5e446fa9f35a693ea12ce6004842da90e`
+`[render] Smooth scene handoff travel with golden lead timing`
+
+The outgoing scene bridge previously used linear FFmpeg progress.
+
+It now:
+- uses smoothstep-style progress;
+- uses Golden minor (~38.2%) to derive the bounded lead before incoming reveal;
+- preserves the existing explicit-only blur rule;
+- does not reintroduce default blur.
+
+Object handoff / motion handoff therefore follows the same comfort language as in-scene motion.
+
+### Story V2 ultra-short windows remain exact
+
+Commit:
+`5573b20f29a15eb743c326c482ffa2f07ad75cc9`
+`[motion] Preserve exact Story timing in sub-frame golden windows`
+
+The renderer has an intentional 50ms minimum interpolation window.
+For a Story-owned activation shorter than 50ms, an interior Golden checkpoint has no perceptual value
+and can create rounding ambiguity around the exact semantic settle.
+
+The compiler therefore collapses sub-50ms Story-V2 entries to:
+- one legal transform leg;
+- exact Story settle;
+- Composition hold.
+
+Golden shaping is used when it is perceptually expressible.
+Story timing always wins when it is not.
+
+This preserves the strict no-early/no-late synchronization contract.
+
+### Rendered Motion QA — now checks comfort, not only strength
+
+Commit:
+`d55d3033f38cb90bfc42179c6daf51be2d844ec1`
+`[qa] Reject rushed motion and scale floors by Story time`
+
+New hard failure:
+`MOTION_TOO_FAST`
+
+RenderedMotionQA now verifies both sides of the perceptual envelope:
+- too weak => `MOTION_BELOW_PERCEPTUAL_FLOOR`;
+- too fast => `MOTION_TOO_FAST`.
+
+Subsequent hardening aligned QA math with Planner math:
+
+`81a56248c342ccd6f8e80c470d298e9babe1b435`
+`[qa] Measure comfort speed on actual keyframe legs`
+
+Speed is measured on each real keyframe leg, not as whole-segment average.
+
+`7d0a15fb053ae3ed69535fe3abb5de31be3e329a`
+`[qa] Bound readability floor by available comfort-speed budget`
+
+A readability floor may never require more displacement than the legal comfort-speed budget for the
+available Story time.
+
+`d1b5eaf59d1a46ff74955899c8aab56b1ddd6e05`
+`[qa] Project comfort budget through actual gesture direction`
+
+Normalized motion is projected through:
+- actual x/y gesture direction;
+- canvas aspect ratio;
+- actual authored asset extent;
+- scale contribution.
+
+`6f88e218858069c8ae35143dd6a3c2a7ed7613a5`
+`[qa] Measure semantic motion in true pixel travel distance`
+
+Pixel activity and keyframe speed now use Euclidean pixel travel rather than `max(x, y)`.
+This removed the final mismatch between diagonal Planner geometry and encoded-video QA.
+
+### CI failures were used as contract checks, not bypassed
+
+The Golden/comfort sprint intentionally kept strict CI throughout.
+
+Important failures and corrections:
+
+1. Initial Golden/comfort integration exposed:
+   - rushed REACT/INTERACT under per-leg measurement;
+   - ultra-short Story-V2 settle precision;
+   - one old QA mutation fixture that became unordered after the extra Golden checkpoint.
+   These were fixed at Planner/Compiler level; the Story timing invariant was not weakened.
+
+2. Run `36138126516`
+   - Compile SUCCESS
+   - Ruff SUCCESS
+   - Pytest **1 failed, 346 passed, 12 warnings**
+   - remaining failure: REACT exceeded comfort speed in the real V1.2 end-to-end encoded contract.
+   Fix: bound scale from above using actual authored asset size.
+
+3. Run `36138295840`
+   - Compile SUCCESS
+   - Ruff SUCCESS
+   - Pytest **1 failed, 346 passed, 12 warnings**
+   - remaining failure: after speed correction, the nominal perceptual floor was higher than the
+     displacement physically allowed by the comfort ceiling.
+   Fix: make floor and ceiling a satisfiable joint contract.
+
+4. Run `36138534013`
+   - Compile SUCCESS
+   - Ruff SUCCESS
+   - Pytest **1 failed, 347 passed, 12 warnings**
+   - residual floor mismatch was caused by assuming a horizontal pixel projection.
+   Fix: directional/asset-aware pixel budget.
+
+5. Run `36138811759`
+   - Compile SUCCESS
+   - Ruff SUCCESS
+   - Pytest **1 failed, 347 passed, 12 warnings**
+   - final ~0.09px mismatch was caused by using Euclidean geometry for the budget but `max(x,y)`
+     for measured movement.
+   Fix: true Euclidean pixel travel for both activity and speed.
+
+No threshold was arbitrarily relaxed to make CI green.
+
+### Final integration CI
+
+Behavior commit:
+`6f88e218858069c8ae35143dd6a3c2a7ed7613a5`
+
+Run:
+`36138971899`
+
+Result:
+**SUCCESS**
+
+- Compile: SUCCESS
+- Ruff: SUCCESS
+- Pytest: **348 passed, 12 warnings in 8.58s**
+
+### Final independent review
+
+Review base:
+`c545115ed6a97dc49348abb084b68d5b549d20ca`
+(MONTAGE21 checkpoint)
+
+Reviewed behavior head:
+`6f88e218858069c8ae35143dd6a3c2a7ed7613a5`
+
+Scope:
+- 25 commits after MONTAGE21;
+- production changes only in:
+  - `app/motion/timing.py`
+  - `app/motion/planner.py`
+  - `app/motion/compiler.py`
+  - `app/qa/rendered_motion.py`
+  - `app/render/renderer.py`
+- regression tests updated/added accordingly;
+- Pass1 unchanged;
+- Pass2 unchanged;
+- no Pass3 / Layer3;
+- Composition authority unchanged;
+- Story/WhisperX timing authority unchanged;
+- Text ownership unchanged;
+- Final Package schema unchanged.
+
+Reviewed invariants after this sprint:
+1. Story still owns reveal, relation and handoff timing.
+2. Composition still owns final resting geometry.
+3. Golden Ratio shapes motion only inside legal Story windows.
+4. Motion strength cannot force a speed above the comfort ceiling.
+5. A short Story window reduces amplitude rather than increasing acceleration.
+6. INTERACT/REACT/PAYOFF timing is never shortened merely to force an EXIT.
+7. EXIT is omitted when a comfortable release cannot fit.
+8. semantic event accents return exactly to Composition.
+9. geometry-locked / compound visuals remain conservative.
+10. collision QA from MONTAGE21 remains active.
+11. encoded-video QA requires motion to be both readable and comfortable.
+12. scene handoffs use smooth eased travel; blur remains explicit-only.
+13. ultra-short V2 semantic timing remains exact.
+
+No additional code-level blocker was found in the final review.
+
+### Production render expectation
+
+The next real Black-Hat render should now differ from the previously supplied weak render in two ways
+at the same time:
+
+**Stronger / more expressive**
+- visible ENTRY path;
+- clear source INTERACT;
+- temporally overlapping target REACT;
+- readable PAYOFF;
+- real semantic EXIT where enough time exists;
+- object-level handoff instead of blur-everywhere continuity.
+
+**More comfortable / smoother**
+- no tiny ultra-fast semantic snaps;
+- no 0.18s forced exit behavior;
+- no linear mechanical scene bridge;
+- bounded keyframe-leg speed;
+- Golden 61.8 / 38.2 pacing;
+- short narration windows reduce amplitude instead of accelerating;
+- scale emphasis is bounded relative to actual asset size.
+
+State:
+**MONTAGE22 is code/CI complete. The remaining acceptance gate is a fresh production render with the
+same real Black-Hat Final Package + narration, followed by visual comparison against the previous
+render and the reference videos.**
