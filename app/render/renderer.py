@@ -152,6 +152,8 @@ class FFmpegRenderer:
             current_beat=beat,
         )
         persistent_ids = transition.persistent_asset_ids
+        object_target_by_outgoing = dict(transition.object_handoff_pairs)
+        current_items_by_id = {item.asset_id: item for item in ordered_items}
         outgoing_items = (
             sorted(
                 (
@@ -242,10 +244,14 @@ class FFmpegRenderer:
                     f"loop=loop=-1:size=1:start=0,trim=duration={bridge_end:.6f},"
                     f"setpts=PTS-STARTPTS[{source_label}]"
                 )
+                target_item = current_items_by_id.get(
+                    object_target_by_outgoing.get(item.asset_id, "")
+                )
                 horizontal, vertical = self._bridge_exit_offset(
                     plan=plan,
                     item=item,
                     mode=transition.mode,
+                    target_item=target_item,
                 )
                 progress_expr = (
                     f"if(lt(t,{bridge_start:.6f}),0,"
@@ -410,8 +416,22 @@ class FFmpegRenderer:
 
 
     @staticmethod
-    def _bridge_exit_offset(*, plan: RenderPlan, item, mode: SceneTransitionMode) -> tuple[int, int]:
+    def _bridge_exit_offset(
+        *,
+        plan: RenderPlan,
+        item,
+        mode: SceneTransitionMode,
+        target_item=None,
+    ) -> tuple[int, int]:
         """Give outgoing artwork a readable directional exit before scene replacement."""
+        if mode == SceneTransitionMode.OBJECT_HANDOFF and target_item is not None:
+            raw_dx = round((float(target_item.x) - float(item.x)) * plan.width * 0.55)
+            raw_dy = round((float(target_item.y) - float(item.y)) * plan.height * 0.55)
+            dx = max(-140, min(140, raw_dx))
+            dy = max(-80, min(80, raw_dy))
+            if abs(dx) >= 48 or abs(dy) >= 18:
+                return dx, dy
+
         if mode == SceneTransitionMode.BLUR_BRIDGE:
             horizontal_ratio, vertical_ratio = 0.030, 0.020
         elif mode == SceneTransitionMode.OBJECT_HANDOFF:
