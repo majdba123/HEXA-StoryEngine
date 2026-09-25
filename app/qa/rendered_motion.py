@@ -112,6 +112,17 @@ class RenderedMotionQA:
                         height=plan.height,
                         duration=duration,
                     )
+                    if enforce_floor:
+                        directional_budget = self._directional_comfort_budget_px(
+                            segment,
+                            duration=duration,
+                            width=plan.width,
+                            height=plan.height,
+                            item_width=item.width,
+                            item_height=item.height,
+                        )
+                        if directional_budget > 0.0:
+                            floor_px = min(floor_px, directional_budget)
                     if enforce_floor and expected_px + 1e-6 < floor_px:
                         violations.append(RenderedMotionViolation(
                             code="MOTION_BELOW_PERCEPTUAL_FLOOR",
@@ -232,6 +243,70 @@ class RenderedMotionQA:
         )
 
 
+
+
+    @staticmethod
+    def _directional_comfort_budget_px(
+        segment: MotionSegment,
+        *,
+        duration: float,
+        width: int,
+        height: int,
+        item_width: float,
+        item_height: float,
+    ) -> float:
+        """Translate the normalized comfort ceiling into this gesture's pixel axis.
+
+        MotionPlanner caps translation in normalized Composition space. A diagonal or
+        vertical gesture therefore has a different pixel budget than a horizontal one
+        on a non-square canvas. Scale has its own asset-size projection. QA must use
+        the same geometry or it can demand a pixel floor that Planner cannot reach
+        without violating the speed ceiling.
+        """
+        keyframes = segment.program.get("keyframes")
+        if not isinstance(keyframes, list) or not keyframes:
+            return 0.0
+        if segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
+            comfort_seconds = duration * GOLDEN_MINOR
+        else:
+            comfort_seconds = duration
+        normalized_budget = max_comfort_displacement(
+            segment.phase,
+            comfort_seconds,
+        )
+        if normalized_budget <= 0.0:
+            return 0.0
+
+        translation_factor = 0.0
+        for frame in keyframes:
+            try:
+                dx = float(frame.get("dx", 0.0))
+                dy = float(frame.get("dy", 0.0))
+            except (TypeError, ValueError):
+                continue
+            magnitude = float(np.hypot(dx, dy))
+            if magnitude <= 1e-9:
+                continue
+            translation_factor = max(
+                translation_factor,
+                float(np.hypot(
+                    dx / magnitude * width,
+                    dy / magnitude * height,
+                )),
+            )
+
+        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
+        asset_px = max(1.0, min(width * item_width, height * item_height))
+        scale_factor = 0.0
+        if any(
+            abs(float(frame.get("scale", 1.0)) - 1.0) > 1e-9
+            for frame in keyframes
+            if isinstance(frame, dict)
+        ):
+            scale_factor = asset_px / asset_extent
+
+        pixel_factor = max(translation_factor, scale_factor)
+        return normalized_budget * pixel_factor if pixel_factor > 0.0 else 0.0
 
     @staticmethod
     def _max_keyframe_speed_px(
