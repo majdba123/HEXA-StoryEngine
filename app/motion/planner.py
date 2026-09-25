@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import hypot
+
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.motion.compiler import MotionCompiler
@@ -559,7 +561,7 @@ class MotionPlanner:
                 or (activation is not None and activation.spoken_start is not None)
             ):
                 return True
-        return False
+        return bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
 
     @classmethod
     def _attach_event_timeline(
@@ -588,6 +590,7 @@ class MotionPlanner:
             entry_program=entry_program,
             assignment=assignment,
             deadline=deadline,
+            item=item,
         )
         if entry_segment is not None:
             segments.append(entry_segment)
@@ -666,6 +669,7 @@ class MotionPlanner:
         entry_program: MotionProgram,
         assignment: MotionEventAssignment,
         deadline: float,
+        item: LayoutItem | None = None,
     ) -> MotionSegment | None:
         """Fit ENTRY entirely before the next semantic handoff.
 
@@ -688,6 +692,15 @@ class MotionPlanner:
             original_duration=original_duration,
             fitted_duration=fitted_duration,
         )
+        geometry_locked = (
+            isinstance(cue.params, dict)
+            and cue.params.get("render_constraints", {}).get("geometry_lock")
+            == "authored_footprint"
+        )
+        if not geometry_locked:
+            fitted_program = cls._ensure_readable_entry(
+                fitted_program, item=item, duration=fitted_duration
+            )
         return MotionSegment(
             phase="ENTRY",
             start=start,
@@ -726,6 +739,41 @@ class MotionPlanner:
         return MotionProgram(
             name=f"{program.name}_handoff_fit",
             keyframes=keyframes,
+            settle_progress=program.settle_progress,
+        )
+
+
+    @staticmethod
+    def _ensure_readable_entry(
+        program: MotionProgram,
+        *,
+        item: LayoutItem | None,
+        duration: float,
+    ) -> MotionProgram:
+        size = min(item.width, item.height) if item is not None else 0.18
+        floor = max(0.018, min(0.038, size * 0.16))
+        if duration < 0.14:
+            floor *= 0.72
+        peak = max((hypot(frame.dx, frame.dy) for frame in program.keyframes), default=0.0)
+        scale_peak = max((abs(frame.scale - 1.0) for frame in program.keyframes), default=0.0)
+        gain = min(2.8, floor / peak) if 1e-6 < peak < floor else 1.0
+        frames = tuple(
+            MotionKeyframe(
+                progress=frame.progress,
+                dx=max(-0.075, min(0.075, frame.dx * gain)),
+                dy=max(-0.075, min(0.075, frame.dy * gain)),
+                scale=(
+                    frame.scale
+                    if peak > 1e-6 or scale_peak >= 0.045
+                    else 1.0 + (-0.045 if frame.progress < program.settle_progress else 0.0)
+                ),
+                easing=frame.easing,
+            )
+            for frame in program.keyframes
+        )
+        return MotionProgram(
+            name=f"{program.name}_readable",
+            keyframes=frames,
             settle_progress=program.settle_progress,
         )
 
