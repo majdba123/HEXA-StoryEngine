@@ -965,6 +965,8 @@ class MotionPlanner:
             0.095,
             max_displacement / asset_extent if max_displacement > 0.0 else 0.0,
         )
+        scale_delta = max(-scale_cap, min(scale_cap, scale - 1.0))
+        scale = 1.0 + scale_delta
         if phase.stage == EventFlowStage.PAYOFF:
             desired_scale = min(0.075 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
