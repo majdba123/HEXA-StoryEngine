@@ -638,6 +638,8 @@ def test_trusted_payoff_survives_overlapping_next_event_handoff() -> None:
         payoff.program["semantic_peak_progress"]
     )
 
+    # Event E2 starts at 0.40, but the trusted E1 result remains readable through
+    # its own Story peak/settle instead of being cut at the handoff boundary.
     assert payoff.end > next_asset.reveal_start
     assert peak == pytest.approx(result.semantic_peak, abs=1 / 30)
     assert payoff.end <= result.settle_at + 1e-9

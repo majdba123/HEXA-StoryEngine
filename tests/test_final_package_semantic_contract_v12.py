@@ -674,6 +674,7 @@ def test_v12_relation_without_explicit_result_does_not_borrow_event_result(tmp_p
     directive = choreography.for_beat(story[0].id)
     assert directive is not None and directive.interaction is not None
 
+    # The authored relation has no result. Do not manufacture one from E2's RESULT.
     assert directive.interaction.relationship == "CONTRASTS_WITH"
     assert directive.interaction.result_asset_id is None
 
@@ -721,6 +722,7 @@ def test_v12_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_pat
                     asset["binding_type"] = "SUPPORT"
                     asset["parent_asset_id"] = "b"
                     asset["visual_locator"] = None
+            # Keep E2 fully authored but make c unavailable as an independent cutout.
             scene["relations"] = []
         path.write_text(json.dumps(payload), encoding="utf-8")
 
