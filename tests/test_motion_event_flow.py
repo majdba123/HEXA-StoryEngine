@@ -176,9 +176,14 @@ def test_motion_executes_choreography_event_steps_not_just_pattern_metadata() ->
     assert by_id["c"].params["semantic_focus"]["event_flow"]["stage"] == "PAYOFF"
     assert by_id["context"].params["semantic_focus"]["event_flow"] is None
 
-    assert "event_chain_establish_interact_" in by_id["a"].params["program"]["name"]
-    assert "event_chain_add_react_" in by_id["b"].params["program"]["name"]
-    assert "event_chain_establish_payoff_" in by_id["c"].params["program"]["name"]
+    # Explicit semantic phases execute once as standalone segments. ENTRY stays a
+    # clean arrival instead of embedding the same INTERACT/REACT/PAYOFF accent twice.
+    assert "event_chain_" not in by_id["a"].params["program"]["name"]
+    assert "event_chain_" not in by_id["b"].params["program"]["name"]
+    assert "event_chain_" not in by_id["c"].params["program"]["name"]
+    assert by_id["a"].params["semantic_focus"]["event_flow_execution"] == "EXPLICIT_TIMELINE"
+    assert by_id["b"].params["semantic_focus"]["event_flow_execution"] == "EXPLICIT_TIMELINE"
+    assert by_id["c"].params["semantic_focus"]["event_flow_execution"] == "EXPLICIT_TIMELINE"
     assert [
         phase["stage"]
         for phase in by_id["a"].params["semantic_focus"]["event_flow"]["phase_chain"]
@@ -189,17 +194,17 @@ def test_motion_executes_choreography_event_steps_not_just_pattern_metadata() ->
     assert by_id["b"].start == pytest.approx(0.40)
     assert by_id["c"].start == pytest.approx(0.78)
 
-    # CONNECT keeps the source/target relationship directional: source moves toward
-    # target and the target acknowledges by moving back toward the source.
-    a_frames = by_id["a"].params["program"]["keyframes"]
-    b_frames = by_id["b"].params["program"]["keyframes"]
-    assert any(frame["dx"] > 0.0 for frame in a_frames[1:-1])
-    assert any(frame["dx"] < 0.0 for frame in b_frames[1:-1])
-    max_scale = {
-        asset_id: max(frame["scale"] for frame in cue.params["program"]["keyframes"])
-        for asset_id, cue in by_id.items()
-    }
-    assert max_scale["c"] > max_scale["b"] > max_scale["context"]
+    # CONNECT keeps the source/target relationship directional in the semantic
+    # timeline, while the result receives the strongest explicit payoff.
+    a_interact = next(row for row in by_id["a"].segments if row.phase == "INTERACT")
+    b_react = next(row for row in by_id["b"].segments if row.phase == "REACT")
+    c_payoff = next(row for row in by_id["c"].segments if row.phase == "PAYOFF")
+    assert any(frame["dx"] > 0.0 for frame in a_interact.program["keyframes"][1:-1])
+    assert any(frame["dx"] < 0.0 for frame in b_react.program["keyframes"][1:-1])
+    assert max(frame["scale"] for frame in c_payoff.program["keyframes"]) > max(
+        frame["scale"] for frame in b_react.program["keyframes"]
+    )
+    assert max(frame["scale"] for frame in by_id["context"].params["program"]["keyframes"]) < 1.02
 
     # Final authored Composition geometry is still absolute.
     for cue in cues:
@@ -245,8 +250,9 @@ def test_short_story_window_collapses_event_chain_to_dominant_phase() -> None:
     cues = MotionPlanner().plan([beat], [composition], choreography)
     a = next(cue for cue in cues if cue.asset_id == "a")
 
-    assert "event_chain_interact_" in a.params["program"]["name"]
-    assert "event_chain_establish_interact_" not in a.params["program"]["name"]
+    assert "event_chain_" not in a.params["program"]["name"]
+    assert a.params["semantic_focus"]["event_flow_execution"] == "EXPLICIT_TIMELINE"
+    assert any(row.phase == "INTERACT" for row in a.segments)
     assert a.start == pytest.approx(0.10)
     assert a.params["semantic_settle_time"] == pytest.approx(0.18)
 
@@ -335,8 +341,11 @@ def test_story_event_id_overrides_stronger_stage_from_other_event_for_reused_ass
 
     assert event_flow["event_id"] == "E2"
     assert event_flow["stage"] == "ESTABLISH"
-    assert "event_chain_establish_" in cue.params["program"]["name"]
-    assert "react" not in cue.params["program"]["name"]
+    # The reused visual still executes its earlier authored REACT as a separate segment,
+    # but E2 remains the Story-owned dominant focus and ENTRY is not double-accented.
+    assert "event_chain_" not in cue.params["program"]["name"]
+    assert cue.params["semantic_focus"]["event_flow_execution"] == "EXPLICIT_TIMELINE"
+    assert any(row.phase == "REACT" and row.semantic_event_id == "E1" for row in cue.segments)
 
 
 def test_relation_flavors_survive_event_flow_instead_of_becoming_generic_interaction() -> None:
@@ -413,7 +422,8 @@ def test_multiple_results_are_all_payoff_visuals_not_quiet_support() -> None:
     assert by_id["r2"].params["semantic_focus"]["event_flow"]["stage"] == "PAYOFF"
     assert by_id["r2"].params["semantic_focus"]["cohort_role"] == "result_peer"
     assert by_id["r2"].params["semantic_focus"]["cohort_gain"] >= 0.8
-    assert max(f["scale"] for f in by_id["r2"].params["program"]["keyframes"]) > 1.04
+    r2_payoff = next(row for row in by_id["r2"].segments if row.phase == "PAYOFF")
+    assert max(f["scale"] for f in r2_payoff.program["keyframes"]) > 1.04
 
 
 def test_compound_required_multi_cutout_executes_one_coherent_unit_motion() -> None:
