@@ -5469,3 +5469,376 @@ Required visual acceptance:
 State:
 **Final Package 1.2 semantics are now strongly consumed end-to-end by Choreography and Motion,
 generalized regressions are green, and the next gate is the user's real full render.**
+
+
+## MONTAGE20 TIMED RELATION MOTION + SCENE CONTINUITY + ENCODED VIDEO QA CHECKPOINT — 2026-09-25
+
+Behavior HEAD before this documentation commit:
+`0b8d8a0ae362ea938e973647f332e0fa739a88c1`
+`[qa] Verify semantic motion in encoded video`
+
+Scope:
+- Adds timed semantic re-activation inside a scene.
+- Adds scene-to-scene continuity / handoff rendering.
+- Adds structural Motion interaction QA.
+- Adds scene continuity QA.
+- Adds encoded-MP4 semantic Motion QA.
+- No Pass1 changes.
+- No Pass2 changes.
+- No Pass3 / Layer3.
+- No Composition geometry authority changes.
+- No Text behavior changes.
+- No topic-specific rules.
+- Story / WhisperX remains the sole timing authority.
+- Composition remains the sole final geometry authority.
+
+### Why this pass was required
+
+The previous MONTAGE19 closure correctly compiled Final Package semantic events into Choreography and
+Motion, but one visual limitation remained: one asset was effectively represented by one short Motion
+cue. That allowed a correct entry but made later semantic re-activation difficult to express.
+
+The target behavior is now:
+
+```
+spoken mention -> ENTRY -> HOLD
+relation script span -> INTERACT + overlapping REACT
+result trigger / relation tail -> PAYOFF
+segment end -> exact Composition geometry
+later semantic event -> asset may reactivate again
+```
+
+The second missing behavior was cross-scene continuity. A new scene must not normally replace the
+previous scene as an abrupt visual reset. The renderer now supports a bounded scene handoff in which
+outgoing artwork remains briefly visible behind the incoming scene, exits with controlled Motion, and
+may receive a blur bridge for explicit semantic continuations.
+
+### Story relation timing
+
+`StoryRelation` now carries:
+- `spoken_start`
+- `spoken_end`
+
+Authored relation `script_span` character offsets are resolved by Story onto the narration clock.
+
+The timing travels through:
+```
+Final Package relation.script_span
+-> StoryRelation
+-> InteractionIntent
+-> EventFlowStep
+-> MotionEventPhase
+-> MotionSegment
+```
+
+No Motion component guesses a relation time.
+
+Final Package semantic-entry behavior is preserved:
+- exact semantic binding entry starts at the Story-owned spoken reveal;
+- no new pre-speech lead was introduced.
+
+### Multi-segment Motion contract
+
+`MotionCue` remains the backward-compatible one-cue-per-asset container.
+
+It now also carries:
+`segments: list[MotionSegment]`
+
+A `MotionSegment` records:
+- phase
+- absolute start/end
+- program
+- semantic_event_id
+- semantic_action
+- relationship
+- involvement
+- source/target/result asset ids
+- handoff deadline
+
+This allows one asset to:
+1. enter;
+2. settle;
+3. hold;
+4. move again during an authored relation;
+5. settle exactly back to Composition;
+6. participate again in a later semantic event.
+
+### Relation timing behavior
+
+For an authored relation window, Motion creates independent semantic windows.
+
+Current generic timing pattern:
+- source INTERACT begins at relation start;
+- target REACT starts after source action has begun;
+- source and target overlap intentionally;
+- RESULT/PAYOFF begins near the relation tail or at the result's own spoken activation.
+
+The implementation intentionally rejects the old visual reading:
+```
+A finishes -> B starts -> C starts
+```
+
+and encodes the intended reading:
+```
+A action
+    overlaps B reaction
+              -> C payoff
+```
+
+COMPARE and LOOP keep their existing non-causal reaction semantics.
+
+### Renderer execution
+
+`FFmpegMotionAdapter` now evaluates `MotionCue.segments` directly.
+
+Each semantic segment is evaluated only inside its absolute time window.
+Outside the window the asset returns to identity-relative Composition geometry.
+
+No transform accumulation is allowed between semantic re-activations.
+
+### Backward compatibility issue found and fixed
+
+Initial behavior commit:
+`40105e794cd738072efc91d128218344321ad7f5`
+`[motion] Execute timed semantic relation segments`
+
+Initial CI:
+- Run: `36084620770`
+- Result: **FAILURE**
+- 3 failed / 316 passed / 12 warnings
+
+The failure exposed three legacy contract regressions:
+- Final Package semantic contract still expected the legacy event program to preserve directional intent;
+- `test_motion_executes_choreography_event_steps_not_just_pattern_metadata` expected event-chain program identity;
+- multi-result PAYOFF regression expected the existing result focus scaling contract.
+
+Root cause:
+the first implementation replaced the legacy event program whenever a timed semantic segment timeline
+was present.
+
+Fix:
+`5d4efef06cf15946e7627330ac698e74531c45bd`
+`[motion] Preserve legacy event program beside semantic segments`
+
+The final design deliberately separates:
+- legacy/base program = compatibility + diagnostic semantic program;
+- ENTRY segment program = actual Story-timed entry used by the renderer;
+- later relation segments = actual semantic re-activations.
+
+This preserves old tested contracts without rendering the old interaction before the spoken relation.
+
+CI after fix:
+- Run: `36084770836`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **319 passed, 12 warnings in 7.81s**
+
+### Motion Interaction QA
+
+New:
+`app/qa/motion_semantics.py`
+
+Pipeline diagnostic:
+`diagnostics/motion-interaction-qa.json`
+
+Hard failures include:
+- missing target reaction for causal relations;
+- subject / target relation windows with zero temporal overlap;
+- missing authored result PAYOFF;
+- PAYOFF before the cause;
+- semantic segment crossing a handoff deadline;
+- missing executable keyframes;
+- segment ending away from exact Composition geometry.
+
+This means semantic metadata alone is no longer enough for a relation to pass authoring QA.
+
+### Scene Continuity architecture
+
+Extended existing transition seam instead of adding a duplicate subsystem:
+- `app/render/transition.py`
+- `app/render/renderer.py`
+
+Modes:
+- `NONE`
+- `CLEAN_HANDOFF`
+- `MOTION_HANDOFF`
+- `BLUR_BRIDGE`
+
+Rules:
+- same-scene continuity does not invent an unrelated bridge;
+- cross-scene boundaries with distinct outgoing assets receive controlled outgoing continuity;
+- ordinary cross-scene change -> `MOTION_HANDOFF`;
+- explicit HANDOFF / authored continuation semantics -> `BLUR_BRIDGE`;
+- blur is NOT applied to every transition.
+
+Important rendering contract:
+- unrelated outgoing artwork is never alpha-crossfaded;
+- outgoing artwork remains opaque behind the incoming scene;
+- outgoing assets receive bounded exit/recede motion;
+- blur, when selected, is applied to the old full-scene bridge;
+- incoming assets remain crisp above the bridge;
+- incoming Story timing remains authoritative;
+- after the bridge expires the frame is the clean authored white scene.
+
+The old pale/washed ghost silhouette regression therefore remains prohibited.
+
+Behavior commit:
+`9e5177c144dd1a148efbd7daef22eb43196d2f81`
+`[render] Add semantic scene continuity bridges`
+
+CI:
+- Run: `36085256870`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **320 passed, 12 warnings in 10.22s**
+
+Rendered regression coverage includes:
+- previous scene remains visible across a delayed incoming spoken reveal;
+- incoming artwork does not leak early merely to avoid a white boundary;
+- previous scene exits and incoming scene takes ownership after the handoff;
+- no internal white flash;
+- blur is reserved for authored semantic handoff rather than every scene transition.
+
+### Scene Continuity QA
+
+New:
+`app/qa/scene_continuity.py`
+
+Pipeline diagnostic:
+`diagnostics/scene-continuity-qa.json`
+
+Hard checks:
+- cross-scene boundary with distinct outgoing visuals cannot resolve to no bridge;
+- selected bridge must contain outgoing visual carriers;
+- bridge cannot be pathologically short;
+- BLUR_BRIDGE must actually carry blur;
+- non-blur transitions cannot accidentally receive blur;
+- bridge cannot exceed beat duration;
+- incoming Motion cannot begin before Story's current beat boundary.
+
+Behavior commit:
+`b37f48864098b63e81278ef5b170dbba15c4c9b0`
+`[qa] Gate semantic scene continuity`
+
+CI:
+- Run: `36085400600`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **322 passed, 12 warnings in 9.51s**
+
+### Encoded MP4 semantic Motion QA
+
+New:
+`app/qa/rendered_motion.py`
+
+Pipeline diagnostic:
+`diagnostics/rendered-motion-qa.json`
+
+This QA runs AFTER FFmpeg produces:
+`render/video-only.mp4`
+
+It does not trust timeline metadata alone.
+
+For each non-trivial:
+- INTERACT
+- REACT
+- PAYOFF
+
+the QA:
+1. finds the authored Composition ROI;
+2. calculates the expected transform magnitude from MotionSegment keyframes;
+3. samples the encoded frame before the semantic segment;
+4. samples the encoded frame near the authored motion peak;
+5. measures actual pixel change in the asset ROI;
+6. fails if the timeline expects meaningful movement but the encoded video is effectively static.
+
+This catches:
+```
+metadata says interaction exists
+but FFmpeg output did not actually move the visual
+```
+
+Rendered regression:
+- a real rendered semantic segment passes;
+- a deliberately static MP4 evaluated against the same expected Motion timeline fails with
+  `RENDERED_SEGMENT_INACTIVE`.
+
+Behavior commit:
+`0b8d8a0ae362ea938e973647f332e0fa739a88c1`
+`[qa] Verify semantic motion in encoded video`
+
+Final behavior CI:
+- Run: `36085622202`
+- Result: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Pytest: **324 passed, 12 warnings in 9.38s**
+
+### Final validation layers now present
+
+The pipeline now validates the target behavior at multiple levels:
+
+1. Story timing authority
+2. Final Package semantic relation mapping
+3. Choreography event ownership
+4. Motion multi-segment schedule
+5. source/target relation overlap
+6. result PAYOFF presence
+7. handoff deadline safety
+8. exact Composition settle
+9. scene-continuity transition contract
+10. actual encoded MP4 Motion activity
+11. existing final A/V drift and white-flash recovery checks
+12. existing rendered contact sheet evidence
+
+### Production render acceptance gate
+
+The code and automated QA are now ready for a fresh real production render from `montage`.
+
+The real render must still be visually reviewed against the accepted reference behavior, especially
+`hallo` style continuity. The reference video itself was not accessible as a file in this chat
+session, so this checkpoint must not claim a new frame-by-frame perceptual comparison.
+
+Review the next real render for:
+1. entry never precedes the spoken semantic activation;
+2. already-visible source can reactivate later during relation speech;
+3. source and target visibly overlap in time;
+4. RESULT/PAYOFF reads after the interaction rather than at its beginning;
+5. repeated re-activation produces no wobble or accumulated geometry drift;
+6. scene A does not disappear as an abrupt reset when a cross-scene bridge is required;
+7. outgoing A motion remains readable while incoming B begins;
+8. authored continuation may use blurred old-scene bridge behind crisp incoming artwork;
+9. blur ends and returns to clean authored white Scene B;
+10. no ghost silhouette, white flash, black frame, collision expansion or semantic leakage;
+11. relation character remains distinct (COMPARE != causal CONNECT/BLOCK/REJECT/etc.);
+12. overall sequence reads as connected visual sentences rather than independent icon pop-ins.
+
+### Next operator instructions
+
+1. Pull branch `montage`.
+2. Confirm HEAD is this documentation commit or newer.
+3. Run the normal production batch with the real Final Package + narration.
+4. Do NOT disable:
+   - MotionInteractionQA
+   - SceneContinuityQA
+   - RenderedMotionQA
+   - StorySyncQA
+5. Preserve all diagnostics from the run:
+   - `motion-interaction-qa.json`
+   - `scene-continuity-qa.json`
+   - `rendered-motion-qa.json`
+   - `story-sync-qa.json`
+   - `authoring-visual-qa.json`
+   - `visual-contact-sheet.jpg`
+6. Review the resulting MP4 perceptually against the references before any additional Motion tuning.
+7. If the render fails a QA gate, fix the general contract; do not weaken thresholds or add a
+   package/scene-specific exception.
+
+State:
+**Timed semantic re-activation, source/target overlap enforcement, result payoff, scene continuity,
+optional semantic blur bridge, encoded-video Motion verification and regression coverage are all
+implemented and CI-proven. The remaining gate is the fresh real production render and perceptual
+acceptance against the references.**
