@@ -982,7 +982,8 @@ def test_encode_args_externalizes_large_filter_graph_to_script(tmp_path: Path) -
     )
 
     assert "-filter_complex" not in args
-    script_index = args.index("-filter_complex_script")
+    assert "-filter_complex_script" not in args
+    script_index = args.index("-/filter_complex")
     script_path = Path(args[script_index + 1])
     assert script_path.exists()
     assert script_path.parent == target.parent
@@ -1012,3 +1013,28 @@ def test_renderer_does_not_misreport_windows_command_overflow_as_missing_ffmpeg(
     assert "Windows process limit" in str(caught.value)
     assert caught.value.details["winerror"] == 206
     assert caught.value.details["command_characters"] > 40_000
+
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_filter_complex_file_option_renders_real_mp4(tmp_path: Path) -> None:
+    target = tmp_path / "file-option-real.mp4"
+    filters = ["[0:v]format=yuv420p[vout]"]
+    script_args = FFmpegRenderer._encode_args(filters, target, fps=30, frame_count=3)
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=white:s=160x90:d=0.2",
+        *script_args,
+    ]
+    FFmpegRenderer._run(command, "real filter-file render failed")
+
+    assert target.exists()
+    assert target.stat().st_size > 0
