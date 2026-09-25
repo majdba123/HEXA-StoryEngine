@@ -638,6 +638,7 @@ class MotionPlanner:
             program = cls._event_segment_program(
                 phase=phase,
                 vector=vector,
+                item=item,
                 focus_strength=focus_strength,
                 energy=energy,
                 cohort_gain=cohort_gain,
@@ -658,6 +659,17 @@ class MotionPlanner:
                     handoff_deadline=deadline,
                 )
             )
+
+        exit_segment = cls._exit_segment_before_handoff(
+            cue=cue,
+            assignment=assignment,
+            deadline=deadline,
+            item=item,
+            items_by_id=items_by_id,
+            existing_segments=segments,
+        )
+        if exit_segment is not None:
+            segments.append(exit_segment)
         return cue.model_copy(update={"segments": segments})
 
 
@@ -827,6 +839,7 @@ class MotionPlanner:
         *,
         phase: MotionEventPhase,
         vector: tuple[float, float],
+        item: LayoutItem,
         focus_strength: float,
         energy: float,
         cohort_gain: float,
@@ -835,9 +848,12 @@ class MotionPlanner:
             phase=phase, vector=vector, focus_strength=max(0.0, min(1.0, focus_strength))
         )
         strength = max(0.30, min(1.0, energy)) * max(0.25, min(1.0, cohort_gain))
-        dx = max(-0.06, min(0.06, dx * strength))
-        dy = max(-0.06, min(0.06, dy * strength))
+        dx = max(-0.075, min(0.075, dx * strength))
+        dy = max(-0.075, min(0.075, dy * strength))
         scale = 1.0 + (scale - 1.0) * strength
+        dx, dy, scale = cls._enforce_event_readability(
+            phase=phase, item=item, dx=dx, dy=dy, scale=scale
+        )
         return MotionProgram(
             name=(
                 f"semantic_segment_{phase.stage.value.lower()}_"
@@ -849,6 +865,113 @@ class MotionPlanner:
                 MotionKeyframe(0.48, dx, dy, scale, "ease_out_cubic"),
                 MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
             ),
+        )
+
+
+    @staticmethod
+    def _enforce_event_readability(
+        *,
+        phase: MotionEventPhase,
+        item: LayoutItem,
+        dx: float,
+        dy: float,
+        scale: float,
+    ) -> tuple[float, float, float]:
+        stage_floor = {
+            EventFlowStage.INTERACT: 0.030,
+            EventFlowStage.REACT: 0.026,
+            EventFlowStage.PAYOFF: 0.020,
+        }.get(phase.stage, 0.0)
+        size_floor = min(0.042, min(item.width, item.height) * 0.14)
+        floor = max(stage_floor, size_floor)
+        magnitude = hypot(dx, dy)
+        if floor > 0 and 1e-6 < magnitude < floor:
+            gain = min(2.8, floor / magnitude)
+            dx = max(-0.075, min(0.075, dx * gain))
+            dy = max(-0.075, min(0.075, dy * gain))
+        elif floor > 0 and magnitude <= 1e-6 and phase.stage != EventFlowStage.PAYOFF:
+            dy = -floor
+
+        if phase.stage == EventFlowStage.PAYOFF and abs(scale - 1.0) < 0.075:
+            scale = 1.075 if scale >= 1.0 else 0.925
+        elif phase.stage == EventFlowStage.REACT and abs(scale - 1.0) < 0.045:
+            scale = 1.045
+        return dx, dy, max(0.90, min(1.14, scale))
+
+    @staticmethod
+    def _exit_direction(
+        *,
+        item: LayoutItem,
+        assignment: MotionEventAssignment,
+        items_by_id: dict[str, LayoutItem],
+    ) -> tuple[float, float]:
+        target = next(
+            (
+                items_by_id[asset_id]
+                for asset_id in assignment.handoff_to_asset_ids
+                if asset_id in items_by_id and asset_id != item.asset_id
+            ),
+            None,
+        )
+        if target is not None:
+            dx = item.x - target.x
+            dy = item.y - target.y
+        else:
+            dx = item.x - 0.5
+            dy = item.y - 0.5
+        length = hypot(dx, dy)
+        if length < 1e-5:
+            dx, dy, length = 0.0, -1.0, 1.0
+        magnitude = max(0.042, min(0.068, min(item.width, item.height) * 0.30))
+        return dx / length * magnitude, dy / length * magnitude
+
+    @classmethod
+    def _exit_segment_before_handoff(
+        cls,
+        *,
+        cue: MotionCue,
+        assignment: MotionEventAssignment,
+        deadline: float,
+        item: LayoutItem,
+        items_by_id: dict[str, LayoutItem],
+        existing_segments: list[MotionSegment],
+    ) -> MotionSegment | None:
+        has_handoff = bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
+        if not has_handoff or cue.asset_id in set(assignment.handoff_to_asset_ids):
+            return None
+
+        end = float(deadline)
+        latest = max((float(segment.end) for segment in existing_segments), default=float(cue.end))
+        start = max(latest, end - 0.28, float(cue.start))
+        if end - start < 0.10:
+            return None
+
+        dx, dy = cls._exit_direction(
+            item=item,
+            assignment=assignment,
+            items_by_id=items_by_id,
+        )
+        program = MotionProgram(
+            name="semantic_release_exit",
+            settle_progress=1.0,
+            keyframes=(
+                MotionKeyframe(0.0, 0.0, 0.0, 1.0, "ease_in_out_cubic"),
+                MotionKeyframe(0.60, dx * 0.62, dy * 0.62, 0.985, "ease_in_out_cubic"),
+                MotionKeyframe(1.0, dx, dy, 0.955, "ease_in_cubic"),
+            ),
+        )
+        return MotionSegment(
+            phase="EXIT",
+            start=start,
+            end=end,
+            program=program.to_payload(),
+            semantic_event_id=assignment.event_id,
+            semantic_action="RELEASE",
+            relationship=assignment.relationship,
+            involvement="OUTGOING",
+            source_asset_id=cue.asset_id,
+            target_asset_id=assignment.handoff_to_asset_id,
+            handoff_deadline=deadline,
         )
 
     @staticmethod
