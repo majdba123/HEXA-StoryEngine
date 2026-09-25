@@ -229,7 +229,24 @@ class MotionInteractionQA:
             )
         except (TypeError, ValueError):
             exact = False
-        if not exact:
+        if segment.phase == "EXIT":
+            try:
+                exit_activity = max(
+                    abs(float(final.get("dx", 0.0))),
+                    abs(float(final.get("dy", 0.0))),
+                    abs(float(final.get("scale", 1.0)) - 1.0),
+                )
+            except (TypeError, ValueError):
+                exit_activity = 0.0
+            if exit_activity < 0.035:
+                violations.append(MotionInteractionViolation(
+                    code="EXIT_NOT_READABLE",
+                    beat_id=cue.beat_id,
+                    asset_id=cue.asset_id,
+                    event_id=segment.semantic_event_id,
+                    detail="EXIT does not travel far enough to read before disappearance",
+                ))
+        elif not exact:
             violations.append(MotionInteractionViolation(
                 code="SEGMENT_GEOMETRY_DRIFT",
                 beat_id=cue.beat_id,
