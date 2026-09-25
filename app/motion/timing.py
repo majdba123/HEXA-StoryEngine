@@ -45,6 +45,38 @@ def max_comfort_displacement(phase: str, duration: float) -> float:
     return max(0.0, float(duration)) * profile.max_normalized_speed
 
 
+def semantic_readability_floor(
+    phase: str,
+    *,
+    item_width: float,
+    item_height: float,
+    duration: float,
+) -> float:
+    """Canonical semantic-motion readability floor in Composition space.
+
+    Planner and QA must share this contract. Pixel projection is renderer evidence,
+    not a second motion-authoring rule, otherwise 16:9 vertical/diagonal gestures can
+    be judged against an unreachable width-derived floor.
+    """
+    stage_floor = {
+        "INTERACT": 0.030,
+        "REACT": 0.026,
+        "PAYOFF": 0.020,
+    }.get(str(phase).upper(), 0.0)
+    if stage_floor <= 0.0:
+        return 0.0
+
+    size_floor = min(0.042, min(float(item_width), float(item_height)) * 0.14)
+    readable = max(stage_floor, size_floor) * comfort_gain(phase, duration)
+    comfort_budget = max_comfort_displacement(
+        phase,
+        max(0.0, float(duration)) * GOLDEN_MINOR,
+    )
+    if comfort_budget > 0.0:
+        readable = min(readable, comfort_budget)
+    return max(0.0, readable)
+
+
 if TYPE_CHECKING:
     from app.story.windows import StoryAssetActivation
 
