@@ -5842,3 +5842,264 @@ State:
 optional semantic blur bridge, encoded-video Motion verification and regression coverage are all
 implemented and CI-proven. The remaining gate is the fresh real production render and perceptual
 acceptance against the references.**
+
+
+## MONTAGE20 POST-CHECKPOINT FINAL PACKAGE CONSUMPTION + RENDER SAFETY AUDIT — 2026-09-25
+
+This audit was performed after the timed Motion / Scene Continuity checkpoint because the operator
+explicitly requested a code-level review before running the next production render.
+
+Behavior HEAD entering the audit:
+`772072a98150c424584efcfae0da43f9a9a53624`
+
+Important limitation:
+the exact real Black-Hat / Gray-Hat V1.2 ZIP bytes were not accessible as a conversation/library file
+in this chat session. Therefore this audit proves the generic V1.2 code path and actual encoded FFmpeg
+runtime with a synthetic rich V1.2 package, but it does not claim that the operator's exact ZIP has
+already been executed in this session. The next real production run remains the package-specific gate.
+
+### Final Package consumption audit
+
+The code path was traced live from loader through encoded output.
+
+Confirmed behavior-driving fields:
+
+- canonical `script_text` / `script_span`:
+  validated by FinalPackageLoader and converted by Story onto forced-aligned narration timing.
+- `visual_locator`:
+  consumed by Story activation identity binding; explicit locator evidence can map one semantic intent
+  to one or multiple real cutouts without falling back to unsafe size/order guessing.
+- `binding_type`:
+  controls explicit vs semantic activation policy; ambiguous bindings abstain.
+- `semantic_group_id` + group `animation_policy`:
+  preserved into AssetActivation and Motion grouping/stagger behavior.
+- `sequence_order`:
+  authoritative Motion ordering before layout/extraction fallback.
+- `semantic_role` / `visual_focus`:
+  drives Story roles, attention hierarchy, Choreography focus and Motion attention budget.
+- `visual_state.before/after`:
+  compiled into authored VisualStateTransition rows before inferred state transitions.
+- asset `continuity`:
+  preserved in Story and now consumed as semantic evidence for scene-handoff mode selection only.
+  It never owns destination geometry.
+- `semantic_event_id`, event `sequence_order`, leader/participant/context/result/text-anchor roles:
+  drive event-flow ownership, focus path, result PAYOFF, text anchoring and Motion event assignment.
+- `depends_on_event_ids`:
+  drives dependency handoff and is now also honored by MotionInteractionQA for result PAYOFF events.
+- `compound_visual_classification` + `internal_progression_unavailable`:
+  prevent fake per-piece choreography for compound semantic units.
+- asset relations:
+  source/object/result + relation type + authored relation script span drive InteractionIntent,
+  relation-specific Motion and timed multi-segment reactivation.
+- scene `relation_to_previous` and semantic continuity:
+  select scene transition class without changing Composition geometry.
+- semantic event progression:
+  consumed by event-flow order / dependency logic and now hard-gated against downstream loss.
+- text-anchor metadata:
+  beats generic beat-primary fallback when selecting which visual owns a text relationship.
+
+Validation-only / descriptive fields remain validation/evidence rather than independent Motion
+instructions where that is semantically correct. For example, anchor granularity constrains/validates
+the authored text span; it does not invent a second timing authority.
+
+### Loader / package rejection coverage
+
+FinalPackageLoader rejects malformed V1.2 contracts before expensive work, including:
+- bad/missing scene or semantic-binding files;
+- semantic asset intent missing from scene plan;
+- invalid or mismatched canonical script spans;
+- invalid semantic-group coverage;
+- broken relation references;
+- invalid relation source/object/result references;
+- invalid semantic event membership;
+- invalid event dependencies / cycles;
+- progression/event-order mismatch;
+- top-level semantic event mirror mismatch;
+- unsafe package paths / missing scene images.
+
+The V1.2 contract remains:
+`cutout_mapping_cardinality = ZERO_OR_ONE_OR_MANY`.
+
+Therefore an authored semantic intent is not automatically required to produce its own independent
+cutout. This is intentional. A missing independent cutout is not converted into a broad Pass3 or a
+false hard failure. Explicit executable relations/results are instead protected by downstream event,
+interaction, asset-binding and encoded Motion QA.
+
+### Audit finding 1 — half-open relation script span
+
+Found:
+FinalPackageLoader validates semantic-binding script spans as half-open `[start,end)`, while the
+legacy Story timing helper accepts an inclusive end. New relation timing initially passed the
+half-open end directly.
+
+Risk:
+relation timing could extend by one character / into the following narration token. This was primarily
+a semantic timing precision bug, not a typical renderer crash, but it could weaken choreography sync.
+
+Fix:
+`daca47f057797290ece31e8eaf3c5d6c15a02716`
+`[story] Honor half-open relation script spans`
+
+The relation boundary alone now converts `end -> end - 1` before using the legacy helper. Legacy
+scene timing contracts were not changed.
+
+CI:
+- Run `36086305135`
+- SUCCESS
+- Compile SUCCESS
+- Ruff SUCCESS
+- Pytest **324 passed, 12 warnings in 9.72s**
+
+### Audit finding 2 — V1.2 event / asset-relation coverage gate
+
+Found:
+StorytellingValidator's generic relationship coverage still counted only the older
+`FINAL_PACKAGE_INTERACTION_TARGET` authority. V1.2 `FINAL_PACKAGE_ASSET_RELATION` was executed by
+Choreography/Motion, but a theoretical downstream drop was not covered by that specific hard gate.
+Semantic-event package-vs-Choreography coverage was also not an explicit hard set comparison.
+
+Fix:
+`5fad6bed8d99c5edb50044a55a8b7b45eb70729c`
+`[qa] Gate Final Package event and asset-relation coverage`
+
+Now:
+- relationship coverage counts old and V1.2 asset-relation authorities;
+- authored V1.2 semantic events are compared with represented Choreography event flows;
+- missing semantic events produce `FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE` hard failure before render;
+- V1.2 regression asserts full relation + 2/2 event representation.
+
+CI:
+- Run `36086548914`
+- SUCCESS
+- Compile SUCCESS
+- Ruff SUCCESS
+- Pytest **324 passed, 12 warnings in 10.55s**
+
+### Audit finding 3 — delayed incoming reveal could overextend blur
+
+Found:
+the first Scene Continuity implementation extended the outgoing bridge to cover a delayed incoming
+Story cue. For a long narration gap, this could make the previous scene remain blurred much longer
+than the intended reference-style transition.
+
+This was not a crash bug, but it violated the desired visual grammar:
+`A crisp -> short outgoing/blur bridge -> B crisp -> clean settle`.
+
+Fix:
+`2400b35367f976d170220258d518f594d29269bd`
+`[render] Bound semantic blur bridge around incoming reveal`
+
+New behavior:
+- old scene remains crisp across a narration gap;
+- bridge begins shortly before the first Story-owned incoming reveal;
+- bridge duration remains bounded by transition policy;
+- outgoing Motion occurs only during the bridge;
+- BLUR_BRIDGE blurs only the short bridge interval;
+- B remains crisp;
+- bridge ends shortly after incoming ownership begins;
+- `CONTINUES_EXPLANATION`-style scene relations are recognized by semantic continuity matching;
+- asset-level `PERSIST / TRANSFORM_TO` continuity can select a semantic bridge but never controls
+  position/size.
+
+CI:
+- Run `36086810367`
+- SUCCESS
+- Compile SUCCESS
+- Ruff SUCCESS
+- Pytest **326 passed, 12 warnings in 10.33s**
+
+### Audit finding 4 — end-to-end V1.2 test exposed result-event QA mismatch
+
+A new end-to-end regression was added:
+`[test] Render V1.2 semantic package end to end`
+commit:
+`2b56b73f504ca02d92ceded74d83eb17785d41bd`
+
+The test executes:
+```
+FinalPackageLoader
+-> StoryPlanner
+-> ChoreographyDirector
+-> MotionPlanner
+-> MotionInteractionQA
+-> RenderPlan
+-> real FFmpegRenderer / H.264 MP4
+-> RenderedMotionQA
+```
+
+First run:
+- CI `36086926919`
+- FAILURE
+- **1 failed, 326 passed, 12 warnings**
+
+The failure was useful and correct to investigate:
+the relation lived in event `E1`, while its authored result `C` lived in event `E2`, with
+`E2 depends_on E1`. Motion correctly created C's PAYOFF in E2. MotionInteractionQA incorrectly
+required the result PAYOFF to duplicate E1.
+
+Fix:
+`573e8b2c84e7d43b4f0d40c73a736cdf7654a310`
+`[qa] Follow dependent events for result payoff`
+
+QA now accepts a result PAYOFF in:
+- the relation event itself; or
+- the result asset's authored semantic event when that event explicitly depends on the relation event.
+
+It does NOT accept arbitrary later events. The dependency must come from Story/Final Package.
+
+Final V1.2 end-to-end CI:
+- Run `36087049362`
+- SUCCESS
+- Compile SUCCESS
+- Ruff SUCCESS
+- Pytest **327 passed, 12 warnings in 7.41s**
+
+This proves the synthetic rich V1.2 semantic package survives through a real encoded MP4 and encoded
+Motion verification.
+
+### Render/runtime risk assessment after audit
+
+Code-level crash risk is now guarded by:
+1. strict package/schema/script-span validation;
+2. semantic-intent-to-cutout binding and locator evidence;
+3. Story timing / StorySync;
+4. full V1.2 semantic-event coverage gate;
+5. old + V1.2 relation coverage gate;
+6. Choreography asset requirements / diagnostics;
+7. AssetUsageValidator for independently animatable runtime cutouts;
+8. MotionInteractionQA for overlap / dependent PAYOFF / settle / handoff;
+9. SceneContinuityQA;
+10. real FFmpeg transition regressions;
+11. real V1.2 semantic-package-to-MP4 regression;
+12. RenderedMotionQA on encoded frames;
+13. release smoke test through H.264 render + AAC mux;
+14. RecoveryDetector A/V drift and white-flash checks;
+15. rendered contact-sheet evidence.
+
+No code review can honestly guarantee that an unseen real ZIP and a different local machine will
+never produce an environment/package-specific error. The exact package-specific guarantee requires
+running that exact package. The current code now fails early with a diagnostic for known contract
+violations rather than silently producing a wrong semantic render.
+
+### Required next production gate
+
+Pull the final `montage` HEAD after this audit documentation commit and run the real Final Package
+with its narration.
+
+If it completes, retain:
+- `motion-interaction-qa.json`
+- `scene-continuity-qa.json`
+- `rendered-motion-qa.json`
+- `story-sync-qa.json`
+- `storytelling-authoring.json`
+- `authoring-visual-qa.json`
+- `visual-contact-sheet.jpg`
+
+Then review the actual MP4 against the references. At this point any remaining work should be driven
+by the real perceptual result, not by another speculative architecture rewrite.
+
+State:
+**The V1.2 Final Package contract is now consumed and hard-gated across Loader, Story, Choreography,
+Motion, Scene Continuity and encoded-video QA. A synthetic rich V1.2 package completes a real FFmpeg
+render in CI. The remaining unknown is only the operator's exact unseen production ZIP/environment,
+which must be validated by the next real render.**
