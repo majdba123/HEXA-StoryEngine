@@ -465,3 +465,80 @@ def test_compound_required_multi_cutout_executes_one_coherent_unit_motion() -> N
         cue.params["semantic_focus"]["event_flow_execution"] == "COMPOUND_UNIT_LOCK"
         for cue in cues
     )
+
+
+
+def test_cross_event_relation_phase_executes_without_stealing_story_event_owner() -> None:
+    beat, composition, choreography = _fixture()
+    directive = choreography.directives[0]
+    e1, e2 = directive.event_flows
+    cross_interact = EventFlowStep(
+        EventFlowStage.INTERACT,
+        focus_asset_id="a",
+        participant_asset_ids=("a", "c"),
+        source_asset_id="a",
+        target_asset_id="c",
+        relationship="ENABLES",
+        semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        spoken_start=0.78,
+        spoken_end=1.10,
+    )
+    cross_react = EventFlowStep(
+        EventFlowStage.REACT,
+        focus_asset_id="c",
+        participant_asset_ids=("a", "c"),
+        source_asset_id="a",
+        target_asset_id="c",
+        relationship="ENABLES",
+        semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        spoken_start=0.78,
+        spoken_end=1.10,
+    )
+    e2_cross = replace(
+        e2,
+        stages=(
+            EventFlowStage.ESTABLISH,
+            EventFlowStage.INTERACT,
+            EventFlowStage.REACT,
+            EventFlowStage.PAYOFF,
+            EventFlowStage.RELEASE,
+        ),
+        steps=(
+            e2.steps[0],
+            cross_interact,
+            cross_react,
+            e2.steps[1],
+            e2.steps[2],
+        ),
+    )
+    choreography = ChoreographyPlan(
+        directives=(replace(directive, event_flows=(e1, e2_cross)),)
+    )
+
+    cues = {cue.asset_id: cue for cue in MotionPlanner().plan(
+        [beat], [composition], choreography
+    )}
+
+    # Asset A still owns E1 for its entry/dominant event metadata.
+    assert cues["a"].params["semantic_focus"]["event_flow"]["event_id"] == "E1"
+    # But the explicitly authored E2 relation is preserved as an independent segment.
+    cross_source = [
+        segment for segment in cues["a"].segments
+        if segment.phase == "INTERACT"
+        and segment.semantic_event_id == "E2"
+        and segment.relationship == "ENABLES"
+    ]
+    cross_target = [
+        segment for segment in cues["c"].segments
+        if segment.phase == "REACT"
+        and segment.semantic_event_id == "E2"
+        and segment.relationship == "ENABLES"
+    ]
+    assert len(cross_source) == 1
+    assert len(cross_target) == 1
+    assert cross_target[0].start >= cues["c"].start
+    assert min(cross_source[0].end, cross_target[0].end) > max(
+        cross_source[0].start, cross_target[0].start
+    )
