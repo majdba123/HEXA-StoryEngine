@@ -728,9 +728,8 @@ def test_transition_policy_blurs_only_authored_handoff_not_every_scene_change() 
     authored_decision = policy.decide(
         previous, previous_layout, current_layout, current_beat=authored
     )
-    assert authored_decision.mode == SceneTransitionMode.BLUR_BRIDGE
-    assert authored_decision.blur_sigma > 0
-    assert authored_decision.bridge_duration >= 0.30
+    assert authored_decision.mode == SceneTransitionMode.MOTION_HANDOFF
+    assert authored_decision.blur_sigma == 0.0
 
 
 def test_blur_bridge_window_stays_short_around_delayed_incoming_reveal() -> None:
@@ -746,7 +745,7 @@ def test_blur_bridge_window_stays_short_around_delayed_incoming_reveal() -> None
     assert start > 0.9  # the preceding narration gap remains crisp, not blurred
 
 
-def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics() -> None:
+def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics_without_global_blur() -> None:
     policy = VisualTransitionPolicy()
     previous = StoryBeat(
         id="old-beat", scene_id="old-scene", start=0.0, end=1.0,
@@ -770,7 +769,7 @@ def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics()
     )
     assert policy.decide(
         previous, old_layout, new_layout, current_beat=scene_continuation
-    ).mode == SceneTransitionMode.BLUR_BRIDGE
+    ).mode == SceneTransitionMode.MOTION_HANDOFF
 
     asset_continuation = scene_continuation.model_copy(update={
         "semantic_context": StorySemanticContext(
@@ -779,4 +778,44 @@ def test_transition_policy_consumes_scene_and_asset_level_continuity_semantics()
     })
     assert policy.decide(
         previous, old_layout, new_layout, current_beat=asset_continuation
-    ).mode == SceneTransitionMode.BLUR_BRIDGE
+    ).mode == SceneTransitionMode.OBJECT_HANDOFF
+
+
+def test_transition_policy_requires_explicit_blur_style() -> None:
+    policy = VisualTransitionPolicy()
+    previous = StoryBeat(
+        id="old", scene_id="scene-old", start=0.0, end=1.0,
+        narration="old", primary_asset_ids=["a"], action="INTRODUCE",
+    )
+    current = StoryBeat(
+        id="new", scene_id="scene-new", start=1.0, end=2.2,
+        narration="new", primary_asset_ids=["b"], action="HANDOFF",
+        semantic_context=StorySemanticContext(
+            continuity_relation="CONTINUES_EXPLANATION",
+            scene_metadata={"transition_style": "soft_blur_bridge"},
+        ),
+    )
+    old_layout = CompositionBeat(
+        beat_id="old",
+        items=[LayoutItem(asset_id="a", x=0.3, y=0.5, width=0.3, height=0.4)],
+    )
+    new_layout = CompositionBeat(
+        beat_id="new",
+        items=[LayoutItem(asset_id="b", x=0.7, y=0.5, width=0.3, height=0.4)],
+    )
+    decision = policy.decide(previous, old_layout, new_layout, current_beat=current)
+    assert decision.mode == SceneTransitionMode.BLUR_BRIDGE
+    assert 0 < decision.blur_sigma <= 6.0
+
+
+def test_bridge_exit_offset_is_perceptually_readable_at_1080p() -> None:
+    plan = RenderPlan(
+        width=1920, height=1080, fps=30, duration=1.0,
+        story=[], composition=[], motion=[], assets=[],
+    )
+    left = LayoutItem(asset_id="left", x=0.25, y=0.45, width=0.2, height=0.3)
+    dx, dy = FFmpegRenderer._bridge_exit_offset(
+        plan=plan, item=left, mode=SceneTransitionMode.MOTION_HANDOFF,
+    )
+    assert dx <= -90
+    assert abs(dy) >= 30

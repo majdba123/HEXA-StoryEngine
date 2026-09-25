@@ -9,6 +9,7 @@ from app.models import CompositionBeat, StoryBeat
 class SceneTransitionMode(StrEnum):
     NONE = "NONE"
     CLEAN_HANDOFF = "CLEAN_HANDOFF"
+    OBJECT_HANDOFF = "OBJECT_HANDOFF"
     MOTION_HANDOFF = "MOTION_HANDOFF"
     BLUR_BRIDGE = "BLUR_BRIDGE"
 
@@ -32,36 +33,37 @@ class VisualTransitionPolicy:
     pale ghost silhouettes that motivated the original no-carry policy.
     """
 
-    _BLUR_CONTINUITY_TOKENS = (
-        "CONTINU",
-        "HANDOFF",
-        "CAUSE_EFFECT",
-        "PAYOFF",
-        "RESULT",
-    )
+    _EXPLICIT_BLUR_TOKENS = ("BLUR", "SOFT", "DEFOCUS", "DEPTH_BRIDGE")
 
     @classmethod
-    def _has_authored_blur_continuity(cls, beat: StoryBeat) -> bool:
+    def _has_explicit_blur_intent(cls, beat: StoryBeat) -> bool:
+        """Blur is an authored render style, never a synonym for continuity."""
         context = beat.semantic_context
-        continuity = (
-            str(context.continuity_relation or "").strip().upper()
-            if context is not None
-            else ""
-        )
-        if any(token in continuity for token in cls._BLUR_CONTINUITY_TOKENS):
-            return True
+        if context is None:
+            return False
 
-        # Asset-level Final Package continuity is semantic intent, not a geometry
-        # instruction. It may justify a visual bridge, but Composition remains the
-        # only authority for where either scene finally lives.
-        if context is not None:
-            for spec in context.continuity_by_unit.values():
-                if not isinstance(spec, dict):
-                    continue
-                mode = str(spec.get("mode") or "").strip().upper()
-                if mode in {"PERSIST", "TRANSFORM_TO"}:
-                    return True
-        return False
+        candidates = [str(context.continuity_relation or "")]
+        for metadata in (context.scene_metadata, context.event_metadata):
+            for key in ("transition", "transition_style", "handoff_style", "bridge_style"):
+                value = metadata.get(key)
+                if value is not None:
+                    candidates.append(str(value))
+        return any(
+            token in candidate.strip().upper()
+            for candidate in candidates
+            for token in cls._EXPLICIT_BLUR_TOKENS
+        )
+
+    @staticmethod
+    def _has_object_continuity(beat: StoryBeat) -> bool:
+        context = beat.semantic_context
+        if context is None:
+            return False
+        return any(
+            isinstance(spec, dict)
+            and str(spec.get("mode") or "").strip().upper() in {"PERSIST", "TRANSFORM_TO"}
+            for spec in context.continuity_by_unit.values()
+        )
 
     def decide(
         self,
@@ -107,22 +109,26 @@ class VisualTransitionPolicy:
                 reason="no_distinct_outgoing_assets",
             )
 
-        action = str(current_beat.action or "").upper()
-        explicit_blur = (
-            action == "HANDOFF"
-            or self._has_authored_blur_continuity(current_beat)
-        )
-
         beat_duration = max(0.0, float(current_beat.end) - float(current_beat.start))
-        if explicit_blur:
+        if self._has_object_continuity(current_beat):
+            bridge_duration = min(0.42, max(0.26, beat_duration * 0.18))
+            return VisualTransitionDecision(
+                persistent_asset_ids=persistent,
+                carry_outgoing_asset_ids=outgoing,
+                mode=SceneTransitionMode.OBJECT_HANDOFF,
+                bridge_duration=bridge_duration,
+                reason="authored_object_continuity",
+            )
+
+        if self._has_explicit_blur_intent(current_beat):
             bridge_duration = min(0.48, max(0.30, beat_duration * 0.22))
             return VisualTransitionDecision(
                 persistent_asset_ids=persistent,
                 carry_outgoing_asset_ids=outgoing,
                 mode=SceneTransitionMode.BLUR_BRIDGE,
                 bridge_duration=bridge_duration,
-                blur_sigma=7.5,
-                reason="authored_continuation",
+                blur_sigma=5.5,
+                reason="explicit_blur_intent",
             )
 
         bridge_duration = min(0.40, max(0.24, beat_duration * 0.16))

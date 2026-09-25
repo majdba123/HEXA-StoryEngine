@@ -173,6 +173,7 @@ class FFmpegRenderer:
         bridge_start = 0.0
         bridge_end = 0.0
         if outgoing_items and transition.mode in {
+            SceneTransitionMode.OBJECT_HANDOFF,
             SceneTransitionMode.MOTION_HANDOFF,
             SceneTransitionMode.BLUR_BRIDGE,
         }:
@@ -241,8 +242,11 @@ class FFmpegRenderer:
                     f"loop=loop=-1:size=1:start=0,trim=duration={bridge_end:.6f},"
                     f"setpts=PTS-STARTPTS[{source_label}]"
                 )
-                horizontal = -34 if item.x < 0.46 else 34 if item.x > 0.54 else 0
-                vertical = -10 if item.y <= 0.5 else 10
+                horizontal, vertical = self._bridge_exit_offset(
+                    plan=plan,
+                    item=item,
+                    mode=transition.mode,
+                )
                 progress_expr = (
                     f"if(lt(t,{bridge_start:.6f}),0,"
                     f"(t-{bridge_start:.6f})/{max(bridge_duration, 0.05):.6f})"
@@ -394,6 +398,30 @@ class FFmpegRenderer:
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
 
+
+
+    @staticmethod
+    def _bridge_exit_offset(*, plan: RenderPlan, item, mode: SceneTransitionMode) -> tuple[int, int]:
+        """Give outgoing artwork a readable directional exit before scene replacement."""
+        if mode == SceneTransitionMode.BLUR_BRIDGE:
+            horizontal_ratio, vertical_ratio = 0.030, 0.020
+        elif mode == SceneTransitionMode.OBJECT_HANDOFF:
+            horizontal_ratio, vertical_ratio = 0.040, 0.026
+        else:
+            horizontal_ratio, vertical_ratio = 0.050, 0.032
+
+        horizontal = max(48, min(120, round(plan.width * horizontal_ratio)))
+        vertical = max(18, min(64, round(plan.height * vertical_ratio)))
+        if item.x < 0.44:
+            dx = -horizontal
+        elif item.x > 0.56:
+            dx = horizontal
+        else:
+            # Central visuals clear vertically so the incoming focal element can own
+            # the centre rather than inheriting a tiny near-zero horizontal nudge.
+            dx = 0
+        dy = -vertical if item.y <= 0.5 else vertical
+        return dx, dy
 
     @staticmethod
     def _scene_bridge_window(
