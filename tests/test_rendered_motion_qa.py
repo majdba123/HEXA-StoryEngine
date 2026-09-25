@@ -15,7 +15,7 @@ from app.models import (
     StoryBeat,
     VisualAsset,
 )
-from app.motion.timing import GOLDEN_MAJOR
+from app.motion.timing import GOLDEN_MAJOR, GOLDEN_MINOR, max_comfort_displacement
 from app.qa import RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
 
@@ -202,3 +202,21 @@ def test_rendered_motion_qa_rejects_rushed_motion_even_when_visible(tmp_path: Pa
     report = RenderedMotionQA().inspect(video=video, plan=plan)
     assert not report.ok
     assert any(row.code == "MOTION_TOO_FAST" for row in report.violations)
+
+
+def test_short_react_readability_floor_never_requires_rushed_motion() -> None:
+    duration = 0.19
+    width = 640
+    floor = RenderedMotionQA._perceptual_floor_px(
+        phase="REACT",
+        width=width,
+        height=360,
+        item_width=0.18,
+        item_height=0.28,
+        duration=duration,
+    )
+    comfort_budget = width * max_comfort_displacement(
+        "REACT",
+        duration * GOLDEN_MINOR,
+    )
+    assert floor <= comfort_budget + 1e-9
