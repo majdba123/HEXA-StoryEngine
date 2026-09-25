@@ -9,6 +9,11 @@ from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
+from app.motion.rhythm import (
+    MIN_FOCUS_OVERLAP_SECONDS,
+    ReferenceRhythmPolicy,
+    focus_progression_key,
+)
 from app.motion.semantic_primitives import SemanticMotionPrimitiveLibrary
 from app.motion.style import MotionStyleDirector
 from app.motion.timing import (
@@ -38,6 +43,7 @@ class MotionPlanner:
         self.ordering = MotionOrderResolver()
         self.compiler = MotionCompiler()
         self.event_flow = MotionEventFlowResolver()
+        self.rhythm = ReferenceRhythmPolicy()
 
     def plan(
         self,
@@ -52,6 +58,7 @@ class MotionPlanner:
         previous_pace_tier: str | None = None
         last_attention_reset = 0.0
         previous_layout: CompositionBeat | None = None
+        rhythm_by_beat = self.rhythm.plan(beats, choreography, self.timing)
 
         for beat_index, beat in enumerate(beats):
             beat_cue_start = len(cues)
@@ -112,11 +119,8 @@ class MotionPlanner:
                     ))
                 continue
 
-            pace_tier = self.timing.pace_tier_for_beat(
-                beat,
-                choreography_action=directive.action if directive else None,
-                pacing_bias=directive.pacing_bias if directive else 1.0,
-            )
+            rhythm = rhythm_by_beat[beat.id]
+            pace_tier = rhythm.pace_tier
 
             if directive is not None:
                 pattern = directive.pattern
@@ -316,14 +320,28 @@ class MotionPlanner:
                         for row in directive.state_transitions
                     )
                 )
-                explicit_event_timeline = bool(
+                explicit_semantic_timeline = bool(
                     assignment is not None
-                    and self._has_explicit_event_timeline(
+                    and self._has_explicit_semantic_timeline(
                         assignment, activation, beat=beat
                     )
                 )
+                explicit_event_timeline = bool(
+                    assignment is not None
+                    and (
+                        explicit_semantic_timeline
+                        or assignment.handoff_to_event_ids
+                        or assignment.handoff_to_event_id
+                    )
+                )
                 if not family_secondary and not compound_unit_locked:
-                    if assignment is not None:
+                    if assignment is not None and not explicit_semantic_timeline:
+                        # Fallback-only event flow may express its dominant semantic phase
+                        # inside the entry program. Once Story/Final Package provide an
+                        # executable event timeline, ENTRY must remain one clean arrival and
+                        # INTERACT/REACT/PAYOFF execute exactly once as explicit segments.
+                        # Duplicating the same semantic action in both layers creates the
+                        # reference-mismatch pattern of micro-accent -> accent -> accent.
                         has_story_window, event_story_window = story_activation_window(activation, beat)
                         active_seconds = (
                             max(0.0, event_story_window.settle_at - event_story_window.reveal_start)
@@ -341,7 +359,7 @@ class MotionPlanner:
                             energy=intensity,
                             cohort_gain=cohort_gain,
                         )
-                    else:
+                    elif assignment is None:
                         program = self._apply_choreography_pattern(
                             program,
                             pattern=pattern,
@@ -387,6 +405,18 @@ class MotionPlanner:
                     visual_unit_index=slot.internal_index,
                     visual_unit_count=slot.internal_count,
                 )
+                if not family_secondary and not compound_unit_locked:
+                    # Base ENTRY programs used to bypass the same comfort-speed cap
+                    # already applied to explicit ENTRY segments. On dense/fast beats
+                    # this creates the exact perceptual failure seen in reference A/B:
+                    # a valid semantic reveal that arrives as a rushed visual snap.
+                    # Scale only downward; do not boost quiet/support motion or alter
+                    # Story timing, focus hierarchy, or final Composition geometry.
+                    program = self._cap_base_entry_comfort(
+                        program,
+                        duration=window.duration,
+                        item=item,
+                    )
                 cues.append(
                     self.compiler.compile(
                         beat=beat,
@@ -413,6 +443,7 @@ class MotionPlanner:
                             ),
                             "attention_decay": "static_hold",
                             "handoff_residual_strength": 0.40,
+                            "rhythm": rhythm.to_payload(),
                             "visual_focus": (
                                 str(activation.visual_focus).upper()
                                 if activation is not None and activation.visual_focus
@@ -438,7 +469,11 @@ class MotionPlanner:
                             "event_flow_execution": (
                                 "COMPOUND_UNIT_LOCK"
                                 if compound_unit_locked
-                                else "EXECUTED" if assignment is not None else "NONE"
+                                else (
+                                    "EXPLICIT_TIMELINE"
+                                    if assignment is not None and explicit_semantic_timeline
+                                    else "ENTRY_FALLBACK" if assignment is not None else "NONE"
+                                )
                             ),
                             "compound_visual_classification": (
                                 activation.compound_visual_classification
@@ -530,6 +565,7 @@ class MotionPlanner:
                                 "event_focus_path_asset_ids": list(
                                     directive.event_focus_path_asset_ids
                                 ),
+                                "rhythm": rhythm.to_payload(),
                                 "event_flow_assignment": (
                                     assignment.to_payload() if assignment is not None else None
                                 ),
@@ -563,12 +599,17 @@ class MotionPlanner:
         return cues
 
     @staticmethod
-    def _has_explicit_event_timeline(
+    def _has_explicit_semantic_timeline(
         assignment: MotionEventAssignment,
         activation: AssetActivation | None,
         *,
         beat: StoryBeat,
     ) -> bool:
+        """Return whether semantic accents execute as standalone MotionSegments.
+
+        Handoff-only assignments still need timeline attachment for EXIT, but they do
+        not justify removing ESTABLISH/ADD emphasis from the entry program.
+        """
         for phase in assignment.phase_chain:
             if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
                 if (
@@ -584,7 +625,21 @@ class MotionPlanner:
                 or (activation is not None and activation.spoken_start is not None)
             ):
                 return True
-        return bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
+        return False
+
+    @staticmethod
+    def _has_explicit_event_timeline(
+        assignment: MotionEventAssignment,
+        activation: AssetActivation | None,
+        *,
+        beat: StoryBeat,
+    ) -> bool:
+        return (
+            MotionPlanner._has_explicit_semantic_timeline(
+                assignment, activation, beat=beat
+            )
+            or bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
+        )
 
     @classmethod
     def _attach_event_timeline(
@@ -908,6 +963,37 @@ class MotionPlanner:
         )
 
     @staticmethod
+    def _cap_base_entry_comfort(
+        program: MotionProgram,
+        *,
+        duration: float,
+        item: LayoutItem | None,
+    ) -> MotionProgram:
+        """Cap base ENTRY velocity without changing authored attention strength.
+
+        Explicit event-timeline ENTRY segments already pass through
+        ``_ensure_readable_entry``. Standard/fallback cues render ``params.program``
+        directly and historically skipped that speed contract. This helper closes the
+        gap while preserving intentional cohort attenuation: it may only reduce motion.
+        """
+        asset_extent = max(
+            1e-6,
+            min(item.width, item.height) if item is not None else 0.18,
+        )
+        frames = MotionPlanner._cap_entry_leg_speed(
+            program.keyframes,
+            duration=max(1e-6, float(duration)),
+            asset_extent=asset_extent,
+        )
+        if frames == program.keyframes:
+            return program
+        return MotionProgram(
+            name=program.name,
+            keyframes=frames,
+            settle_progress=program.settle_progress,
+        )
+
+    @staticmethod
     def _cap_entry_leg_speed(
         frames: tuple[MotionKeyframe, ...],
         *,
@@ -918,24 +1004,33 @@ class MotionPlanner:
         if len(frames) < 2 or duration <= 1e-6:
             return frames
         speed_limit = motion_comfort("ENTRY").max_normalized_speed
-        peak_speed = 0.0
+        translation_speed = 0.0
+        scale_speed = 0.0
         for left, right in zip(frames, frames[1:]):
             seconds = max(1e-6, (right.progress - left.progress) * duration)
             translation = hypot(right.dx - left.dx, right.dy - left.dy)
             scale_motion = abs(right.scale - left.scale) * asset_extent
-            peak_speed = max(
-                peak_speed,
-                max(translation, scale_motion) / seconds,
-            )
-        if peak_speed <= speed_limit + 1e-9:
+            translation_speed = max(translation_speed, translation / seconds)
+            scale_speed = max(scale_speed, scale_motion / seconds)
+
+        translation_gain = (
+            1.0
+            if translation_speed <= speed_limit + 1e-9
+            else max(0.0, min(1.0, speed_limit / translation_speed))
+        )
+        scale_gain = (
+            1.0
+            if scale_speed <= speed_limit + 1e-9
+            else max(0.0, min(1.0, speed_limit / scale_speed))
+        )
+        if translation_gain >= 1.0 - 1e-9 and scale_gain >= 1.0 - 1e-9:
             return frames
-        gain = max(0.0, min(1.0, speed_limit / peak_speed))
         return tuple(
             MotionKeyframe(
                 progress=frame.progress,
-                dx=frame.dx * gain,
-                dy=frame.dy * gain,
-                scale=1.0 + (frame.scale - 1.0) * gain,
+                dx=frame.dx * translation_gain,
+                dy=frame.dy * translation_gain,
+                scale=1.0 + (frame.scale - 1.0) * scale_gain,
                 easing=frame.easing,
             )
             for frame in frames
@@ -1904,21 +1999,36 @@ class MotionPlanner:
         timed.sort(key=lambda row: (float(row[2].reveal_start), row[0]))
 
         cohorts: list[list[tuple[str, AssetActivation, object]]] = []
-        threshold = 2.0 / 30.0
+        threshold = MIN_FOCUS_OVERLAP_SECONDS
+        cohort_end: float | None = None
         for row in timed:
+            start = float(row[2].reveal_start)
+            end = float(row[2].settle_at)
             if not cohorts:
                 cohorts.append([row])
+                cohort_end = end
                 continue
-            anchor = cohorts[-1][0][2]
-            if (
-                abs(float(row[2].reveal_start) - float(anchor.reveal_start))
-                <= threshold + 1e-9
-                and abs(float(row[2].phrase_start) - float(anchor.phrase_start))
-                <= threshold + 1e-9
-            ):
+            assert cohort_end is not None
+            overlap = cohort_end - start
+            current_key = focus_progression_key(
+                row[1].semantic_event_order,
+                row[1].sequence_order,
+            )
+            anchor_activation = cohorts[-1][0][1]
+            anchor_key = focus_progression_key(
+                anchor_activation.semantic_event_order,
+                anchor_activation.sequence_order,
+            )
+            # Attention conflict is about simultaneous movement at the same authored
+            # semantic instant. Distinct event/sequence orders are an intentional
+            # progressive reveal: their windows may overlap, but each later peak still
+            # deserves its own Hero moment.
+            if overlap >= threshold - 1e-9 and current_key == anchor_key:
                 cohorts[-1].append(row)
+                cohort_end = max(cohort_end, end)
             else:
                 cohorts.append([row])
+                cohort_end = end
 
         output: dict[str, tuple[float, str]] = {}
         for cohort in cohorts:
