@@ -1000,7 +1000,8 @@ def test_v12_group_event_proxy_preserves_unresolved_authored_event_without_new_a
     package = FinalPackageLoader().load(
         package_path,
         tmp_path / "work-group-proxy",
-    )    scene = package.scenes[0]
+    )
+    scene = package.scenes[0]
     assets = [
         VisualAsset(
             id=asset_id,
