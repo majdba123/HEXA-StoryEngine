@@ -17,6 +17,7 @@ from app.qa import (
     RenderedMotionQA,
     RenderedVisualQA,
     SceneContinuityQA,
+    SemanticLifetimeQA,
 )
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
@@ -102,6 +103,7 @@ class StoryEnginePipeline:
         self.motion_interaction_qa = MotionInteractionQA()
         self.choreography_rhythm_qa = ChoreographyRhythmQA()
         self.scene_continuity_qa = SceneContinuityQA()
+        self.semantic_lifetime_qa = SemanticLifetimeQA()
         self.rendered_motion_qa = RenderedMotionQA()
         self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
@@ -261,6 +263,17 @@ class StoryEnginePipeline:
             workspace / "diagnostics" / "choreography-rhythm-qa.json",
         )
         self.choreography_rhythm_qa.require(rhythm_report)
+
+        lifetime_report = self.semantic_lifetime_qa.inspect(
+            story=story,
+            motion=motion,
+            choreography=choreography,
+        )
+        self.semantic_lifetime_qa.write(
+            lifetime_report,
+            workspace / "diagnostics" / "semantic-lifetime-qa.json",
+        )
+        self.semantic_lifetime_qa.require(lifetime_report)
 
         sync_report = self.story_sync_qa.inspect(story=story, motion=motion)
         self.story_sync_qa.write(
@@ -973,6 +986,12 @@ class StoryEnginePipeline:
                 choreography=choreography,
             )
             self.choreography_rhythm_qa.require(rhythm_report)
+            lifetime_report = self.semantic_lifetime_qa.inspect(
+                story=candidate_plan.story,
+                motion=candidate_plan.motion,
+                choreography=choreography,
+            )
+            self.semantic_lifetime_qa.require(lifetime_report)
             sync_report = self.story_sync_qa.inspect(
                 story=candidate_plan.story,
                 motion=candidate_plan.motion,

@@ -369,6 +369,18 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
         FailureDisposition.PREVENT,
         "Persistent asset lifecycle cannot contain a terminal leave before continuation",
     ),
+    "PREMATURE_SEMANTIC_EXIT": _policy(
+        "PREMATURE_SEMANTIC_EXIT",
+        "motion",
+        FailureDisposition.PREVENT,
+        "Terminal release cannot precede proven future semantic use of the exact asset",
+    ),
+    "SEMANTIC_LIFETIME_VIOLATIONS": _policy(
+        "SEMANTIC_LIFETIME_VIOLATIONS",
+        "motion",
+        FailureDisposition.PREVENT,
+        "Semantic lifetime aggregate contains one or more premature terminal releases",
+    ),
     "RENDERED_SEGMENT_INACTIVE": _policy(
         "RENDERED_SEGMENT_INACTIVE",
         "render",

@@ -15,6 +15,7 @@ from app.shared.errors import StageFailedError
 from app.motion.collision import fit_relation_collisions
 from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
+from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
 from app.motion.rhythm import (
@@ -214,6 +215,11 @@ class MotionPlanner:
                     asset_id: activation.semantic_event_id
                     for asset_id, activation in activation_by_asset.items()
                 },
+            )
+            lifetime_index = SemanticVisualLifetimeIndex.build(
+                beat=beat,
+                directive=directive,
+                assignments=event_assignments,
             )
             attention_profiles = {}
             for slot in ordered_slots:
@@ -610,6 +616,7 @@ class MotionPlanner:
                         energy=intensity,
                         cohort_gain=cohort_gain,
                         directive=directive,
+                        lifetime_decision=lifetime_index.for_asset(item.asset_id),
                         continues_next_beat=self.continuity_contract.continues_into_layout(
                             item.asset_id, next_layout
                         ),
@@ -933,6 +940,7 @@ class MotionPlanner:
         energy: float,
         cohort_gain: float,
         directive,
+        lifetime_decision: SemanticLifetimeDecision | None = None,
         continues_next_beat: bool = False,
     ) -> MotionCue:
         """Attach later semantic actions while keeping one backward-compatible cue."""
@@ -1263,11 +1271,23 @@ class MotionPlanner:
             item=item,
             items_by_id=items_by_id,
             existing_segments=segments,
+            lifetime_decision=lifetime_decision,
             continues_next_beat=continues_next_beat,
         )
         if exit_segment is not None:
             segments.append(exit_segment)
-        return cue.model_copy(update={"segments": segments})
+        update: dict[str, object] = {"segments": segments}
+        if lifetime_decision is not None:
+            params = dict(cue.params)
+            params["semantic_lifetime"] = {
+                "mode": "HOLD_THROUGH_FUTURE_USE",
+                "keep_visible_through": lifetime_decision.keep_visible_through,
+                "release_deadline": lifetime_decision.release_deadline,
+                "future_event_ids": list(lifetime_decision.future_event_ids),
+                "reasons": list(lifetime_decision.reasons),
+            }
+            update["params"] = params
+        return cue.model_copy(update=update)
 
 
     @classmethod
@@ -2064,6 +2084,7 @@ class MotionPlanner:
         item: LayoutItem,
         items_by_id: dict[str, LayoutItem],
         existing_segments: list[MotionSegment],
+        lifetime_decision: SemanticLifetimeDecision | None = None,
         continues_next_beat: bool = False,
     ) -> MotionSegment | None:
         if continues_next_beat:
@@ -2071,12 +2092,19 @@ class MotionPlanner:
         has_handoff = bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
         if not has_handoff or cue.asset_id in set(assignment.handoff_to_asset_ids):
             return None
+        # A terminal release is illegal while the exact runtime carrier has proven
+        # future semantic use in the same authored event/dependency chain. Keep the
+        # visual motionless at Composition identity; a later beat/scene boundary may
+        # retire it normally. Assets without this evidence keep the historical EXIT
+        # behavior byte-for-behavior below.
+        if lifetime_decision is not None:
+            return None
 
         end = float(deadline)
         reserve = cls._exit_reserve_seconds(
             cue=cue,
             assignment=assignment,
-            deadline=deadline,
+            deadline=end,
         )
         if reserve <= 0.0:
             return None
