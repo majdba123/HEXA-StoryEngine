@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.assets import AssetManager
 from app.director.models import SceneDirection
 from app.director.qwen import Qwen3VLBackend
+from app.canonical import ensure_canonical_package
 from app.models import PackageModel, StoryBeat, VisualAsset
 
 
@@ -18,6 +19,7 @@ class VisualDirector:
         story: list[StoryBeat],
         assets: list[VisualAsset],
     ) -> list[SceneDirection]:
+        package = ensure_canonical_package(package)
         by_scene: dict[str, list[VisualAsset]] = {}
         for asset in assets:
             by_scene.setdefault(asset.scene_id, []).append(asset)

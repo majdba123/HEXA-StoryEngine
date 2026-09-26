@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
@@ -291,23 +292,14 @@ class TextSemanticSelector:
         so TextTiming can continue to use canonical-script character spans as the
         authority for forced-alignment timestamps.
         """
-        if package is None or not package.script or not package.semantic_bindings:
+        if package is None or not package.script or not package.has_semantic_bindings:
             return []
-        scenes = package.semantic_bindings.get("scenes")
-        if not isinstance(scenes, list):
-            return []
-        binding_scene = next(
-            (
-                row for row in scenes
-                if isinstance(row, dict) and row.get("scene_id") == beat.scene_id
-            ),
-            None,
-        )
+        binding_scene = package.scene_by_id.get(beat.scene_id)
         if binding_scene is None:
             return []
         scene = next((row for row in package.scenes if row.id == beat.scene_id), None)
         groups = binding_scene.get("semantic_groups")
-        assets = [row for row in binding_scene.get("assets", []) if isinstance(row, dict)]
+        assets = [row for row in binding_scene.get("assets", []) if isinstance(row, Mapping)]
         assets_by_id = {
             str(row.get("asset_id")): row
             for row in assets
@@ -315,7 +307,7 @@ class TextSemanticSelector:
         }
         event_roles_by_asset: dict[str, set[str]] = {}
         for event in binding_scene.get("semantic_events", []) or []:
-            if not isinstance(event, dict):
+            if not isinstance(event, Mapping):
                 continue
             leader = event.get("visual_leader_asset_id")
             text_anchor = event.get("text_anchor_asset_id")
@@ -333,9 +325,9 @@ class TextSemanticSelector:
                         event_roles_by_asset.setdefault(asset_id, set()).add(role)
 
         phrase_rows: list[tuple[str, list[dict]]] = []
-        if isinstance(groups, list) and groups:
+        if groups:
             for group in groups:
-                if not isinstance(group, dict):
+                if not isinstance(group, Mapping):
                     continue
                 phrase = str(group.get("script_text") or "").strip()
                 if not phrase:
@@ -445,7 +437,7 @@ class TextSemanticSelector:
             if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
                 continue
             span = asset.get("script_span")
-            if not isinstance(span, dict):
+            if not isinstance(span, Mapping):
                 continue
             start_value = (
                 span.get("char_start")

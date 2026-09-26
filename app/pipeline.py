@@ -24,7 +24,8 @@ from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
-from app.input import FinalPackageLoader
+from app.canonical import CanonicalNormalizer
+from app.final_package import FinalPackageLoader
 from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.recovery import RecoveryCandidateEvaluator
@@ -54,6 +55,7 @@ class StoryEnginePipeline:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings.from_env()
         self.loader = FinalPackageLoader()
+        self.canonicalizer = CanonicalNormalizer()
         alignment_models: dict[str, str] = {}
         if self.settings.alignment_ar_model:
             alignment_models["ar"] = self.settings.alignment_ar_model
@@ -141,7 +143,8 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.05, "Reading Final Package")
-        package = self.loader.load(package_path, workspace, script_path)
+        raw_package = self.loader.load(package_path, workspace, script_path)
+        package = self.canonicalizer.normalize(raw_package)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.08, "Checking timing dependencies")

@@ -5,10 +5,12 @@ import logging
 import math
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
+from app.canonical import CanonicalPackage, ensure_canonical_package
 from app.shared.errors import DependencyUnavailableError
 from app.models import (
     AssetActivation,
@@ -240,6 +242,7 @@ class SemanticActivationPlanner:
         assets: list[VisualAsset],
         beats: list[StoryBeat],
     ) -> list[StoryBeat]:
+        package = ensure_canonical_package(package)
         self._decisions.clear()
         self._eligible_asset_ids.clear()
         self._trusted_eligible_ids.clear()
@@ -257,7 +260,7 @@ class SemanticActivationPlanner:
             "visual_identity": [],
         }
         if isinstance(self.scorer, HybridSemanticTextScorer):
-            if not package.semantic_bindings:
+            if not package.has_semantic_bindings:
                 try:
                     self.scorer.ensure_available()
                 finally:
@@ -419,25 +422,16 @@ class SemanticActivationPlanner:
         assets. We never infer containment from pixels, never manufacture a cutout, and
         never reuse this path for an independently extracted child.
         """
-        scenes = package.semantic_bindings.get("scenes")
-        if not isinstance(scenes, list):
-            return []
-        binding = next(
-            (
-                row for row in scenes
-                if isinstance(row, dict) and row.get("scene_id") == scene.id
-            ),
-            None,
-        )
-        if not isinstance(binding, dict):
+        binding = package.scene_by_id.get(scene.id)
+        if binding is None:
             return []
         binding_assets = [
-            row for row in binding.get("assets", []) if isinstance(row, dict)
+            row for row in binding.get("assets", []) if isinstance(row, Mapping)
         ]
         events = {
             str(row.get("semantic_event_id")): row
             for row in binding.get("semantic_events", [])
-            if isinstance(row, dict) and row.get("semantic_event_id")
+            if isinstance(row, Mapping) and row.get("semantic_event_id")
         }
         if not binding_assets or not events:
             return []
@@ -489,7 +483,7 @@ class SemanticActivationPlanner:
             if not parents:
                 continue
             event = events.get(event_id)
-            if not isinstance(event, dict):
+            if not isinstance(event, Mapping):
                 continue
             span = self._binding_authored_span(
                 package.script, scene, phrase, row.get("script_span")
@@ -635,27 +629,21 @@ class SemanticActivationPlanner:
         authored group. This preserves event timing/ordering without manufacturing a
         cutout, guessing pixels, or changing Composition geometry.
         """
-        scenes = package.semantic_bindings.get("scenes")
-        if not isinstance(scenes, list):
-            return []
-        binding = next((
-            row for row in scenes
-            if isinstance(row, dict) and row.get("scene_id") == scene.id
-        ), None)
-        if not isinstance(binding, dict):
+        binding = package.scene_by_id.get(scene.id)
+        if binding is None:
             return []
         binding_assets = [
-            row for row in binding.get("assets", []) if isinstance(row, dict)
+            row for row in binding.get("assets", []) if isinstance(row, Mapping)
         ]
         groups = {
             str(row.get("semantic_group_id")): row
             for row in binding.get("semantic_groups", [])
-            if isinstance(row, dict) and row.get("semantic_group_id")
+            if isinstance(row, Mapping) and row.get("semantic_group_id")
         }
         events = {
             str(row.get("semantic_event_id")): row
             for row in binding.get("semantic_events", [])
-            if isinstance(row, dict) and row.get("semantic_event_id")
+            if isinstance(row, Mapping) and row.get("semantic_event_id")
         }
         if not binding_assets or not groups or not events:
             return []
@@ -707,7 +695,7 @@ class SemanticActivationPlanner:
                 or semantic_id in represented_units
                 or event_id in represented_events
                 or row.get("parent_asset_id")
-                or not isinstance(group, dict)
+                or not isinstance(group, Mapping)
                 or semantic_id not in group.get("asset_ids", [])
                 or str(group.get("animation_policy") or "").upper()
                 != "SEQUENTIAL_WITHIN_PHRASE"
@@ -715,7 +703,7 @@ class SemanticActivationPlanner:
             ):
                 continue
             event = events.get(event_id)
-            if not isinstance(event, dict):
+            if not isinstance(event, Mapping):
                 continue
             span = self._binding_authored_span(
                 package.script, scene, phrase, row.get("script_span")
@@ -971,7 +959,7 @@ class SemanticActivationPlanner:
         )
         semantic_map = dict(binding.semantic_asset_map)
         asset_level_bindings = (
-            package.semantic_bindings.get("schema_name")
+            package.semantic_binding_schema_name
             == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
         )
         entities = self._ordered_entities(beat)
@@ -1143,35 +1131,26 @@ class SemanticActivationPlanner:
         semantic_map: dict[str, str],
         binding_confidence: float,
     ) -> list[AssetActivation]:
-        scenes = package.semantic_bindings.get("scenes")
-        if not isinstance(scenes, list):
-            return []
-        scene_binding = next(
-            (
-                row for row in scenes
-                if isinstance(row, dict) and row.get("scene_id") == scene.id
-            ),
-            None,
-        )
+        scene_binding = package.scene_by_id.get(scene.id)
         if scene_binding is None:
             return []
         binding_assets = scene_binding.get("assets")
-        if not isinstance(binding_assets, list) or not binding_assets:
+        if not binding_assets:
             return []
         groups = {
             str(row.get("semantic_group_id")): row
             for row in scene_binding.get("semantic_groups", [])
-            if isinstance(row, dict) and row.get("semantic_group_id")
+            if isinstance(row, Mapping) and row.get("semantic_group_id")
         }
         events_by_id = {
             str(row.get("semantic_event_id")): row
             for row in scene_binding.get("semantic_events", [])
-            if isinstance(row, dict) and row.get("semantic_event_id")
+            if isinstance(row, Mapping) and row.get("semantic_event_id")
         }
         asset_by_id = {asset.id: asset for asset in assets}
         identity = self.identity_binder.bind(
             scene=scene,
-            semantic_assets=[row for row in binding_assets if isinstance(row, dict)],
+            semantic_assets=[row for row in binding_assets if isinstance(row, Mapping)],
             assets=assets,
         )
         if identity.has_incomplete_locator_binding:
@@ -1215,7 +1194,7 @@ class SemanticActivationPlanner:
         candidates_by_real: dict[str, list[AssetActivation]] = {}
 
         for row in binding_assets:
-            if not isinstance(row, dict):
+            if not isinstance(row, Mapping):
                 continue
             semantic_id = str(row.get("asset_id") or "").strip()
             phrase = str(row.get("script_text") or "").strip()
@@ -1265,7 +1244,7 @@ class SemanticActivationPlanner:
                     if authored_span.get("char_start") is not None
                     else authored_span.get("global_char_start")
                 )
-                if isinstance(authored_span, dict)
+                if isinstance(authored_span, Mapping)
                 else None
             )
             authored_end = (
@@ -1274,7 +1253,7 @@ class SemanticActivationPlanner:
                     if authored_span.get("char_end") is not None
                     else authored_span.get("global_char_end")
                 )
-                if isinstance(authored_span, dict)
+                if isinstance(authored_span, Mapping)
                 else None
             )
             cache_key = (
@@ -1420,7 +1399,7 @@ class SemanticActivationPlanner:
                         "exact_final_package_script_text",
                         *(
                             ["exact_final_package_script_span"]
-                            if isinstance(authored_span, dict)
+                            if isinstance(authored_span, Mapping)
                             else []
                         ),
                         *(
@@ -1541,21 +1520,12 @@ class SemanticActivationPlanner:
         They are appended after authored sequence orders in deterministic visual-weight
         order. Multi-group scenes remain abstentions unless explicitly mapped.
         """
-        scenes = package.semantic_bindings.get("scenes")
-        if not isinstance(scenes, list):
-            return []
-        scene_binding = next(
-            (
-                row for row in scenes
-                if isinstance(row, dict) and row.get("scene_id") == scene.id
-            ),
-            None,
-        )
+        scene_binding = package.scene_by_id.get(scene.id)
         if scene_binding is None:
             return []
         groups = [
             row for row in scene_binding.get("semantic_groups", [])
-            if isinstance(row, dict)
+            if isinstance(row, Mapping)
         ]
         if len(groups) != 1:
             return []
@@ -1723,25 +1693,16 @@ class SemanticActivationPlanner:
 
     @staticmethod
     def _uniform_scene_binding_phrase(package: PackageModel, scene_id: str) -> str | None:
-        scenes = package.semantic_bindings.get("scenes")
-        if not isinstance(scenes, list):
-            return None
-        row = next(
-            (
-                item for item in scenes
-                if isinstance(item, dict) and item.get("scene_id") == scene_id
-            ),
-            None,
-        )
+        row = package.scene_by_id.get(scene_id)
         if row is None:
             return None
-        assets = row.get("assets")
-        if not isinstance(assets, list) or not assets:
+        assets = row.assets
+        if not assets:
             return None
         phrases = [
             str(asset.get("script_text") or "").strip()
             for asset in assets
-            if isinstance(asset, dict)
+            if isinstance(asset, Mapping)
         ]
         if len(phrases) != len(assets) or any(not phrase for phrase in phrases):
             return None
@@ -1758,7 +1719,7 @@ class SemanticActivationPlanner:
         phrase: str,
         authored_span: object,
     ) -> tuple[int, int] | None:
-        if isinstance(authored_span, dict) and script:
+        if isinstance(authored_span, Mapping) and script:
             start = authored_span.get("char_start")
             end = authored_span.get("char_end")
             if start is None and end is None:

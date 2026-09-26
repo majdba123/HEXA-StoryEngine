@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.choreography import ChoreographyPlan, HookKind
+from app.canonical import ensure_canonical_package
 from app.models import CompositionBeat, MotionCue, PackageModel, StoryBeat, TextMotionCue, TextPlan
 from app.shared.errors import StageFailedError
 
@@ -127,6 +128,7 @@ class StorytellingValidator:
         text: TextPlan,
         text_motion: list[TextMotionCue],
     ) -> StorytellingReport:
+        package = ensure_canonical_package(package)
         rich_scene_ids = {
             scene.id
             for scene in package.scenes
@@ -166,11 +168,10 @@ class StorytellingValidator:
         )
 
         authored_event_keys = {
-            (str(scene.get("scene_id")), str(event.get("semantic_event_id")))
-            for scene in package.semantic_bindings.get("scenes", [])
-            if isinstance(scene, dict) and scene.get("scene_id")
-            for event in scene.get("semantic_events", [])
-            if isinstance(event, dict) and event.get("semantic_event_id")
+            (scene.id, event.semantic_event_id)
+            for scene in package.scenes
+            for event in scene.semantic_events
+            if event.semantic_event_id
         }
         beat_scene = {beat.id: beat.scene_id for beat in story}
         represented_event_keys = {

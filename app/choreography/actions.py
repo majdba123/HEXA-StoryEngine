@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.models import SceneSource, StoryBeat
@@ -142,7 +143,7 @@ class SemanticActionResolver:
             has_declared_primary = any(
                 str(unit.get("role") or "").upper() == "PRIMARY"
                 for unit in scene.units
-                if isinstance(unit, dict)
+                if isinstance(unit, Mapping)
             )
             for unit in scene.units:
                 values = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.choreography import ChoreographyDirective, ChoreographyPlan
+from app.canonical import ensure_canonical_package
 from app.models import PackageModel, StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
 from app.text.semantic import KeywordCandidate, TextSemanticSelector
 from app.text.style import TextStyleResolver
@@ -34,6 +35,7 @@ class TextPlanner:
         package: PackageModel | None = None,
         choreography: ChoreographyPlan | None = None,
     ) -> TextPlan:
+        package = ensure_canonical_package(package) if package is not None else None
         del assets
         scene_by_id = {scene.id: scene for scene in package.scenes} if package else {}
         cues: list[TextCue] = []

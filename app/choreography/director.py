@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from app.canonical import ensure_canonical_package
 from app.models import PackageModel, StoryBeat, VisualAsset
 
 from .actions import ActionDecision, SemanticActionResolver
@@ -56,6 +57,7 @@ class ChoreographyDirector:
         beats: list[StoryBeat],
         assets: list[VisualAsset],
     ) -> ChoreographyPlan:
+        package = ensure_canonical_package(package)
         if not beats:
             return ChoreographyPlan()
 

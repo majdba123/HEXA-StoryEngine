@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,7 +103,7 @@ class VisualIdentityBinder:
         unit_by_id = {
             str(unit.get("unit_id")): unit
             for unit in scene.units
-            if isinstance(unit, dict) and unit.get("unit_id")
+            if isinstance(unit, Mapping) and unit.get("unit_id")
         }
         asset_by_id = {asset.id: asset for asset in assets}
         eligible = [
@@ -123,7 +124,7 @@ class VisualIdentityBinder:
 
         # Exact authored real-asset identity, when it exists, remains strongest.
         for row in semantic_assets:
-            if not isinstance(row, dict):
+            if not isinstance(row, Mapping):
                 continue
             semantic_id = str(row.get("asset_id") or "").strip()
             if not semantic_id:
@@ -505,7 +506,7 @@ class VisualIdentityBinder:
 
     @staticmethod
     def _locator_box(raw: Any) -> Box | None:
-        if not isinstance(raw, dict):
+        if not isinstance(raw, Mapping):
             return None
         try:
             cx = float(raw["cx"])

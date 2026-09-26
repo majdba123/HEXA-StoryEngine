@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from app.canonical import CanonicalPackage, ensure_canonical_package
 from app.models import PackageModel, SceneSource, StoryBeat, StorySemanticContext, Transcript, VisualAsset
 
 from .activation import SemanticActivationPlanner
@@ -42,17 +43,14 @@ class StoryPlanner:
         transcript: Transcript,
         assets: list[VisualAsset],
     ) -> list[StoryBeat]:
+        package = ensure_canonical_package(package)
         assets_by_scene: dict[str, list[VisualAsset]] = defaultdict(list)
         for asset in assets:
             assets_by_scene[asset.scene_id].append(asset)
         for rows in assets_by_scene.values():
             rows.sort(key=lambda asset: (asset.source_area_ratio or 0.0), reverse=True)
 
-        semantic_binding_by_scene = {
-            str(row.get("scene_id")): row
-            for row in package.semantic_bindings.get("scenes", [])
-            if isinstance(row, dict) and row.get("scene_id")
-        }
+        semantic_binding_by_scene = package.scene_by_id
 
         beats: list[StoryBeat] = []
         previous_primary: str | None = None
@@ -133,7 +131,7 @@ class StoryPlanner:
         beats = self._assign_visual_timeline(
             beats,
             transcript.duration,
-            preserve_spoken_completion=bool(package.semantic_bindings),
+            preserve_spoken_completion=package.has_semantic_bindings,
         )
         return self.activation.enrich(package, transcript, assets, beats)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.models import SceneSource, StoryBeat, VisualAsset
@@ -105,7 +106,7 @@ class SemanticAssetBinder:
         declared_units = [
             unit
             for unit in scene.units
-            if isinstance(unit, dict) and unit.get("unit_id")
+            if isinstance(unit, Mapping) and unit.get("unit_id")
         ]
         has_asset_intents = any(
             str(unit.get("type") or "").upper() == "VISUAL_ASSET_INTENT"
@@ -300,7 +301,7 @@ class SemanticAssetBinder:
     ) -> float:
         if scene is None or not scene.units:
             return 0.70 if assets else 0.0
-        declared = [unit for unit in scene.units if isinstance(unit, dict) and unit.get("unit_id")]
+        declared = [unit for unit in scene.units if isinstance(unit, Mapping) and unit.get("unit_id")]
         if not declared:
             return 0.72
         coverage = len(semantic_map) / len(declared)

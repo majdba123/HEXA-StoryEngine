@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from app.models import (
     SceneSource,
@@ -155,7 +155,7 @@ class PackageStoryInterpreter:
         units_by_id = {
             str(unit.get("unit_id")): unit
             for unit in scene.units
-            if isinstance(unit, dict) and unit.get("unit_id")
+            if isinstance(unit, Mapping) and unit.get("unit_id")
         }
 
         relevant_units = self._relevant_units(scene.units, target_ids)
@@ -165,7 +165,7 @@ class PackageStoryInterpreter:
         binding_assets = [
             row
             for row in (semantic_binding_scene or {}).get("assets", [])
-            if isinstance(row, dict) and row.get("asset_id")
+            if isinstance(row, Mapping) and row.get("asset_id")
         ]
         binding_assets_by_id = {
             str(row.get("asset_id")): row
@@ -174,7 +174,7 @@ class PackageStoryInterpreter:
         semantic_events = [
             row
             for row in (semantic_binding_scene or {}).get("semantic_events", [])
-            if isinstance(row, dict) and row.get("semantic_event_id")
+            if isinstance(row, Mapping) and row.get("semantic_event_id")
         ]
         for asset in binding_assets:
             unit_id = str(asset.get("asset_id"))
@@ -197,7 +197,7 @@ class PackageStoryInterpreter:
 
         relations: list[StoryRelation] = []
         for relation in (semantic_binding_scene or {}).get("relations", []) or []:
-            if not isinstance(relation, dict):
+            if not isinstance(relation, Mapping):
                 continue
             source = str(relation.get("subject_asset_id") or "")
             target = str(relation.get("object_asset_id") or "")
@@ -207,7 +207,7 @@ class PackageStoryInterpreter:
             if not source or not target or not relationship:
                 continue
             span = relation.get("script_span")
-            if not isinstance(span, dict):
+            if not isinstance(span, Mapping):
                 span = self._relation_span_from_assets(
                     relation,
                     binding_assets_by_id,
@@ -226,7 +226,7 @@ class PackageStoryInterpreter:
                             if span.get("char_start") is not None
                             else span.get("global_char_start")
                         )
-                        if isinstance(span, dict)
+                        if isinstance(span, Mapping)
                         else None
                     ),
                     trigger_char_end=(
@@ -235,7 +235,7 @@ class PackageStoryInterpreter:
                             if span.get("char_end") is not None
                             else span.get("global_char_end")
                         )
-                        if isinstance(span, dict)
+                        if isinstance(span, Mapping)
                         else None
                     ),
                     confidence=float(relation.get("confidence", 1.0)),
@@ -359,14 +359,14 @@ class PackageStoryInterpreter:
                 "after": str(row["visual_state"]["after"]),
             }
             for row in binding_assets
-            if isinstance(row.get("visual_state"), dict)
+            if isinstance(row.get("visual_state"), Mapping)
             and row["visual_state"].get("before")
             and row["visual_state"].get("after")
         }
         continuity_by_unit = {
             str(row.get("asset_id")): dict(row["continuity"])
             for row in binding_assets
-            if isinstance(row.get("continuity"), dict)
+            if isinstance(row.get("continuity"), Mapping)
         }
 
         narrative_functions = self._unique(
@@ -415,7 +415,7 @@ class PackageStoryInterpreter:
                 evidence.append("final_package_asset_relations")
             if semantic_events:
                 evidence.append("final_package_semantic_events")
-                if isinstance(semantic_binding_scene.get("progression"), dict):
+                if isinstance(semantic_binding_scene.get("progression"), Mapping):
                     evidence.append("final_package_event_progression")
             if focus_unit_ids:
                 evidence.append(
@@ -444,7 +444,7 @@ class PackageStoryInterpreter:
                 "semantic_progression": (
                     dict(semantic_binding_scene.get("progression"))
                     if semantic_binding_scene is not None
-                    and isinstance(semantic_binding_scene.get("progression"), dict)
+                    and isinstance(semantic_binding_scene.get("progression"), Mapping)
                     else scene.semantic_progression
                 ),
             },
@@ -467,7 +467,7 @@ class PackageStoryInterpreter:
 
     @staticmethod
     def _relevant_units(units: list[dict], target_ids: tuple[str, ...]) -> list[dict]:
-        rows = [unit for unit in units if isinstance(unit, dict)]
+        rows = [unit for unit in units if isinstance(unit, Mapping)]
         if not target_ids:
             return rows
         selected = [unit for unit in rows if str(unit.get("unit_id") or "") in target_ids]
@@ -502,7 +502,7 @@ class PackageStoryInterpreter:
 
     @staticmethod
     def _trigger(value) -> StoryTrigger | None:
-        if not isinstance(value, dict):
+        if not isinstance(value, Mapping):
             return None
         return StoryTrigger(
             phrase=PackageStoryInterpreter._string_or_none(value.get("phrase")),
@@ -598,7 +598,7 @@ class PackageStoryInterpreter:
             output.append(f"event_id:{event['event_id']}")
         if event.get("order") is not None:
             output.append(f"event_order:{event['order']}")
-        trigger = event.get("trigger") if isinstance(event.get("trigger"), dict) else {}
+        trigger = event.get("trigger") if isinstance(event.get("trigger"), Mapping) else {}
         if trigger.get("phrase"):
             output.append(f"event_trigger_phrase:{trigger['phrase']}")
         if trigger.get("global_char_start") is not None or trigger.get("global_char_end") is not None:
@@ -670,8 +670,8 @@ class PackageStoryInterpreter:
             if index < 2:
                 required += 1
             asset = assets_by_id.get(str(asset_id))
-            asset_span = asset.get("script_span") if isinstance(asset, dict) else None
-            if not isinstance(asset_span, dict):
+            asset_span = asset.get("script_span") if isinstance(asset, Mapping) else None
+            if not isinstance(asset_span, Mapping):
                 continue
             start = cls._int_or_none(
                 asset_span.get("char_start")

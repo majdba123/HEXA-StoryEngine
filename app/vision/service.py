@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.canonical import ensure_canonical_package
 from app.models import PackageModel
 
 
@@ -77,6 +78,7 @@ class VisionService:
     """
 
     def analyze(self, package: PackageModel) -> list[VisionObject]:
+        package = ensure_canonical_package(package)
         declared = self._declared_boxes(package)
         output: list[VisionObject] = []
         for scene in package.scenes:
@@ -87,22 +89,15 @@ class VisionService:
 
     def _declared_boxes(self, package: PackageModel) -> dict[str, list[tuple[str, tuple[int, int, int, int], float]]]:
         by_scene: dict[str, list[tuple[str, tuple[int, int, int, int], float]]] = {}
-        declared = package.manifest.get("objects", [])
-        if not isinstance(declared, list):
-            return by_scene
         valid_scenes = {scene.id for scene in package.scenes}
-        for item in declared:
-            if not isinstance(item, dict):
+        for item in package.manifest_objects:
+            scene_id = item.scene_id
+            if scene_id not in valid_scenes:
                 continue
-            scene_id = str(item.get("scene_id", ""))
-            bbox = item.get("bbox")
-            if scene_id not in valid_scenes or not isinstance(bbox, list) or len(bbox) != 4:
-                continue
-            parsed = tuple(int(v) for v in bbox)
             by_scene.setdefault(scene_id, []).append((
-                str(item.get("role") or "object"),
-                parsed,
-                float(item.get("confidence", 1.0)),
+                item.role,
+                item.bbox,
+                item.confidence,
             ))
         return by_scene
 
