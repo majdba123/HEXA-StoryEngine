@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from app.canonical import ensure_canonical_package
-from app.models import PackageModel, SceneSource, StoryBeat, StorySemanticContext, Transcript, VisualAsset
+from app.canonical import CanonicalPackage, CanonicalScene, ensure_canonical_package
+from app.models import StoryBeat, StorySemanticContext, Transcript, VisualAsset
 
 from .activation import SemanticActivationPlanner
 from .graph import StoryGraph, StoryGraphBuilder
@@ -39,7 +39,7 @@ class StoryPlanner:
 
     def plan(
         self,
-        package: PackageModel,
+        package: CanonicalPackage,
         transcript: Transcript,
         assets: list[VisualAsset],
     ) -> list[StoryBeat]:
@@ -231,7 +231,7 @@ class StoryPlanner:
         return list(scene_assets)
 
     @staticmethod
-    def _default_event(scene: SceneSource) -> dict:
+    def _default_event(scene: CanonicalScene) -> dict:
         return {
             "action": "EXPLAIN",
             "targets": [unit.get("unit_id") for unit in scene.units if unit.get("unit_id")],

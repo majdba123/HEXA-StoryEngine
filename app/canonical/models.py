@@ -10,6 +10,7 @@ from .enums import (
     AnchorGranularity,
     BindingType,
     CompoundVisualClassification,
+    ContinuityMode,
     SemanticGroupAnimationPolicy,
     VisualFocus,
 )
@@ -54,7 +55,7 @@ class CanonicalVisualLocator(CanonicalRecord):
 
 
 class CanonicalContinuity(CanonicalRecord):
-    mode: str | None = None
+    mode: ContinuityMode | None = None
     target_asset_id: str | None = None
     extension_metadata: dict[str, Any] = Field(default_factory=dict)
 

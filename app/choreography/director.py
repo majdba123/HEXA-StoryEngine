@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from app.canonical import ensure_canonical_package
-from app.models import PackageModel, StoryBeat, VisualAsset
+from app.canonical import CanonicalPackage, ensure_canonical_package
+from app.models import StoryBeat, VisualAsset
 
 from .actions import ActionDecision, SemanticActionResolver
 from .binding import AssetBinding, SemanticAssetBinder
@@ -53,7 +53,7 @@ class ChoreographyDirector:
 
     def plan(
         self,
-        package: PackageModel,
+        package: CanonicalPackage,
         beats: list[StoryBeat],
         assets: list[VisualAsset],
     ) -> ChoreographyPlan:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app.choreography import ChoreographyDirective, ChoreographyPlan
-from app.canonical import ensure_canonical_package
-from app.models import PackageModel, StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
+from app.canonical import CanonicalPackage, ensure_canonical_package
+from app.models import StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
 from app.text.semantic import KeywordCandidate, TextSemanticSelector
 from app.text.style import TextStyleResolver
 from app.text.timing import TextTimingPlanner
@@ -32,7 +32,7 @@ class TextPlanner:
         transcript: Transcript,
         story: list[StoryBeat],
         assets: list[VisualAsset] | None = None,
-        package: PackageModel | None = None,
+        package: CanonicalPackage | None = None,
         choreography: ChoreographyPlan | None = None,
     ) -> TextPlan:
         package = ensure_canonical_package(package) if package is not None else None

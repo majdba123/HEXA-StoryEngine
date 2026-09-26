@@ -3,8 +3,8 @@ from __future__ import annotations
 from app.assets import AssetManager
 from app.director.models import SceneDirection
 from app.director.qwen import Qwen3VLBackend
-from app.canonical import ensure_canonical_package
-from app.models import PackageModel, StoryBeat, VisualAsset
+from app.canonical import CanonicalPackage, ensure_canonical_package
+from app.models import StoryBeat, VisualAsset
 
 
 class VisualDirector:
@@ -15,7 +15,7 @@ class VisualDirector:
 
     def plan(
         self,
-        package: PackageModel,
+        package: CanonicalPackage,
         story: list[StoryBeat],
         assets: list[VisualAsset],
     ) -> list[SceneDirection]:

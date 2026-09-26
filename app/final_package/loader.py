@@ -12,6 +12,9 @@ from app.shared.errors import InvalidPackageError
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _SEMANTIC_BINDING_SCHEMAS = {"HEXA_SEMANTIC_BINDINGS", "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"}
+_FINAL_PACKAGE_SCHEMAS = {"HEXA_V20_SCENE_PACKAGE"}
+_FINAL_PACKAGE_VERSIONS = {"1", "1.0", "1.1", "1.2"}
+_SEMANTIC_BINDING_VERSIONS = {"1", "1.0", "1.1", "1.2"}
 _ASSET_LEVEL_BINDING_TYPES = {"EXPLICIT", "SEMANTIC", "SUPPORT", "PARENT", "AMBIGUOUS"}
 _SEMANTIC_GROUP_POLICIES = {"SEQUENTIAL_WITHIN_PHRASE", "SIMULTANEOUS_VISUAL_UNIT"}
 _VISUAL_FOCUS_VALUES = {"PRIMARY", "SUPPORT", "RESULT", "CONTEXT"}
@@ -28,6 +31,7 @@ class FinalPackageLoader:
         package_root = self._materialize(source, workspace)
         manifest_path = package_root / "manifest.json"
         manifest = self._load_json(manifest_path) if manifest_path.exists() else {}
+        self._validate_manifest_contract(manifest)
         script = self._load_script(package_root, script_path, manifest)
         scene_plan = self._load_scene_plan(package_root, manifest)
         semantic_bindings = self._load_semantic_bindings(package_root, manifest)
@@ -110,10 +114,22 @@ class FinalPackageLoader:
         return {}
 
     @staticmethod
+    def _validate_manifest_contract(data: dict) -> None:
+        schema = data.get("package_schema")
+        if schema is not None and schema not in _FINAL_PACKAGE_SCHEMAS:
+            raise InvalidPackageError("unsupported Final Package schema")
+        version = data.get("package_version")
+        if version is not None and str(version) not in _FINAL_PACKAGE_VERSIONS:
+            raise InvalidPackageError("unsupported Final Package version")
+
+    @staticmethod
     def _validate_semantic_bindings(data: dict) -> None:
         schema = data.get("schema_name")
         if schema is not None and schema not in _SEMANTIC_BINDING_SCHEMAS:
             raise InvalidPackageError("unsupported semantic bindings schema")
+        version = data.get("schema_version")
+        if version is not None and str(version) not in _SEMANTIC_BINDING_VERSIONS:
+            raise InvalidPackageError("unsupported semantic bindings version")
         asset_level = schema == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
         if asset_level:
             semantic_intent = data.get("asset_is_semantic_intent_not_cutout")

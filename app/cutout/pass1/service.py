@@ -9,8 +9,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
-from app.canonical import ensure_canonical_package
-from app.models import PackageModel, VisualAsset
+from app.canonical import CanonicalPackage, ensure_canonical_package
+from app.models import VisualAsset
 from app.shared.errors import StageFailedError
 from app.vision.service import VisionObject, build_structural_foreground
 
@@ -25,7 +25,7 @@ class CutoutService:
 
     def extract(
         self,
-        package: PackageModel,
+        package: CanonicalPackage,
         detections: list[VisionObject],
         workspace: Path,
     ) -> list[VisualAsset]:
@@ -209,7 +209,7 @@ class CutoutService:
             self._sam_backend = None
         return self._sam_backend
 
-    def _packaged_assets(self, package: PackageModel) -> list[VisualAsset]:
+    def _packaged_assets(self, package: CanonicalPackage) -> list[VisualAsset]:
         root = package.root.resolve()
         assets: list[VisualAsset] = []
         for item in package.manifest_assets:

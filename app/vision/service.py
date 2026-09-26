@@ -6,8 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.canonical import ensure_canonical_package
-from app.models import PackageModel
+from app.canonical import CanonicalPackage, ensure_canonical_package
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +76,7 @@ class VisionService:
     distant objects merely because they share a semantic class.
     """
 
-    def analyze(self, package: PackageModel) -> list[VisionObject]:
+    def analyze(self, package: CanonicalPackage) -> list[VisionObject]:
         package = ensure_canonical_package(package)
         declared = self._declared_boxes(package)
         output: list[VisionObject] = []
@@ -87,7 +86,7 @@ class VisionService:
             output.extend(self._label_geometry(geometry, semantic_boxes))
         return output
 
-    def _declared_boxes(self, package: PackageModel) -> dict[str, list[tuple[str, tuple[int, int, int, int], float]]]:
+    def _declared_boxes(self, package: CanonicalPackage) -> dict[str, list[tuple[str, tuple[int, int, int, int], float]]]:
         by_scene: dict[str, list[tuple[str, tuple[int, int, int, int], float]]] = {}
         valid_scenes = {scene.id for scene in package.scenes}
         for item in package.manifest_objects:

@@ -5,10 +5,16 @@ from typing import Any
 
 from app.shared.errors import InvalidPackageError
 
+from .authority import (
+    resolve_semantic_collection,
+    resolve_semantic_mapping,
+    resolve_semantic_record,
+)
 from .enums import (
     AnchorGranularity,
     BindingType,
     CompoundVisualClassification,
+    ContinuityMode,
     SemanticGroupAnimationPolicy,
     VisualFocus,
 )
@@ -110,15 +116,15 @@ class CanonicalNormalizer:
             )
         assets = tuple(assets_list)
 
-        events_source = binding.get("semantic_events")
-        if not isinstance(events_source, list):
-            events_source = plan.get("semantic_events")
-        relations_source = binding.get("relations")
-        if not isinstance(relations_source, list):
-            relations_source = plan.get("relations")
-        progression_source = binding.get("progression")
-        if not isinstance(progression_source, Mapping):
-            progression_source = plan.get("progression")
+        events_source = resolve_semantic_collection(
+            plan.get("semantic_events"), binding.get("semantic_events")
+        )
+        relations_source = resolve_semantic_collection(
+            plan.get("relations"), binding.get("relations")
+        )
+        progression_source = resolve_semantic_mapping(
+            plan.get("progression"), binding.get("progression")
+        )
         groups_source = binding.get("semantic_groups")
 
         visual_progression = tuple(
@@ -175,8 +181,7 @@ class CanonicalNormalizer:
 
     def _asset(self, *, scene_id: str, plan: Mapping[str, Any], binding: Mapping[str, Any]) -> CanonicalAsset:
         # Semantic bindings own semantic facts; scene-plan units are the structural fallback.
-        merged = dict(plan)
-        merged.update(binding)
+        merged = resolve_semantic_record(plan, binding)
         asset_id = self._string(merged.get("asset_id") or merged.get("unit_id"))
         if not asset_id:
             raise InvalidPackageError(f"canonical asset missing identity: {scene_id}")
@@ -409,7 +414,7 @@ class CanonicalNormalizer:
         if not isinstance(value, Mapping):
             return None
         return CanonicalContinuity(
-            mode=cls._string(value.get("mode")),
+            mode=cls._enum(ContinuityMode, value.get("mode")),
             target_asset_id=cls._string(value.get("target_asset_id")),
             extension_metadata=cls._extras(value, {"mode", "target_asset_id"}),
         )
