@@ -9766,3 +9766,192 @@ Next actions:
 4. rerender Black Hat from current exact tested source and verify lifecycle continuity visually;
 5. use ReferenceMatch evidence to decide whether a SemanticGestureComposer change is required;
 6. continue Gray/Script Kiddie + stress matrix only after the Black/White gates pass.
+
+
+# STRICT RENDER-FAILURE PERMANENCE CONTRACT — 2026-09-26
+
+## User-mandated non-negotiable product rule
+
+This rule is permanent and applies to every current and future Final Package.
+
+Every real failure discovered while loading, planning, validating, rendering, encoding, muxing, decoding, exporting, or visually reviewing ANY Final Package is a product-level defect class until proven otherwise.
+
+It is forbidden to treat a discovered failure as:
+- a one-off package problem without proof;
+- a White/Black/Gray/Script-Kiddie special case;
+- a scene-id or asset-id exception;
+- a manual operator workaround;
+- a QA-threshold problem to be weakened;
+- a reason to delete/hide assets, relations, text, motion, or semantic intent;
+- a reason to modify a valid Final Package so the engine can pass;
+- an error that may simply be retried blindly;
+- closed merely because unit tests or CI are green.
+
+### Mandatory lifecycle for EVERY discovered failure
+
+For every failure reported from a real operator run:
+
+1. **Preserve evidence**
+   - keep the diagnostic ZIP/log/error code/render artifact when available;
+   - identify the exact stage, inputs, and observed symptom.
+
+2. **Find the root cause**
+   - diagnose the generic engine condition that allowed the failure;
+   - do not stop at the top-level exception text.
+
+3. **Assign one owning layer**
+   - Final Package validation;
+   - Story/timing;
+   - Choreography;
+   - Composition;
+   - Motion;
+   - Text;
+   - Pass1/Pass2 extraction;
+   - Recovery;
+   - FFmpeg/render;
+   - final export/mux;
+   - pre-render QA;
+   - encoded/post-render QA;
+   - environment/preflight.
+
+4. **Implement a GENERAL fix**
+   - the fix must apply to every future package with the same underlying condition;
+   - no package name, scene id, asset id, script phrase, hardcoded timestamp, or package-specific geometry may appear in production logic.
+
+5. **Prevent before expensive render whenever technically possible**
+   - if the failure can be known from authored state, contracts, timing, geometry, environment, codec/filter capability, asset lifecycle, collision path, semantic coverage, text layout, or motion feasibility, it must be prevented/detected before expensive FFmpeg rendering;
+   - do not knowingly author an invalid state and wait for 70%+ render progress to discover it.
+
+6. **Declare an explicit Failure Policy**
+   Every production failure code must have an explicit owner and one disposition:
+   - PREVENT
+   - RECOVER
+   - FAIL_FAST
+   - POST_RENDER_PROOF
+
+   No production failure code may exist without a policy.
+
+7. **Recovery is allowed only when safe and bounded**
+   - candidate-based;
+   - monotonic;
+   - revalidated against the same contracts;
+   - no new defect;
+   - no semantic-authority change;
+   - rollback-safe;
+   - bounded attempts;
+   - recorded in diagnostics.
+   Blind retry is forbidden.
+
+8. **Add a permanent regression**
+   - reproduce the generic condition that caused the real failure;
+   - prove the old bad state is rejected or corrected;
+   - prove the intended valid state remains accepted;
+   - keep the regression permanently in the suite.
+
+9. **Run the broader regression matrix**
+   A fix is not accepted because the triggering package alone passes.
+   At minimum consider its effect on:
+   - White Hat;
+   - Black Hat;
+   - Gray Hat;
+   - Script Kiddie;
+   - dense scenes;
+   - one-asset scenes;
+   - short and long beats;
+   - repeated assets;
+   - multi-enter/exit cases;
+   - comparison/timeline scenes;
+   - long Arabic text;
+   - character/no-character scenes;
+   - realistic and illustrated media where relevant.
+
+10. **CI must pass on exact source**
+    - Compile PASS;
+    - Ruff PASS;
+    - full automated tests PASS;
+    - exact tested-source artifact recorded when produced.
+
+11. **Real-render verification is mandatory**
+    The failure class is not CLOSED from code/CI alone.
+    Re-run the real package/input that exposed it and verify the corrected exact source.
+
+12. **Post-render-only failures still require permanent handling**
+    If a fact genuinely cannot be known until encoded frames exist:
+    - keep strict post-render proof;
+    - add the earliest practical probe/sampling check if it can reduce wasted render time;
+    - never pretend such a failure can be proven pre-render when it cannot;
+    - once discovered, preserve a regression/proof path so the same root cause is not silently reintroduced.
+
+### Definition of CLOSED for a discovered failure
+
+A real failure may be marked CLOSED only when all applicable gates are satisfied:
+
+`Root Cause identified
+-> Generic production fix
+-> Shared contract / owning-stage prevention where applicable
+-> Explicit Failure Policy
+-> Permanent regression
+-> Full CI
+-> Real triggering-package rerender
+-> Technical QA
+-> Full decode/export proof where applicable
+-> Visual/reference review where the defect is perceptual`
+
+Anything less remains OPEN.
+
+### Recurrence rule
+
+The same known root cause must not be allowed to recur silently in a future Final Package.
+
+If a previously closed failure code or equivalent root cause reappears:
+- treat it as a regression in the engine;
+- do not patch the new package;
+- do not weaken QA;
+- reopen the owning contract/implementation and strengthen the permanent regression until the recurrence path is closed.
+
+### Product objective
+
+HEXA-StoryEngine is expected to process many heterogeneous Final Packages. Therefore the product must become progressively stronger from every real failure discovered in production.
+
+The required engineering loop is permanently:
+
+`Real Failure
+-> Evidence
+-> Root Cause
+-> Generic Fix
+-> Failure Policy
+-> Regression
+-> CI
+-> Real Render Proof
+-> Permanent Contract`
+
+The project must never regress to:
+
+`new package -> wait for late render failure -> manual/package-specific patch -> retry`
+
+### Current implementation baseline when this rule was locked
+
+Behavior HEAD:
+`c5111bc1d05afd3971fdf54d57724f95d3d4ca62`
+`[preflight] Probe ffmpeg filter transport by execution`
+
+CI proof:
+- workflow run: `36210742931`
+- run number: `572`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `437 passed, 12 warnings`
+
+The latest FFmpeg failure discovered by the operator:
+`ffmpeg does not expose a supported file-backed complex-filter option`
+
+was treated under this rule:
+- root cause: help-text-based capability inference produced a false negative on the operator's Windows FFmpeg build;
+- generic fix: production filter transport is now selected by executing real capability probes;
+- generic order: `-/filter_complex` then fallback to `-filter_complex_script`;
+- direct renderer calls resolve capability before worker threads to avoid probe races;
+- only if both real probes fail does the engine raise `FFMPEG_FILTER_FILE_UNSUPPORTED`;
+- no Final Package, scene, motion, Story, Composition, or QA threshold was changed.
+
+This operator rule supersedes any older handoff wording that could be interpreted as allowing a known render failure to remain a recurring per-package troubleshooting task.
