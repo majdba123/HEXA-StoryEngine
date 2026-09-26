@@ -1015,7 +1015,15 @@ class MotionPlanner:
                     "FINAL_PACKAGE_INTERACTION_TARGET",
                 }
             )
-            semantic_proxy_phase = phase.authority in SEMANTIC_PROXY_AUTHORITIES
+            has_proxy_story_timing = (
+                phase.reveal_start is not None
+                and phase.semantic_peak is not None
+                and phase.settle_at is not None
+            )
+            semantic_proxy_phase = (
+                phase.authority in SEMANTIC_PROXY_AUTHORITIES
+                or has_proxy_story_timing
+            )
             phase_deadline = (
                 float(beat.end)
                 if relation_phase or semantic_proxy_phase
@@ -1045,15 +1053,8 @@ class MotionPlanner:
                 None,
             )
             phase_story_peak = story_peak
-            if (
-                semantic_proxy_phase
-                and phase.spoken_start is not None
-                and phase.spoken_end is not None
-                and phase.spoken_end > phase.spoken_start
-            ):
-                phase_story_peak = float(phase.spoken_start) + (
-                    float(phase.spoken_end) - float(phase.spoken_start)
-                ) * GOLDEN_MAJOR
+            if has_proxy_story_timing:
+                phase_story_peak = float(phase.semantic_peak)
             event_already_aligned = phase.event_id in aligned_semantic_event_ids
             window = cls._event_segment_window(
                 phase=phase,
@@ -1537,14 +1538,22 @@ class MotionPlanner:
         relation_bounds: tuple[float, float] | None = None
         has_story_window, story_window = story_activation_window(activation, beat)
 
+        proxy_story_timing = (
+            phase.reveal_start is not None
+            and phase.semantic_peak is not None
+            and phase.settle_at is not None
+        )
         if (
-            phase.authority in SEMANTIC_PROXY_AUTHORITIES
+            (phase.authority in SEMANTIC_PROXY_AUTHORITIES or proxy_story_timing)
             and phase.stage in {
                 EventFlowStage.ESTABLISH,
                 EventFlowStage.ADD,
                 EventFlowStage.PAYOFF,
             }
         ):
+            if proxy_story_timing:
+                relation_start = float(phase.reveal_start)
+                relation_end = float(phase.settle_at)
             if (
                 relation_start is None
                 or relation_end is None
@@ -1560,9 +1569,13 @@ class MotionPlanner:
             end_bound = min(upper, float(relation_end))
             if end_bound - start_bound < 0.06:
                 return None
-            proxy_peak = float(relation_start) + (
-                float(relation_end) - float(relation_start)
-            ) * GOLDEN_MAJOR
+            proxy_peak = (
+                float(phase.semantic_peak)
+                if proxy_story_timing
+                else float(relation_start) + (
+                    float(relation_end) - float(relation_start)
+                ) * GOLDEN_MAJOR
+            )
             if not (start_bound + 1e-9 < proxy_peak < end_bound - 1e-9):
                 return None
             # Story already owns the proxy's exact reveal/peak/settle envelope. Do not

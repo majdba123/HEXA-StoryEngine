@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from math import inf
 
-from app.models import AssetActivation, StoryBeat
+from app.models import AssetActivation, SemanticEventProxy, StoryBeat
 
 from .relation_contract import SEMANTIC_PROXY_AUTHORITIES, relation_requires_reaction
 from .models import (
@@ -137,6 +137,10 @@ class SemanticEventFlowPlanner:
             for dependency_id in item["dependency_ids"]:
                 dependents_by_event[str(dependency_id)].append(event_id)
 
+        proxy_timings = {
+            (proxy.semantic_event_id, proxy.semantic_unit_id, proxy.asset_id): proxy
+            for proxy in beat.semantic_event_proxies
+        }
         flows: list[SemanticEventFlow] = []
         for index, item in enumerate(metadata):
             event_id = str(item["event_id"])
@@ -186,6 +190,7 @@ class SemanticEventFlowPlanner:
                 reaction_asset_ids=reaction_asset_ids,
                 handoff_to_asset_ids=handoff_to_asset_ids,
                 event_rows=rows,
+                proxy_timings=proxy_timings,
             )
             stages = tuple(dict.fromkeys(step.stage for step in steps))
             flows.append(
@@ -343,6 +348,7 @@ class SemanticEventFlowPlanner:
         reaction_asset_ids: set[str],
         handoff_to_asset_ids: tuple[str, ...],
         event_rows: list[AssetActivation],
+        proxy_timings: dict[tuple[str, str, str], SemanticEventProxy],
     ) -> tuple[EventFlowStep, ...]:
         steps: list[EventFlowStep] = []
 
@@ -363,6 +369,7 @@ class SemanticEventFlowPlanner:
         }
         for unit in leader_units:
             proxy = cls._compound_proxy_row(unit, event_rows)
+            proxy_timing = cls._proxy_timing(proxy, proxy_timings)
             if proxy is not None and any(asset_id in proxy_result_ids for asset_id in unit):
                 continue
             steps.append(EventFlowStep(
@@ -377,9 +384,13 @@ class SemanticEventFlowPlanner:
                 trigger_char_end=(proxy.trigger_char_end if proxy is not None else None),
                 spoken_start=(proxy.spoken_start if proxy is not None else None),
                 spoken_end=(proxy.spoken_end if proxy is not None else None),
+                reveal_start=(proxy_timing.reveal_start if proxy_timing is not None else None),
+                semantic_peak=(proxy_timing.semantic_peak if proxy_timing is not None else None),
+                settle_at=(proxy_timing.settle_at if proxy_timing is not None else None),
             ))
         for unit in participant_units:
             proxy = cls._compound_proxy_row(unit, event_rows)
+            proxy_timing = cls._proxy_timing(proxy, proxy_timings)
             if proxy is not None and any(
                 asset_id in proxy_result_ids or asset_id in proxy_leader_ids
                 for asset_id in unit
@@ -397,6 +408,9 @@ class SemanticEventFlowPlanner:
                 trigger_char_end=(proxy.trigger_char_end if proxy is not None else None),
                 spoken_start=(proxy.spoken_start if proxy is not None else None),
                 spoken_end=(proxy.spoken_end if proxy is not None else None),
+                reveal_start=(proxy_timing.reveal_start if proxy_timing is not None else None),
+                semantic_peak=(proxy_timing.semantic_peak if proxy_timing is not None else None),
+                settle_at=(proxy_timing.settle_at if proxy_timing is not None else None),
             ))
 
         for interaction in interactions:
@@ -458,6 +472,7 @@ class SemanticEventFlowPlanner:
                 tuple(dict.fromkeys((*interactions, *payoff_interactions))),
             )
             proxy = cls._compound_proxy_row(unit, event_rows)
+            proxy_timing = cls._proxy_timing(proxy, proxy_timings)
             steps.append(EventFlowStep(
                 stage=EventFlowStage.PAYOFF,
                 focus_asset_id=result_id,
@@ -494,6 +509,9 @@ class SemanticEventFlowPlanner:
                     result_interaction.spoken_end
                     if result_interaction else proxy.spoken_end if proxy is not None else None
                 ),
+                reveal_start=(proxy_timing.reveal_start if proxy_timing is not None else None),
+                semantic_peak=(proxy_timing.semantic_peak if proxy_timing is not None else None),
+                settle_at=(proxy_timing.settle_at if proxy_timing is not None else None),
             ))
 
         if steps:
@@ -517,6 +535,23 @@ class SemanticEventFlowPlanner:
                 ),
             ))
         return tuple(steps)
+
+    @staticmethod
+    def _proxy_timing(
+        row: AssetActivation | None,
+        proxy_timings: dict[tuple[str, str, str], SemanticEventProxy],
+    ) -> SemanticEventProxy | None:
+        if (
+            row is None
+            or not row.semantic_event_id
+            or not row.semantic_unit_id
+        ):
+            return None
+        return proxy_timings.get((
+            row.semantic_event_id,
+            row.semantic_unit_id,
+            row.asset_id,
+        ))
 
     @classmethod
     def _compound_proxy_row(
