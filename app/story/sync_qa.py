@@ -663,8 +663,10 @@ class StorySyncQA:
         for segment in cue.segments:
             if (
                 segment.phase == "ENTRY"
-                and activation_event is not None
-                and segment.semantic_event_id == activation_event
+                and (
+                    activation_event is None
+                    or segment.semantic_event_id == activation_event
+                )
             ):
                 # ENTRY is an arrival gesture. When Motion carries Story's explicit
                 # semantic peak inside the ENTRY window, that authored instant owns
