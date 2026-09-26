@@ -8,6 +8,7 @@ from app.choreography import ChoreographyPlan
 from app.choreography.relation_contract import relation_requires_reaction
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion.collision import authored_overlap_ratio, max_relation_overlap
+from app.qa.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -493,7 +494,10 @@ class MotionInteractionQA:
         raise StageFailedError(
             "semantic motion timeline QA failed",
             details={
+                **violation_failure_details(
+                    report.violations,
+                    aggregate_code="MOTION_CONTRACT_VIOLATIONS",
+                ),
                 "violations": [asdict(row) for row in report.violations[:12]],
-                "violation_count": len(report.violations),
             },
         )

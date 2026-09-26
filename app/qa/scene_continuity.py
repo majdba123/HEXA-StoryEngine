@@ -7,6 +7,7 @@ from pathlib import Path
 from app.contracts import ContinuityContract
 from app.models import CompositionBeat, MotionCue, StoryBeat
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
+from app.qa.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -214,7 +215,10 @@ class SceneContinuityQA:
         raise StageFailedError(
             "scene continuity QA failed",
             details={
-                "violation_count": len(report.violations),
+                **violation_failure_details(
+                    report.violations,
+                    aggregate_code="CONTINUITY_CONTRACT_VIOLATIONS",
+                ),
                 "violations": [asdict(row) for row in report.violations[:12]],
             },
         )

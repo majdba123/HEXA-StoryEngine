@@ -18,6 +18,7 @@ from app.motion.timing import (
     semantic_readability_floor,
     semantic_readability_floor_px,
 )
+from app.qa.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -744,7 +745,10 @@ class RenderedMotionQA:
         raise StageFailedError(
             "rendered semantic motion QA failed",
             details={
-                "violation_count": len(report.violations),
+                **violation_failure_details(
+                    report.violations,
+                    aggregate_code="RENDERED_MOTION_CONTRACT_VIOLATIONS",
+                ),
                 "violations": [asdict(row) for row in report.violations[:12]],
             },
         )

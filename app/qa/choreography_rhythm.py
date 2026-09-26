@@ -11,6 +11,7 @@ from app.motion.rhythm import (
     ReferenceRhythmPolicy,
     focus_progression_key,
 )
+from app.qa.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -201,7 +202,10 @@ class ChoreographyRhythmQA:
         raise StageFailedError(
             "choreography rhythm QA failed",
             details={
-                "violation_count": len(report.violations),
+                **violation_failure_details(
+                    report.violations,
+                    aggregate_code="RHYTHM_CONTRACT_VIOLATIONS",
+                ),
                 "violations": [asdict(row) for row in report.violations[:12]],
             },
         )
