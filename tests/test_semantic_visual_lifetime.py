@@ -369,6 +369,38 @@ def test_future_semantic_use_matrix(name, build_case, protected) -> None:
     assert (decision is not None) is protected, name
 
 
+
+def test_nonpersistent_relation_counterpart_does_not_extend_source_lifetime() -> None:
+    source = activation("source", "E1", 1, 0.1, 0.35)
+    result = activation("result", "E2", 2, 0.8, 1.2)
+    story = beat([source, result])
+    causal = EventFlowStep(
+        EventFlowStage.INTERACT,
+        focus_asset_id="source",
+        participant_asset_ids=("source", "result"),
+        source_asset_id="source",
+        target_asset_id="result",
+        relationship="CAUSES",
+        semantic_action="REVEAL",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+    )
+    choreo = directive(
+        flow("E1", 1, "source", handoff=("E2",), extra=(causal,)),
+        flow("E2", 2, "result", deps=("E1",)),
+    )
+    assert index(story, choreo).for_asset("source") is None
+
+
+def test_persistence_relation_counterpart_extends_source_lifetime() -> None:
+    source = activation("source", "E1", 1, 0.1, 0.35)
+    result = activation("result", "E2", 2, 0.8, 1.2)
+    story = beat([source, result])
+    choreo = directive(
+        flow("E1", 1, "source", handoff=("E2",), extra=(relation("source", "result"),)),
+        flow("E2", 2, "result", deps=("E1",)),
+    )
+    assert index(story, choreo).for_asset("source") is not None
+
 def test_legacy_beat_without_event_flow_has_no_lifetime_override() -> None:
     story = beat([activation("asset", "E1", 1, 0.1, 0.35)])
     assert SemanticVisualLifetimeIndex.build(

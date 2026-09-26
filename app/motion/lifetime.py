@@ -102,6 +102,13 @@ class SemanticVisualLifetimeIndex:
                     EventFlowStage.PAYOFF,
                 }:
                     continue
+                # Relation-counterpart inference is intentionally stricter than exact
+                # asset reuse. A later target/result does not mean every causal source
+                # must stay on screen. Only an authored persistence action proves that
+                # this carrier itself must remain visible through the later counterpart.
+                # Other relation families need independent future-use evidence above.
+                if str(phase.semantic_action or "").upper() != "LOOP":
+                    continue
                 if asset_id not in {
                     phase.focus_asset_id,
                     phase.source_asset_id,
