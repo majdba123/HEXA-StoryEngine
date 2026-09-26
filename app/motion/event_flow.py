@@ -26,6 +26,9 @@ class MotionEventPhase:
     trigger_char_end: int | None = None
     spoken_start: float | None = None
     spoken_end: float | None = None
+    reveal_start: float | None = None
+    semantic_peak: float | None = None
+    settle_at: float | None = None
 
     def to_payload(self) -> dict[str, object | None]:
         return {
@@ -45,6 +48,9 @@ class MotionEventPhase:
             "trigger_char_end": self.trigger_char_end,
             "spoken_start": self.spoken_start,
             "spoken_end": self.spoken_end,
+            "reveal_start": self.reveal_start,
+            "semantic_peak": self.semantic_peak,
+            "settle_at": self.settle_at,
         }
 
 
@@ -80,6 +86,9 @@ class MotionEventAssignment:
     trigger_char_end: int | None = None
     spoken_start: float | None = None
     spoken_end: float | None = None
+    reveal_start: float | None = None
+    semantic_peak: float | None = None
+    settle_at: float | None = None
     phase_chain: tuple[MotionEventPhase, ...] = ()
     relation_only: bool = False
 
@@ -108,6 +117,9 @@ class MotionEventAssignment:
             "trigger_char_end": self.trigger_char_end,
             "spoken_start": self.spoken_start,
             "spoken_end": self.spoken_end,
+            "reveal_start": self.reveal_start,
+            "semantic_peak": self.semantic_peak,
+            "settle_at": self.settle_at,
             "phase_chain": [phase.to_payload() for phase in self.phase_chain],
             "relation_only": self.relation_only,
         }
@@ -213,6 +225,9 @@ class MotionEventFlowResolver:
                     trigger_char_end=step.trigger_char_end,
                     spoken_start=step.spoken_start,
                     spoken_end=step.spoken_end,
+                    reveal_start=step.reveal_start,
+                    semantic_peak=step.semantic_peak,
+                    settle_at=step.settle_at,
                 )
                 owned_phases.append(phase)
                 if not owns_event:
@@ -248,6 +263,9 @@ class MotionEventFlowResolver:
                         trigger_char_end=step.trigger_char_end,
                         spoken_start=step.spoken_start,
                         spoken_end=step.spoken_end,
+                        reveal_start=step.reveal_start,
+                        semantic_peak=step.semantic_peak,
+                        settle_at=step.settle_at,
                     ),
                 ))
 
@@ -317,6 +335,9 @@ class MotionEventFlowResolver:
                 trigger_char_end=dominant_phase.trigger_char_end,
                 spoken_start=dominant_phase.spoken_start,
                 spoken_end=dominant_phase.spoken_end,
+                reveal_start=dominant_phase.reveal_start,
+                semantic_peak=dominant_phase.semantic_peak,
+                settle_at=dominant_phase.settle_at,
                 phase_chain=tuple(owned_phases),
                 relation_only=True,
             )
@@ -345,6 +366,9 @@ class MotionEventFlowResolver:
             trigger_char_end=dominant.trigger_char_end,
             spoken_start=dominant.spoken_start,
             spoken_end=dominant.spoken_end,
+            reveal_start=dominant.reveal_start,
+            semantic_peak=dominant.semantic_peak,
+            settle_at=dominant.settle_at,
             phase_chain=tuple(owned_phases),
         )
 
