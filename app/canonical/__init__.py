@@ -9,6 +9,7 @@ from app.canonical.enums import (
 )
 from app.canonical.models import (
     CanonicalAsset,
+    CanonicalContinuity,
     CanonicalPackage,
     CanonicalProgression,
     CanonicalRelation,
@@ -17,13 +18,14 @@ from app.canonical.models import (
     CanonicalSemanticEvent,
     CanonicalSemanticGroup,
     CanonicalVisualLocator,
+    CanonicalVisualProgression,
 )
 from app.canonical.normalizer import CanonicalNormalizer, ensure_canonical_package
 
 __all__ = [
     "AUTHORITY_MATRIX", "CanonicalAuthority", "CanonicalNormalizer", "ensure_canonical_package", "CanonicalPackage",
-    "CanonicalScene", "CanonicalAsset", "CanonicalSemanticEvent", "CanonicalRelation",
-    "CanonicalProgression", "CanonicalScriptSpan", "CanonicalVisualLocator",
+    "CanonicalScene", "CanonicalAsset", "CanonicalContinuity", "CanonicalSemanticEvent", "CanonicalRelation",
+    "CanonicalProgression", "CanonicalScriptSpan", "CanonicalVisualLocator", "CanonicalVisualProgression",
     "CanonicalSemanticGroup", "BindingType", "VisualFocus", "AnchorGranularity",
     "SemanticGroupAnimationPolicy", "CompoundVisualClassification", "ContinuityMode",
 ]

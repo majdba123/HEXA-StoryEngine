@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from PIL import Image
 
-from app.models import SceneSource, VisualAsset
+from app.canonical import CanonicalAsset, CanonicalScene, CanonicalVisualLocator
+from app.models import VisualAsset
 
 
 Box = tuple[float, float, float, float]
@@ -96,15 +95,10 @@ class VisualIdentityBinder:
     def bind(
         self,
         *,
-        scene: SceneSource,
-        semantic_assets: list[dict[str, Any]],
+        scene: CanonicalScene,
+        semantic_assets: list[CanonicalAsset],
         assets: list[VisualAsset],
     ) -> VisualIdentityBinding:
-        unit_by_id = {
-            str(unit.get("unit_id")): unit
-            for unit in scene.units
-            if isinstance(unit, Mapping) and unit.get("unit_id")
-        }
         asset_by_id = {asset.id: asset for asset in assets}
         eligible = [
             asset for asset in assets
@@ -120,19 +114,14 @@ class VisualIdentityBinder:
         matches: dict[str, VisualIdentityMatch] = {}
         multi_matches: dict[str, tuple[VisualIdentityMatch, ...]] = {}
         reserved: set[str] = set()
-        locator_rows: dict[str, tuple[dict[str, Any], Box]] = {}
+        locator_rows: dict[str, tuple[CanonicalAsset, Box]] = {}
 
         # Exact authored real-asset identity, when it exists, remains strongest.
         for row in semantic_assets:
-            if not isinstance(row, Mapping):
-                continue
-            semantic_id = str(row.get("asset_id") or "").strip()
+            semantic_id = str(row.asset_id or "").strip()
             if not semantic_id:
                 continue
-            locator_raw = row.get("visual_locator")
-            if locator_raw is None:
-                locator_raw = unit_by_id.get(semantic_id, {}).get("visual_locator")
-            locator = self._locator_box(locator_raw)
+            locator = self._locator_box(row.visual_locator)
             if locator is not None:
                 locator_rows[semantic_id] = (row, locator)
             if semantic_id in asset_by_id and semantic_id not in reserved:
@@ -357,13 +346,13 @@ class VisualIdentityBinder:
         self,
         *,
         locator: Box,
-        semantic_row: dict[str, Any],
+        semantic_row: CanonicalAsset,
         real_boxes: dict[str, Box],
         assets: dict[str, VisualAsset],
         reserved: set[str],
         matches: dict[str, VisualIdentityMatch],
     ) -> list[tuple[str, float]]:
-        parent_semantic_id = str(semantic_row.get("parent_asset_id") or "").strip()
+        parent_semantic_id = str(semantic_row.parent_asset_id or "").strip()
         parent_real_id = (
             matches[parent_semantic_id].real_asset_id
             if parent_semantic_id in matches
@@ -505,15 +494,15 @@ class VisualIdentityBinder:
         return result
 
     @staticmethod
-    def _locator_box(raw: Any) -> Box | None:
-        if not isinstance(raw, Mapping):
+    def _locator_box(raw: CanonicalVisualLocator | None) -> Box | None:
+        if raw is None:
             return None
         try:
-            cx = float(raw["cx"])
-            cy = float(raw["cy"])
-            width = float(raw["width"])
-            height = float(raw["height"])
-        except (KeyError, TypeError, ValueError):
+            cx = float(raw.cx)
+            cy = float(raw.cy)
+            width = float(raw.width)
+            height = float(raw.height)
+        except (TypeError, ValueError):
             return None
         if not (
             0.0 <= cx <= 1.0

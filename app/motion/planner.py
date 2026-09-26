@@ -9,7 +9,7 @@ from app.choreography.relation_contract import (
     relation_requires_reaction,
     relation_timing_mode,
 )
-from app.contracts import ContinuityContract
+from app.motion.continuity import ContinuityContract
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
 from app.motion.collision import fit_relation_collisions

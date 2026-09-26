@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class TextLayoutContract:
-    """Shared hard acceptance limits for authored text placement and QA."""
+    """Composition-owned hard acceptance limits for authored text placement."""
 
     max_visual_overlap: float = 0.012
     max_text_overlap: float = 0.04

@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from app.canonical import (
+    CanonicalAsset,
+    CanonicalRelation,
+    CanonicalScene,
+    CanonicalScriptSpan,
+    CanonicalVisualProgression,
+)
 from app.input.loader import FinalPackageLoader
 from app.models import (
     PackageModel,
@@ -188,42 +195,40 @@ def test_precise_script_span_must_match_exact_half_open_text(tmp_path: Path) -> 
 
 
 def test_final_package_relations_focus_and_state_enter_story_context() -> None:
-    scene = SceneSource(
+    scene = CanonicalScene(
         id="SCENE_001",
         image_path=Path("/scene.png"),
         order=0,
-        units=[
-            {"unit_id": "actor", "type": "VISUAL_ASSET_INTENT", "role": "CHARACTER"},
-            {"unit_id": "target", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
-            {"unit_id": "result", "type": "VISUAL_ASSET_INTENT", "role": "RESULT"},
-        ],
+        units=(
+            CanonicalAsset(
+                unit_id="actor", asset_id="actor", scene_id="SCENE_001",
+                role="CHARACTER", semantic_meaning="actor",
+            ),
+            CanonicalAsset(
+                unit_id="target", asset_id="target", scene_id="SCENE_001",
+                role="PRIMARY", semantic_meaning="target", visual_focus="PRIMARY",
+            ),
+            CanonicalAsset(
+                unit_id="result", asset_id="result", scene_id="SCENE_001",
+                role="RESULT", semantic_meaning="result",
+                visual_state={"before": "SAFE", "after": "CHANGED"},
+            ),
+        ),
+        relations=(CanonicalRelation(
+            subject_asset_id="actor",
+            relation_type="CREATES",
+            object_asset_id="target",
+            result_asset_id="result",
+            script_text="creates result",
+            script_span=CanonicalScriptSpan(global_char_start=2, global_char_end=16),
+            confidence=0.97,
+        ),),
     )
-    semantic_scene = {
-        "assets": [
-            {"asset_id": "actor", "semantic_meaning": "actor"},
-            {"asset_id": "target", "semantic_meaning": "target", "visual_focus": "PRIMARY"},
-            {
-                "asset_id": "result",
-                "semantic_meaning": "result",
-                "visual_state": {"before": "SAFE", "after": "CHANGED"},
-            },
-        ],
-        "relations": [{
-            "subject_asset_id": "actor",
-            "relationship": "CREATES",
-            "object_asset_id": "target",
-            "result_asset_id": "result",
-            "script_text": "creates result",
-            "script_span": {"char_start": 2, "char_end": 16},
-            "confidence": 0.97,
-        }],
-    }
 
     context = PackageStoryInterpreter().interpret(
         scene,
-        {"action": "EXPLAIN", "targets": []},
+        CanonicalVisualProgression(action="EXPLAIN", targets=()),
         is_first_beat=False,
-        semantic_binding_scene=semantic_scene,
     )
 
     authored = next(row for row in context.relations if row.authority == "FINAL_PACKAGE_ASSET_RELATION")
@@ -235,14 +240,18 @@ def test_final_package_relations_focus_and_state_enter_story_context() -> None:
 
 
 def test_story_binder_prefers_locator_proven_activation_and_authored_focus(tmp_path: Path) -> None:
-    scene = SceneSource(
+    scene = CanonicalScene(
         id="SCENE_001",
         image_path=tmp_path / "scene.png",
         order=0,
-        units=[
-            {"unit_id": "concept-a", "type": "VISUAL_ASSET_INTENT"},
-            {"unit_id": "concept-b", "type": "VISUAL_ASSET_INTENT"},
-        ],
+        units=(
+            CanonicalAsset(
+                unit_id="concept-a", asset_id="concept-a", scene_id="SCENE_001"
+            ),
+            CanonicalAsset(
+                unit_id="concept-b", asset_id="concept-b", scene_id="SCENE_001"
+            ),
+        ),
     )
     assets = [
         VisualAsset(

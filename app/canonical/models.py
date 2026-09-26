@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -16,28 +15,51 @@ from .enums import (
 )
 
 
-class CanonicalRecord(BaseModel, Mapping[str, Any]):
-    """Typed canonical record with a read-only mapping compatibility surface.
+class FrozenDict(dict):
+    """Recursively immutable mapping used for canonical extension metadata."""
 
-    The mapping surface exists only to keep proven legacy algorithms behavior-identical
-    during migration. Values originate from typed canonical fields, never raw JSON.
-    """
+    @staticmethod
+    def _immutable(*_args: Any, **_kwargs: Any) -> None:
+        raise TypeError("canonical mapping is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+
+def _freeze_canonical_value(value: Any) -> Any:
+    if isinstance(value, FrozenDict):
+        return value
+    if isinstance(value, dict):
+        return FrozenDict({key: _freeze_canonical_value(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_canonical_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_canonical_value(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_canonical_value(item) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_freeze_canonical_value(item) for item in value)
+    return value
+
+
+class CanonicalRecord(BaseModel):
+    """Typed, deeply immutable canonical semantic truth."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    def __getitem__(self, key: str) -> Any:
-        if key not in type(self).model_fields:
-            raise KeyError(key)
-        return getattr(self, key)
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(type(self).model_fields)
-
-    def __len__(self) -> int:
-        return len(type(self).model_fields)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        for field_name in type(self).model_fields:
+            current = getattr(self, field_name)
+            frozen = _freeze_canonical_value(current)
+            if frozen is not current:
+                object.__setattr__(self, field_name, frozen)
 
 
 class CanonicalScriptSpan(CanonicalRecord):

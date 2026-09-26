@@ -7,7 +7,7 @@ from app.models import CompositionBeat, MotionCue
 
 @dataclass(frozen=True, slots=True)
 class AssetLifecycleBoundary:
-    """Shared lifecycle decision for one adjacent beat boundary."""
+    """Motion-owned lifecycle decision for one adjacent beat boundary."""
 
     shared_asset_ids: frozenset[str]
     persistent_asset_ids: frozenset[str]
@@ -21,11 +21,9 @@ class AssetLifecycleBoundary:
 class ContinuityContract:
     """Single source of truth for cross-beat asset lifecycle.
 
-    The same runtime asset may persist across adjacent beats, but an authored terminal
-    EXIT/LEAVE explicitly ends that visual lifetime. A planner must therefore avoid
-    authoring a terminal exit when the exact same asset continues in the next layout.
-    QA consumes the same rule and rejects externally supplied or legacy plans that
-    violate it before FFmpeg rendering.
+    Motion owns terminal-exit and visual-lifetime rules. QA and Render may inspect the
+    same contract, but they do not define it. Behavior and thresholds are preserved
+    exactly from the former generic app.contracts location.
     """
 
     TERMINAL_BEHAVIOR = "LEAVE"

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from app.models import PackageModel, SceneSource, StoryBeat, Transcript, TranscriptWord
+from app.canonical import CanonicalAsset, CanonicalPackage, CanonicalScene
+from app.models import StoryBeat, Transcript, TranscriptWord
 
 _TOKEN_EDGE_RE = re.compile(r"^[\W_]+|[\W_]+$", re.UNICODE)
 _DIGIT_RE = re.compile(r"[0-9٠-٩]")
@@ -133,7 +133,7 @@ class TextSemanticSelector:
         beat: StoryBeat,
         transcript: Transcript,
         *,
-        package: PackageModel | None = None,
+        package: CanonicalPackage | None = None,
     ) -> list[KeywordCandidate]:
         words = self._aligned_words_for_beat(beat, transcript)
         if not words:
@@ -283,7 +283,7 @@ class TextSemanticSelector:
         self,
         words: list[TranscriptWord],
         beat: StoryBeat,
-        package: PackageModel | None,
+        package: CanonicalPackage | None,
     ) -> list[KeywordCandidate]:
         """Derive on-screen keywords from the Final Package semantic contract.
 
@@ -298,50 +298,43 @@ class TextSemanticSelector:
         if binding_scene is None:
             return []
         scene = next((row for row in package.scenes if row.id == beat.scene_id), None)
-        groups = binding_scene.get("semantic_groups")
-        assets = [row for row in binding_scene.get("assets", []) if isinstance(row, Mapping)]
-        assets_by_id = {
-            str(row.get("asset_id")): row
-            for row in assets
-            if row.get("asset_id")
-        }
+        groups = binding_scene.semantic_groups
+        assets = list(binding_scene.assets)
+        assets_by_id = {asset.asset_id: asset for asset in assets if asset.asset_id}
         event_roles_by_asset: dict[str, set[str]] = {}
-        for event in binding_scene.get("semantic_events", []) or []:
-            if not isinstance(event, Mapping):
-                continue
-            leader = event.get("visual_leader_asset_id")
-            text_anchor = event.get("text_anchor_asset_id")
-            if isinstance(leader, str) and leader:
+        for event in binding_scene.semantic_events:
+            leader = event.visual_leader_asset_id
+            text_anchor = event.text_anchor_asset_id
+            if leader:
                 event_roles_by_asset.setdefault(leader, set()).add("LEADER")
-            if isinstance(text_anchor, str) and text_anchor:
+            if text_anchor:
                 event_roles_by_asset.setdefault(text_anchor, set()).add("TEXT_ANCHOR")
-            for field, role in (
-                ("participant_asset_ids", "PARTICIPANT"),
-                ("context_asset_ids", "CONTEXT"),
-                ("result_asset_ids", "RESULT"),
-            ):
-                for asset_id in event.get(field, []) or []:
-                    if isinstance(asset_id, str) and asset_id:
-                        event_roles_by_asset.setdefault(asset_id, set()).add(role)
+            for asset_id in event.participant_asset_ids:
+                if asset_id:
+                    event_roles_by_asset.setdefault(asset_id, set()).add("PARTICIPANT")
+            for asset_id in event.context_asset_ids:
+                if asset_id:
+                    event_roles_by_asset.setdefault(asset_id, set()).add("CONTEXT")
+            for asset_id in event.result_asset_ids:
+                if asset_id:
+                    event_roles_by_asset.setdefault(asset_id, set()).add("RESULT")
 
-        phrase_rows: list[tuple[str, list[dict]]] = []
+        phrase_rows: list[tuple[str, list[CanonicalAsset]]] = []
         if groups:
             for group in groups:
-                if not isinstance(group, Mapping):
-                    continue
-                phrase = str(group.get("script_text") or "").strip()
+                phrase = str(group.script_text or "").strip()
                 if not phrase:
                     continue
                 group_assets = [
                     assets_by_id[asset_id]
-                    for asset_id in group.get("asset_ids", [])
+                    for asset_id in group.asset_ids
                     if asset_id in assets_by_id
                 ]
                 phrase_rows.append((phrase, group_assets))
         else:
-            grouped: dict[str, list[dict]] = {}
+            grouped: dict[str, list[CanonicalAsset]] = {}
             for asset in assets:
-                phrase = str(asset.get("script_text") or "").strip()
+                phrase = str(asset.script_text or "").strip()
                 if phrase:
                     grouped.setdefault(phrase, []).append(asset)
             phrase_rows.extend(grouped.items())
@@ -375,7 +368,7 @@ class TextSemanticSelector:
 
             produced = False
             for semantic_asset in semantic_assets:
-                binding_type = str(semantic_asset.get("binding_type") or "").upper()
+                binding_type = str(semantic_asset.binding_type or "").upper()
                 if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
                     continue
                 semantic_terms, explicit_terms = self._semantic_evidence_terms([semantic_asset])
@@ -420,7 +413,7 @@ class TextSemanticSelector:
     def _precise_asset_candidates(
         self,
         words: list[TranscriptWord],
-        semantic_assets: list[dict],
+        semantic_assets: list[CanonicalAsset],
         *,
         event_roles_by_asset: dict[str, set[str]] | None = None,
     ) -> list[KeywordCandidate]:
@@ -433,22 +426,14 @@ class TextSemanticSelector:
         """
         output: list[KeywordCandidate] = []
         for asset in semantic_assets:
-            binding_type = str(asset.get("binding_type") or "").upper()
+            binding_type = str(asset.binding_type or "").upper()
             if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
                 continue
-            span = asset.get("script_span")
-            if not isinstance(span, Mapping):
+            span = asset.script_span
+            if span is None:
                 continue
-            start_value = (
-                span.get("char_start")
-                if span.get("char_start") is not None
-                else span.get("global_char_start")
-            )
-            end_value = (
-                span.get("char_end")
-                if span.get("char_end") is not None
-                else span.get("global_char_end")
-            )
+            start_value = span.global_char_start
+            end_value = span.global_char_end
             try:
                 char_start = int(start_value)
                 char_end = int(end_value)
@@ -474,12 +459,8 @@ class TextSemanticSelector:
             if not display or len(display) > self.max_display_chars:
                 continue
 
-            role = str(
-                asset.get("semantic_role")
-                or asset.get("role")
-                or ""
-            ).upper()
-            visual_focus = str(asset.get("visual_focus") or "").upper()
+            role = str(asset.semantic_role or asset.role or "").upper()
+            visual_focus = str(asset.visual_focus or "").upper()
             # Exact asset-level script spans outrank aggregate/group phrase mining.
             # They are the strongest available evidence for WHAT should be written.
             base = 1.15 if binding_type == "EXPLICIT" else 1.05
@@ -501,8 +482,8 @@ class TextSemanticSelector:
                 "SUPPORT": -0.04,
                 "CONTEXT": -0.14,
             }.get(visual_focus, 0.0)
-            state_bonus = 0.08 if asset.get("visual_state") else 0.0
-            asset_id = str(asset.get("asset_id") or "")
+            state_bonus = 0.08 if asset.visual_state else 0.0
+            asset_id = str(asset.asset_id or "")
             event_roles = (event_roles_by_asset or {}).get(asset_id, set())
             event_bonus = 0.0
             if "TEXT_ANCHOR" in event_roles:
@@ -543,7 +524,7 @@ class TextSemanticSelector:
         self,
         words: list[TranscriptWord],
         beat: StoryBeat,
-        package: PackageModel | None,
+        package: CanonicalPackage | None,
     ) -> list[KeywordCandidate]:
         """Topic-agnostic fallback based on linguistic salience, not domain words."""
         corpus = package.script if package is not None and package.script else beat.narration
@@ -582,7 +563,7 @@ class TextSemanticSelector:
         self,
         words: list[TranscriptWord],
         *,
-        semantic_assets: list[dict],
+        semantic_assets: list[CanonicalAsset],
         semantic_terms: set[str],
         explicit_terms: set[str],
         corpus_frequency: Counter[str],
@@ -592,7 +573,7 @@ class TextSemanticSelector:
     ) -> list[KeywordCandidate]:
         output: list[KeywordCandidate] = []
         binding_types = {
-            str(row.get("binding_type") or "").upper() for row in semantic_assets
+            str(row.binding_type or "").upper() for row in semantic_assets
         }
         binding_bonus = (
             0.12 if "EXPLICIT" in binding_types
@@ -600,7 +581,7 @@ class TextSemanticSelector:
             else 0.0
         )
         roles = {
-            str(row.get("semantic_role") or row.get("role") or "").upper()
+            str(row.semantic_role or row.role or "").upper()
             for row in semantic_assets
         }
         role_bonus = 0.035 if roles & {"PRIMARY", "RESULT", "ACTION", "OBJECT"} else 0.0
@@ -680,20 +661,23 @@ class TextSemanticSelector:
         return any(str(word.text).rstrip().endswith(boundary) for word in words[:-1])
 
     @classmethod
-    def _semantic_evidence_terms(cls, assets: list[dict]) -> tuple[set[str], set[str]]:
+    def _semantic_evidence_terms(cls, assets: list[CanonicalAsset]) -> tuple[set[str], set[str]]:
         all_terms: set[str] = set()
         explicit_terms: set[str] = set()
-        fields = ("semantic_meaning", "visual_concept", "semantic_role")
         for asset in assets:
             row_terms: set[str] = set()
-            for field in fields:
-                value = str(asset.get(field) or "")
-                for raw in re.findall(r"[w؀-ۿ]+", value, flags=re.UNICODE):
+            for value in (
+                asset.semantic_meaning,
+                asset.visual_concept,
+                asset.semantic_role,
+            ):
+                text = str(value or "")
+                for raw in re.findall(r"[w؀-ۿ]+", text, flags=re.UNICODE):
                     term = cls._semantic_lexeme(raw)
                     if term:
                         row_terms.add(term)
             all_terms.update(row_terms)
-            if str(asset.get("binding_type") or "").upper() == "EXPLICIT":
+            if str(asset.binding_type or "").upper() == "EXPLICIT":
                 explicit_terms.update(row_terms)
         return all_terms, explicit_terms
 
@@ -758,7 +742,7 @@ class TextSemanticSelector:
     @staticmethod
     def _phrase_span(
         script: str,
-        scene: SceneSource | None,
+        scene: CanonicalScene | None,
         phrase: str,
         words: list[TranscriptWord],
     ) -> tuple[int, int] | None:

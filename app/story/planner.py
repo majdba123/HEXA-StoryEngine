@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from app.canonical import CanonicalPackage, CanonicalScene, ensure_canonical_package
+from app.canonical import (
+    CanonicalPackage,
+    CanonicalScene,
+    CanonicalScriptSpan,
+    CanonicalVisualProgression,
+    ensure_canonical_package,
+)
 from app.models import StoryBeat, StorySemanticContext, Transcript, VisualAsset
 
 from .activation import SemanticActivationPlanner
@@ -50,8 +56,6 @@ class StoryPlanner:
         for rows in assets_by_scene.values():
             rows.sort(key=lambda asset: (asset.source_area_ratio or 0.0), reverse=True)
 
-        semantic_binding_by_scene = package.scene_by_id
-
         beats: list[StoryBeat] = []
         previous_primary: str | None = None
         beat_number = 1
@@ -59,11 +63,11 @@ class StoryPlanner:
             scene_assets = assets_by_scene.get(scene.id, [])
             if not scene_assets:
                 continue
+            authored_progression = bool(scene.visual_progression)
             events = scene.visual_progression or [self._default_event(scene)]
             for event_index, event in enumerate(events):
-                trigger = event.get("trigger") if isinstance(event.get("trigger"), dict) else {}
-                char_start = self._int_or_none(trigger.get("global_char_start"))
-                char_end = self._int_or_none(trigger.get("global_char_end"))
+                char_start = scene.script_char_start
+                char_end = scene.script_char_end
                 if char_start is None:
                     char_start = scene.script_char_start
                 if char_end is None:
@@ -88,14 +92,14 @@ class StoryPlanner:
                 selected = self._select_assets(scene_assets)
                 primary = selected[0].id if selected else None
                 support = [asset.id for asset in selected[1:]]
-                raw_action = str(event.get("action") or "EXPLAIN").upper()
+                raw_action = str(event.action or "EXPLAIN").upper()
                 action = self._story_action(raw_action, previous_primary, primary)
-                targets = [str(value) for value in event.get("targets", []) if value]
+                targets = [str(value) for value in event.targets if value]
                 semantic_context = self.semantic_interpreter.interpret(
                     scene,
                     event,
                     is_first_beat=(beat_number == 1),
-                    semantic_binding_scene=semantic_binding_by_scene.get(scene.id),
+                    default_event=not authored_progression,
                 )
                 semantic_context = self._resolve_relation_timing(
                     semantic_context,
@@ -231,16 +235,16 @@ class StoryPlanner:
         return list(scene_assets)
 
     @staticmethod
-    def _default_event(scene: CanonicalScene) -> dict:
-        return {
-            "action": "EXPLAIN",
-            "targets": [unit.get("unit_id") for unit in scene.units if unit.get("unit_id")],
-            "trigger": {
-                "global_char_start": scene.script_char_start,
-                "global_char_end": scene.script_char_end,
-                "phrase": scene.narration_hint,
-            },
-        }
+    def _default_event(scene: CanonicalScene) -> CanonicalVisualProgression:
+        return CanonicalVisualProgression(
+            action="EXPLAIN",
+            targets=tuple(unit.unit_id for unit in scene.units if unit.unit_id),
+            trigger=CanonicalScriptSpan(
+                text=scene.narration_hint,
+                global_char_start=scene.script_char_start,
+                global_char_end=scene.script_char_end,
+            ),
+        )
 
     @staticmethod
     def _story_action(raw_action: str, previous_primary: str | None, primary: str | None) -> str:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 
-from app.models import SceneSource, StoryBeat, VisualAsset
+from app.canonical import CanonicalAsset, CanonicalScene
+from app.models import StoryBeat, VisualAsset
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +37,7 @@ class SemanticAssetBinder:
     def bind(
         self,
         *,
-        scene: SceneSource | None,
+        scene: CanonicalScene | None,
         assets: list[VisualAsset],
         action: str,
         beat: StoryBeat | None = None,
@@ -94,7 +94,7 @@ class SemanticAssetBinder:
     def _semantic_map(
         self,
         *,
-        scene: SceneSource | None,
+        scene: CanonicalScene | None,
         beat: StoryBeat | None,
         assets: list[VisualAsset],
         focus: VisualAsset,
@@ -103,13 +103,9 @@ class SemanticAssetBinder:
     ) -> dict[str, str]:
         if scene is None:
             return {}
-        declared_units = [
-            unit
-            for unit in scene.units
-            if isinstance(unit, Mapping) and unit.get("unit_id")
-        ]
+        declared_units = [unit for unit in scene.units if unit.unit_id]
         has_asset_intents = any(
-            str(unit.get("type") or "").upper() == "VISUAL_ASSET_INTENT"
+            str(unit.type or "").upper() == "VISUAL_ASSET_INTENT"
             for unit in declared_units
         )
         units = [
@@ -117,7 +113,7 @@ class SemanticAssetBinder:
             for unit in declared_units
             if not (
                 has_asset_intents
-                and str(unit.get("type") or "").upper() == "GROUP"
+                and str(unit.type or "").upper() == "GROUP"
             )
         ]
         if not units:
@@ -168,17 +164,17 @@ class SemanticAssetBinder:
         # Authored unit identity outranks area/role heuristics. Never derive meaning
         # from image filenames or silently swap an explicitly bound asset.
         for unit in units:
-            unit_id = str(unit["unit_id"])
+            unit_id = str(unit.unit_id)
             if unit_id in abstained_units and unit_id not in mapping:
                 continue
-            declared = str(unit.get("asset_id") or unit_id)
+            declared = str(unit.asset_id or unit_id)
             if declared in asset_by_id and declared not in used:
                 mapping[unit_id] = declared
                 used.add(declared)
 
         # Declared character units are the most reliable semantic->asset class mapping.
         for unit, asset_id in zip(self._character_units(scene), actor_ids):
-            unit_id = str(unit["unit_id"])
+            unit_id = str(unit.unit_id)
             if unit_id in abstained_units and unit_id not in mapping:
                 continue
             if unit_id in mapping or asset_id in used:
@@ -191,9 +187,9 @@ class SemanticAssetBinder:
         non_character = [unit for unit in units if not self._is_character_unit(unit)]
         non_character.sort(
             key=lambda unit: (
-                0 if str(unit.get("role") or "").upper() == "PRIMARY" else 1,
-                target_rank.get(str(unit.get("unit_id")), 10_000),
-                str(unit.get("unit_id")),
+                0 if str(unit.role or "").upper() == "PRIMARY" else 1,
+                target_rank.get(str(unit.unit_id), 10_000),
+                str(unit.unit_id),
             )
         )
 
@@ -208,7 +204,7 @@ class SemanticAssetBinder:
             )
         )
         for unit in non_character:
-            unit_id = str(unit["unit_id"])
+            unit_id = str(unit.unit_id)
             if unit_id in mapping or unit_id in abstained_units:
                 continue
             candidate = next((asset for asset in candidates if asset.id not in used), None)
@@ -295,27 +291,27 @@ class SemanticAssetBinder:
 
     @staticmethod
     def _binding_confidence(
-        scene: SceneSource | None,
+        scene: CanonicalScene | None,
         semantic_map: dict[str, str],
         assets: list[VisualAsset],
     ) -> float:
         if scene is None or not scene.units:
             return 0.70 if assets else 0.0
-        declared = [unit for unit in scene.units if isinstance(unit, Mapping) and unit.get("unit_id")]
+        declared = [unit for unit in scene.units if unit.unit_id]
         if not declared:
             return 0.72
         coverage = len(semantic_map) / len(declared)
         return max(0.45, min(1.0, 0.58 + coverage * 0.42))
 
     @staticmethod
-    def _character_units(scene: SceneSource | None) -> list[dict]:
+    def _character_units(scene: CanonicalScene | None) -> list[CanonicalAsset]:
         if scene is None:
             return []
         return [unit for unit in scene.units if SemanticAssetBinder._is_character_unit(unit)]
 
     @staticmethod
-    def _is_character_unit(unit: dict) -> bool:
-        unit_type = str(unit.get("type") or "").upper()
+    def _is_character_unit(unit: CanonicalAsset) -> bool:
+        unit_type = str(unit.type or "").upper()
         return unit_type in {"MAIN_CHARACTER", "SECONDARY_CHARACTER", "CHARACTER", "PERSON"}
 
     @classmethod

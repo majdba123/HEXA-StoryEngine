@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 
-from app.models import SceneSource, StoryBeat
+from app.canonical import CanonicalScene
+from app.models import StoryBeat
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +110,7 @@ class SemanticActionResolver:
         "FOCUS": (0.34, 0.56, 1.00),
     }
 
-    def resolve(self, scene: SceneSource | None, beat: StoryBeat) -> ActionDecision:
+    def resolve(self, scene: CanonicalScene | None, beat: StoryBeat) -> ActionDecision:
         labels: list[str] = []
         relationships: list[str] = []
         primary_parts: list[str] = [beat.action]
@@ -141,28 +141,30 @@ class SemanticActionResolver:
         if scene is not None:
             primary_parts.extend([scene.purpose or "", scene.visual_concept or ""])
             has_declared_primary = any(
-                str(unit.get("role") or "").upper() == "PRIMARY"
-                for unit in scene.units
-                if isinstance(unit, Mapping)
+                str(unit.role or "").upper() == "PRIMARY" for unit in scene.units
             )
             for unit in scene.units:
                 values = [
-                    str(unit.get(key) or "")
-                    for key in ("semantic_name", "narrative_function", "semantic_intent")
+                    str(value or "")
+                    for value in (
+                        unit.semantic_name,
+                        unit.narrative_function,
+                        unit.semantic_intent,
+                    )
                 ]
                 target = (
                     primary_parts
                     if (
-                        str(unit.get("role") or "").upper() == "PRIMARY"
+                        str(unit.role or "").upper() == "PRIMARY"
                         or not has_declared_primary
                     )
                     else secondary_parts
                 )
                 target.extend(value for value in values if value)
-                relationship = str(unit.get("relationship") or "")
+                relationship = str(unit.relationship or "")
                 if relationship:
                     relationships.append(relationship)
-                semantic_name = str(unit.get("semantic_name") or "").strip()
+                semantic_name = str(unit.semantic_name or "").strip()
                 if semantic_name and semantic_name not in labels:
                     labels.append(semantic_name)
 

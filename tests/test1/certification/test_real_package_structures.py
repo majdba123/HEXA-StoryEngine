@@ -20,6 +20,8 @@ _EXPECTED = {
 def test_real_corrected_package_corpus(tmp_path: Path, filename: str, expected: tuple[int, int, int]) -> None:
     corpus = os.getenv("HEXA_REAL_PACKAGE_CORPUS")
     if not corpus:
+        if os.getenv("HEXA_REQUIRE_REAL_PACKAGE_CORPUS") == "1":
+            pytest.fail("REAL PACKAGE CERTIFICATION BLOCKED: HEXA_REAL_PACKAGE_CORPUS is unset")
         pytest.skip("real Final Package corpus is not installed in this CI environment")
     source = Path(corpus) / filename
     if not source.is_file():

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.composition.text_director import TextPlacementDirector
 from app.composition.occupancy import VisualOccupancyMap
-from app.contracts import TextLayoutContract
+from app.composition.text_constraints import TextLayoutContract
 from app.layout import ConstraintLayoutSolver
 from app.layout.footprint import AlphaFootprintResolver
 from app.models import (

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 
+from app.canonical import (
+    CanonicalAsset,
+    CanonicalContinuity,
+    CanonicalProgression,
+    CanonicalRelation,
+    CanonicalScene,
+    CanonicalScriptSpan,
+    CanonicalVisualProgression,
+)
 from app.models import (
-    SceneSource,
     StoryEntity,
     StoryRelation,
     StorySemanticContext,
@@ -145,108 +153,58 @@ class PackageStoryInterpreter:
 
     def interpret(
         self,
-        scene: SceneSource,
-        event: dict,
+        scene: CanonicalScene,
+        event: CanonicalVisualProgression,
         *,
         is_first_beat: bool,
-        semantic_binding_scene: dict | None = None,
+        default_event: bool = False,
     ) -> StorySemanticContext:
-        target_ids = tuple(str(value) for value in event.get("targets", []) if value)
-        units_by_id = {
-            str(unit.get("unit_id")): unit
-            for unit in scene.units
-            if isinstance(unit, Mapping) and unit.get("unit_id")
-        }
+        target_ids = tuple(str(value) for value in event.targets if value)
+        units_by_id = {unit.unit_id: unit for unit in scene.units if unit.unit_id}
 
         relevant_units = self._relevant_units(scene.units, target_ids)
-        entities = [self._entity(unit) for unit in relevant_units if unit.get("unit_id")]
+        entities = [self._entity(unit) for unit in relevant_units if unit.unit_id]
         entity_by_id = {entity.unit_id: entity for entity in entities}
 
-        binding_assets = [
-            row
-            for row in (semantic_binding_scene or {}).get("assets", [])
-            if isinstance(row, Mapping) and row.get("asset_id")
-        ]
-        binding_assets_by_id = {
-            str(row.get("asset_id")): row
-            for row in binding_assets
-        }
-        semantic_events = [
-            row
-            for row in (semantic_binding_scene or {}).get("semantic_events", [])
-            if isinstance(row, Mapping) and row.get("semantic_event_id")
-        ]
+        binding_assets = list(scene.assets)
+        binding_assets_by_id = {row.asset_id: row for row in binding_assets}
+        semantic_events = list(scene.semantic_events)
         for asset in binding_assets:
-            unit_id = str(asset.get("asset_id"))
-            scene_unit = units_by_id.get(unit_id, {})
-            merged = {**scene_unit, **asset, "unit_id": unit_id}
-            merged["semantic_name"] = (
-                asset.get("semantic_meaning")
-                or scene_unit.get("semantic_name")
-                or asset.get("visual_concept")
-                or unit_id
-            )
-            merged["role"] = (
-                asset.get("semantic_role")
-                or asset.get("role")
-                or scene_unit.get("role")
-            )
-            entity_by_id[unit_id] = self._entity(merged)
+            unit_id = asset.asset_id
+            entity_by_id[unit_id] = self._entity(asset)
         entities = list(entity_by_id.values())
         entity_ids = set(entity_by_id)
 
         relations: list[StoryRelation] = []
-        for relation in (semantic_binding_scene or {}).get("relations", []) or []:
-            if not isinstance(relation, Mapping):
-                continue
-            source = str(relation.get("subject_asset_id") or "")
-            target = str(relation.get("object_asset_id") or "")
-            relationship = str(
-                relation.get("relationship") or relation.get("relation_type") or ""
-            ).strip()
+        for relation in scene.relations:
+            source = relation.subject_asset_id
+            target = relation.object_asset_id
+            relationship = relation.relation_type.strip()
             if not source or not target or not relationship:
                 continue
-            span = relation.get("script_span")
-            if not isinstance(span, Mapping):
-                span = self._relation_span_from_assets(
-                    relation,
-                    binding_assets_by_id,
-                )
+            span = relation.script_span or self._relation_span_from_assets(
+                relation,
+                binding_assets_by_id,
+            )
             relations.append(
                 StoryRelation(
                     source_unit_id=source,
                     target_unit_id=target,
-                    result_unit_id=self._string_or_none(relation.get("result_asset_id")),
+                    result_unit_id=self._string_or_none(relation.result_asset_id),
                     kind=relationship,
                     authority="FINAL_PACKAGE_ASSET_RELATION",
-                    trigger_text=self._string_or_none(relation.get("script_text")),
-                    trigger_char_start=(
-                        self._int_or_none(
-                            span.get("char_start")
-                            if span.get("char_start") is not None
-                            else span.get("global_char_start")
-                        )
-                        if isinstance(span, Mapping)
-                        else None
-                    ),
-                    trigger_char_end=(
-                        self._int_or_none(
-                            span.get("char_end")
-                            if span.get("char_end") is not None
-                            else span.get("global_char_end")
-                        )
-                        if isinstance(span, Mapping)
-                        else None
-                    ),
-                    confidence=float(relation.get("confidence", 1.0)),
+                    trigger_text=self._string_or_none(relation.script_text),
+                    trigger_char_start=(span.global_char_start if span is not None else None),
+                    trigger_char_end=(span.global_char_end if span is not None else None),
+                    confidence=float(relation.confidence),
                     causal=self._is_causal_relation(relationship),
                 )
             )
 
         for unit in relevant_units:
-            source = str(unit.get("unit_id") or "")
-            target = str(unit.get("interaction_target") or "")
-            relationship = str(unit.get("relationship") or "").strip()
+            source = unit.unit_id
+            target = str(unit.interaction_target or "")
+            relationship = str(unit.relationship or "").strip()
             if not source or not target or target not in units_by_id or not relationship:
                 continue
             relations.append(
@@ -330,8 +288,8 @@ class PackageStoryInterpreter:
         event_result_ids = self._unique(
             asset_id
             for event_row in semantic_events
-            for asset_id in event_row.get("result_asset_ids", [])
-            if isinstance(asset_id, str) and asset_id
+            for asset_id in event_row.result_asset_ids
+            if asset_id
         )
         result_ids = self._unique([
             *explicit_result_ids,
@@ -340,33 +298,33 @@ class PackageStoryInterpreter:
         ])
 
         event_leader_ids = self._unique(
-            str(row.get("visual_leader_asset_id"))
+            row.visual_leader_asset_id
             for row in semantic_events
-            if row.get("visual_leader_asset_id")
+            if row.visual_leader_asset_id
         )
         focus_unit_ids = (
             event_leader_ids
             if event_leader_ids
             else self._unique(
-                str(row.get("asset_id"))
+                row.asset_id
                 for row in binding_assets
-                if row.get("visual_focus")
+                if row.visual_focus is not None
             )
         )
         visual_states = {
-            str(row.get("asset_id")): {
-                "before": str(row["visual_state"]["before"]),
-                "after": str(row["visual_state"]["after"]),
+            row.asset_id: {
+                "before": str(row.visual_state["before"]),
+                "after": str(row.visual_state["after"]),
             }
             for row in binding_assets
-            if isinstance(row.get("visual_state"), Mapping)
-            and row["visual_state"].get("before")
-            and row["visual_state"].get("after")
+            if row.visual_state
+            and row.visual_state.get("before")
+            and row.visual_state.get("after")
         }
         continuity_by_unit = {
-            str(row.get("asset_id")): dict(row["continuity"])
+            row.asset_id: self._continuity_metadata(row.continuity)
             for row in binding_assets
-            if isinstance(row.get("continuity"), Mapping)
+            if row.continuity is not None
         }
 
         narrative_functions = self._unique(
@@ -383,7 +341,7 @@ class PackageStoryInterpreter:
         primary_entities = [
             entity for entity in entities if self._normalize(entity.role) == "primary"
         ] or entities[:1]
-        corpus_parts: list[str] = [str(event.get("action") or "")]
+        corpus_parts: list[str] = [str(event.action or "")]
         for entity in primary_entities:
             corpus_parts.extend(
                 value
@@ -404,18 +362,17 @@ class PackageStoryInterpreter:
         role_corpus = " ".join(corpus_parts)
         latent_role = self._story_role(role_corpus, is_first_beat=False)
         story_role = "SETUP" if is_first_beat else latent_role
-        # Opening beats still preserve the semantic pressure of the problem they set up.
-        # This lets the retention layer recognize a high-tension opener without changing
-        # the structural arc role from SETUP.
         tension = self._tension_for(latent_role if is_first_beat else story_role)
-        evidence = self._evidence(scene, event, entities, relations)
-        if semantic_binding_scene is not None:
+        evidence = self._evidence(
+            scene, event, entities, relations, default_event=default_event
+        )
+        if scene.assets or scene.semantic_events or scene.relations:
             evidence.append("final_package_asset_level_semantics")
             if relations:
                 evidence.append("final_package_asset_relations")
             if semantic_events:
                 evidence.append("final_package_semantic_events")
-                if isinstance(semantic_binding_scene.get("progression"), Mapping):
+                if scene.semantic_progression is not None:
                     evidence.append("final_package_event_progression")
             if focus_unit_ids:
                 evidence.append(
@@ -429,9 +386,11 @@ class PackageStoryInterpreter:
 
         return StorySemanticContext(
             story_role=story_role,
-            event_id=self._string_or_none(event.get("event_id")),
-            event_order=self._int_or_none(event.get("order")),
-            event_trigger=self._trigger(event.get("trigger")),
+            event_id=None,
+            event_order=None,
+            event_trigger=self._trigger(
+                event.trigger, phrase_from_text=default_event
+            ),
             scene_purpose=scene.purpose,
             scene_visual_concept=scene.visual_concept,
             scene_metadata={
@@ -441,14 +400,9 @@ class PackageStoryInterpreter:
                 "script_char_start": scene.script_char_start,
                 "script_char_end": scene.script_char_end,
                 "semantic_event_count": len(semantic_events),
-                "semantic_progression": (
-                    dict(semantic_binding_scene.get("progression"))
-                    if semantic_binding_scene is not None
-                    and isinstance(semantic_binding_scene.get("progression"), Mapping)
-                    else scene.semantic_progression
-                ),
+                "semantic_progression": self._progression_metadata(scene.semantic_progression),
             },
-            event_metadata=dict(event),
+            event_metadata=self._event_metadata(event, default_event=default_event),
             entities=entities,
             relations=relations,
             subject_unit_ids=subject_ids,
@@ -466,49 +420,73 @@ class PackageStoryInterpreter:
         )
 
     @staticmethod
-    def _relevant_units(units: list[dict], target_ids: tuple[str, ...]) -> list[dict]:
-        rows = [unit for unit in units if isinstance(unit, Mapping)]
+    def _relevant_units(
+        units: tuple[CanonicalAsset, ...],
+        target_ids: tuple[str, ...],
+    ) -> list[CanonicalAsset]:
+        rows = list(units)
         if not target_ids:
             return rows
-        selected = [unit for unit in rows if str(unit.get("unit_id") or "") in target_ids]
-        # Include explicit relation endpoints even if visual_progression omitted them.
-        selected_ids = {str(unit.get("unit_id") or "") for unit in selected}
+        selected = [unit for unit in rows if unit.unit_id in target_ids]
+        selected_ids = {unit.unit_id for unit in selected}
         relation_targets = {
-            str(unit.get("interaction_target"))
+            str(unit.interaction_target)
             for unit in selected
-            if unit.get("interaction_target")
+            if unit.interaction_target
         }
         for unit in rows:
-            unit_id = str(unit.get("unit_id") or "")
-            if unit_id in relation_targets and unit_id not in selected_ids:
+            if unit.unit_id in relation_targets and unit.unit_id not in selected_ids:
                 selected.append(unit)
-                selected_ids.add(unit_id)
+                selected_ids.add(unit.unit_id)
         return selected or rows
 
     @staticmethod
-    def _entity(unit: dict) -> StoryEntity:
+    def _entity(unit: CanonicalAsset) -> StoryEntity:
+        semantic_name = (
+            unit.semantic_meaning
+            or unit.semantic_name
+            or unit.visual_concept
+            or unit.unit_id
+        )
+        role = unit.semantic_role or unit.role
+        metadata = PackageStoryInterpreter._record_metadata(unit)
+        # Preserve the proven pre-refactor Story metadata contract: semantic bindings
+        # overrode the scene-plan display name/role in the merged runtime entity view.
+        metadata["semantic_name"] = semantic_name
+        metadata["role"] = role
         return StoryEntity(
-            unit_id=str(unit.get("unit_id")),
-            semantic_name=PackageStoryInterpreter._string_or_none(unit.get("semantic_name")),
-            entity_type=PackageStoryInterpreter._string_or_none(unit.get("type")),
-            role=PackageStoryInterpreter._string_or_none(unit.get("role")),
-            narrative_function=PackageStoryInterpreter._string_or_none(unit.get("narrative_function")),
-            semantic_intent=PackageStoryInterpreter._string_or_none(unit.get("semantic_intent")),
-            appear_trigger=PackageStoryInterpreter._trigger(unit.get("appear_trigger")),
-            focus_trigger=PackageStoryInterpreter._trigger(unit.get("focus_trigger")),
-            exit_trigger=PackageStoryInterpreter._trigger(unit.get("exit_trigger")),
-            package_metadata=dict(unit),
+            unit_id=unit.unit_id,
+            semantic_name=PackageStoryInterpreter._string_or_none(semantic_name),
+            entity_type=PackageStoryInterpreter._string_or_none(unit.type),
+            role=PackageStoryInterpreter._string_or_none(role),
+            narrative_function=PackageStoryInterpreter._string_or_none(unit.narrative_function),
+            semantic_intent=PackageStoryInterpreter._string_or_none(unit.semantic_intent),
+            # CanonicalScriptSpan stores the normalized phrase in ``text``. The old
+            # Mapping bridge did not expose that as ``phrase`` for asset triggers, so
+            # preserve that exact behavior while retaining the authored char anchors.
+            appear_trigger=PackageStoryInterpreter._trigger(unit.appear_trigger),
+            focus_trigger=PackageStoryInterpreter._trigger(unit.focus_trigger),
+            exit_trigger=PackageStoryInterpreter._trigger(unit.exit_trigger),
+            package_metadata=metadata,
         )
 
     @staticmethod
-    def _trigger(value) -> StoryTrigger | None:
-        if not isinstance(value, Mapping):
+    def _trigger(
+        value: CanonicalScriptSpan | None,
+        *,
+        phrase_from_text: bool = False,
+    ) -> StoryTrigger | None:
+        if value is None:
             return None
         return StoryTrigger(
-            phrase=PackageStoryInterpreter._string_or_none(value.get("phrase")),
-            occurrence_in_scene=PackageStoryInterpreter._int_or_none(value.get("occurrence_in_scene")),
-            global_char_start=PackageStoryInterpreter._int_or_none(value.get("global_char_start")),
-            global_char_end=PackageStoryInterpreter._int_or_none(value.get("global_char_end")),
+            phrase=(
+                PackageStoryInterpreter._string_or_none(value.text)
+                if phrase_from_text
+                else None
+            ),
+            occurrence_in_scene=None,
+            global_char_start=value.global_char_start,
+            global_char_end=value.global_char_end,
         )
 
     def _story_role(self, value: str, *, is_first_beat: bool) -> str:
@@ -549,7 +527,7 @@ class PackageStoryInterpreter:
 
     @staticmethod
     def _confidence(
-        scene: SceneSource,
+        scene: CanonicalScene,
         entities: list[StoryEntity],
         relations: list[StoryRelation],
         target_ids: tuple[str, ...],
@@ -580,31 +558,33 @@ class PackageStoryInterpreter:
 
     @staticmethod
     def _evidence(
-        scene: SceneSource,
-        event: dict,
+        scene: CanonicalScene,
+        event: CanonicalVisualProgression,
         entities: list[StoryEntity],
         relations: list[StoryRelation],
+        *,
+        default_event: bool = False,
     ) -> list[str]:
         output: list[str] = []
-        if event.get("action"):
-            output.append(f"event_action:{event['action']}")
+        if event.action:
+            output.append(f"event_action:{event.action}")
         if scene.relation_to_previous:
             output.append(f"scene_relation:{scene.relation_to_previous}")
         if scene.visual_concept:
             output.append(f"scene_visual_concept:{scene.visual_concept}")
         if scene.purpose:
             output.append(f"scene_purpose:{scene.purpose}")
-        if event.get("event_id"):
-            output.append(f"event_id:{event['event_id']}")
-        if event.get("order") is not None:
-            output.append(f"event_order:{event['order']}")
-        trigger = event.get("trigger") if isinstance(event.get("trigger"), Mapping) else {}
-        if trigger.get("phrase"):
-            output.append(f"event_trigger_phrase:{trigger['phrase']}")
-        if trigger.get("global_char_start") is not None or trigger.get("global_char_end") is not None:
-            output.append(
-                f"event_trigger_chars:{trigger.get('global_char_start')}:{trigger.get('global_char_end')}"
-            )
+        trigger = event.trigger
+        if trigger is not None:
+            if default_event and trigger.text:
+                output.append(f"event_trigger_phrase:{trigger.text}")
+            if (
+                trigger.global_char_start is not None
+                or trigger.global_char_end is not None
+            ):
+                output.append(
+                    f"event_trigger_chars:{trigger.global_char_start}:{trigger.global_char_end}"
+                )
         for entity in entities:
             if entity.semantic_name:
                 output.append(f"entity:{entity.unit_id}:{entity.semantic_name}")
@@ -646,20 +626,14 @@ class PackageStoryInterpreter:
     @classmethod
     def _relation_span_from_assets(
         cls,
-        relation: dict,
-        assets_by_id: dict[str, dict],
-    ) -> dict[str, int] | None:
-        """Derive relation timing only from authored participant spans.
-
-        V1.2 permits a relation without its own script_span while the related semantic
-        assets remain exactly anchored to narration. In that case the smallest envelope
-        covering source/target/result is authoritative enough to schedule interaction
-        without inventing topic-specific timing.
-        """
+        relation: CanonicalRelation,
+        assets_by_id: dict[str, CanonicalAsset],
+    ) -> CanonicalScriptSpan | None:
+        """Derive relation timing only from authored participant spans."""
         participant_ids = (
-            relation.get("subject_asset_id"),
-            relation.get("object_asset_id"),
-            relation.get("result_asset_id"),
+            relation.subject_asset_id,
+            relation.object_asset_id,
+            relation.result_asset_id,
         )
         spans: list[tuple[int, int]] = []
         required = 0
@@ -670,19 +644,11 @@ class PackageStoryInterpreter:
             if index < 2:
                 required += 1
             asset = assets_by_id.get(str(asset_id))
-            asset_span = asset.get("script_span") if isinstance(asset, Mapping) else None
-            if not isinstance(asset_span, Mapping):
+            asset_span = asset.script_span if asset is not None else None
+            if asset_span is None:
                 continue
-            start = cls._int_or_none(
-                asset_span.get("char_start")
-                if asset_span.get("char_start") is not None
-                else asset_span.get("global_char_start")
-            )
-            end = cls._int_or_none(
-                asset_span.get("char_end")
-                if asset_span.get("char_end") is not None
-                else asset_span.get("global_char_end")
-            )
+            start = asset_span.global_char_start
+            end = asset_span.global_char_end
             if start is None or end is None or end <= start:
                 continue
             spans.append((start, end))
@@ -690,9 +656,55 @@ class PackageStoryInterpreter:
                 resolved_required += 1
         if required < 2 or resolved_required < required or not spans:
             return None
+        return CanonicalScriptSpan(
+            global_char_start=min(start for start, _end in spans),
+            global_char_end=max(end for _start, end in spans),
+        )
+
+    @staticmethod
+    def _event_metadata(
+        event: CanonicalVisualProgression,
+        *,
+        default_event: bool,
+    ) -> dict:
+        if default_event:
+            trigger = event.trigger
+            return {
+                "action": event.action,
+                "targets": list(event.targets),
+                "trigger": (
+                    {
+                        "global_char_start": trigger.global_char_start,
+                        "global_char_end": trigger.global_char_end,
+                        "phrase": trigger.text,
+                    }
+                    if trigger is not None
+                    else None
+                ),
+            }
+        return PackageStoryInterpreter._record_metadata(event)
+
+    @staticmethod
+    def _record_metadata(record) -> dict:
         return {
-            "global_char_start": min(start for start, _end in spans),
-            "global_char_end": max(end for _start, end in spans),
+            name: getattr(record, name)
+            for name in type(record).model_fields
+        }
+
+    @staticmethod
+    def _progression_metadata(value: CanonicalProgression | None):
+        if value is None:
+            return None
+        return PackageStoryInterpreter._record_metadata(value)
+
+    @staticmethod
+    def _continuity_metadata(value: CanonicalContinuity | None) -> dict:
+        if value is None:
+            return {}
+        return {
+            "mode": value.mode,
+            "target_asset_id": value.target_asset_id,
+            **dict(value.extension_metadata),
         }
 
     @classmethod

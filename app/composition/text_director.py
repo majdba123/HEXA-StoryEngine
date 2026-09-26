@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
-from app.contracts import TextLayoutContract
+from app.composition.text_constraints import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
 from app.text.metrics import TextTypographyMetrics
 from app.story.windows import StoryAssetActivation

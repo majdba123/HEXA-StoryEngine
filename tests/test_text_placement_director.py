@@ -1,5 +1,5 @@
 from app.composition.text_director import PlacedTextRegion, TextPlacementDirector
-from app.contracts import TextLayoutContract
+from app.composition.text_constraints import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue
 
 

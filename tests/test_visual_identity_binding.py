@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from app.canonical import CanonicalAsset, CanonicalScene, CanonicalVisualLocator
 from app.models import (
     PackageModel,
     SceneSource,
@@ -50,15 +51,51 @@ def _locator(cx: float, cy: float, width: float, height: float) -> dict:
     }
 
 
+def _canonical_identity_inputs(
+    tmp_path: Path,
+    semantic_rows: list[dict],
+    *,
+    unit_rows: list[dict] | None = None,
+) -> tuple[CanonicalScene, list[CanonicalAsset]]:
+    unit_by_id = {
+        str(row.get("asset_id") or row.get("unit_id")): row
+        for row in (unit_rows or [])
+    }
+    canonical_assets: list[CanonicalAsset] = []
+    for semantic in semantic_rows:
+        asset_id = str(semantic["asset_id"])
+        merged = dict(unit_by_id.get(asset_id, {}))
+        merged.update(semantic)
+        locator = merged.get("visual_locator")
+        canonical_assets.append(CanonicalAsset(
+            unit_id=str(merged.get("unit_id") or asset_id),
+            asset_id=asset_id,
+            scene_id="s",
+            type=str(merged.get("type") or "VISUAL_ASSET_INTENT"),
+            role=merged.get("role"),
+            semantic_role=merged.get("semantic_role"),
+            parent_asset_id=merged.get("parent_asset_id"),
+            visual_locator=(
+                CanonicalVisualLocator(**locator) if isinstance(locator, dict) else None
+            ),
+        ))
+    scene = CanonicalScene(
+        id="s",
+        image_path=tmp_path / "scene.png",
+        order=0,
+        units=tuple(canonical_assets),
+    )
+    return scene, canonical_assets
+
+
 def test_visual_locator_binds_semantic_intent_to_geometry_not_visual_weight(tmp_path: Path) -> None:
-    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    scene, semantic_assets = _canonical_identity_inputs(tmp_path, [
+        {"asset_id": "intent-password", "visual_locator": _locator(0.16, 0.26, 0.12, 0.12)},
+        {"asset_id": "intent-shield", "visual_locator": _locator(0.79, 0.32, 0.28, 0.28)},
+    ])
     assets = [
         _asset(tmp_path, "small-left", (100, 200, 120, 120), area=0.02),
         _asset(tmp_path, "large-right", (650, 180, 280, 280), area=0.25),
-    ]
-    semantic_assets = [
-        {"asset_id": "intent-password", "visual_locator": _locator(0.16, 0.26, 0.12, 0.12)},
-        {"asset_id": "intent-shield", "visual_locator": _locator(0.79, 0.32, 0.28, 0.28)},
     ]
 
     result = VisualIdentityBinder().bind(
@@ -74,7 +111,10 @@ def test_visual_locator_binds_semantic_intent_to_geometry_not_visual_weight(tmp_
 
 
 def test_visual_locator_abstains_when_two_cutouts_are_not_separable(tmp_path: Path) -> None:
-    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    scene, semantic_assets = _canonical_identity_inputs(tmp_path, [{
+        "asset_id": "intent",
+        "visual_locator": _locator(0.505, 0.50, 0.18, 0.18),
+    }])
     assets = [
         _asset(tmp_path, "a", (410, 410, 180, 180), area=0.04),
         _asset(tmp_path, "b", (420, 410, 180, 180), area=0.04),
@@ -82,10 +122,7 @@ def test_visual_locator_abstains_when_two_cutouts_are_not_separable(tmp_path: Pa
 
     result = VisualIdentityBinder().bind(
         scene=scene,
-        semantic_assets=[{
-            "asset_id": "intent",
-            "visual_locator": _locator(0.505, 0.50, 0.18, 0.18),
-        }],
+        semantic_assets=semantic_assets,
         assets=assets,
     )
 
@@ -95,10 +132,12 @@ def test_visual_locator_abstains_when_two_cutouts_are_not_separable(tmp_path: Pa
 
 
 def test_absent_visual_locator_does_not_change_legacy_identity_path(tmp_path: Path) -> None:
-    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    scene, semantic_assets = _canonical_identity_inputs(
+        tmp_path, [{"asset_id": "intent-a"}, {"asset_id": "intent-b"}]
+    )
     result = VisualIdentityBinder().bind(
         scene=scene,
-        semantic_assets=[{"asset_id": "intent-a"}, {"asset_id": "intent-b"}],
+        semantic_assets=semantic_assets,
         assets=[_asset(tmp_path, "real", (100, 100, 200, 200), area=0.04)],
     )
 
@@ -265,19 +304,17 @@ def test_ambiguous_locator_disables_single_group_support_guessing(tmp_path: Path
 def test_scene_unit_visual_locator_is_supported_without_duplicate_semantic_metadata(
     tmp_path: Path,
 ) -> None:
-    scene = SceneSource(
-        id="s",
-        image_path=tmp_path / "scene.png",
-        order=0,
-        units=[{
-            "unit_id": "intent",
-            "type": "VISUAL_ASSET_INTENT",
-            "visual_locator": _locator(0.20, 0.30, 0.10, 0.10),
-        }],
+    unit_rows = [{
+        "unit_id": "intent",
+        "type": "VISUAL_ASSET_INTENT",
+        "visual_locator": _locator(0.20, 0.30, 0.10, 0.10),
+    }]
+    scene, semantic_assets = _canonical_identity_inputs(
+        tmp_path, [{"asset_id": "intent"}], unit_rows=unit_rows
     )
     result = VisualIdentityBinder().bind(
         scene=scene,
-        semantic_assets=[{"asset_id": "intent"}],
+        semantic_assets=semantic_assets,
         assets=[_asset(tmp_path, "real", (150, 250, 100, 100), area=0.01)],
     )
 
@@ -311,21 +348,21 @@ def test_pass2_family_canvas_uses_alpha_footprint_for_identity(tmp_path: Path) -
         source_area_ratio=0.04, parent_asset_id="family", asset_family_id="family",
         render_as_family_canvas=True,
     )
-    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    scene, semantic_assets = _canonical_identity_inputs(tmp_path, [
+        {
+            "asset_id": "parent-intent",
+            "visual_locator": _locator(0.34, 0.40, 0.20, 0.24),
+        },
+        {
+            "asset_id": "child-intent",
+            "parent_asset_id": "parent-intent",
+            "visual_locator": _locator(0.67, 0.40, 0.16, 0.16),
+        },
+    ])
 
     result = VisualIdentityBinder().bind(
         scene=scene,
-        semantic_assets=[
-            {
-                "asset_id": "parent-intent",
-                "visual_locator": _locator(0.34, 0.40, 0.20, 0.24),
-            },
-            {
-                "asset_id": "child-intent",
-                "parent_asset_id": "parent-intent",
-                "visual_locator": _locator(0.67, 0.40, 0.16, 0.16),
-            },
-        ],
+        semantic_assets=semantic_assets,
         assets=[parent, child],
     )
 
@@ -427,7 +464,10 @@ def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: 
 def test_visual_locator_can_resolve_one_semantic_intent_to_multiple_cutouts(
     tmp_path: Path,
 ) -> None:
-    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    scene, semantic_assets = _canonical_identity_inputs(tmp_path, [{
+        "asset_id": "profile-cards",
+        "visual_locator": _locator(0.48, 0.61, 0.76, 0.22),
+    }])
     assets = [
         _asset(tmp_path, "left-card", (110, 520, 180, 180), area=0.04),
         _asset(tmp_path, "middle-card", (390, 520, 180, 180), area=0.04),
@@ -436,10 +476,7 @@ def test_visual_locator_can_resolve_one_semantic_intent_to_multiple_cutouts(
 
     result = VisualIdentityBinder().bind(
         scene=scene,
-        semantic_assets=[{
-            "asset_id": "profile-cards",
-            "visual_locator": _locator(0.48, 0.61, 0.76, 0.22),
-        }],
+        semantic_assets=semantic_assets,
         assets=assets,
     )
 
@@ -456,7 +493,16 @@ def test_visual_locator_can_resolve_one_semantic_intent_to_multiple_cutouts(
 def test_multi_cutout_locator_does_not_steal_individually_proven_cutout(
     tmp_path: Path,
 ) -> None:
-    scene = SceneSource(id="s", image_path=tmp_path / "scene.png", order=0)
+    scene, semantic_assets = _canonical_identity_inputs(tmp_path, [
+        {
+            "asset_id": "target",
+            "visual_locator": _locator(0.50, 0.59, 0.18, 0.18),
+        },
+        {
+            "asset_id": "surrounding-unit",
+            "visual_locator": _locator(0.50, 0.59, 0.82, 0.24),
+        },
+    ])
     assets = [
         _asset(tmp_path, "left", (100, 500, 180, 180), area=0.04),
         _asset(tmp_path, "center-target", (410, 500, 180, 180), area=0.04),
@@ -465,16 +511,7 @@ def test_multi_cutout_locator_does_not_steal_individually_proven_cutout(
 
     result = VisualIdentityBinder().bind(
         scene=scene,
-        semantic_assets=[
-            {
-                "asset_id": "target",
-                "visual_locator": _locator(0.50, 0.59, 0.18, 0.18),
-            },
-            {
-                "asset_id": "surrounding-unit",
-                "visual_locator": _locator(0.50, 0.59, 0.82, 0.24),
-            },
-        ],
+        semantic_assets=semantic_assets,
         assets=assets,
     )
 

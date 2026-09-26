@@ -6,7 +6,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from app.contracts import ContinuityContract
+from app.motion.continuity import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError

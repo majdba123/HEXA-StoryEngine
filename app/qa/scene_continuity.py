@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.contracts import ContinuityContract
+from app.motion.continuity import ContinuityContract
 from app.models import CompositionBeat, MotionCue, StoryBeat
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.qa.failure_identity import violation_failure_details

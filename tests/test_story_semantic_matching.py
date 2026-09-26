@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from app.canonical import CanonicalAsset, CanonicalScene
 from app.models import (
     SceneSource, SemanticEventProxy, StoryBeat, StoryEntity, StorySemanticContext,
     StoryTrigger, TranscriptWord, VisualAsset,
@@ -10,6 +11,25 @@ from app.story.activation import HybridSemanticTextScorer, SemanticActivationPla
 from app.story.binding import SemanticAssetBinder
 from app.story.windows import StoryAssetActivation
 from test_story_activation_windows import Scorer, scene_case
+
+
+def _canonical_scene(source: SceneSource) -> CanonicalScene:
+    units = tuple(
+        CanonicalAsset(
+            unit_id=str(row.get("unit_id") or row.get("asset_id")),
+            asset_id=str(row.get("asset_id") or row.get("unit_id")),
+            scene_id=source.id,
+            type=str(row.get("type") or "VISUAL_ASSET_INTENT"),
+            role=row.get("role"),
+        )
+        for row in source.units
+    )
+    return CanonicalScene(
+        id=source.id,
+        image_path=source.image_path,
+        order=source.order,
+        units=units,
+    )
 
 
 def test_cross_language_meaning_uses_semantic_interface_and_aligned_timing(tmp_path):
@@ -94,8 +114,10 @@ def test_explicit_asset_identity_outranks_geometry(tmp_path):
     package, _, assets, beat = scene_case(tmp_path, 2)
     package.scenes[0].units[0]["asset_id"] = assets[1].id
     package.scenes[0].units[1]["asset_id"] = assets[0].id
-    binding = SemanticAssetBinder().bind(scene=package.scenes[0], assets=assets,
-                                        beat=beat, action=beat.action)
+    binding = SemanticAssetBinder().bind(
+        scene=_canonical_scene(package.scenes[0]), assets=assets,
+        beat=beat, action=beat.action,
+    )
     assert dict(binding.semantic_asset_map) == {"concept00": "concept01", "concept01": "concept00"}
 
 
@@ -150,7 +172,7 @@ def test_safe_abstention_blocks_heuristic_semantic_remap_but_proxy_is_allowed(tm
     )
 
     binding = SemanticAssetBinder().bind(
-        scene=scene, assets=assets, action=beat.action, beat=beat,
+        scene=_canonical_scene(scene), assets=assets, action=beat.action, beat=beat,
     )
     semantic_map = dict(binding.semantic_asset_map)
 
@@ -179,7 +201,7 @@ def test_group_container_does_not_claim_cutout_before_visual_asset_intent(tmp_pa
     )
 
     binding = SemanticAssetBinder().bind(
-        scene=scene, assets=[asset], action="REVEAL", beat=None,
+        scene=_canonical_scene(scene), assets=[asset], action="REVEAL", beat=None,
     )
 
     assert dict(binding.semantic_asset_map) == {"intent": "real-asset"}

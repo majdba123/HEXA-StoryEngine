@@ -178,9 +178,18 @@ class DiskPackageShape:
     assets_per_scene: int = 3
     relations: bool = True
     dependencies: bool = True
+    dependency_mode: str = "linear"  # none | linear | branching
     locators: str = "none"  # none | partial | all
     extra_metadata: bool = False
     compound: bool = False
+    progression: bool = True
+    group_count: int = 1
+    group_policy: str = "SEQUENTIAL_WITHIN_PHRASE"
+    binding_types: tuple[str, ...] = ("EXPLICIT", "SEMANTIC")
+    continuity: str = "none"  # none | persist | transform
+    reuse_first_asset: bool = False
+    script_style: str = "ascii"  # ascii | arabic | numbers
+    namespace: str = ""
 
 
 def _disk_span(script: str, text: str, start_at: int = 0) -> dict[str, int]:
@@ -196,10 +205,22 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
     scene_phrases: list[str] = []
     scene_tokens: list[list[str]] = []
     for scene_index in range(1, shape.scenes + 1):
-        tokens = [
-            f"s{scene_index}a{asset_index}"
-            for asset_index in range(1, shape.assets_per_scene + 1)
-        ]
+        if shape.script_style == "arabic":
+            tokens = [
+                f"مشهد{scene_index}عنصر{asset_index}"
+                for asset_index in range(1, shape.assets_per_scene + 1)
+            ]
+        elif shape.script_style == "numbers":
+            tokens = [
+                f"رقم{scene_index}{asset_index}x{scene_index * asset_index * 100}"
+                for asset_index in range(1, shape.assets_per_scene + 1)
+            ]
+        else:
+            prefix = shape.namespace.lower() or "s"
+            tokens = [
+                f"{prefix}{scene_index}a{asset_index}"
+                for asset_index in range(1, shape.assets_per_scene + 1)
+            ]
         scene_tokens.append(tokens)
         scene_phrases.append(" ".join(tokens))
     script = " ".join(scene_phrases)
@@ -212,7 +233,8 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
     for scene_index, (tokens, phrase) in enumerate(
         zip(scene_tokens, scene_phrases), start=1
     ):
-        scene_id = f"SCENE_{scene_index:03d}"
+        scene_prefix = f"{shape.namespace}_" if shape.namespace else ""
+        scene_id = f"{scene_prefix}SCENE_{scene_index:03d}"
         image_rel = f"scenes/{scene_id}.png"
         Image.new("RGB", (64, 64), "white").save(package / image_rel)
         scene_start = script.index(phrase, cursor)
@@ -222,8 +244,10 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
         assets: list[dict] = []
         events: list[dict] = []
         relations: list[dict] = []
-        group_id = f"{scene_id}_G01"
+        group_count = max(1, min(shape.group_count, max(1, len(tokens))))
         for asset_index, token in enumerate(tokens, start=1):
+            group_index = ((asset_index - 1) % group_count) + 1
+            group_id = f"{scene_id}_G{group_index:02d}"
             asset_id = f"{scene_id}_A{asset_index:02d}"
             event_id = f"{scene_id}_E{asset_index:02d}"
             span = _disk_span(script, token, scene_start)
@@ -233,7 +257,7 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
                 "script_text": token,
                 "script_span": span,
                 "anchor_granularity": "EXACT_WORD",
-                "binding_type": "EXPLICIT" if asset_index % 2 else "SEMANTIC",
+                "binding_type": shape.binding_types[(asset_index - 1) % len(shape.binding_types)],
                 "semantic_group_id": group_id,
                 "sequence_order": asset_index,
                 "confidence": 0.99,
@@ -257,6 +281,17 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
                     shape.compound and asset_index == len(tokens)
                 ),
             }
+            if asset["binding_type"] == "PARENT" and asset_index > 1:
+                asset["parent_asset_id"] = f"{scene_id}_A01"
+            elif asset["binding_type"] == "PARENT":
+                asset["binding_type"] = "EXPLICIT"
+            if shape.continuity == "persist" and asset_index == 1:
+                asset["continuity"] = {"mode": "PERSIST"}
+            elif shape.continuity == "transform" and asset_index == 1 and len(tokens) > 1:
+                asset["continuity"] = {
+                    "mode": "TRANSFORM_TO",
+                    "target_asset_id": f"{scene_id}_A02",
+                }
             if shape.locators == "all" or (
                 shape.locators == "partial" and asset_index % 2
             ):
@@ -293,11 +328,19 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
                 "text_anchor_asset_id": asset_id,
                 "confidence": 0.99,
                 "depends_on_event_ids": (
-                    [f"{scene_id}_E{asset_index - 1:02d}"]
-                    if shape.dependencies and asset_index > 1
-                    else []
+                    []
+                    if not shape.dependencies or shape.dependency_mode == "none" or asset_index <= 1
+                    else (
+                        [f"{scene_id}_E01"]
+                        if shape.dependency_mode == "branching"
+                        else [f"{scene_id}_E{asset_index - 1:02d}"]
+                    )
                 ),
             }
+            if shape.reuse_first_asset and asset_index > 1:
+                first_asset_id = f"{scene_id}_A01"
+                if first_asset_id not in event["participant_asset_ids"]:
+                    event["participant_asset_ids"].append(first_asset_id)
             events.append(event)
             top_events.append(event)
 
@@ -317,16 +360,27 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
                     "confidence": 0.97,
                 })
 
-        group = {
-            "semantic_group_id": group_id,
-            "script_text": phrase,
-            "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
-            "asset_ids": [row["asset_id"] for row in assets],
-        }
-        progression = {
-            "type": "GENERIC_PROGRESS",
-            "event_order": [row["semantic_event_id"] for row in events],
-        }
+        groups = []
+        for group_index in range(1, group_count + 1):
+            gid = f"{scene_id}_G{group_index:02d}"
+            members = [
+                row["asset_id"] for row in assets
+                if row["semantic_group_id"] == gid
+            ]
+            groups.append({
+                "semantic_group_id": gid,
+                "script_text": phrase,
+                "animation_policy": shape.group_policy,
+                "asset_ids": members,
+            })
+        progression = (
+            {
+                "type": "GENERIC_PROGRESS",
+                "event_order": [row["semantic_event_id"] for row in events],
+            }
+            if shape.progression and events
+            else None
+        )
         scene_plan_rows.append({
             "scene_id": scene_id,
             "order": scene_index,
@@ -359,14 +413,14 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
             "scene_id": scene_id,
             "script_text": phrase,
             "assets": assets,
-            "semantic_groups": [group],
+            "semantic_groups": groups,
             "semantic_events": events,
             "relations": relations,
             "progression": progression,
         })
 
     (package / "manifest.json").write_text(json.dumps({
-        "project_id": "test1-generated",
+        "project_id": f"test1-generated-{shape.namespace or 'default'}",
         "package_schema": "HEXA_V20_SCENE_PACKAGE",
         "package_version": "1.2",
         "scene_plan": "scene_plan.json",
@@ -374,7 +428,7 @@ def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
         "semantic_bindings": "semantic_bindings.json",
     }), encoding="utf-8")
     (package / "scene_plan.json").write_text(json.dumps({
-        "project_id": "test1-generated",
+        "project_id": f"test1-generated-{shape.namespace or 'default'}",
         "scenes": scene_plan_rows,
     }), encoding="utf-8")
     (package / "semantic_bindings.json").write_text(json.dumps({
@@ -396,7 +450,114 @@ def seeded_disk_shape(seed: int) -> DiskPackageShape:
         assets_per_scene=rng.randint(1, 8),
         relations=rng.choice([True, False]),
         dependencies=rng.choice([True, False]),
+        dependency_mode=rng.choice(["none", "linear", "branching"]),
         locators=rng.choice(["none", "partial", "all"]),
         extra_metadata=rng.choice([True, False]),
         compound=rng.choice([True, False]),
+        progression=rng.choice([True, False]),
+        group_count=rng.choice([1, 1, 2]),
+        group_policy=rng.choice([
+            "SEQUENTIAL_WITHIN_PHRASE", "SIMULTANEOUS_VISUAL_UNIT"
+        ]),
+        binding_types=rng.choice([
+            ("EXPLICIT", "SEMANTIC"),
+            ("EXPLICIT", "SUPPORT"),
+            ("SEMANTIC", "AMBIGUOUS"),
+            ("EXPLICIT", "PARENT", "SEMANTIC"),
+        ]),
+        continuity=rng.choice(["none", "persist", "transform"]),
+        reuse_first_asset=rng.choice([True, False]),
+        script_style=rng.choice(["ascii", "arabic", "numbers"]),
+        namespace=f"N{seed}",
     )
+
+
+def deterministic_transcript(package) -> "Transcript":
+    """Create a stable forced-alignment-like clock for structural planning tests."""
+    import re
+    from app.models import Transcript, TranscriptSegment, TranscriptWord
+
+    script = package.script or ""
+    words: list[TranscriptWord] = []
+    for index, match in enumerate(re.finditer(r"\S+", script)):
+        # Deliberately comfortable speech cadence for structural planning. The goal is
+        # to exercise semantic scheduling, not simulate a fast narrator that makes
+        # otherwise valid authored interactions physically infeasible.
+        start = 0.30 + index * 0.42
+        end = start + 0.28
+        words.append(TranscriptWord(
+            text=match.group(0),
+            start=start,
+            end=end,
+            char_start=match.start(),
+            char_end=match.end(),
+        ))
+    duration = (words[-1].end + 0.30) if words else 1.0
+    segments: list[TranscriptSegment] = []
+    for scene in package.scenes:
+        start_char = scene.script_char_start
+        end_char = scene.script_char_end
+        scene_words = [
+            word for word in words
+            if start_char is not None
+            and end_char is not None
+            and word.char_end is not None
+            and word.char_start is not None
+            and word.char_end > start_char
+            and word.char_start <= end_char
+        ]
+        if not scene_words:
+            continue
+        text = script[start_char:end_char + 1] if script else " ".join(w.text for w in scene_words)
+        segments.append(TranscriptSegment(
+            start=scene_words[0].start,
+            end=scene_words[-1].end,
+            text=text.strip() or "scene",
+            char_start=start_char,
+            char_end=end_char + 1,
+            words=scene_words,
+        ))
+    return Transcript(
+        language="en",
+        duration=duration,
+        segments=segments,
+        words=words,
+        timing_source="forced_alignment",
+    )
+
+
+def controlled_visual_assets(package) -> list["VisualAsset"]:
+    """Create deterministic runtime cutouts that preserve canonical asset identity."""
+    from math import ceil, sqrt
+    from app.models import VisualAsset
+
+    output: list[VisualAsset] = []
+    for scene in package.scenes:
+        semantic_assets = list(scene.assets)
+        count = max(1, len(semantic_assets))
+        columns = max(1, ceil(sqrt(count)))
+        rows = max(1, ceil(count / columns))
+        cell_w = 900 / columns
+        cell_h = 900 / rows
+        for index, asset in enumerate(semantic_assets):
+            col = index % columns
+            row = index // columns
+            x = int(50 + col * cell_w + cell_w * 0.15)
+            y = int(50 + row * cell_h + cell_h * 0.15)
+            width = max(24, int(cell_w * 0.55))
+            height = max(24, int(cell_h * 0.55))
+            output.append(VisualAsset(
+                id=asset.asset_id,
+                scene_id=scene.id,
+                role=str(asset.role or asset.semantic_role or "object").lower(),
+                image_path=scene.image_path,
+                source_bbox=(x, y, width, height),
+                source_canvas_width=1000,
+                source_canvas_height=1000,
+                source_area_ratio=min(0.95, (width * height) / 1_000_000),
+                extraction_method="test1-controlled",
+                parent_asset_id=asset.parent_asset_id,
+                compound=bool(asset.internal_progression_unavailable),
+                can_animate_independently=not bool(asset.internal_progression_unavailable),
+            ))
+    return output
