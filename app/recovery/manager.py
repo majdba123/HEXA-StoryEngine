@@ -6,6 +6,7 @@ from app.recovery.builtins import BUILTIN_ISSUES
 from app.recovery.handlers import HANDLERS, HandlerResult
 from app.recovery.history import RecoveryHistory
 from app.recovery.models import RecoveryEvent
+from app.recovery.policy import FailureDisposition, failure_policy
 from app.recovery.registry import RecoveryRegistry
 
 
@@ -27,6 +28,9 @@ class RecoveryManager:
         The caller must re-run QA and call record_outcome afterwards. This prevents
         a handler invocation from being mistaken for a successful repair.
         """
+        policy = failure_policy(code)
+        if policy is not None and policy.disposition != FailureDisposition.RECOVER:
+            return None
         issue = self.registry.get(code)
         if issue is None or issue.status.value != "proven" or attempt > issue.max_attempts:
             return None

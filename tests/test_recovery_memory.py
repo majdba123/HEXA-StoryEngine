@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.recovery.manager import RecoveryManager
 from app.recovery.models import KnownIssue, RecoveryStatus
+from app.recovery.policy import FailureDisposition, failure_policy
 
 
 def test_recovery_records_only_after_post_fix_validation(tmp_path: Path) -> None:
@@ -88,3 +89,55 @@ def test_builtin_seed_does_not_overwrite_newer_local_policy(tmp_path: Path) -> N
     assert issue is not None
     assert issue.handler_version == 99
     assert issue.status == RecoveryStatus.proven
+
+
+def test_historical_failure_policies_block_blind_recovery_for_deterministic_contracts(
+    tmp_path: Path,
+) -> None:
+    manager = RecoveryManager(tmp_path)
+    policy = failure_policy("MOTION_TOO_FAST")
+    assert policy is not None
+    assert policy.disposition == FailureDisposition.PREVENT
+    assert policy.semantic_authority_change_allowed is False
+    assert manager.handle(code="MOTION_TOO_FAST", context={}, attempt=1) is None
+
+
+def test_encoded_inactivity_is_post_render_proof_not_identical_rerender_recovery(
+    tmp_path: Path,
+) -> None:
+    manager = RecoveryManager(tmp_path)
+    policy = failure_policy("RENDERED_SEGMENT_INACTIVE")
+    assert policy is not None
+    assert policy.disposition == FailureDisposition.POST_RENDER_PROOF
+    assert manager.handle(code="RENDERED_SEGMENT_INACTIVE", context={}, attempt=1) is None
+
+
+def test_text_layout_remains_explicit_bounded_recovery(tmp_path: Path) -> None:
+    manager = RecoveryManager(tmp_path)
+    policy = failure_policy("TEXT_LAYOUT_REFERENCE_VIOLATION")
+    assert policy is not None
+    assert policy.disposition == FailureDisposition.RECOVER
+    assert manager.handle(
+        code="TEXT_LAYOUT_REFERENCE_VIOLATION",
+        context={},
+        attempt=1,
+    ) is not None
+
+
+def test_all_known_historical_engine_failures_have_declared_disposition() -> None:
+    codes = {
+        "MISSING_RELATION_TIMELINE",
+        "MISSING_RESULT_PAYOFF",
+        "MISSING_TARGET_REACTION",
+        "MOTION_BELOW_PERCEPTUAL_FLOOR",
+        "RENDERED_SEGMENT_INACTIVE",
+        "MOTION_TOO_FAST",
+        "MOTION_CREATES_COLLISION",
+        "SEGMENT_PAST_HANDOFF",
+        "TERMINAL_EXIT_ON_PERSISTENT_ASSET",
+        "TEXT_LAYOUT_REFERENCE_VIOLATION",
+        "FFMPEG_UNAVAILABLE",
+        "FFMPEG_FILTER_FILE_UNSUPPORTED",
+    }
+    missing = sorted(code for code in codes if failure_policy(code) is None)
+    assert missing == []
