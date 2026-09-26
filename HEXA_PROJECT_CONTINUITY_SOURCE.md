@@ -8992,3 +8992,442 @@ If the Windows render completes, perform perceptual A/B against:
 Do not change production code merely because a scalar pixel-motion statistic is not identical to unrelated
 reference artwork. Open a new code change only when visual review or a new diagnostic identifies a concrete
 general failure class.
+# MONTAGE30 REFERENCE MOTION + CORRECT-BY-CONSTRUCTION RECOVERY HANDOFF — 2026-09-26
+
+## Official branch / live state
+
+Official development branch: `montage`.
+
+Live HEAD before this continuity-only handoff update:
+`baec01bd333be75f4f84b6665a2a50a80ec27c6d`
+`[motion] Clean shared readability QA imports`
+
+Immediate behavior lineage:
+- `29f4c0a6b6289582e31623db670960f540517c38` — `[motion] Replace legacy motion with reference gesture language`
+- `bbcb30acab068e5907ae9d4c9190308e8e5cde62` — `[motion] Share rendered readability contract with planner`
+- `baec01bd333be75f4f84b6665a2a50a80ec27c6d` — `[motion] Clean shared readability QA imports`
+
+Latest exact-head CI before this handoff update:
+- workflow: `V2 CI`
+- run: `36203409846`
+- run number: `551`
+- conclusion: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: **395 passed, 12 warnings in 14.64 s**
+- exact tested-source artifact: `hexa-storyengine-source-e8e934fc317c7d9fc2bef11ea141ba2fb1528056`
+- artifact digest: `sha256:d12c1c75911e3da1e518bdd4ba16a06ea02750c6b4e10f5b0872368df35d5015`
+
+Always verify live `montage` HEAD/CI before editing.
+
+## Motion decision locked
+
+The user explicitly rejected the old Motion visual character and requested production Motion to follow the approved reference-video family instead of continuing to polish legacy bounce/wobble/recoil shapes.
+
+Approved reference family:
+- `تأثير المتفرج2.mp4`
+- `انحياز 2.mp4`
+- `hallo 2.mp4`
+
+Dominant reference rule:
+`one clear meaning-bearing gesture -> settle -> readable HOLD -> next semantic gesture`
+
+Accepted gesture abstraction:
+- HOLD
+- SLIDE_SETTLE
+- POP_REVEAL
+- SEQUENTIAL_ADD
+- FOCUS_HANDOFF
+- DIRECTIONAL_HANDOFF
+- SHORT_IMPACT
+- STATE_CHANGE
+- RESULT_ENTER
+- COMPARE_SHIFT
+
+Do not reintroduce continuous decorative wobble, repeated bounce after settle, or generic REACT/PAYOFF pulses.
+
+## Legacy Motion removal
+
+Commit `29f4c0a6b6289582e31623db670960f540517c38` replaced the old production Motion primitive path.
+
+Added:
+- `app/reference/motion_language.py`
+- `app/motion/reference_gestures.py`
+
+Changed:
+- `app/motion/planner.py` now uses `ReferenceGestureLibrary`.
+
+Removed:
+- `app/motion/primitives.py`
+- `app/motion/semantic_primitives.py`
+
+Architecture remains:
+- Final Package = semantic authority.
+- Story/WhisperX = timing authority.
+- Choreography = semantic action authority.
+- Composition = final resting geometry authority.
+- Reference Motion Language = visual gesture-shape authority.
+- Pass1 + Pass2 only. No Pass3/Layer3.
+
+Reference Motion invariants:
+- one primary gesture per semantic moment where possible;
+- no unjustified post-settle movement;
+- support must not mirror Hero accent automatically;
+- PAYOFF is not automatically a bounce;
+- REACT is not automatically a shake;
+- state/result changes prefer STATE_CHANGE / RESULT_ENTER where appropriate;
+- all normal gestures settle exactly to Composition geometry;
+- any later motion requires a new semantic reason.
+
+## Black-Hat current operator render
+
+User rendered:
+`HEXA_BLACK_HAT_HACKER_AR(2).mp4`
+
+Technical probe:
+- approximately 97.07 s
+- 1920x1080
+- 30 fps
+- H.264 + AAC
+- technically valid media.
+
+Operator visual feedback remains OPEN:
+- some elements appear to disappear and reappear;
+- continuity/handoff feels strange in places;
+- motion still feels weaker than desired relative to references;
+- final shot/final payoff needs stronger authority;
+- full lifecycle/continuity review is still required.
+
+The Black-Hat visual audit was started but interrupted by the White-Hat diagnostic. Do not mark Black-Hat visual parity closed.
+
+Next audit must inspect:
+- asset lifecycle / visibility ownership;
+- duplicate reveal/re-entry vs legitimate semantic reactivation;
+- scene-to-scene continuity;
+- motion strength/reference gap without reintroducing legacy bounce;
+- final-scene payoff/focus hierarchy.
+
+## White-Hat diagnostic: exact failure
+
+User supplied:
+`HEXA-diagnostic-1a54d71f.zip`
+
+Final Package validation itself is valid. This was NOT a package-authority failure.
+
+Pre-render Authoring QA passed:
+- 137 semantic sync anchors
+- 0 conservative fallbacks
+- 11 relation timelines
+- 7 focus cohorts
+- 0 rhythm violations
+- 0 visual layout violations
+- 0 text layout violations after recovery
+- 0 short-motion violations
+
+Final failure was only in `RenderedMotionQA`:
+
+- code: `MOTION_BELOW_PERCEPTUAL_FLOOR`
+- beat: `beat-016`
+- asset: `SCENE_016:asset-03`
+- phase: `ESTABLISH`
+- expected/planned visible motion: **12.45 px**
+- rendered readability floor: **15.36 px**
+- encoded mean_delta: **0.0**
+- encoded changed_ratio: **0.0**
+
+This is the concrete historical example for the new architecture: Planner must not author a gesture below the same perceptual floor enforced later by encoded QA.
+
+## First Correct-by-Construction fix already landed
+
+`bbcb30acab068e5907ae9d4c9190308e8e5cde62`
+`[motion] Share rendered readability contract with planner`
+
+`baec01bd333be75f4f84b6665a2a50a80ec27c6d`
+`[motion] Clean shared readability QA imports`
+
+The fix centralizes ENTRY / ESTABLISH / ADD / INTERACT / REACT / PAYOFF / EXIT readability in shared `semantic_readability_floor(...)` logic in `app/motion/timing.py`.
+
+The same contract is now consumed by:
+- MotionPlanner before committing a semantic segment;
+- RenderedMotionQA when projecting expected readability into encoded pixels.
+
+An exact regression test reproduces the White-Hat 15.36 px ESTABLISH floor.
+
+Current CI after the change: 395 passed.
+
+IMPORTANT: White-Hat has NOT yet been rerendered from current exact tested source in this conversation. Code-level root cause is addressed, but encoded proof remains OPEN.
+
+## White diagnostic text Recovery evidence
+
+The same diagnostic recorded three `TEXT_LAYOUT_REFERENCE_VIOLATION` recovery attempts:
+- attempt 1: 8 remaining;
+- attempt 2: 5 remaining;
+- attempt 3: success, 0 remaining.
+
+Third recovery dropped optional cues:
+- `text-004`
+- `text-024`
+- `text-025`
+- `text-040`
+- `text-066`
+
+This behavior must be reviewed in the new Recovery architecture. Dropping optional text may remain a bounded last fallback, but should not be the default route to passing layout QA. Preferred approach: Text/Composition should build against actual visual occupancy/lifetime first.
+
+No silent degradation is allowed.
+
+## Next official objective
+
+Build a production-grade generic:
+
+**Correct-by-Construction + Error Handling + Recovery + QA architecture**
+
+User requirement:
+- known historical failure classes must be handled generically;
+- builders/planners should avoid known-invalid states before QA;
+- Recovery handles only exceptional cases that cannot be prevented during construction;
+- QA remains strict and proves correctness; do not weaken QA to pass;
+- missing/invalid Final Package authority is the explicit exception: fail fast and never invent meaning.
+
+Target flow:
+
+`Final Package -> shared quality contracts -> Story -> Composition -> Motion -> bounded Recovery if required -> pre-render QA -> Render -> encoded QA -> reference-match QA`
+
+Do NOT use:
+`build invalid plan -> QA fails -> patch until green`
+
+QA is a proof barrier, not the primary repair engine.
+
+## Shared contracts required
+
+Use one source of truth consumed by both builder and QA. Do not duplicate thresholds.
+
+Contracts to centralize/formalize:
+- timing / reveal / handoff boundaries;
+- focus / attention allocation;
+- motion readability / comfort / speed;
+- geometry / exact final settle;
+- collision / path safety;
+- continuity / scene bridge / lifecycle;
+- semantic event/relation coverage;
+- reference gesture legality.
+
+Do not create a new abstraction package just for aesthetics. Reuse existing ownership where practical. The shared readability contract already lives in `app/motion/timing.py`; preserve one source of truth.
+
+## Correct-by-Construction requirements
+
+Story/timing must prevent before QA:
+- reveal before Story/audio authority;
+- settle past next semantic handoff;
+- reversed sequence;
+- collapsed required sequential reveal;
+- simultaneous strong focus on distinct sequential meanings.
+
+Focus allocation:
+- one dominant Hero/focus owner per semantic moment unless a true authored comparison requires dual focus;
+- support/context receive bounded secondary emphasis;
+- support cannot automatically copy Hero motion.
+
+Motion feasibility:
+Before authoring any gesture, evaluate:
+- selected reference gesture;
+- available Story time;
+- asset dimensions;
+- distance;
+- semantic importance;
+- final Composition geometry;
+- minimum perceptual readability;
+- maximum comfort/speed/displacement.
+
+If infeasible, generic order:
+1. choose a simpler reference-approved gesture if semantics allow;
+2. reduce legal travel only if readability remains satisfied;
+3. bounded retime inside Story authority;
+4. fail closed if truthful representation is impossible.
+
+Do not knowingly author an invalid gesture and rely on RenderedMotionQA to discover it.
+
+Semantic gesture composition:
+INTERACT / REACT / PAYOFF remain semantic stages but must not automatically create three perceptual hits.
+When they represent one visual sentence, compose them coherently. Reaction may terminate directly in result state. Avoid redundant payoff bounce.
+
+Collision prevention:
+Validate candidate motion path before final commit.
+Bounded generic candidate order:
+1. lower amplitude only while remaining readable;
+2. safer semantically consistent direction;
+3. bounded retime;
+4. alternate reference-approved gesture;
+5. reject if no truthful candidate.
+
+A candidate must not introduce a new collision/order violation.
+
+Text/Composition:
+Build text against actual artwork visibility/occupancy during its readability window. Prefer valid placement over dropping optional text later.
+
+Scene continuity/lifecycle:
+Every scene boundary should resolve to an explicit valid transition contract, e.g. CLEAN_CUT, OBJECT_HANDOFF, MOTION_HANDOFF, or explicitly authored blur.
+
+Builder should prevent:
+- missing/empty handoff carrier;
+- too-short bridge;
+- bridge overrun;
+- incoming before Story;
+- accidental disappearance/reappearance due to ownership/lifetime errors.
+
+Repeated appearance is valid only with a new authored semantic reason. Otherwise preserve continuity/lifetime.
+
+## Recovery policy
+
+Known non-package failures must become named generic failure classes, never scene-specific patches.
+
+Every recovery class must define:
+- trigger;
+- owning stage;
+- bounded candidate list;
+- contracts revalidated after every candidate;
+- rollback;
+- max attempts;
+- diagnostic record;
+- fail-closed escalation.
+
+Recommended categories:
+- extraction safety / compound integrity;
+- semantic representation / compound proxy;
+- Story/timing conflict;
+- focus conflict;
+- motion readability / comfort infeasibility;
+- motion collision;
+- duplicate semantic accent;
+- continuity/handoff/lifecycle;
+- text placement;
+- render environment / codec/filter incompatibility;
+- encoded survival failure.
+
+Never silently recover.
+
+## Final Package exception
+
+Do NOT auto-repair/guess when Final Package itself is invalid or missing semantic authority, including:
+- required semantic intent/binding missing;
+- malformed progression;
+- invalid scene plan;
+- missing authored authority needed to know meaning.
+
+Fail clearly. Do not weaken validator and do not invent meaning.
+
+Historical package-authoring examples:
+- `semantic asset intent missing ...`
+- `semantic progression must be an object ...`
+
+These remain package errors, not Recovery cases.
+
+## QA architecture
+
+Pre-render QA should be nearly zero by construction and prove:
+- required semantic event coverage = 100%;
+- required authored relation coverage = 100%;
+- valid Story order/timing;
+- no illegal early reveal;
+- no unauthorized competing Hero;
+- no motion-created collision;
+- no segment past handoff;
+- no geometry drift;
+- no unsupported legacy gesture;
+- no unjustified post-settle movement;
+- valid scene bridge/lifecycle;
+- text/layout valid for actual visual lifetime.
+
+If pre-render QA fails, treat it as builder bug or unrecoverable input; do not spend FFmpeg time on a known-invalid plan.
+
+Post-render QA remains required for facts only encoding can prove:
+- frames exist;
+- ROI survives;
+- required motion remains visible;
+- encoded result is not static when motion is required;
+- encoded speed remains legal;
+- full decode succeeds;
+- A/V/output specs are valid.
+
+Encoded QA must project shared authoring contracts, not own private thresholds.
+
+Reference-match QA must compare editing language, not pixel clone similarity across different artwork.
+
+Measure:
+- gesture durations;
+- hold durations;
+- burst frequency;
+- post-settle motion;
+- duplicate semantic accents;
+- simultaneous strong movers;
+- focus handoff cadence;
+- motion strength;
+- jerk as evidence;
+- sequential reveal spacing;
+- scene transition pacing;
+- final payoff authority.
+
+Derive acceptable ranges from the three approved reference videos.
+
+Hard invariants where applicable:
+- unjustified post-settle motion = 0;
+- duplicate semantic accents = 0;
+- early reveals = 0;
+- motion-created collisions = 0;
+- required semantic event coverage = 100%;
+- required authored relation coverage = 100%;
+- valid scene bridge coverage = 100%.
+
+## Regression matrix for every general fix
+
+A fix is not accepted because only White or Black passes.
+
+Run at minimum:
+- Black Hat: attack/cause/result + current lifecycle/operator feedback;
+- White Hat: compound semantic proxies + ESTABLISH readability regression;
+- Gray Hat: density/variation;
+- Script Kiddie: materially different package;
+- synthetic 1-asset;
+- synthetic ~20-item;
+- 0.5 s beat;
+- 8 s beat;
+- comparison;
+- repeated asset across scenes;
+- same asset enters/exits repeatedly;
+- no character;
+- long Arabic text;
+- realistic-image and illustration cases where available.
+
+Pass1 + Pass2 only throughout.
+
+## Exact next actions
+
+1. Verify live `montage` HEAD and CI.
+2. Rerender White Hat from current exact tested source with production inputs if available; prove the previous beat-016 ESTABLISH failure is gone and no new encoded-motion failure appears.
+3. Finish interrupted visual audit of `HEXA_BLACK_HAT_HACKER_AR(2).mp4`: disappear/reappear lifecycle, strange continuity, motion strength gap, final payoff.
+4. Map every visual/QA defect to its owning builder contract BEFORE writing Recovery.
+5. Implement shared contracts incrementally beyond the readability contract: lifecycle/continuity, focus, gesture feasibility, semantic gesture composition.
+6. Implement bounded Recovery only after the corresponding builder contract exists.
+7. Mirror every contract in strict QA without duplicate thresholds.
+8. Add historical regression cases + stress matrix.
+9. Full CI after each committed slice.
+10. Render Black + White first; then Gray + Script Kiddie.
+11. Compare encoded outputs against reference family.
+12. Mark a failure class CLOSED only after exact-source render + technical QA + visual approval.
+
+## Non-negotiable locks
+
+- work on live `montage` unless user explicitly changes branch;
+- verify HEAD/CI before edits;
+- Pass1 + Pass2 only; never Pass3/Layer3;
+- Final Package semantic authority remains absolute;
+- Story/WhisperX timing authority remains absolute;
+- Composition final geometry authority remains absolute;
+- Reference Motion Language is the visual motion-shape authority;
+- do not weaken QA merely to get green;
+- no scene/package-specific production hardcoding;
+- no invented semantic meaning for invalid Final Packages;
+- no silent Recovery or silent degradation;
+- every recovery candidate bounded, monotonic, revalidated, rollback-safe;
+- avoid unnecessary re-encoding;
+- never claim reference parity from CI/scalar metrics alone;
+- record new accepted changes and real render evidence in this continuity file before the next handoff.
