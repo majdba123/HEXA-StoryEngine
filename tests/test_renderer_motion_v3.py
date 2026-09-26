@@ -212,3 +212,54 @@ def test_family_secondary_reveal_keeps_visible_footprint_locked(tmp_path: Path) 
     assert max(heights) - min(heights) <= 3
     assert max(c[0] for c in centers) - min(c[0] for c in centers) <= 2.5
     assert max(c[1] for c in centers) - min(c[1] for c in centers) <= 2.5
+
+
+
+def test_renderer_visibility_covers_full_motion_segment_lifetime() -> None:
+    from app.models import MotionCue, MotionSegment
+
+    beat = StoryBeat(
+        id="beat-proxy",
+        scene_id="scene-proxy",
+        start=0.0,
+        end=2.5,
+        narration="proxy",
+        primary_asset_ids=["carrier"],
+        action="REVEAL",
+    )
+    cue = MotionCue(
+        beat_id=beat.id,
+        asset_id="carrier",
+        kind="program_v3",
+        start=0.70,
+        end=1.20,
+        params={"engine_version": 3, "program": {}},
+        segments=[
+            MotionSegment(
+                phase="ESTABLISH",
+                start=0.25,
+                end=0.60,
+                program={"keyframes": []},
+                semantic_event_id="E1",
+            ),
+            MotionSegment(
+                phase="ADD",
+                start=1.40,
+                end=2.10,
+                program={"keyframes": []},
+                semantic_event_id="E2",
+            ),
+        ],
+    )
+
+    start, end, _fade = FFmpegRenderer._cue_window(
+        beat=beat,
+        cue=cue,
+        segment_start=0.0,
+        duration=2.5,
+    )
+
+    assert start == pytest.approx(0.25)
+    assert end == pytest.approx(2.10)
+    assert cue.start == pytest.approx(0.70)
+    assert cue.end == pytest.approx(1.20)
