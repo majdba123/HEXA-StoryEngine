@@ -15,7 +15,6 @@ from app.canonical import (
     CanonicalScene,
     CanonicalScriptSpan,
     CanonicalSemanticEvent,
-    CanonicalSemanticGroup,
     ensure_canonical_package,
 )
 from app.shared.errors import DependencyUnavailableError

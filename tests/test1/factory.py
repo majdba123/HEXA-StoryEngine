@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from app.models import PackageModel, SceneSource
+from app.models import PackageModel, SceneSource, Transcript, VisualAsset
 
 
 def make_package(
@@ -475,7 +475,7 @@ def seeded_disk_shape(seed: int) -> DiskPackageShape:
 def deterministic_transcript(package) -> "Transcript":
     """Create a stable forced-alignment-like clock for structural planning tests."""
     import re
-    from app.models import Transcript, TranscriptSegment, TranscriptWord
+    from app.models import TranscriptSegment, TranscriptWord
 
     script = package.script or ""
     words: list[TranscriptWord] = []
@@ -529,7 +529,6 @@ def deterministic_transcript(package) -> "Transcript":
 def controlled_visual_assets(package) -> list["VisualAsset"]:
     """Create deterministic runtime cutouts that preserve canonical asset identity."""
     from math import ceil, sqrt
-    from app.models import VisualAsset
 
     output: list[VisualAsset] = []
     for scene in package.scenes:
