@@ -10534,3 +10534,243 @@ For long work:
 - do not claim a failure is closed from tests alone.
 
 The next chat should not ask the user to repeat architecture, package rules, or the current blocker already recorded here.
+
+# MONTAGE33 GRAY STORYSYNC + ENTRY-FOCUS STABILITY CHECKPOINT — 2026-09-26
+
+## Priority remains unchanged
+
+Render Stability / Error Handling remains the only active priority.
+Do NOT resume visual Motion polish, Hero-strength, reference matching, final-shot polish,
+or other aesthetic work until the same-head Gray/Black/White render matrix is complete.
+
+Permanent rule remains:
+`Evidence -> Root Cause -> Owning Layer -> Generic Fix -> Failure Policy -> Regression -> Cross-Package Regression -> CI -> Real Render Proof -> Permanent Contract`.
+
+## Live behavior checkpoint for this section
+
+Branch:
+- `montage`
+
+Behavior HEAD:
+- `5e2c891c4cc6a85aa20341d087f1944be6d1297d`
+- `[tests] Prevent abstained assets from competing for entry focus`
+
+Exact-head CI:
+- workflow: `V2 CI`
+- run id: `36257113195`
+- run number: `588`
+- conclusion: **SUCCESS**
+- Compile: PASS
+- Ruff: `All checks passed!`
+- Pytest: **454 passed, 12 warnings in 15.87 s**
+- tested-source artifact upload: PASS
+
+Focused stability matrix on the tested source:
+- proxy Story timing
+- StorySyncQA
+- choreography rhythm
+- Motion event flow
+- renderer Motion V3
+- result: **41/41 PASS**
+
+## Gray diagnostic 9903fa93 — new real failure evidence
+
+Diagnostic:
+- `HEXA-diagnostic-9903fa93.zip`
+- job: `9903fa93fb364479a62428df40b9ba37`
+- source commit used by the user's run:
+  `e7eef94e21e36fe3fdd54a497e3b697f02abd884`
+- branch: `montage`
+- package:
+  `HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+- original narration:
+  `ElevenLabs_2026-09-23T07_14_02_Ahmed - Intellectual, Calm & Educational_pvc_sp101_s76_sb100_se0_b_m2(1).mp3`
+
+Observed real pipeline progress before failure:
+- alignment completed
+- Pass1: **127 authored assets / 35 scenes**
+- Pass2: **153 assets (+26)**
+- Story: **35 beats**
+- Composition locked to Final Package geometry
+- Motion planned
+- 75 text cues placed
+
+Failure:
+- code: `COMPETING_ENTRY_FOCUS`
+- owner: `choreography`
+- disposition: `PREVENT`
+- semantic authority change allowed: false
+- beat: `beat-023`
+- competing runtime assets:
+  - `SCENE_023:asset-03`
+  - `SCENE_023:asset-04`
+  - `SCENE_023:asset-05`
+  - `SCENE_023:asset-06`
+  - `SCENE_023:asset-07`
+
+The Final Package itself is not the defect.
+SCENE_023 authors an explicit progression:
+- Event 01: open house + supporting warning/key evidence
+- Event 02: footprints / entry consequence
+- relation: `INVITES_UNAUTHORIZED_ENTRY`
+- Event 02 depends on Event 01
+
+There are not five authored semantic leaders.
+
+## Root cause — COMPETING_ENTRY_FOCUS
+
+Historical code on the diagnostic source only computed cohort attention budgets for assets
+with trusted Story V2 timing windows.
+
+Runtime cutouts that correctly ended in:
+`activation_policy = SAFE_ABSTENTION`
+could therefore remain outside the timed cohort budget and fall through to Motion's old
+default:
+- `cohort_gain = 1.0`
+- `cohort_role = independent`
+
+In a dense scene, several unresolved runtime cutouts could consequently enter at full
+strength simultaneously even though Final Package / Story never declared them independent
+semantic heroes.
+
+This is a generic engine defect, not a Gray-specific defect.
+
+## Current generic prevention contract
+
+Current Motion source explicitly budgets `SAFE_ABSTENTION` assets:
+
+1. If the beat contains trusted semantic focus:
+   - unresolved assets stay supporting context;
+   - ordinary unresolved visuals receive quiet attention (current default gain 0.24);
+   - relation participants may retain bounded participant attention;
+   - they do NOT default to full-strength independent focus.
+
+2. If the whole beat is unresolved:
+   - exactly one deterministic fallback leader is allowed;
+   - remaining unresolved assets are quiet.
+
+This changes attention energy only.
+It does NOT:
+- invent semantic timing;
+- alter Final Package meaning;
+- alter Composition geometry;
+- delete assets;
+- lower ChoreographyRhythmQA thresholds.
+
+Failure policy remains:
+- `COMPETING_ENTRY_FOCUS -> choreography -> PREVENT`.
+
+Permanent regression added:
+- `test_safe_abstention_assets_do_not_compete_with_trusted_focus`
+
+The regression proves:
+- one trusted semantic leader;
+- five unresolved SAFE_ABSTENTION runtime visuals;
+- unresolved gains stay below full-strength threshold;
+- ChoreographyRhythmQA returns no `COMPETING_ENTRY_FOCUS`.
+
+## Gray StorySync blocker work completed on the same development line
+
+The earlier Gray StorySync failure family is now protected by producer-side regressions.
+
+### Exact proxy peak authority
+
+Commit:
+- `6cd75781c0aab88b551a33c7b06aeb057711a100`
+- `[story] Preserve exact proxy Story timing`
+
+Contract:
+- Story `reveal_start / semantic_peak / settle_at` are carried through Choreography to Motion.
+- Motion must not recompute a contradictory GOLDEN_MAJOR peak from spoken_start/end.
+
+Regression:
+- `test_proxy_motion_uses_exact_story_semantic_peak_not_recomputed_peak`
+
+### Same carrier + multiple authored proxy events
+
+Contract:
+- one runtime carrier may represent N authored proxy events;
+- each authored event keeps an independent semantic Motion segment;
+- asset reuse does not dedupe later authored events.
+
+Regression:
+- `test_same_carrier_keeps_one_semantic_segment_per_authored_proxy_event`
+
+### Proxy events earlier than carrier owner's own activation
+
+Behavior commits:
+- `3c733335f1f9de1b46462676823255231c5698b3`
+  `[motion] Preserve proxy events before carrier owner timing`
+- `d1d7f5a646dd189e72b70da0c0db34679f642089`
+  `[render] Honor full semantic motion lifetime`
+
+Contract:
+- owner cue timing does not clip an earlier authored proxy event;
+- a carrier revealed by an earlier proxy must not re-enter later;
+- the owner's later semantic event remains as refocus rather than being lost;
+- Renderer visibility covers the complete Motion segment lifetime while Story cue timing
+  itself remains unchanged.
+
+Regressions:
+- `test_proxy_events_before_carrier_owner_activation_keep_independent_segments`
+- `test_renderer_visibility_covers_full_motion_segment_lifetime`
+
+### Story focus peak evidence
+
+Current StorySyncQA also preserves declared ENTRY arrival peak evidence for an owner whose
+activation has no semantic_event_id. This prevents the producer's correct Story peak from
+being mistaken for an early physical-travel peak.
+
+Current live line includes:
+- `[story] Preserve eventless owner entry peak evidence`
+
+Relevant regressions include:
+- frame-aware semantic focus peak accepted;
+- too-early peak rejected;
+- too-late peak rejected;
+- declared Story peak inside ENTRY arrival accepted.
+
+Do not weaken StorySync tolerances.
+
+## Current status after diagnostic 9903fa93
+
+CLOSED — code + regression + CI:
+- relation timing distinction (overlap-required vs sequential-allowed)
+- target reaction contract
+- semantic group/compound proxy infrastructure
+- Binder GROUP-vs-VISUAL_ASSET_INTENT compatibility
+- canonical semantic dependency anchor
+- proxy exact Story peak propagation
+- same-carrier multi-proxy preservation
+- pre-owner proxy execution without re-entry
+- renderer full semantic-segment lifetime
+- eventless owner ENTRY peak evidence
+- SAFE_ABSTENTION entry-focus arbitration
+- `COMPETING_ENTRY_FOCUS` diagnostic failure class
+
+NOT YET CLOSED — real production/render proof:
+- Gray rerender on the current final behavior HEAD with the original Gray narration
+- Gray pre-render QA / StorySyncQA / ChoreographyRhythmQA all PASS
+- Gray RenderedMotionQA PASS
+- Gray final export PASS
+- Gray full decode PASS
+- Black rerender on the exact same final behavior HEAD
+- White rerender on the exact same final behavior HEAD
+- Script Kiddie regression after Gray/Black/White
+
+Important:
+the user's `9903fa93` diagnostic was produced from `e7eef94...`, so it is valid failure
+evidence but is not evidence that the current `5e2c891...` behavior still fails.
+
+Do not claim the Render Stability layer CLOSED until Gray + Black + White all pass on one
+exact behavior HEAD with real renders.
+
+## Next exact action
+
+1. User updates/runs current `montage` behavior (or a later verified descendant).
+2. Rerun the exact Gray package with the original Gray narration.
+3. If a diagnostic still appears, classify it as a new real failure and continue the
+   permanent failure loop; do not patch the package.
+4. If Gray passes end-to-end, rerun Black and White on the same exact behavior HEAD.
+5. Only after all three pass may Motion-polish work resume.
+
