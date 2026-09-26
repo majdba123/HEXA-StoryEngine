@@ -11,7 +11,6 @@ import numpy as np
 from app.models import LayoutItem, MotionSegment, RenderPlan
 from app.motion.timing import (
     GOLDEN_MINOR,
-    comfort_gain,
     max_comfort_displacement,
     motion_comfort,
     semantic_readability_floor,
