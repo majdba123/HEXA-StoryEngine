@@ -33,7 +33,6 @@ from app.motion.timing import (
     max_comfort_displacement,
     motion_comfort,
     projected_motion_activity_px,
-    semantic_readability_floor,
     semantic_readability_floor_px,
 )
 from app.qa import MotionInteractionQA, RenderedMotionQA
