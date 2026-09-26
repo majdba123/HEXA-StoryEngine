@@ -123,18 +123,26 @@ class StoryEnginePipeline:
     ) -> Path:
         job_id = job_id or uuid.uuid4().hex
         workspace = self.settings.work_root / job_id
-        workspace.mkdir(parents=True, exist_ok=True)
-
-        self._check_cancel(cancelled)
-        self._progress(progress, Stage.input, 0.01, "Checking FFmpeg render path")
-        self.renderer.preflight(workspace / "preflight")
-
-        self._check_cancel(cancelled)
-        self._progress(progress, Stage.input, 0.04, "Reading Final Package")
-        package = self.loader.load(package_path, workspace, script_path)
         audio_path = audio_path.expanduser().resolve()
-        if not audio_path.is_file():
-            raise StageFailedError("audio file not found", details={"path": str(audio_path)})
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.input, 0.01, "Checking storage and FFmpeg paths")
+        self._assert_writable_directory(workspace, code="WORKSPACE_NOT_WRITABLE")
+        self._assert_writable_directory(self.settings.output_root, code="OUTPUT_ROOT_NOT_WRITABLE")
+        render_probe = self.renderer.preflight(workspace / "preflight")
+        self.final.preflight(render_probe, workspace / "preflight")
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.input, 0.03, "Checking narration media")
+        self.transcriber.preflight(audio_path)
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.input, 0.05, "Reading Final Package")
+        package = self.loader.load(package_path, workspace, script_path)
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.input, 0.08, "Checking timing dependencies")
+        self.transcriber.preflight(audio_path, package.script)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.transcription, 0.12, "Aligning narration")
@@ -857,6 +865,23 @@ class StoryEnginePipeline:
                 shutil.copy2(candidate_final, final_path)
                 if result.invalidate_from_stage == "render":
                     video_only = candidate_video
+
+    @staticmethod
+    def _assert_writable_directory(path: Path, *, code: str) -> None:
+        probe = path / f".hexa-write-probe-{uuid.uuid4().hex}"
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe.write_bytes(b"ok")
+        except OSError as exc:
+            raise StageFailedError(
+                "required directory is not writable",
+                details={"code": code, "path": str(path), "error": str(exc)},
+            ) from exc
+        finally:
+            try:
+                probe.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _output_path(self, package_id: str, output_name: str | None) -> Path:
         name = output_name or f"{package_id}.mp4"

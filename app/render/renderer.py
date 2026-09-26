@@ -69,7 +69,10 @@ class FFmpegRenderer:
         )
         self._run(command, "ffmpeg render preflight failed")
         if not target.exists() or target.stat().st_size == 0:
-            raise StageFailedError("ffmpeg render preflight produced no output")
+            raise StageFailedError(
+                "ffmpeg render preflight produced no output",
+                details={"code": "RENDER_PREFLIGHT_EMPTY"},
+            )
         return target
 
     def render(
@@ -864,11 +867,14 @@ class FFmpegRenderer:
                 text=True,
             )
         except FileNotFoundError as exc:
-            raise DependencyUnavailableError("ffmpeg is not available") from exc
+            raise DependencyUnavailableError(
+                "ffmpeg is not available",
+                details={"code": "FFMPEG_UNAVAILABLE", "binary": self.ffmpeg_bin},
+            ) from exc
         except (OSError, subprocess.CalledProcessError) as exc:
             raise StageFailedError(
                 "failed to inspect ffmpeg filter-file capabilities",
-                details={"error": str(exc)},
+                details={"code": "FFMPEG_CAPABILITY_PROBE_FAILED", "error": str(exc)},
             ) from exc
 
         help_text = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
@@ -909,16 +915,27 @@ class FFmpegRenderer:
                 raise StageFailedError(
                     "render process command exceeded the Windows process limit",
                     details={
+                        "code": "RENDER_PROCESS_COMMAND_LIMIT",
                         "winerror": 206,
                         "argument_count": len(command),
                         "command_characters": sum(len(str(arg)) + 1 for arg in command),
                     },
                 ) from exc
             if isinstance(exc, FileNotFoundError):
-                raise DependencyUnavailableError("ffmpeg is not available") from exc
+                raise DependencyUnavailableError(
+                    "ffmpeg is not available",
+                    details={"code": "FFMPEG_UNAVAILABLE", "binary": command[0] if command else None},
+                ) from exc
             raise StageFailedError(
                 message,
-                details={"os_error": str(exc), "errno": getattr(exc, "errno", None)},
+                details={
+                    "code": "RENDER_PROCESS_OS_ERROR",
+                    "os_error": str(exc),
+                    "errno": getattr(exc, "errno", None),
+                },
             ) from exc
         except subprocess.CalledProcessError as exc:
-            raise StageFailedError(message, details={"stderr": (exc.stderr or "")[-6000:]}) from exc
+            raise StageFailedError(
+                message,
+                details={"code": "FFMPEG_COMMAND_FAILED", "stderr": (exc.stderr or "")[-6000:]},
+            ) from exc

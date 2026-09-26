@@ -10,7 +10,7 @@ from app.transcription.alignment import (
     ForcedAligner,
     WhisperXForcedAligner,
 )
-from app.shared.errors import DependencyUnavailableError
+from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.media import probe_duration
 from app.shared.process import run_hidden
 
@@ -35,10 +35,32 @@ class TranscriptionService:
         self.forced_aligner = forced_aligner or WhisperXForcedAligner(ffmpeg_bin=ffmpeg_bin)
         self.require_forced_alignment = require_forced_alignment
 
+    def preflight(self, audio: Path, script: str | None = None) -> float:
+        """Validate narration and strict timing dependencies before expensive visual work."""
+        audio = audio.expanduser().resolve()
+        if not audio.is_file():
+            raise StageFailedError(
+                "audio file not found",
+                details={"code": "AUDIO_INPUT_MISSING", "path": str(audio)},
+            )
+        duration = probe_duration(audio, self.ffprobe_bin)
+        if self.require_forced_alignment and script:
+            preflight = getattr(self.forced_aligner, "preflight", None)
+            if not callable(preflight):
+                raise DependencyUnavailableError(
+                    "forced aligner does not expose production preflight",
+                    details={"code": "ALIGNMENT_PREFLIGHT_UNAVAILABLE"},
+                )
+            preflight(script)
+        return duration
+
     def transcribe(self, audio: Path, script: str | None = None) -> Transcript:
         audio = audio.expanduser().resolve()
-        if not audio.exists():
-            raise FileNotFoundError(audio)
+        if not audio.is_file():
+            raise StageFailedError(
+                "audio file not found",
+                details={"code": "AUDIO_INPUT_MISSING", "path": str(audio)},
+            )
         if script:
             duration = probe_duration(audio, self.ffprobe_bin)
             try:

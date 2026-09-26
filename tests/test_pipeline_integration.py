@@ -84,4 +84,11 @@ def test_pipeline_generates_final_video(tmp_path: Path) -> None:
         / "preflight"
         / "ffmpeg-render-preflight.mp4"
     ).is_file()
+    assert (
+        tmp_path
+        / "work"
+        / "integration-job"
+        / "preflight"
+        / "ffmpeg-final-preflight.mp4"
+    ).is_file()
     assert (tmp_path / "work" / "integration-job" / "render-plan.json").is_file()

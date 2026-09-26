@@ -181,3 +181,29 @@ def test_forced_alignment_passes_predecoded_waveform_to_whisperx(
     assert captured["decode"] == (audio, "custom-ffmpeg", 16000)
     assert captured["audio_input"] is waveform
     assert [word.text for word in transcript.words] == ["one", "two"]
+
+
+def test_forced_alignment_preflight_loads_and_caches_model(monkeypatch) -> None:
+    aligner = WhisperXForcedAligner(device="cpu")
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_load_model(language: str, device: str, *, model_name: str, model_dir=None):
+        calls.append((language, device, model_name))
+        return object(), {"language": language}
+
+    monkeypatch.setattr(aligner, "_load_api", lambda: (object(), fake_load_model))
+    aligner.preflight("مرحبا بالعالم")
+    aligner.preflight("مرحبا بالعالم")
+
+    assert len(calls) == 1
+    assert calls[0][0] == "ar"
+    assert "ar" in aligner._loaded
+
+
+def test_forced_alignment_preflight_rejects_unsupported_script() -> None:
+    from app.shared.errors import StageFailedError
+
+    aligner = WhisperXForcedAligner(device="cpu")
+    with pytest.raises(StageFailedError) as exc_info:
+        aligner.preflight("12345 !!!")
+    assert exc_info.value.effective_code == "ALIGNMENT_SCRIPT_UNSUPPORTED"

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Transcript, TranscriptSegment, TranscriptWord
-from app.shared.errors import DependencyUnavailableError
+from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.media import decode_audio_mono
 
 _WORD_RE = re.compile(r"\S+")
@@ -58,6 +58,34 @@ class WhisperXForcedAligner:
         self.ffmpeg_bin = ffmpeg_bin
         self._loaded: dict[str, tuple[Any, dict[str, Any]]] = {}
 
+    def preflight(self, script: str) -> None:
+        """Prove the production forced-alignment runtime before later visual stages.
+
+        Loading here is intentional: the model is cached and reused immediately by
+        align(), so this moves failure earlier without paying the model-load cost twice.
+        """
+        try:
+            language = detect_script_language(script)
+        except AlignmentRejectedError as exc:
+            raise StageFailedError(
+                "script is not supported by forced alignment",
+                details={"code": "ALIGNMENT_SCRIPT_UNSUPPORTED", "error": str(exc)},
+            ) from exc
+        model_name = self.model_by_language.get(language)
+        if not model_name:
+            raise DependencyUnavailableError(
+                "no forced-alignment model configured",
+                details={"code": "ALIGNMENT_MODEL_NOT_CONFIGURED", "language": language},
+            )
+        _align_fn, load_model = self._load_api()
+        device = self.device or self._auto_device()
+        self._model_for(
+            language=language,
+            model_name=model_name,
+            device=device,
+            load_model=load_model,
+        )
+
     def align(self, audio: Path, script: str, duration: float) -> Transcript:
         language = detect_script_language(script)
         model_name = self.model_by_language.get(language)
@@ -101,7 +129,8 @@ class WhisperXForcedAligner:
             from whisperx.alignment import align, load_align_model
         except (ImportError, ModuleNotFoundError) as exc:
             raise DependencyUnavailableError(
-                "WhisperX forced alignment is unavailable; install the alignment runtime"
+                "WhisperX forced alignment is unavailable; install the alignment runtime",
+                details={"code": "ALIGNMENT_RUNTIME_UNAVAILABLE"},
             ) from exc
         return align, load_align_model
 
@@ -127,7 +156,12 @@ class WhisperXForcedAligner:
         except Exception as exc:
             raise DependencyUnavailableError(
                 "forced-alignment model could not be loaded",
-                details={"language": language, "model": model_name, "error": str(exc)},
+                details={
+                    "code": "ALIGNMENT_MODEL_LOAD_FAILED",
+                    "language": language,
+                    "model": model_name,
+                    "error": str(exc),
+                },
             ) from exc
         self._loaded[language] = (model, metadata)
         return model, metadata

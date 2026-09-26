@@ -24,13 +24,28 @@ def probe_duration(path: Path, ffprobe_bin: str = "ffprobe") -> float:
     try:
         result = run_hidden(command, check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
-        raise DependencyUnavailableError("ffprobe is not available") from exc
+        raise DependencyUnavailableError(
+            "ffprobe is not available",
+            details={"code": "FFPROBE_UNAVAILABLE", "binary": ffprobe_bin},
+        ) from exc
     except subprocess.CalledProcessError as exc:
-        raise StageFailedError("ffprobe failed", details={"stderr": exc.stderr[-2000:]}) from exc
-    payload = json.loads(result.stdout)
-    duration = float(payload["format"]["duration"])
+        raise StageFailedError(
+            "ffprobe failed",
+            details={"code": "MEDIA_PROBE_FAILED", "stderr": exc.stderr[-2000:]},
+        ) from exc
+    try:
+        payload = json.loads(result.stdout)
+        duration = float(payload["format"]["duration"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise StageFailedError(
+            "ffprobe returned invalid duration metadata",
+            details={"code": "MEDIA_PROBE_INVALID_METADATA"},
+        ) from exc
     if duration <= 0:
-        raise StageFailedError("media duration is invalid")
+        raise StageFailedError(
+            "media duration is invalid",
+            details={"code": "MEDIA_DURATION_INVALID", "duration": duration},
+        )
     return duration
 
 
