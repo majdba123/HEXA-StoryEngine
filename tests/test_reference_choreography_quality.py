@@ -476,3 +476,65 @@ def test_repeated_asset_across_beats_keeps_same_asset_continuity_without_phantom
         assert final["dx"] == pytest.approx(0.0)
         assert final["dy"] == pytest.approx(0.0)
         assert final["scale"] == pytest.approx(1.0)
+
+
+def test_safe_abstention_assets_do_not_compete_with_trusted_focus() -> None:
+    trusted = _activation(
+        "hero",
+        reveal=0.20,
+        settle=0.72,
+        role="LEADER",
+        event_id="E1",
+    )
+    unresolved = [
+        StoryAssetActivation(
+            asset_id=f"extra-{index}",
+            semantic_unit_id=f"extra-unit-{index}",
+            confidence=0.0,
+            source="semantic_abstention",
+            policy="FALLBACK",
+            activation_policy="SAFE_ABSTENTION",
+        )
+        for index in range(5)
+    ]
+    beat = _beat(
+        "abstention-swarm",
+        start=0.0,
+        end=1.5,
+        narration="trusted focus with unresolved supporting visuals",
+        activations=[trusted, *unresolved],
+        primary=["hero"],
+        support=[f"extra-{index}" for index in range(5)],
+    )
+    asset_ids = ["hero", *[f"extra-{index}" for index in range(5)]]
+    composition = _layout(beat.id, asset_ids)
+    choreography = ChoreographyPlan(
+        directives=(_directive(beat.id, primary="hero"),)
+    )
+
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    focus = {
+        cue.asset_id: cue.params["semantic_focus"]
+        for cue in cues
+    }
+
+    assert focus["hero"]["cohort_gain"] == pytest.approx(1.0)
+    assert all(
+        focus[f"extra-{index}"]["cohort_gain"] < 0.72
+        for index in range(5)
+    )
+    assert all(
+        focus[f"extra-{index}"]["cohort_role"] in {"quiet", "participant", "secondary"}
+        for index in range(5)
+    )
+
+    report = ChoreographyRhythmQA().inspect(
+        story=[beat],
+        motion=cues,
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
+    assert not any(
+        violation.code == "COMPETING_ENTRY_FOCUS"
+        for violation in report.violations
+    )
