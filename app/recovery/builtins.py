@@ -3,7 +3,14 @@ from app.recovery.models import KnownIssue, RecoveryStatus
 
 BUILTIN_ISSUES = [
     KnownIssue(code="ASSET_BAD_CUTOUT", description="Asset extraction is visibly invalid", affected_stage="cutout", handler="retry_cutout", status=RecoveryStatus.proven),
-    KnownIssue(code="ASSET_WHITE_HALO", description="White/opaque halo around extracted asset", affected_stage="cutout", handler="retry_cutout", status=RecoveryStatus.proven),
+    KnownIssue(
+        code="ASSET_WHITE_HALO",
+        description="White/opaque halo around extracted asset",
+        affected_stage="cutout",
+        handler="retry_cutout",
+        status=RecoveryStatus.candidate,
+        handler_version=2,
+    ),
     KnownIssue(code="ELEMENT_APPEARS_TOO_EARLY", description="Visual element appears before its narration cue", affected_stage="story", handler="rebuild_story_timing", status=RecoveryStatus.proven),
     KnownIssue(code="ELEMENT_APPEARS_TOO_LATE", description="Visual element appears too late for its narration cue", affected_stage="motion", handler="rebuild_motion", status=RecoveryStatus.proven),
     KnownIssue(code="BAD_HANDOFF", description="Visual attention handoff is missing or invalid", affected_stage="story", handler="rebuild_story_timing", status=RecoveryStatus.proven),

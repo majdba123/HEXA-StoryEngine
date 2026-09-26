@@ -17,7 +17,8 @@ class RecoveryManager:
 
     def _seed(self) -> None:
         for issue in BUILTIN_ISSUES:
-            if self.registry.get(issue.code) is None:
+            current = self.registry.get(issue.code)
+            if current is None or current.handler_version < issue.handler_version:
                 self.registry.upsert(issue)
 
     def handle(self, *, code: str, context: dict, attempt: int) -> HandlerResult | None:
