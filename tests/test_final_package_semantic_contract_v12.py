@@ -26,6 +26,7 @@ from app.qa import MotionInteractionQA, RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
 from app.story.planner import StoryPlanner
 from app.story.windows import schedule_windows
+from app.shared.errors import StageFailedError
 from app.text.planner import TextPlanner
 from app.text.semantic import KeywordCandidate
 
@@ -810,3 +811,131 @@ def test_v12_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_pat
     )
     assert report.missing_semantic_events == ()
     assert report.represented_semantic_events == report.authored_semantic_events
+
+
+def test_historical_relation_and_handoff_failures_remain_strictly_rejected(
+    tmp_path: Path,
+) -> None:
+    """Lock historical Gray/Black semantic-motion failure classes as regressions."""
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for scene_row in payload["scenes"]:
+            relation = scene_row["relations"][0]
+            relation["relation_type"] = "DISCOVERS"
+            relation.pop("script_span", None)
+            relation.pop("script_text", None)
+            for event in scene_row.get("semantic_events", []):
+                if event["semantic_event_id"] == "E2":
+                    event["result_asset_ids"] = []
+        if filename == "semantic_bindings.json":
+            for event in payload.get("semantic_events", []):
+                if event["semantic_event_id"] == "E2":
+                    event["result_asset_ids"] = []
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(package_path, tmp_path / "work-historical-failures")
+    scene = package.scenes[0]
+    assets = [
+        VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=scene.image_path,
+            extraction_method="historical-failure-regression",
+            source_area_ratio=area,
+        )
+        for asset_id, area in (("a", 0.50), ("b", 0.30), ("c", 0.20))
+    ]
+    story = StoryPlanner().plan(package, _transcript(), assets)
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    beat = story[0]
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="a", x=0.20, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.15, height=0.20),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.15, height=0.20),
+        ],
+    )]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+    baseline = MotionInteractionQA().inspect(
+        story=story,
+        motion=motion,
+        composition=composition,
+        choreography=choreography,
+    )
+    assert baseline.ok, baseline.violations
+
+    def without_phase(asset_id: str, phase: str):
+        rows = []
+        for cue in motion:
+            if cue.asset_id != asset_id:
+                rows.append(cue)
+                continue
+            rows.append(cue.model_copy(update={
+                "segments": [
+                    segment for segment in cue.segments
+                    if segment.phase != phase
+                ],
+            }))
+        return rows
+
+    missing_reaction = MotionInteractionQA().inspect(
+        story=story,
+        motion=without_phase("b", "REACT"),
+        composition=composition,
+        choreography=choreography,
+    )
+    assert any(
+        row.code == "MISSING_TARGET_REACTION"
+        for row in missing_reaction.violations
+    )
+    with pytest.raises(StageFailedError) as reaction_error:
+        MotionInteractionQA.require(missing_reaction)
+    assert reaction_error.value.effective_code == "MISSING_TARGET_REACTION"
+
+    missing_payoff = MotionInteractionQA().inspect(
+        story=story,
+        motion=without_phase("c", "PAYOFF"),
+        composition=composition,
+        choreography=choreography,
+    )
+    assert any(
+        row.code == "MISSING_RESULT_PAYOFF"
+        for row in missing_payoff.violations
+    )
+    with pytest.raises(StageFailedError) as payoff_error:
+        MotionInteractionQA.require(missing_payoff)
+    assert payoff_error.value.effective_code == "MISSING_RESULT_PAYOFF"
+
+    mutated_motion = list(motion)
+    source_index = next(
+        index for index, cue in enumerate(mutated_motion)
+        if cue.segments
+    )
+    source_cue = mutated_motion[source_index]
+    source_segment = source_cue.segments[0]
+    bad_segment = source_segment.model_copy(update={
+        "handoff_deadline": max(
+            source_segment.start,
+            source_segment.end - 0.01,
+        ),
+    })
+    mutated_motion[source_index] = source_cue.model_copy(update={
+        "segments": [bad_segment, *source_cue.segments[1:]],
+    })
+    past_handoff = MotionInteractionQA().inspect(
+        story=story,
+        motion=mutated_motion,
+        composition=composition,
+        choreography=choreography,
+    )
+    assert any(
+        row.code == "SEGMENT_PAST_HANDOFF"
+        for row in past_handoff.violations
+    )
+    with pytest.raises(StageFailedError) as handoff_error:
+        MotionInteractionQA.require(past_handoff)
+    assert handoff_error.value.effective_code == "SEGMENT_PAST_HANDOFF"
