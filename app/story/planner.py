@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from app.canonical import CanonicalPackage, ensure_canonical_package
+from app.canonical import ensure_canonical_package
 from app.models import PackageModel, SceneSource, StoryBeat, StorySemanticContext, Transcript, VisualAsset
 
 from .activation import SemanticActivationPlanner

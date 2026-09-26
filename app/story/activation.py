@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
-from app.canonical import CanonicalPackage, ensure_canonical_package
+from app.canonical import ensure_canonical_package
 from app.shared.errors import DependencyUnavailableError
 from app.models import (
     AssetActivation,
