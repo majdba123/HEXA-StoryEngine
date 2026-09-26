@@ -32,7 +32,9 @@ from app.motion.timing import (
     comfort_gain,
     max_comfort_displacement,
     motion_comfort,
+    projected_motion_activity_px,
     semantic_readability_floor,
+    semantic_readability_floor_px,
 )
 from app.qa import MotionInteractionQA, RenderedMotionQA
 from app.shared.errors import StageFailedError
@@ -721,7 +723,10 @@ def test_infeasible_establish_motion_fails_before_render() -> None:
         )
 
     assert exc_info.value.details["code"] == "MOTION_INFEASIBLE_BEFORE_RENDER"
-    assert exc_info.value.details["readability_floor"] > exc_info.value.details["comfort_ceiling"]
+    assert exc_info.value.details["readability_floor_px"] > max(
+        exc_info.value.details["translation_ceiling_px"],
+        exc_info.value.details["scale_ceiling_px"],
+    )
 
 
 def test_story_aligned_establish_program_cannot_fall_below_rendered_floor() -> None:
@@ -765,17 +770,30 @@ def test_story_aligned_establish_program_cannot_fall_below_rendered_floor() -> N
         duration=segment_duration,
         semantic_peak_progress=0.7936,
     )
-    peak = max(
-        ((frame.dx * frame.dx + frame.dy * frame.dy) ** 0.5 for frame in program.keyframes),
+    peak_px = max(
+        (
+            projected_motion_activity_px(
+                dx=frame.dx,
+                dy=frame.dy,
+                scale=frame.scale,
+                item_width=item.width,
+                item_height=item.height,
+                frame_width=1920,
+                frame_height=1080,
+            )
+            for frame in program.keyframes
+        ),
         default=0.0,
     )
-    floor = semantic_readability_floor(
+    floor_px = semantic_readability_floor_px(
         "ESTABLISH",
         item_width=item.width,
         item_height=item.height,
         duration=segment_duration,
+        frame_width=1920,
+        frame_height=1080,
     )
-    assert floor * 1920 == pytest.approx(15.36, abs=1e-6)
-    assert peak >= floor - 1e-9
+    assert floor_px == pytest.approx(15.36, abs=1e-6)
+    assert peak_px >= floor_px - 1e-6
 
 

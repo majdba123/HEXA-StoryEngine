@@ -26,8 +26,12 @@ from app.motion.timing import (
     golden_window_around_peak,
     max_comfort_displacement,
     motion_comfort,
+    projected_motion_activity_px,
+    required_scale_delta_for_pixel_floor,
+    required_translation_for_pixel_floor,
     semantic_readability_duration,
     semantic_readability_floor,
+    semantic_readability_floor_px,
     story_activation_window,
 )
 
@@ -1504,6 +1508,8 @@ class MotionPlanner:
         scale: float,
         duration: float,
         readability_duration: float | None = None,
+        frame_width: int = 1920,
+        frame_height: int = 1080,
     ) -> tuple[float, float, float]:
         movement_duration = max(0.0, float(duration))
         contract_duration = (
@@ -1511,64 +1517,178 @@ class MotionPlanner:
             if readability_duration is None
             else max(0.0, float(readability_duration))
         )
-        temporal_gain = comfort_gain(phase.stage.value, movement_duration)
-        floor = semantic_readability_floor(
-            phase.stage.value,
-            item_width=item.width,
-            item_height=item.height,
-            duration=contract_duration,
-        )
-        # Event accents travel out and then return to Composition. The return leg is
-        # the shorter golden section (38.2%), so it is the actual speed bottleneck.
-        # Cap displacement against that leg; otherwise the outbound average can look
-        # comfortable while the settle snaps back too quickly.
-        comfort_leg_duration = movement_duration * GOLDEN_MINOR
-        max_displacement = max_comfort_displacement(
-            phase.stage.value,
-            comfort_leg_duration,
-        )
-        if floor > 0.0 and max_displacement + 1e-9 < floor:
-            raise StageFailedError(
-                "semantic motion is not readable within the available comfort budget",
-                details={
-                    "code": "MOTION_INFEASIBLE_BEFORE_RENDER",
-                    "phase": phase.stage.value,
-                    "event_id": phase.event_id,
-                    "asset_id": item.asset_id,
-                    "readability_floor": floor,
-                    "comfort_ceiling": max_displacement,
-                    "segment_duration": contract_duration,
-                    "active_duration": movement_duration,
-                },
-            )
-        magnitude = hypot(dx, dy)
-        desired = max(magnitude, floor)
-        if max_displacement > 0.0:
-            desired = min(desired, max_displacement)
-        if magnitude > 1e-6:
-            gain = desired / magnitude
-            dx = max(-0.075, min(0.075, dx * gain))
-            dy = max(-0.075, min(0.075, dy * gain))
-        elif floor > 0 and phase.stage != EventFlowStage.PAYOFF:
-            dy = -min(floor, max_displacement or floor)
+        phase_name = phase.stage.value
+        temporal_gain = comfort_gain(phase_name, movement_duration)
 
+        comfort_leg_duration = movement_duration * GOLDEN_MINOR
+        max_displacement = max_comfort_displacement(phase_name, comfort_leg_duration)
         asset_extent = max(1e-6, min(item.width, item.height))
         scale_cap = min(
             0.095,
             max_displacement / asset_extent if max_displacement > 0.0 else 0.0,
         )
+
+        magnitude = hypot(dx, dy)
+        if magnitude > max_displacement > 0.0:
+            gain = max_displacement / magnitude
+            dx *= gain
+            dy *= gain
         scale_delta = max(-scale_cap, min(scale_cap, scale - 1.0))
         scale = 1.0 + scale_delta
+
+        semantic_normalized_phases = {
+            EventFlowStage.INTERACT, EventFlowStage.REACT, EventFlowStage.PAYOFF
+        }
+        if phase.stage in semantic_normalized_phases:
+            floor = semantic_readability_floor(
+                phase_name,
+                item_width=item.width,
+                item_height=item.height,
+                duration=contract_duration,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            if floor > 0.0 and max_displacement + 1e-9 < floor:
+                raise StageFailedError(
+                    "semantic motion is not readable within the available comfort budget",
+                    details={
+                        "code": "MOTION_INFEASIBLE_BEFORE_RENDER",
+                        "phase": phase_name,
+                        "event_id": phase.event_id,
+                        "asset_id": item.asset_id,
+                        "readability_floor": floor,
+                        "comfort_ceiling": max_displacement,
+                        "segment_duration": contract_duration,
+                        "active_duration": movement_duration,
+                    },
+                )
+            magnitude = hypot(dx, dy)
+            desired = max(magnitude, floor)
+            if max_displacement > 0.0:
+                desired = min(desired, max_displacement)
+            if magnitude > 1e-6:
+                gain = desired / magnitude
+                dx = max(-0.075, min(0.075, dx * gain))
+                dy = max(-0.075, min(0.075, dy * gain))
+            elif floor > 0.0 and phase.stage != EventFlowStage.PAYOFF:
+                dy = -min(floor, max_displacement or floor)
+        else:
+            floor_px = semantic_readability_floor_px(
+                phase_name,
+                item_width=item.width,
+                item_height=item.height,
+                duration=contract_duration,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            current_px = projected_motion_activity_px(
+                dx=dx,
+                dy=dy,
+                scale=scale,
+                item_width=item.width,
+                item_height=item.height,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            if current_px + 1e-6 < floor_px:
+                required_translation = required_translation_for_pixel_floor(
+                    dx=dx,
+                    dy=dy,
+                    floor_px=floor_px,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                )
+                required_scale_delta = required_scale_delta_for_pixel_floor(
+                    floor_px=floor_px,
+                    item_width=item.width,
+                    item_height=item.height,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                )
+                translation_feasible = (
+                    required_translation <= min(0.075, max_displacement) + 1e-9
+                )
+                scale_feasible = required_scale_delta <= scale_cap + 1e-9
+
+                width = max(1.0, float(frame_width))
+                height = max(1.0, float(frame_height))
+                translation_px = hypot(dx * width, dy * height)
+                asset_px = max(1.0, min(width * item.width, height * item.height))
+                scale_px = abs(scale - 1.0) * asset_px
+
+                if scale_feasible and (not translation_feasible or scale_px >= translation_px):
+                    sign = -1.0 if scale < 1.0 else 1.0
+                    scale = 1.0 + sign * required_scale_delta
+                elif translation_feasible:
+                    magnitude = hypot(dx, dy)
+                    if magnitude > 1e-9:
+                        gain = required_translation / magnitude
+                        dx *= gain
+                        dy *= gain
+                    else:
+                        dy = -required_translation
+                elif scale_feasible:
+                    sign = -1.0 if scale < 1.0 else 1.0
+                    scale = 1.0 + sign * required_scale_delta
+                else:
+                    raise StageFailedError(
+                        "motion cannot satisfy encoded readability within comfort budget",
+                        details={
+                            "code": "MOTION_INFEASIBLE_BEFORE_RENDER",
+                            "phase": phase_name,
+                            "event_id": phase.event_id,
+                            "asset_id": item.asset_id,
+                            "readability_floor_px": floor_px,
+                            "translation_ceiling_px": projected_motion_activity_px(
+                                dx=0.0,
+                                dy=max_displacement,
+                                scale=1.0,
+                                item_width=item.width,
+                                item_height=item.height,
+                                frame_width=frame_width,
+                                frame_height=frame_height,
+                            ),
+                            "scale_ceiling_px": scale_cap * asset_px,
+                            "segment_duration": contract_duration,
+                            "active_duration": movement_duration,
+                        },
+                    )
+
+            final_px = projected_motion_activity_px(
+                dx=dx,
+                dy=dy,
+                scale=scale,
+                item_width=item.width,
+                item_height=item.height,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            if final_px + 1e-6 < floor_px:
+                raise StageFailedError(
+                    "planner produced motion below the shared encoded readability floor",
+                    details={
+                        "code": "MOTION_READABILITY_CONTRACT_BROKEN",
+                        "phase": phase_name,
+                        "event_id": phase.event_id,
+                        "asset_id": item.asset_id,
+                        "expected_px": final_px,
+                        "readability_floor_px": floor_px,
+                    },
+                )
+
         if phase.stage == EventFlowStage.PAYOFF:
             desired_scale = min(0.075 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
-                scale = 1.0 + desired_scale if scale >= 1.0 else 1.0 - desired_scale
+                scale = 1.0 + desired_scale
         elif phase.stage == EventFlowStage.REACT:
             desired_scale = min(0.045 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
                 scale = 1.0 + desired_scale
-        return dx, dy, max(0.90, min(1.14, scale))
-
+        return (
+            max(-0.075, min(0.075, dx)),
+            max(-0.075, min(0.075, dy)),
+            max(0.90, min(1.14, scale)),
+        )
 
     @staticmethod
     def _exit_reserve_seconds(

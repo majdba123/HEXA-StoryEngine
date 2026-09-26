@@ -19,8 +19,10 @@ from app.motion.timing import (
     GOLDEN_MAJOR,
     GOLDEN_MINOR,
     max_comfort_displacement,
+    projected_motion_activity_px,
     semantic_readability_duration,
     semantic_readability_floor,
+    semantic_readability_floor_px,
 )
 from app.qa import RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
@@ -532,6 +534,50 @@ def test_readability_duration_semantics_are_shared_by_phase() -> None:
     assert semantic_readability_duration(
         "REACT", segment_duration=0.36, active_duration=0.1945
     ) == pytest.approx(0.1945)
+
+
+def test_pixel_activity_projection_is_axis_and_scale_aware() -> None:
+    item_width = 0.298445
+    item_height = 0.579171
+    floor_px = semantic_readability_floor_px(
+        "ESTABLISH",
+        item_width=item_width,
+        item_height=item_height,
+        duration=0.36,
+        frame_width=1920,
+        frame_height=1080,
+    )
+    vertical = projected_motion_activity_px(
+        dx=0.0,
+        dy=-0.008,
+        scale=1.0,
+        item_width=item_width,
+        item_height=item_height,
+        frame_width=1920,
+        frame_height=1080,
+    )
+    horizontal = projected_motion_activity_px(
+        dx=0.008,
+        dy=0.0,
+        scale=1.0,
+        item_width=item_width,
+        item_height=item_height,
+        frame_width=1920,
+        frame_height=1080,
+    )
+    scale_delta = floor_px / min(1920 * item_width, 1080 * item_height)
+    scaled = projected_motion_activity_px(
+        dx=0.0,
+        dy=0.0,
+        scale=1.0 + scale_delta,
+        item_width=item_width,
+        item_height=item_height,
+        frame_width=1920,
+        frame_height=1080,
+    )
+    assert vertical == pytest.approx(8.64, abs=1e-6)
+    assert horizontal == pytest.approx(15.36, abs=1e-6)
+    assert scaled == pytest.approx(floor_px, abs=1e-6)
 
 
 def test_establish_rendered_floor_matches_shared_planner_contract() -> None:

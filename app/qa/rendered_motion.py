@@ -13,8 +13,10 @@ from app.motion.timing import (
     GOLDEN_MINOR,
     max_comfort_displacement,
     motion_comfort,
+    projected_motion_activity_px,
     semantic_readability_duration,
     semantic_readability_floor,
+    semantic_readability_floor_px,
 )
 from app.shared.errors import StageFailedError
 
@@ -650,7 +652,7 @@ class RenderedMotionQA:
         duration: float,
     ) -> float:
         """Project the shared planner readability contract into encoded pixels."""
-        return float(width) * semantic_readability_floor(
+        return semantic_readability_floor_px(
             phase,
             item_width=item_width,
             item_height=item_height,
@@ -673,17 +675,23 @@ class RenderedMotionQA:
             return 0.0, 0.5
         best_px = 0.0
         best_progress = 0.5
-        asset_px = max(1.0, min(width * item_width, height * item_height))
         for frame in keyframes:
             try:
-                dx = float(frame.get("dx", 0.0)) * width
-                dy = float(frame.get("dy", 0.0)) * height
-                translation = float(np.hypot(dx, dy))
-                scale = abs(float(frame.get("scale", 1.0)) - 1.0) * asset_px
+                dx = float(frame.get("dx", 0.0))
+                dy = float(frame.get("dy", 0.0))
+                scale = float(frame.get("scale", 1.0))
                 progress = float(frame.get("progress", 0.5))
             except (TypeError, ValueError):
                 continue
-            activity = max(translation, scale)
+            activity = projected_motion_activity_px(
+                dx=dx,
+                dy=dy,
+                scale=scale,
+                item_width=item_width,
+                item_height=item_height,
+                frame_width=width,
+                frame_height=height,
+            )
             if activity > best_px:
                 best_px = activity
                 best_progress = max(0.05, min(0.95, progress))

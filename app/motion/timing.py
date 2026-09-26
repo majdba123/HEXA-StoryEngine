@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite
+from math import hypot, isfinite
 from typing import TYPE_CHECKING
 
 from app.models import AssetActivation, StoryBeat
@@ -158,6 +158,85 @@ def semantic_readability_floor(
     if comfort_budget > 0.0:
         readable = min(readable, comfort_budget)
     return max(0.0, readable)
+
+
+
+def semantic_readability_floor_px(
+    phase: str,
+    *,
+    item_width: float,
+    item_height: float,
+    duration: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Return the exact encoded-pixel floor projected from the shared contract."""
+    width = max(1, int(frame_width))
+    return float(width) * semantic_readability_floor(
+        phase,
+        item_width=item_width,
+        item_height=item_height,
+        duration=duration,
+        frame_width=width,
+        frame_height=max(1, int(frame_height)),
+    )
+
+
+def projected_motion_activity_px(
+    *,
+    dx: float,
+    dy: float,
+    scale: float,
+    item_width: float,
+    item_height: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Measure the exact pixel activity used by encoded-motion QA."""
+    width = max(1.0, float(frame_width))
+    height = max(1.0, float(frame_height))
+    translation_px = hypot(float(dx) * width, float(dy) * height)
+    asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
+    scale_px = abs(float(scale) - 1.0) * asset_px
+    return max(translation_px, scale_px)
+
+
+def required_translation_for_pixel_floor(
+    *,
+    dx: float,
+    dy: float,
+    floor_px: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Return normalized translation magnitude required to reach the pixel floor."""
+    floor_px = max(0.0, float(floor_px))
+    if floor_px <= 0.0:
+        return 0.0
+    magnitude = hypot(float(dx), float(dy))
+    if magnitude <= 1e-9:
+        return floor_px / max(1.0, float(frame_height))
+    ux = float(dx) / magnitude
+    uy = float(dy) / magnitude
+    pixels_per_normalized = hypot(
+        ux * max(1.0, float(frame_width)),
+        uy * max(1.0, float(frame_height)),
+    )
+    return floor_px / max(1e-9, pixels_per_normalized)
+
+
+def required_scale_delta_for_pixel_floor(
+    *,
+    floor_px: float,
+    item_width: float,
+    item_height: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    width = max(1.0, float(frame_width))
+    height = max(1.0, float(frame_height))
+    asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
+    return max(0.0, float(floor_px)) / asset_px
 
 
 if TYPE_CHECKING:
