@@ -9955,3 +9955,64 @@ was treated under this rule:
 - no Final Package, scene, motion, Story, Composition, or QA threshold was changed.
 
 This operator rule supersedes any older handoff wording that could be interpreted as allowing a known render failure to remain a recurring per-package troubleshooting task.
+
+
+# GRAY-HAT RELATION TIMELINE REGRESSION — 2026-09-26
+
+Operator diagnostic:
+- `HEXA-diagnostic-9322cea6.zip`
+- job: `9322cea6469c470898d9a8f1deae89fd`
+- source commit in diagnostic: `c5111bc1d05afd3971fdf54d57724f95d3d4ca62`
+- package: Gray Hat corrected V1.2 package
+- failure occurred before FFmpeg render at MotionInteractionQA (~64% pipeline progress).
+
+Observed violations:
+- `MISSING_RELATION_TIMELINE` — beat-018, NOT_STOLEN relation.
+- `MISSING_RELATION_TIMELINE` — beat-024, compound/Pass2 ENTRIES relation.
+- `NO_RELATION_OVERLAP` — beat-010, source INTERACT and target REACT separated by a tiny timing gap.
+- `MISSING_TARGET_REACTION` — beat-014, DISCOVERS relation.
+
+Root cause:
+- Motion could schedule dense authored relations independently per asset and silently lose a later semantic relation when local timing was already occupied.
+- relation source INTERACT could reserve too much of the Story-owned phrase, leaving no legal room for another authored relation.
+- Pass2/compound target/source timing could produce a source/reaction pair with no actual causal overlap.
+- relation phase deduplication did not include the complete relation identity.
+- aggregate QA code `MOTION_CONTRACT_VIOLATIONS` was not itself included in failure-policy coverage, so the diagnostic showed policy=null even though its individual violation codes were classified.
+
+Generic production fix:
+- commit: `1ab23e54830b50039e365aba4dc3da5aea476154`
+- message: `[motion] Prevent authored relation timeline regressions`
+- bounded source INTERACT gestures preserve room for multiple authored relations inside one spoken phrase;
+- relation/proxy phases may retry from the Story-owned cue boundary instead of being silently dropped when decorative/previous occupancy consumes the local window;
+- relation phase deduplication now includes source/target/result/relationship identity;
+- produced SOURCE INTERACT / TARGET REACT pairs receive a bounded causal-overlap finalization inside existing Story/handoff bounds;
+- Motion fails closed before downstream Text/Render if an authored event-flow relation still has no INTERACT, no required REACT, or no causal overlap;
+- no scene id, asset id, package name, timestamp, semantic phrase, or QA threshold is hardcoded in production logic.
+
+Failure policy hardening:
+- aggregate codes are now included in policy-coverage tests.
+- `MOTION_CONTRACT_VIOLATIONS` -> owner motion / PREVENT.
+- `RHYTHM_CONTRACT_VIOLATIONS` -> choreography / PREVENT.
+- `CONTINUITY_CONTRACT_VIOLATIONS` -> continuity / PREVENT.
+- `RENDERED_MOTION_CONTRACT_VIOLATIONS` -> render / POST_RENDER_PROOF.
+
+Permanent regressions:
+- multiple dense authored relations from one source must all retain source timelines;
+- Pass2-style source/reaction timing gaps are repaired inside legal Story bounds;
+- missing target reaction fails inside Motion before downstream QA/render;
+- legacy/synthetic non-event-flow behavior remains accepted where no production semantic-event authority exists;
+- prior behavior regression suite remains green.
+
+CI proof:
+- workflow: V2 CI
+- run: `36213306879`
+- run number: `574`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `440 passed, 12 warnings in 15.41s`
+
+Closure status:
+- code/CI prevention: CLOSED.
+- Gray encoded/visual production proof: OPEN until the same Gray package + narration is rerendered from exact source `1ab23e54830b50039e365aba4dc3da5aea476154` or a descendant containing only documentation/non-behavior changes.
+- If any of the same relation failure classes recur on rerender, treat as engine regression under the permanent render-failure handling rule; do not patch the Gray package and do not weaken QA.
