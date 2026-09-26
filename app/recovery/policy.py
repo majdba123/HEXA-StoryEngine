@@ -35,6 +35,202 @@ def _policy(
 
 
 HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
+    "HEXA_ERROR": _policy(
+        "HEXA_ERROR", "pipeline", FailureDisposition.FAIL_FAST,
+        "Generic HEXA failure is terminal and requires diagnosis rather than blind recovery",
+    ),
+    "DEPENDENCY_UNAVAILABLE": _policy(
+        "DEPENDENCY_UNAVAILABLE", "input", FailureDisposition.FAIL_FAST,
+        "A required runtime dependency is unavailable",
+    ),
+    "STAGE_FAILED": _policy(
+        "STAGE_FAILED", "pipeline", FailureDisposition.FAIL_FAST,
+        "Unclassified stage failure must be diagnosed before a recovery is introduced",
+    ),
+    "GENERATION_CANCELLED": _policy(
+        "GENERATION_CANCELLED", "pipeline", FailureDisposition.FAIL_FAST,
+        "Explicit cancellation is terminal control flow and must never be recovered",
+    ),
+    "AUDIO_INPUT_MISSING": _policy(
+        "AUDIO_INPUT_MISSING", "input", FailureDisposition.FAIL_FAST,
+        "Narration media is required before production planning starts",
+    ),
+    "FFPROBE_UNAVAILABLE": _policy(
+        "FFPROBE_UNAVAILABLE", "input", FailureDisposition.FAIL_FAST,
+        "Media probing is a required production dependency",
+    ),
+    "MEDIA_PROBE_FAILED": _policy(
+        "MEDIA_PROBE_FAILED", "input", FailureDisposition.FAIL_FAST,
+        "Narration/media cannot be trusted when ffprobe fails",
+    ),
+    "MEDIA_PROBE_INVALID_METADATA": _policy(
+        "MEDIA_PROBE_INVALID_METADATA", "input", FailureDisposition.FAIL_FAST,
+        "Invalid media metadata must be rejected before expensive work",
+    ),
+    "MEDIA_DURATION_INVALID": _policy(
+        "MEDIA_DURATION_INVALID", "input", FailureDisposition.FAIL_FAST,
+        "Non-positive or invalid media duration cannot establish timing authority",
+    ),
+    "WORKSPACE_NOT_WRITABLE": _policy(
+        "WORKSPACE_NOT_WRITABLE", "input", FailureDisposition.FAIL_FAST,
+        "Workspace storage must be writable before generation starts",
+    ),
+    "OUTPUT_ROOT_NOT_WRITABLE": _policy(
+        "OUTPUT_ROOT_NOT_WRITABLE", "input", FailureDisposition.FAIL_FAST,
+        "Output storage must be writable before generation starts",
+    ),
+    "CUTOUT_BACKEND_REQUIRED": _policy(
+        "CUTOUT_BACKEND_REQUIRED", "cutout", FailureDisposition.FAIL_FAST,
+        "Required production extraction backend is unavailable",
+    ),
+    "SEMANTIC_RUNTIME_UNAVAILABLE": _policy(
+        "SEMANTIC_RUNTIME_UNAVAILABLE", "story", FailureDisposition.FAIL_FAST,
+        "Required semantic runtime is unavailable and meaning must not be guessed",
+    ),
+    "ALIGNMENT_PREFLIGHT_UNAVAILABLE": _policy(
+        "ALIGNMENT_PREFLIGHT_UNAVAILABLE", "input", FailureDisposition.FAIL_FAST,
+        "Production forced-alignment preflight is unavailable",
+    ),
+    "ALIGNMENT_RUNTIME_UNAVAILABLE": _policy(
+        "ALIGNMENT_RUNTIME_UNAVAILABLE", "input", FailureDisposition.FAIL_FAST,
+        "Forced-alignment runtime is unavailable",
+    ),
+    "ALIGNMENT_MODEL_NOT_CONFIGURED": _policy(
+        "ALIGNMENT_MODEL_NOT_CONFIGURED", "input", FailureDisposition.FAIL_FAST,
+        "Required alignment language model is not configured",
+    ),
+    "ALIGNMENT_MODEL_LOAD_FAILED": _policy(
+        "ALIGNMENT_MODEL_LOAD_FAILED", "input", FailureDisposition.FAIL_FAST,
+        "Required alignment model could not be loaded",
+    ),
+    "ALIGNMENT_SCRIPT_UNSUPPORTED": _policy(
+        "ALIGNMENT_SCRIPT_UNSUPPORTED", "input", FailureDisposition.FAIL_FAST,
+        "Narration script cannot be aligned safely by the configured production path",
+    ),
+    "FFMPEG_CAPABILITY_PROBE_FAILED": _policy(
+        "FFMPEG_CAPABILITY_PROBE_FAILED", "input", FailureDisposition.FAIL_FAST,
+        "FFmpeg capabilities could not be established safely",
+    ),
+    "RENDER_PREFLIGHT_EMPTY": _policy(
+        "RENDER_PREFLIGHT_EMPTY", "input", FailureDisposition.FAIL_FAST,
+        "Production render preflight produced no valid encoded output",
+    ),
+    "FINAL_MUX_PREFLIGHT_FAILED": _policy(
+        "FINAL_MUX_PREFLIGHT_FAILED", "input", FailureDisposition.FAIL_FAST,
+        "Production mux path failed during preflight",
+    ),
+    "FINAL_MUX_PREFLIGHT_EMPTY": _policy(
+        "FINAL_MUX_PREFLIGHT_EMPTY", "input", FailureDisposition.FAIL_FAST,
+        "Production mux preflight produced no output",
+    ),
+    "FINAL_MUX_FAILED": _policy(
+        "FINAL_MUX_FAILED", "final", FailureDisposition.FAIL_FAST,
+        "Actual final mux failure requires diagnosis; blind remux retry is not accepted",
+    ),
+    "FFMPEG_COMMAND_FAILED": _policy(
+        "FFMPEG_COMMAND_FAILED", "render", FailureDisposition.FAIL_FAST,
+        "Unclassified FFmpeg command failure requires stderr diagnosis before recovery",
+    ),
+    "RENDER_PROCESS_OS_ERROR": _policy(
+        "RENDER_PROCESS_OS_ERROR", "render", FailureDisposition.FAIL_FAST,
+        "Operating-system process failure is not safe for blind render retry",
+    ),
+    "RENDER_PROCESS_COMMAND_LIMIT": _policy(
+        "RENDER_PROCESS_COMMAND_LIMIT", "render", FailureDisposition.PREVENT,
+        "Renderer must keep production filter graphs out of process command-length limits",
+    ),
+    "STORY_SYNC_INVALID": _policy(
+        "STORY_SYNC_INVALID", "story", FailureDisposition.PREVENT,
+        "Story must respect narration timing authority before downstream planning",
+    ),
+    "COMPETING_ENTRY_FOCUS": _policy(
+        "COMPETING_ENTRY_FOCUS", "choreography", FailureDisposition.PREVENT,
+        "Focus allocation must prevent simultaneous competing hero entries",
+    ),
+    "DUPLICATE_SEMANTIC_ENTRY_ACCENT": _policy(
+        "DUPLICATE_SEMANTIC_ENTRY_ACCENT", "choreography", FailureDisposition.PREVENT,
+        "A semantic event must not receive duplicate entry accents",
+    ),
+    "INCONSISTENT_BEAT_PACE": _policy(
+        "INCONSISTENT_BEAT_PACE", "choreography", FailureDisposition.PREVENT,
+        "Reference rhythm planning must avoid inconsistent local beat pace",
+    ),
+    "PACE_WHIPLASH": _policy(
+        "PACE_WHIPLASH", "choreography", FailureDisposition.PREVENT,
+        "Reference rhythm planning must prevent abrupt unsupported pace changes",
+    ),
+    "LAYOUT_REFERENCE_VIOLATION": _policy(
+        "LAYOUT_REFERENCE_VIOLATION", "composition", FailureDisposition.PREVENT,
+        "Composition must satisfy the shared reference layout contract before render",
+    ),
+    "TEXT_LAYER_MISSING": _policy(
+        "TEXT_LAYER_MISSING", "text", FailureDisposition.PREVENT,
+        "Required text cues must be authored before pre-render QA",
+    ),
+    "MOTION_REFERENCE_VIOLATION": _policy(
+        "MOTION_REFERENCE_VIOLATION", "motion", FailureDisposition.PREVENT,
+        "Motion must remain within the approved Reference Gesture Language",
+    ),
+    "MOTION_INFEASIBLE_BEFORE_RENDER": _policy(
+        "MOTION_INFEASIBLE_BEFORE_RENDER", "motion", FailureDisposition.PREVENT,
+        "Planner must fail closed when readability and comfort cannot both be satisfied",
+    ),
+    "MOTION_READABILITY_CONTRACT_BROKEN": _policy(
+        "MOTION_READABILITY_CONTRACT_BROKEN", "motion", FailureDisposition.PREVENT,
+        "Planner/QA readability contract divergence is an internal invariant failure",
+    ),
+    "SEGMENT_PROGRAM_MISSING": _policy(
+        "SEGMENT_PROGRAM_MISSING", "motion", FailureDisposition.PREVENT,
+        "Every semantic motion segment must have an executable reference program",
+    ),
+    "EXIT_NOT_READABLE": _policy(
+        "EXIT_NOT_READABLE", "motion", FailureDisposition.PREVENT,
+        "Authored exit motion must remain perceptually readable",
+    ),
+    "SEGMENT_GEOMETRY_DRIFT": _policy(
+        "SEGMENT_GEOMETRY_DRIFT", "motion", FailureDisposition.PREVENT,
+        "Motion must settle exactly on Composition-owned geometry",
+    ),
+    "NO_RELATION_OVERLAP": _policy(
+        "NO_RELATION_OVERLAP", "motion", FailureDisposition.PREVENT,
+        "Relation source/target phases must overlap when the authored relation requires it",
+    ),
+    "PAYOFF_PRECEDES_CAUSE": _policy(
+        "PAYOFF_PRECEDES_CAUSE", "motion", FailureDisposition.PREVENT,
+        "Result payoff cannot precede its authored cause/reaction sentence",
+    ),
+    "MISSING_SCENE_BRIDGE": _policy(
+        "MISSING_SCENE_BRIDGE", "continuity", FailureDisposition.PREVENT,
+        "Every scene boundary requiring continuity must have an authored legal bridge",
+    ),
+    "EMPTY_SCENE_BRIDGE": _policy(
+        "EMPTY_SCENE_BRIDGE", "continuity", FailureDisposition.PREVENT,
+        "Continuity bridge must have a valid outgoing/incoming carrier",
+    ),
+    "SCENE_BRIDGE_TOO_SHORT": _policy(
+        "SCENE_BRIDGE_TOO_SHORT", "continuity", FailureDisposition.PREVENT,
+        "Continuity bridge must meet the shared minimum readable duration",
+    ),
+    "SCENE_BRIDGE_OVERRUN": _policy(
+        "SCENE_BRIDGE_OVERRUN", "continuity", FailureDisposition.PREVENT,
+        "Continuity bridge cannot run beyond its Story-owned boundary",
+    ),
+    "INCOMING_BEFORE_STORY": _policy(
+        "INCOMING_BEFORE_STORY", "continuity", FailureDisposition.PREVENT,
+        "Incoming scene assets cannot appear before Story timing authority",
+    ),
+    "BLUR_NOT_EXPLICITLY_AUTHORED": _policy(
+        "BLUR_NOT_EXPLICITLY_AUTHORED", "continuity", FailureDisposition.PREVENT,
+        "Blur transitions are legal only when explicitly authored",
+    ),
+    "BLUR_BRIDGE_WITHOUT_BLUR": _policy(
+        "BLUR_BRIDGE_WITHOUT_BLUR", "continuity", FailureDisposition.PREVENT,
+        "Authored blur bridge must execute its declared visual treatment",
+    ),
+    "UNAUTHORED_BLUR": _policy(
+        "UNAUTHORED_BLUR", "continuity", FailureDisposition.PREVENT,
+        "Renderer must not invent blur continuity",
+    ),
     "ASSET_BAD_CUTOUT": _policy(
         "ASSET_BAD_CUTOUT",
         "cutout",
