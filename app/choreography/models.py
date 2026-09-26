@@ -154,6 +154,9 @@ class EventFlowStep:
     trigger_char_end: int | None = None
     spoken_start: float | None = None
     spoken_end: float | None = None
+    reveal_start: float | None = None
+    semantic_peak: float | None = None
+    settle_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
