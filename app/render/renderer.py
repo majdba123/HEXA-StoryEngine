@@ -719,6 +719,22 @@ class FFmpegRenderer:
     ) -> tuple[float, float, float]:
         global_start = float(cue.start if cue else beat.start)
         global_end = float(cue.end if cue else min(beat.end, beat.start + 0.32))
+        if cue is not None and cue.segments:
+            # Motion owns execution lifetime. Semantic proxy segments may start
+            # before or finish after the owner's Story cue without changing the
+            # owner's timing authority, so the renderer must cover the full segment
+            # envelope rather than clipping execution to cue.start/cue.end.
+            visible_starts = [
+                float(segment.start)
+                for segment in cue.segments
+                if segment.phase != "EXIT"
+            ]
+            if visible_starts:
+                global_start = min(global_start, min(visible_starts))
+            global_end = max(
+                global_end,
+                max(float(segment.end) for segment in cue.segments),
+            )
         start = max(0.0, global_start - segment_start)
         end = min(duration, max(start + 0.05, global_end - segment_start))
         reveal_duration = max(0.05, end - start)
