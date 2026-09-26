@@ -35,6 +35,7 @@ from app.motion.timing import (
     semantic_readability_floor,
 )
 from app.qa import MotionInteractionQA, RenderedMotionQA
+from app.shared.errors import StageFailedError
 from app.story.planner import StoryPlanner
 from app.story.windows import StoryAssetActivation
 
@@ -654,6 +655,44 @@ def test_spanless_relation_timeline_uses_story_participant_envelope() -> None:
         choreography=choreography,
     )
     assert report.ok, report.violations
+
+def test_infeasible_establish_motion_fails_before_render() -> None:
+    item = LayoutItem(
+        asset_id="infeasible-establish",
+        x=0.5,
+        y=0.5,
+        width=0.30,
+        height=0.50,
+    )
+    phase = MotionEventPhase(
+        event_id="EVENT_INFEASIBLE",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id=item.asset_id,
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_COMPOUND_PROXY",
+        involvement="FOCUS",
+    )
+
+    with pytest.raises(StageFailedError) as exc_info:
+        MotionPlanner._enforce_event_readability(
+            phase=phase,
+            item=item,
+            dx=0.0,
+            dy=-0.004,
+            scale=1.0,
+            duration=0.08,
+            readability_duration=0.36,
+        )
+
+    assert exc_info.value.details["code"] == "MOTION_INFEASIBLE_BEFORE_RENDER"
+    assert exc_info.value.details["readability_floor"] > exc_info.value.details["comfort_ceiling"]
+
 
 def test_story_aligned_establish_program_cannot_fall_below_rendered_floor() -> None:
     """Regression for White-Hat beat-016 encoded failure.

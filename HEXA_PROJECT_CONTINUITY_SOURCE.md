@@ -9431,3 +9431,97 @@ Pass1 + Pass2 only throughout.
 - avoid unnecessary re-encoding;
 - never claim reference parity from CI/scalar metrics alone;
 - record new accepted changes and real render evidence in this continuity file before the next handoff.
+
+
+# MONTAGE31 SHARED READABILITY DURATION CONTRACT — 2026-09-26
+
+## New White-Hat diagnostic and confirmed engine failure class
+
+Operator diagnostic:
+- `HEXA-diagnostic-7980cc76(1).zip`
+- job: `7980cc7668bd4e9e8e3dafa195fc21ec`
+- source commit reported by the job: `baec01bd333be75f4f84b6665a2a50a80ec27c6d`
+- Final Package: `HEXA_WHITE_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+- failure remained:
+  - code: `MOTION_BELOW_PERCEPTUAL_FLOOR`
+  - beat: `beat-016`
+  - asset: `SCENE_016:asset-03`
+  - phase: `ESTABLISH`
+  - planned motion: `12.45 px`
+  - rendered/shared floor: `15.36 px`
+  - encoded `mean_delta = 0.0`
+  - encoded `changed_ratio = 0.0`
+
+This proves the first shared-floor fix was incomplete. The Final Package was not the cause.
+
+## Exact root cause
+
+Planner and RenderedMotionQA used the same `semantic_readability_floor(...)` formula but did not use the same meaning for its duration argument.
+
+For Story-aligned event accents:
+- MotionPlanner calculated ESTABLISH/ADD readability from the shorter internal `active_duration` around the semantic peak.
+- RenderedMotionQA calculated ESTABLISH/ADD readability from the full authored MotionSegment duration.
+
+A late semantic peak could therefore reduce Planner amplitude below the exact floor that QA would later enforce. The White-Hat case reproduced this deterministically:
+- old planner peak: `12.4499 px`
+- required floor: `15.3600 px`
+
+This is a generic Planner/QA contract mismatch, not a White-specific exception.
+
+## Generic prevention landed
+
+Behavior commit:
+`2b718f0fc32fc86fca3579215a3f2f0916c5542f`
+`[motion] Unify planner and rendered readability duration`
+
+Changes:
+- `app/motion/timing.py`
+  - adds canonical `semantic_readability_duration(...)`.
+  - INTERACT/REACT/PAYOFF use semantic active duration.
+  - ENTRY/ESTABLISH/ADD/EXIT use authored segment duration.
+- `app/motion/planner.py`
+  - consumes the canonical duration policy before committing event motion.
+  - separates perceptual/readability duration from actual movement duration.
+  - comfort remains evaluated against the real active movement window.
+  - if readable displacement cannot fit within the comfort ceiling, Planner fails before render with diagnostic code `MOTION_INFEASIBLE_BEFORE_RENDER`.
+- `app/qa/rendered_motion.py`
+  - consumes the same canonical duration policy.
+  - no private duration interpretation remains for the shared floor.
+- regressions cover the historical late-peak ESTABLISH mismatch and shared phase-duration semantics.
+
+No Final Package, scene, asset id, QA threshold, or reference threshold was hardcoded into production logic.
+
+## Proof
+
+Deterministic regression:
+- old exact source generated `12.4499 px` for the reproduced late-peak ESTABLISH case.
+- corrected source generates `15.3600 px`.
+- required floor remains unchanged at `15.3600 px`.
+
+CI for behavior commit:
+- workflow: `V2 CI`
+- run: `36205257737`
+- run number: `553`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `396 passed, 12 warnings`
+- exact tested-source artifact: `hexa-storyengine-source-35bbac269942681c2c032bd5497b9240000234e4`
+- artifact digest: `sha256:68f1bc7d4f6fb24df629de974732e5a1f8b03465f1ce351cf65a7d54d72d0449`
+
+A fail-closed regression is added with this continuity update to prove an infeasible readable+comfortable ESTABLISH is rejected before FFmpeg rather than authored below the QA floor.
+
+## Status / next proof
+
+White-Hat is NOT CLOSED yet.
+
+Required next acceptance:
+1. rerender the same White-Hat Final Package + narration from current exact source;
+2. pre-render QA must pass;
+3. `beat-016 / SCENE_016:asset-03 / ESTABLISH` must no longer report below-floor motion;
+4. RenderedMotionQA must pass on the encoded output;
+5. full decode and visual/reference review must pass.
+
+Do not weaken the `15.36 px` contract to obtain green output. The Builder must meet it or fail closed before render.
+
+Black-Hat visual lifecycle/continuity/reference-strength audit remains OPEN and resumes after this White-Hat regression proof is locked.
