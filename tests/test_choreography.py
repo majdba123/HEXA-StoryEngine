@@ -360,7 +360,6 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
         EventFlowStage.ESTABLISH,
         EventFlowStage.ADD,
         EventFlowStage.INTERACT,
-        EventFlowStage.REACT,
         EventFlowStage.RELEASE,
     )
     assert flows[1].dependency_ids == ("E1",)
@@ -375,7 +374,6 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
         EventFlowStage.ESTABLISH,
         EventFlowStage.ADD,
         EventFlowStage.INTERACT,
-        EventFlowStage.REACT,
         EventFlowStage.RELEASE,
     ]
     assert flows[0].steps[0].focus_asset_id == "leader"
@@ -383,7 +381,7 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
     assert flows[0].steps[2].source_asset_id == "leader"
     assert flows[0].steps[2].target_asset_id == "participant"
     assert flows[0].steps[2].relationship == "CAUSES"
-    assert flows[0].steps[3].focus_asset_id == "participant"
+    assert flows[0].steps[3].focus_asset_id == "result"
     assert flows[0].handoff_to_event_id == "E2"
     assert flows[0].handoff_to_asset_id == "result"
     assert flows[0].steps[-1].focus_asset_id == "result"
@@ -568,8 +566,8 @@ def test_compare_event_is_relational_but_not_mislabeled_as_cause_effect() -> Non
 
 
 
-def test_event_flow_completes_executable_relation_without_redundant_state_or_result_roles() -> None:
-    """Gray-Hat regression: relation authority alone must complete REACT + PAYOFF."""
+def test_event_flow_avoids_duplicate_reaction_for_discovery_with_explicit_result() -> None:
+    """Discovery uses INTERACT + PAYOFF; a passive target needs no extra REACT accent."""
     from app.choreography import EventFlowStage, InteractionIntent, SemanticEventFlowPlanner
     from app.models import AssetActivation
 
@@ -628,10 +626,10 @@ def test_event_flow_completes_executable_relation_without_redundant_state_or_res
     assert len(flows) == 1
     flow = flows[0]
     assert EventFlowStage.INTERACT in flow.stages
-    assert EventFlowStage.REACT in flow.stages
+    assert EventFlowStage.REACT not in flow.stages
     assert EventFlowStage.PAYOFF in flow.stages
     assert "result" in flow.result_asset_ids
-    assert any(
+    assert not any(
         step.stage == EventFlowStage.REACT and step.target_asset_id == "target"
         for step in flow.steps
     )
@@ -712,3 +710,48 @@ def test_relation_result_payoff_stays_with_result_story_event_without_result_rol
     )
     assert payoff.relationship == "REPAIRS"
     assert payoff.semantic_action == "RESOLVE"
+
+def test_explicit_final_package_target_state_can_require_reaction_for_reveal() -> None:
+    from app.choreography import EventFlowStage, InteractionIntent, SemanticEventFlowPlanner, VisualStateTransition
+    from app.models import AssetActivation
+
+    beat = StoryBeat(
+        id="authored-state-reveal",
+        scene_id="scene-authored-state",
+        start=0.0,
+        end=1.6,
+        narration="reveals changed target",
+        primary_asset_ids=["source"],
+        support_asset_ids=["target"],
+        action="REVEAL",
+        asset_activations=[
+            AssetActivation(
+                asset_id="source", semantic_event_id="E1", semantic_event_order=1,
+                semantic_event_roles=["LEADER"], source="final_package_semantic_binding",
+                policy="EXPLICIT", spoken_start=0.1, spoken_end=0.5, confidence=0.99,
+            ),
+            AssetActivation(
+                asset_id="target", semantic_event_id="E1", semantic_event_order=1,
+                semantic_event_roles=["PARTICIPANT"], source="final_package_semantic_binding",
+                policy="EXPLICIT", spoken_start=0.2, spoken_end=0.7, confidence=0.99,
+            ),
+        ],
+    )
+    relation = InteractionIntent(
+        semantic_action="REVEAL", relationship="REVEALS",
+        subject_asset_id="source", object_asset_id="target",
+        authority="FINAL_PACKAGE_ASSET_RELATION", confidence=0.99,
+        executable=True, requires_state_change=True,
+    )
+    transitions = (
+        VisualStateTransition(
+            asset_id="target", from_state="HIDDEN", to_state="CHANGED",
+            reason="FINAL_PACKAGE_VISUAL_STATE", meaningful=True,
+            authority="FINAL_PACKAGE_VISUAL_STATE",
+        ),
+    )
+    flows = SemanticEventFlowPlanner().compile(
+        beat=beat, interactions=(relation,), transitions=transitions,
+    )
+    assert len(flows) == 1
+    assert EventFlowStage.REACT in flows[0].stages

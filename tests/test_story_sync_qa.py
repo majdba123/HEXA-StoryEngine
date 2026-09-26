@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, StoryBeat
+from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion import MotionPlanner
 from app.story.sync_qa import StorySyncQA
 from app.story.windows import StoryAssetActivation, schedule_windows
@@ -411,3 +411,45 @@ def test_story_sync_qa_rejects_semantic_focus_peak_too_late() -> None:
 
     assert any("focus_peak_too_late" in row for row in report.violations)
 
+
+
+
+def test_story_sync_qa_uses_declared_peak_inside_entry_arrival() -> None:
+    """ENTRY focus follows Story's declared peak instead of off-canvas travel strength."""
+    beat, cue = _v2_attention_peak_case(0.55)
+    activation = beat.asset_activations[0].model_copy(update={
+        "semantic_event_id": "E1",
+        "semantic_event_order": 1,
+        "semantic_event_roles": ["LEADER"],
+    })
+    beat = beat.model_copy(update={"asset_activations": [activation]})
+    window = activation
+    entry_end = min(float(window.settle_at), float(window.semantic_peak) + 0.12)
+    entry = MotionSegment(
+        phase="ENTRY",
+        start=float(window.reveal_start),
+        end=entry_end,
+        program={
+            "name": "entry-arrival",
+            "settle_progress": 1.0,
+            "keyframes": [
+                {"progress": 0.0, "dx": -0.04, "dy": 0.0, "scale": 0.98, "easing": "linear"},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
+            ],
+        },
+        semantic_event_id="E1",
+        involvement="FOCUS",
+    )
+    params = dict(cue.params)
+    params["semantic_peak_time"] = float(window.semantic_peak)
+    cue = cue.model_copy(update={
+        "params": params,
+        "segments": [entry],
+    })
+
+    report = StorySyncQA().inspect(story=[beat], motion=[cue])
+
+    assert report.passed, report.violations
+    assert report.entries[0].actual_peak == pytest.approx(
+        float(window.semantic_peak), abs=1e-6
+    )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.choreography import ChoreographyDirective, EventFlowStage, EventFlowStep
+from app.choreography.relation_contract import SEMANTIC_PROXY_AUTHORITIES
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class MotionEventAssignment:
     spoken_start: float | None = None
     spoken_end: float | None = None
     phase_chain: tuple[MotionEventPhase, ...] = ()
+    relation_only: bool = False
 
     def to_payload(self) -> dict[str, object | None]:
         return {
@@ -107,6 +109,7 @@ class MotionEventAssignment:
             "spoken_start": self.spoken_start,
             "spoken_end": self.spoken_end,
             "phase_chain": [phase.to_payload() for phase in self.phase_chain],
+            "relation_only": self.relation_only,
         }
 
 
@@ -183,13 +186,13 @@ class MotionEventFlowResolver:
                 )
                 cross_event_proxy = (
                     not owns_event
-                    and step.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+                    and step.authority in SEMANTIC_PROXY_AUTHORITIES
                     and step.stage in {
                         EventFlowStage.ESTABLISH,
                         EventFlowStage.ADD,
                         EventFlowStage.PAYOFF,
                     }
-                    and involvement in {"FOCUS", "RESULT"}
+                    and involvement in {"FOCUS", "RESULT", "PARTICIPANT"}
                 )
                 if not owns_event and not cross_event_relation and not cross_event_proxy:
                     continue
@@ -249,7 +252,74 @@ class MotionEventFlowResolver:
                 ))
 
         if not candidates:
-            return None
+            executable_phases = [
+                phase for phase in owned_phases
+                if (
+                    phase.authority in {
+                        "FINAL_PACKAGE_ASSET_RELATION",
+                        "FINAL_PACKAGE_INTERACTION_TARGET",
+                    }
+                    and phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}
+                    and phase.involvement in {"SOURCE", "TARGET"}
+                )
+                or (
+                    phase.authority in SEMANTIC_PROXY_AUTHORITIES
+                    and phase.stage in {
+                        EventFlowStage.ESTABLISH,
+                        EventFlowStage.ADD,
+                        EventFlowStage.PAYOFF,
+                    }
+                    and phase.involvement in {"FOCUS", "RESULT", "PARTICIPANT"}
+                )
+            ]
+            if not executable_phases:
+                return None
+            dominant_phase = max(
+                executable_phases,
+                key=lambda phase: (
+                    self._STAGE_PRIORITY[phase.stage] + self._role_bonus(
+                        phase.stage, phase.involvement
+                    ),
+                    -(phase.event_order if phase.event_order is not None else 10_000),
+                    -phase.step_index,
+                ),
+            )
+            owner_flow = next(
+                (
+                    flow for flow in directive.event_flows
+                    if semantic_event_id and flow.event_id == semantic_event_id
+                ),
+                None,
+            )
+            return MotionEventAssignment(
+                # Preserve Story event ownership. The cross-event phase remains in
+                # phase_chain and executes as a semantic segment, but it must not steal
+                # ENTRY/focus/handoff ownership from the asset's authored event.
+                event_id=(
+                    semantic_event_id
+                    or (owner_flow.event_id if owner_flow is not None else dominant_phase.event_id)
+                ),
+                event_order=(
+                    owner_flow.order if owner_flow is not None else dominant_phase.event_order
+                ),
+                stage=dominant_phase.stage,
+                step_index=dominant_phase.step_index,
+                focus_asset_id=dominant_phase.focus_asset_id,
+                source_asset_id=dominant_phase.source_asset_id,
+                target_asset_id=dominant_phase.target_asset_id,
+                result_asset_id=dominant_phase.result_asset_id,
+                relationship=dominant_phase.relationship,
+                semantic_action=dominant_phase.semantic_action,
+                authority=dominant_phase.authority,
+                involvement=dominant_phase.involvement,
+                progression_type=(owner_flow.progression_type if owner_flow else None),
+                trigger_char_start=dominant_phase.trigger_char_start,
+                trigger_char_end=dominant_phase.trigger_char_end,
+                spoken_start=dominant_phase.spoken_start,
+                spoken_end=dominant_phase.spoken_end,
+                phase_chain=tuple(owned_phases),
+                relation_only=True,
+            )
         dominant = max(candidates, key=lambda row: row[:3])[3]
         return MotionEventAssignment(
             event_id=dominant.event_id,

@@ -24,8 +24,9 @@ from app.motion import MotionPlanner
 from app.motion.order import MotionOrderResolver
 from app.qa import MotionInteractionQA, RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
+from app.story.activation import SemanticActivationPlanner
 from app.story.planner import StoryPlanner
-from app.story.windows import schedule_windows
+from app.story.windows import StoryAssetActivation, schedule_windows
 from app.shared.errors import StageFailedError
 from app.text.planner import TextPlanner
 from app.text.semantic import KeywordCandidate
@@ -556,7 +557,7 @@ def test_v12_relation_authority_completes_gray_hat_style_motion_contract(tmp_pat
 
     by_id = {cue.asset_id: cue for cue in motion}
     assert any(segment.phase == "INTERACT" for segment in by_id["a"].segments)
-    assert any(segment.phase == "REACT" for segment in by_id["b"].segments)
+    assert not any(segment.phase == "REACT" for segment in by_id["b"].segments)
     assert any(segment.phase == "PAYOFF" for segment in by_id["c"].segments)
 
 
@@ -882,19 +883,16 @@ def test_historical_relation_and_handoff_failures_remain_strictly_rejected(
             }))
         return rows
 
-    missing_reaction = MotionInteractionQA().inspect(
+    reveal_without_duplicate_reaction = MotionInteractionQA().inspect(
         story=story,
         motion=without_phase("b", "REACT"),
         composition=composition,
         choreography=choreography,
     )
-    assert any(
+    assert not any(
         row.code == "MISSING_TARGET_REACTION"
-        for row in missing_reaction.violations
+        for row in reveal_without_duplicate_reaction.violations
     )
-    with pytest.raises(StageFailedError) as reaction_error:
-        MotionInteractionQA.require(missing_reaction)
-    assert reaction_error.value.effective_code == "MISSING_TARGET_REACTION"
 
     missing_payoff = MotionInteractionQA().inspect(
         story=story,
@@ -939,3 +937,122 @@ def test_historical_relation_and_handoff_failures_remain_strictly_rejected(
     with pytest.raises(StageFailedError) as handoff_error:
         MotionInteractionQA.require(past_handoff)
     assert handoff_error.value.effective_code == "SEGMENT_PAST_HANDOFF"
+
+
+def test_event_dependency_anchor_prefers_leader_over_late_support() -> None:
+    leader = StoryAssetActivation(
+        asset_id="leader",
+        semantic_unit_id="leader-unit",
+        confidence=0.99,
+        source="final_package_semantic_binding",
+        policy="EXACT",
+        semantic_event_id="E1",
+        semantic_event_order=1,
+        semantic_event_roles=["LEADER", "TEXT_ANCHOR"],
+        visual_focus="PRIMARY",
+        phrase_start=0.10, phrase_end=0.70, reveal_start=0.10,
+        semantic_peak=0.40, settle_at=0.60, activation_policy="OWN_WINDOW",
+    )
+    support = StoryAssetActivation(
+        asset_id="support",
+        semantic_unit_id="support-unit",
+        confidence=0.95,
+        source="final_package_semantic_binding",
+        policy="EXACT",
+        semantic_event_id="E1",
+        semantic_event_order=1,
+        semantic_event_roles=["PARTICIPANT"],
+        visual_focus="SUPPORT",
+        phrase_start=0.80, phrase_end=1.60, reveal_start=0.80,
+        semantic_peak=1.40, settle_at=1.55, activation_policy="OWN_WINDOW",
+    )
+
+    anchors = SemanticActivationPlanner._canonical_event_anchor_peaks(
+        [leader, support], renderable_ids={"leader", "support"}
+    )
+
+    assert anchors["E1"] == pytest.approx(0.40)
+
+
+def test_v12_group_event_proxy_preserves_unresolved_authored_event_without_new_asset(tmp_path: Path) -> None:
+    """An unresolved semantic-group member keeps its authored event via one real carrier."""
+    package_path = _write_package(tmp_path)
+    for filename in ("scene_plan.json", "semantic_bindings.json"):
+        path = package_path / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        scene = payload["scenes"][0]
+        # Make c an authored later event in the same semantic group, but remove all
+        # direct identity evidence so no independent cutout can be resolved.
+        for asset in scene.get("assets", []):
+            if asset.get("asset_id") == "c":
+                asset["parent_asset_id"] = None
+                asset["visual_locator"] = None
+                asset["semantic_group_id"] = "G1"
+                asset["sequence_order"] = 3
+        scene.setdefault("semantic_groups", [{
+            "semantic_group_id": "G1",
+            "script_text": "alpha beta gamma",
+            "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+            "asset_ids": ["a", "b", "c"],
+        }])
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    package = FinalPackageLoader().load(package_path, tmp_path / "work-group-proxy")    scene = package.scenes[0]
+    assets = [
+        VisualAsset(
+            id=asset_id,
+            scene_id=scene.id,
+            role="support",
+            image_path=scene.image_path,
+            extraction_method="test",
+            source_area_ratio=area,
+        )
+        for asset_id, area in (("a", 0.50), ("b", 0.30))
+    ]
+    story = StoryPlanner().plan(package, _transcript(), assets)
+    beat = story[0]
+
+    assert {row.asset_id for row in beat.asset_activations} == {"a", "b"}
+    group_proxies = [
+        row for row in beat.semantic_event_proxies
+        if row.authority == "FINAL_PACKAGE_GROUP_PROXY"
+    ]
+    assert len(group_proxies) == 1
+    proxy = group_proxies[0]
+    assert proxy.semantic_unit_id == "c"
+    assert proxy.semantic_group_id == "G1"
+    assert proxy.semantic_parent_id is None
+    assert proxy.semantic_event_id == "E2"
+    assert proxy.asset_id in {"a", "b"}
+
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    directive = choreography.directives[0]
+    assert {flow.event_id for flow in directive.event_flows} == {"E1", "E2"}
+    proxy_flow = next(flow for flow in directive.event_flows if flow.event_id == "E2")
+    assert proxy.asset_id in proxy_flow.asset_ids
+    assert any(
+        step.authority == "FINAL_PACKAGE_GROUP_PROXY"
+        for step in proxy_flow.steps
+    )
+
+    composition = [CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(asset_id="a", x=0.30, y=0.50, width=0.20, height=0.30),
+            LayoutItem(asset_id="b", x=0.70, y=0.50, width=0.20, height=0.30),
+        ],
+    )]
+    motion = MotionPlanner().plan(story, composition, choreography, assets=assets)
+    cue = next(row for row in motion if row.asset_id == proxy.asset_id)
+    assert any(
+        segment.semantic_event_id == "E2"
+        for segment in cue.segments
+    )
+
+    from app.story import StorySyncQA
+
+    sync = StorySyncQA().inspect(story=story, motion=motion)
+    assert not [
+        violation for violation in sync.violations
+        if proxy.semantic_event_id in violation and "proxy_" in violation
+    ], sync.violations

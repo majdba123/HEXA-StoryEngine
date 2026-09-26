@@ -14,6 +14,7 @@ from app.choreography import (
     SequencePhase,
 )
 from app.models import (
+    AssetActivation,
     CompositionBeat,
     LayoutItem,
     MotionCue,
@@ -25,7 +26,7 @@ from app.models import (
     TranscriptWord,
 )
 from app.motion import MotionPlanner
-from app.motion.event_flow import MotionEventAssignment, MotionEventPhase
+from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
     GOLDEN_MAJOR,
@@ -996,8 +997,7 @@ def test_relation_contract_assertion_fails_inside_motion_when_target_reaction_is
     """Known authored relation defects fail in Motion before downstream QA/render."""
     beat = StoryBeat(
         id="beat-contract",
-        scene_id="scene",
-        start=0.0,
+        scene_id="scene",        start=0.0,
         end=2.0,
         narration="authored relation",
         action="CONNECT",
@@ -1108,3 +1108,254 @@ def test_relation_contract_assertion_fails_inside_motion_when_target_reaction_is
 
     assert exc_info.value.effective_code == "MISSING_TARGET_REACTION"
 
+def test_black_style_later_target_relation_is_sequential_not_forced_overlap() -> None:
+    """Regression for Black diagnostic e6f91917 after Gray overlap hardening."""
+    program = {
+        "semantic_active_duration": 0.20,
+        "semantic_peak_progress": 0.5,
+        "keyframes": [
+            {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+            {"progress": 0.5, "dx": 0.01, "dy": 0.0, "scale": 1.0},
+            {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+        ],
+    }
+    source = MotionSegment(
+        phase="INTERACT",
+        start=0.10,
+        end=0.50,
+        program=program,
+        semantic_event_id="E1",
+        semantic_action="REVEAL",
+        relationship="REL",
+        involvement="SOURCE",
+        source_asset_id="lock",
+        target_asset_id="identity",
+        handoff_deadline=2.0,
+    )
+    target = MotionSegment(
+        phase="REACT",
+        start=1.496,
+        end=1.856,
+        program=program,
+        semantic_event_id="E1",
+        semantic_action="REVEAL",
+        relationship="REL",
+        involvement="TARGET",
+        source_asset_id="lock",
+        target_asset_id="identity",
+        handoff_deadline=2.0,
+    )
+    beat = StoryBeat(
+        id="beat-black-sequential",
+        scene_id="scene",
+        start=0.0,
+        end=2.2,
+        narration="source then identity",
+        action="REVEAL",
+        asset_activations=[
+            AssetActivation(
+                asset_id="lock",
+                trigger_text="source",
+                trigger_char_start=0,
+                trigger_char_end=6,
+                spoken_start=0.10,
+                spoken_end=0.50,
+                confidence=1.0,
+                source="final_package",
+                policy="OWN_WINDOW",
+                semantic_event_id="E1",
+                semantic_event_order=1,
+            ),
+            AssetActivation(
+                asset_id="identity",
+                trigger_text="identity",
+                trigger_char_start=10,
+                trigger_char_end=24,
+                spoken_start=1.496,
+                spoken_end=1.856,
+                confidence=1.0,
+                source="final_package",
+                policy="OWN_WINDOW",
+                semantic_event_id="E2",
+                semantic_event_order=2,
+            ),
+        ],
+    )
+    cues = [
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="lock",
+            kind="program_v3",
+            start=beat.start,
+            end=beat.end,
+            params={"engine_version": 3},
+            segments=[source],
+        ),
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="identity",
+            kind="program_v3",
+            start=beat.start,
+            end=beat.end,
+            params={"engine_version": 3},
+            segments=[target],
+        ),
+    ]
+    interaction = InteractionIntent(
+        semantic_action="REVEAL",
+        relationship="REL",
+        subject_asset_id="lock",
+        object_asset_id="identity",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.99,
+        executable=True,
+        requires_state_change=True,
+        spoken_start=0.10,
+        spoken_end=1.856,
+    )
+    flow = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("lock",),
+        participant_asset_ids=("identity",),
+        interactions=(interaction,),
+        stages=(EventFlowStage.INTERACT, EventFlowStage.REACT),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.INTERACT,
+                focus_asset_id="lock",
+                participant_asset_ids=("lock", "identity"),
+                source_asset_id="lock",
+                target_asset_id="identity",
+                relationship="REL",
+                semantic_action="REVEAL",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.10,
+                spoken_end=1.856,
+            ),
+            EventFlowStep(
+                EventFlowStage.REACT,
+                focus_asset_id="identity",
+                participant_asset_ids=("lock", "identity"),
+                source_asset_id="lock",
+                target_asset_id="identity",
+                relationship="REL",
+                semantic_action="REVEAL",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.10,
+                spoken_end=1.856,
+            ),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id,
+        sequence_id="sequence-black",
+        phase=SequencePhase.ACTION,
+        action="REVEAL",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.OPEN,
+        energy=0.7,
+        primary_asset_id="lock",
+        interaction=interaction,
+        interactions=(interaction,),
+        event_flows=(flow,),
+    )
+    choreography = ChoreographyPlan(directives=(directive,))
+
+    repaired = MotionPlanner._enforce_relation_temporal_overlap(cues, beat=beat)
+    assert repaired[0].segments[0].end == pytest.approx(source.end)
+    assert repaired[1].segments[0].start == pytest.approx(target.start)
+    MotionPlanner._assert_authored_relation_contract(
+        repaired, directive=directive, beat=beat
+    )
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=repaired,
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
+
+
+def test_cross_event_relation_only_source_keeps_executable_phase_without_stealing_event_ownership() -> None:
+    """Pass2/source relation participants must not disappear when they own no local stage.
+
+    Regression for Gray beat-024: the source cutout belongs to E1, while its authored
+    INTERACT step is compiled into E2. The resolver must preserve that cross-event
+    relation phase without promoting E2 to the source asset's Story event.
+    """
+    own_flow = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("parent",),
+        participant_asset_ids=("source",),
+        stages=(EventFlowStage.ADD,),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.ADD,
+                focus_asset_id="parent",
+                participant_asset_ids=("parent",),
+                authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+            ),
+        ),
+    )
+    relation_flow = SemanticEventFlow(
+        event_id="E2",
+        order=2,
+        leader_asset_ids=("target",),
+        participant_asset_ids=("source", "target"),
+        stages=(EventFlowStage.ESTABLISH, EventFlowStage.INTERACT),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.ESTABLISH,
+                focus_asset_id="target",
+                participant_asset_ids=("target",),
+                authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+            ),
+            EventFlowStep(
+                EventFlowStage.INTERACT,
+                focus_asset_id="source",
+                participant_asset_ids=("source", "target"),
+                source_asset_id="source",
+                target_asset_id="target",
+                result_asset_id="parent",
+                relationship="ENTERS",
+                semantic_action="REVEAL",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.4,
+                spoken_end=1.4,
+            ),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id="beat",
+        sequence_id="seq",
+        phase=SequencePhase.ACTION,
+        action="REVEAL",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.NONE,
+        energy=0.7,
+        primary_asset_id="parent",
+        event_flows=(own_flow, relation_flow),
+    )
+
+    assignment = MotionEventFlowResolver().resolve(
+        directive,
+        "source",
+        semantic_event_id="E1",
+    )
+
+    assert assignment is not None
+    assert assignment.relation_only is True
+    assert assignment.event_id == "E1"
+    assert assignment.event_order == 1
+    assert assignment.handoff_mode == "NONE"
+    assert assignment.handoff_to_event_ids == ()
+    assert assignment.handoff_to_asset_ids == ()
+    assert any(
+        phase.event_id == "E2"
+        and phase.stage == EventFlowStage.INTERACT
+        and phase.involvement == "SOURCE"
+        and phase.source_asset_id == "source"
+        and phase.target_asset_id == "target"
+        for phase in assignment.phase_chain
+    )

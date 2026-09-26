@@ -16,6 +16,7 @@ from app.choreography import (
 )
 from app.models import CompositionBeat, LayoutItem, StoryBeat
 from app.motion import MotionPlanner
+from app.motion.event_flow import MotionEventFlowResolver
 from app.story.windows import StoryAssetActivation
 
 
@@ -643,3 +644,71 @@ def test_trusted_payoff_survives_overlapping_next_event_handoff() -> None:
     assert payoff.end > next_asset.reveal_start
     assert peak == pytest.approx(result.semantic_peak, abs=1 / 30)
     assert payoff.end <= result.settle_at + 1e-9
+
+
+def test_proxy_only_cross_event_carrier_keeps_all_group_proxy_phases() -> None:
+    """A carrier with no local dominant stage must still execute later proxy events."""
+    e1 = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("owner",),
+        participant_asset_ids=("carrier", "sibling"),
+        stages=(EventFlowStage.ESTABLISH,),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.ESTABLISH,
+                focus_asset_id="owner",
+                participant_asset_ids=("owner",),
+                authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+            ),
+        ),
+    )
+    e2 = SemanticEventFlow(
+        event_id="E2",
+        order=2,
+        dependency_ids=("E1",),
+        leader_asset_ids=("carrier", "sibling"),
+        stages=(EventFlowStage.ESTABLISH,),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.ESTABLISH,
+                focus_asset_id="carrier",
+                participant_asset_ids=("carrier", "sibling"),
+                authority="FINAL_PACKAGE_GROUP_PROXY",
+                spoken_start=1.0,
+                spoken_end=1.8,
+            ),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id="beat",
+        sequence_id="seq",
+        phase=SequencePhase.ACTION,
+        action="REVEAL",
+        pattern=ChoreographyPattern.PROGRESSIVE_BUILD,
+        hook=HookKind.NONE,
+        energy=0.6,
+        primary_asset_id="owner",
+        event_flows=(e1, e2),
+    )
+    resolver = MotionEventFlowResolver()
+
+    carrier = resolver.resolve(directive, "carrier", semantic_event_id="E1")
+    sibling = resolver.resolve(directive, "sibling", semantic_event_id="E1")
+
+    assert carrier is not None
+    assert sibling is not None
+    assert carrier.relation_only is True
+    assert sibling.relation_only is True
+    assert any(
+        phase.event_id == "E2"
+        and phase.authority == "FINAL_PACKAGE_GROUP_PROXY"
+        and phase.involvement == "FOCUS"
+        for phase in carrier.phase_chain
+    )
+    assert any(
+        phase.event_id == "E2"
+        and phase.authority == "FINAL_PACKAGE_GROUP_PROXY"
+        and phase.involvement == "PARTICIPANT"
+        for phase in sibling.phase_chain
+    )

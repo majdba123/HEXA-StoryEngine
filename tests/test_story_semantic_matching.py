@@ -2,9 +2,13 @@ import json
 
 import pytest
 
-from app.models import StoryBeat, StoryEntity, StorySemanticContext, StoryTrigger, TranscriptWord
+from app.models import (
+    SceneSource, SemanticEventProxy, StoryBeat, StoryEntity, StorySemanticContext,
+    StoryTrigger, TranscriptWord, VisualAsset,
+)
 from app.story.activation import HybridSemanticTextScorer, SemanticActivationPlanner
 from app.story.binding import SemanticAssetBinder
+from app.story.windows import StoryAssetActivation
 from test_story_activation_windows import Scorer, scene_case
 
 
@@ -94,6 +98,91 @@ def test_explicit_asset_identity_outranks_geometry(tmp_path):
                                         beat=beat, action=beat.action)
     assert dict(binding.semantic_asset_map) == {"concept00": "concept01", "concept01": "concept00"}
 
+
+
+
+def test_safe_abstention_blocks_heuristic_semantic_remap_but_proxy_is_allowed(tmp_path):
+    scene = SceneSource(
+        id="scene",
+        image_path=tmp_path / "scene.png",
+        order=0,
+        units=[
+            {"unit_id": "trusted-unit", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
+            {"unit_id": "abstained-unit", "type": "VISUAL_ASSET_INTENT", "role": "SUPPORTING"},
+            {"unit_id": "proxy-unit", "type": "VISUAL_ASSET_INTENT", "role": "SUPPORTING"},
+        ],
+    )
+    assets = [
+        VisualAsset(
+            id="real-a", scene_id=scene.id, role="support",
+            image_path=scene.image_path, extraction_method="test", source_area_ratio=0.4,
+        ),
+        VisualAsset(
+            id="real-b", scene_id=scene.id, role="support",
+            image_path=scene.image_path, extraction_method="test", source_area_ratio=0.3,
+        ),
+    ]
+    beat = StoryBeat(
+        id="beat", scene_id=scene.id, start=0.0, end=2.0, narration="x", action="EXPLAIN",
+        asset_activations=[
+            StoryAssetActivation(
+                asset_id="real-a", semantic_unit_id="trusted-unit",
+                confidence=0.99, source="final_package_semantic_binding", policy="EXPLICIT",
+                phrase_start=0.1, phrase_end=0.8, reveal_start=0.1, semantic_peak=0.4,
+                settle_at=0.7, activation_policy="OWN_WINDOW",
+            ),
+            StoryAssetActivation(
+                asset_id="real-b", semantic_unit_id="abstained-unit",
+                confidence=0.0, source="semantic_abstention", policy="FALLBACK",
+                activation_policy="SAFE_ABSTENTION",
+            ),
+        ],
+        semantic_event_proxies=[
+            SemanticEventProxy(
+                asset_id="real-a", semantic_unit_id="proxy-unit", semantic_group_id="G1",
+                semantic_event_id="E2", semantic_event_order=2,
+                semantic_event_roles=["LEADER"], semantic_event_dependency_ids=["E1"],
+                trigger_text="x", trigger_char_start=0, trigger_char_end=1,
+                spoken_start=0.2, spoken_end=1.0, reveal_start=0.3, semantic_peak=0.5,
+                settle_at=0.8, authority="FINAL_PACKAGE_GROUP_PROXY",
+            )
+        ],
+    )
+
+    binding = SemanticAssetBinder().bind(
+        scene=scene, assets=assets, action=beat.action, beat=beat,
+    )
+    semantic_map = dict(binding.semantic_asset_map)
+
+    assert semantic_map["trusted-unit"] == "real-a"
+    assert semantic_map["proxy-unit"] == "real-a"
+    assert "abstained-unit" not in semantic_map
+
+
+def test_group_container_does_not_claim_cutout_before_visual_asset_intent(tmp_path):
+    scene = SceneSource(
+        id="scene",
+        image_path=tmp_path / "scene.png",
+        order=0,
+        units=[
+            {"unit_id": "group-container", "type": "GROUP", "role": "PRIMARY"},
+            {"unit_id": "intent", "type": "VISUAL_ASSET_INTENT", "role": "SUPPORTING"},
+        ],
+    )
+    asset = VisualAsset(
+        id="real-asset",
+        scene_id=scene.id,
+        role="support",
+        image_path=scene.image_path,
+        extraction_method="test",
+        source_area_ratio=0.3,
+    )
+
+    binding = SemanticAssetBinder().bind(
+        scene=scene, assets=[asset], action="REVEAL", beat=None,
+    )
+
+    assert dict(binding.semantic_asset_map) == {"intent": "real-asset"}
 
 def test_query_extracts_nested_metadata_without_structural_labels():
     entity = StoryEntity(unit_id="UNIT_42", entity_type="ICON", role="SUPPORTING",

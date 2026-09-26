@@ -5,7 +5,7 @@ from math import inf
 
 from app.models import AssetActivation, StoryBeat
 
-from .relation_contract import relation_requires_reaction
+from .relation_contract import SEMANTIC_PROXY_AUTHORITIES, relation_requires_reaction
 from .models import (
     EventFlowStage,
     EventFlowStep,
@@ -25,7 +25,7 @@ class SemanticEventFlowPlanner:
     """
 
     _PACKAGE_SOURCE = "final_package_semantic_binding"
-    _COMPOUND_PROXY_SOURCE = "FINAL_PACKAGE_COMPOUND_PROXY"
+    _PROXY_SOURCES = SEMANTIC_PROXY_AUTHORITIES
 
     def compile(
         self,
@@ -57,7 +57,7 @@ class SemanticEventFlowPlanner:
                 spoken_start=proxy.reveal_start,
                 spoken_end=proxy.settle_at,
                 confidence=proxy.confidence,
-                source=self._COMPOUND_PROXY_SOURCE,
+                source=proxy.authority,
                 policy="EXPLICIT",
                 semantic_parent_id=proxy.semantic_parent_id,
                 visual_focus=proxy.visual_focus,
@@ -90,7 +90,9 @@ class SemanticEventFlowPlanner:
             interactions,
         )
         reaction_asset_ids = {
-            row.asset_id for row in transitions if row.meaningful
+            row.asset_id
+            for row in transitions
+            if row.meaningful and row.authority == "FINAL_PACKAGE_VISUAL_STATE"
         }
         progression_type = self._progression_type(beat)
 
@@ -368,7 +370,7 @@ class SemanticEventFlowPlanner:
                 focus_asset_id=unit[0],
                 participant_asset_ids=unit,
                 authority=(
-                    cls._COMPOUND_PROXY_SOURCE if proxy is not None
+                    proxy.source if proxy is not None
                     else "FINAL_PACKAGE_SEMANTIC_EVENT"
                 ),
                 trigger_char_start=(proxy.trigger_char_start if proxy is not None else None),
@@ -388,7 +390,7 @@ class SemanticEventFlowPlanner:
                 focus_asset_id=unit[0],
                 participant_asset_ids=unit,
                 authority=(
-                    cls._COMPOUND_PROXY_SOURCE if proxy is not None
+                    proxy.source if proxy is not None
                     else "FINAL_PACKAGE_SEMANTIC_EVENT"
                 ),
                 trigger_char_start=(proxy.trigger_char_start if proxy is not None else None),
@@ -472,7 +474,7 @@ class SemanticEventFlowPlanner:
                 authority=(
                     result_interaction.authority
                     if result_interaction
-                    else cls._COMPOUND_PROXY_SOURCE
+                    else proxy.source
                     if proxy is not None
                     else "FINAL_PACKAGE_SEMANTIC_EVENT"
                 ),
@@ -524,7 +526,7 @@ class SemanticEventFlowPlanner:
     ) -> AssetActivation | None:
         candidates = [
             row for row in rows
-            if row.source == cls._COMPOUND_PROXY_SOURCE
+            if row.source in cls._PROXY_SOURCES
             and row.asset_id in unit
         ]
         return min(

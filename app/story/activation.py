@@ -250,6 +250,7 @@ class SemanticActivationPlanner:
             "inherited_count": 0, "abstained_count": 0, "runtime_failure_count": 0,
             "semantic_authority": "final_package",
             "compound_proxy_count": 0,
+            "group_proxy_count": 0,
             "eligible_asset_count": 0, "trusted_eligible_count": 0,
             "inherited_eligible_count": 0, "eligible_coverage": 0.0,
             "assets": [],
@@ -285,7 +286,7 @@ class SemanticActivationPlanner:
             windows = schedule_windows(
                 activations, beat, transcript.duration, set(beat.primary_asset_ids),
             )
-            proxies = self._compound_semantic_event_proxies(
+            compound_proxies = self._compound_semantic_event_proxies(
                 package=package,
                 transcript=transcript,
                 scene=scene,
@@ -293,11 +294,22 @@ class SemanticActivationPlanner:
                 assets=scene_assets,
                 windows=windows,
             )
+            group_proxies = self._group_semantic_event_proxies(
+                package=package,
+                transcript=transcript,
+                scene=scene,
+                beat=beat,
+                assets=scene_assets,
+                windows=windows,
+                existing_proxies=compound_proxies,
+            )
+            proxies = [*compound_proxies, *group_proxies]
             data = beat.model_dump()
             data["asset_activations"] = windows
             data["semantic_event_proxies"] = proxies
             output.append(ScheduledStoryBeat.model_validate(data))
-            self.diagnostics["compound_proxy_count"] += len(proxies)
+            self.diagnostics["compound_proxy_count"] += len(compound_proxies)
+            self.diagnostics["group_proxy_count"] += len(group_proxies)
             for row in windows:
                 key = {"OWN_WINDOW": "trusted_count", "INHERITED_WINDOW": "inherited_count",
                        "SAFE_ABSTENTION": "abstained_count"}[row.activation_policy]
@@ -327,6 +339,68 @@ class SemanticActivationPlanner:
             ensure_ascii=False,
         ))
         return output
+
+    @staticmethod
+    def _canonical_event_anchor_peaks(
+        windows: list[Any],
+        proxies: Iterable[SemanticEventProxy] = (),
+        *,
+        renderable_ids: set[str] | None = None,
+    ) -> dict[str, float]:
+        """Return one causal focus anchor per semantic event.
+
+        Dependencies hand off after the event's meaning-bearing anchor, not after the
+        last support member. Prefer LEADER, then RESULT/TEXT_ANCHOR, then PRIMARY
+        focus, and only then generic support. For equal authority, the earlier peak is
+        the canonical handoff point.
+        """
+        anchors: dict[str, tuple[int, float]] = {}
+
+        def consider(
+            event_id: str | None,
+            peak: float | None,
+            roles: Iterable[str],
+            visual_focus: str | None,
+        ) -> None:
+            if not event_id or peak is None:
+                return
+            peak_value = float(peak)
+            if not math.isfinite(peak_value):
+                return
+            role_set = {str(role).upper() for role in roles}
+            focus = str(visual_focus or "").upper()
+            if "LEADER" in role_set:
+                rank = 0
+            elif "RESULT" in role_set or "TEXT_ANCHOR" in role_set:
+                rank = 1
+            elif focus in {"PRIMARY", "RESULT"}:
+                rank = 2
+            else:
+                rank = 3
+            candidate = (rank, peak_value)
+            current = anchors.get(str(event_id))
+            if current is None or candidate < current:
+                anchors[str(event_id)] = candidate
+
+        for row in windows:
+            if getattr(row, "activation_policy", None) == "SAFE_ABSTENTION":
+                continue
+            if renderable_ids is not None and row.asset_id not in renderable_ids:
+                continue
+            consider(
+                getattr(row, "semantic_event_id", None),
+                getattr(row, "semantic_peak", None),
+                getattr(row, "semantic_event_roles", ()),
+                getattr(row, "visual_focus", None),
+            )
+        for proxy in proxies:
+            consider(
+                proxy.semantic_event_id,
+                proxy.semantic_peak,
+                proxy.semantic_event_roles,
+                proxy.visual_focus,
+            )
+        return {event_id: value[1] for event_id, value in anchors.items()}
 
     def _compound_semantic_event_proxies(
         self,
@@ -382,7 +456,6 @@ class SemanticActivationPlanner:
             and getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
         }
         parent_windows: dict[str, list[Any]] = {}
-        event_peak: dict[str, float] = {}
         for row in windows:
             if (
                 getattr(row, "activation_policy", None) == "SAFE_ABSTENTION"
@@ -391,11 +464,9 @@ class SemanticActivationPlanner:
                 continue
             if row.semantic_unit_id:
                 parent_windows.setdefault(str(row.semantic_unit_id), []).append(row)
-            if row.semantic_event_id and getattr(row, "semantic_peak", None) is not None:
-                event_peak[str(row.semantic_event_id)] = max(
-                    event_peak.get(str(row.semantic_event_id), 0.0),
-                    float(row.semantic_peak),
-                )
+        event_peak = self._canonical_event_anchor_peaks(
+            windows, renderable_ids=renderable_ids
+        )
 
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
@@ -541,8 +612,293 @@ class SemanticActivationPlanner:
                     ),
                     evidence=evidence,
                 ))
-            event_peak[event_id] = max(event_peak.get(event_id, 0.0), semantic_peak)
+            event_peak[event_id] = min(event_peak.get(event_id, semantic_peak), semantic_peak)
             represented_events.add(event_id)
+        return proxies
+
+    def _group_semantic_event_proxies(
+        self,
+        *,
+        package: PackageModel,
+        transcript: Transcript,
+        scene: SceneSource,
+        beat: StoryBeat,
+        assets: list[VisualAsset],
+        windows: list[Any],
+        existing_proxies: list[SemanticEventProxy],
+    ) -> list[SemanticEventProxy]:
+        """Preserve authored group events when no independent cutout can be resolved.
+
+        Final Package semantic groups are explicit authoring authority. When a group
+        member has no visual locator/parent and Pass1+Pass2 cannot resolve a dedicated
+        cutout, keep its event on one already-renderable visual unit from the same
+        authored group. This preserves event timing/ordering without manufacturing a
+        cutout, guessing pixels, or changing Composition geometry.
+        """
+        scenes = package.semantic_bindings.get("scenes")
+        if not isinstance(scenes, list):
+            return []
+        binding = next((
+            row for row in scenes
+            if isinstance(row, dict) and row.get("scene_id") == scene.id
+        ), None)
+        if not isinstance(binding, dict):
+            return []
+        binding_assets = [
+            row for row in binding.get("assets", []) if isinstance(row, dict)
+        ]
+        groups = {
+            str(row.get("semantic_group_id")): row
+            for row in binding.get("semantic_groups", [])
+            if isinstance(row, dict) and row.get("semantic_group_id")
+        }
+        events = {
+            str(row.get("semantic_event_id")): row
+            for row in binding.get("semantic_events", [])
+            if isinstance(row, dict) and row.get("semantic_event_id")
+        }
+        if not binding_assets or not groups or not events:
+            return []
+
+        renderable_ids = {asset.id for asset in assets if asset.can_animate_independently}
+        represented_units = {
+            str(row.semantic_unit_id)
+            for row in windows
+            if getattr(row, "semantic_unit_id", None)
+            and getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
+        }
+        represented_events = {
+            str(row.semantic_event_id)
+            for row in windows
+            if getattr(row, "semantic_event_id", None)
+            and getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
+        }
+        represented_events.update(proxy.semantic_event_id for proxy in existing_proxies)
+
+        group_windows: dict[str, list[Any]] = {}
+        proxy_by_event = {proxy.semantic_event_id: proxy for proxy in existing_proxies}
+        for row in windows:
+            if (
+                getattr(row, "activation_policy", None) == "SAFE_ABSTENTION"
+                or row.asset_id not in renderable_ids
+            ):
+                continue
+            group_id = str(getattr(row, "semantic_group_id", None) or "").strip()
+            if group_id:
+                group_windows.setdefault(group_id, []).append(row)
+        event_peak = self._canonical_event_anchor_peaks(
+            windows, existing_proxies, renderable_ids=renderable_ids
+        )
+
+        audio_start = beat.audio_start if beat.audio_start is not None else beat.start
+        audio_end = beat.audio_end if beat.audio_end is not None else beat.end
+        candidates: list[tuple[int, float, dict[str, Any], dict[str, Any], tuple[int, int, float, float]]] = []
+        for row in binding_assets:
+            semantic_id = str(row.get("asset_id") or "").strip()
+            group_id = str(row.get("semantic_group_id") or "").strip()
+            event_id = str(row.get("semantic_event_id") or "").strip()
+            phrase = str(row.get("script_text") or "").strip()
+            group = groups.get(group_id)
+            if (
+                not semantic_id
+                or not group_id
+                or not event_id
+                or not phrase
+                or semantic_id in represented_units
+                or event_id in represented_events
+                or row.get("parent_asset_id")
+                or not isinstance(group, dict)
+                or semantic_id not in group.get("asset_ids", [])
+                or str(group.get("animation_policy") or "").upper()
+                != "SEQUENTIAL_WITHIN_PHRASE"
+                or not group_windows.get(group_id)
+            ):
+                continue
+            event = events.get(event_id)
+            if not isinstance(event, dict):
+                continue
+            span = self._binding_authored_span(
+                package.script, scene, phrase, row.get("script_span")
+            )
+            if span is None:
+                continue
+            char_start, char_end = span
+            phrase_words = [
+                word for word in transcript.words
+                if word.char_start is not None
+                and word.char_end is not None
+                and word.char_end > char_start
+                and word.char_start < char_end
+            ]
+            if not phrase_words:
+                continue
+            spoken_start = float(phrase_words[0].start)
+            spoken_end = float(phrase_words[-1].end)
+            if (
+                spoken_start < float(audio_start) - 0.025
+                or spoken_end > float(audio_end) + 0.025
+                or spoken_end <= spoken_start
+            ):
+                continue
+            order = (
+                int(event["sequence_order"])
+                if isinstance(event.get("sequence_order"), int)
+                and not isinstance(event.get("sequence_order"), bool)
+                else 10_000
+            )
+            candidates.append((
+                order, spoken_start, row, event,
+                (char_start, char_end, spoken_start, spoken_end),
+            ))
+
+        proxies: list[SemanticEventProxy] = []
+        for _order, _spoken, row, event, timing in sorted(
+            candidates, key=lambda item: (
+                item[0], item[1], str(item[2].get("asset_id") or "")
+            )
+        ):
+            semantic_id = str(row["asset_id"])
+            group_id = str(row["semantic_group_id"])
+            event_id = str(row["semantic_event_id"])
+            if event_id in represented_events:
+                continue
+            char_start, char_end, spoken_start, spoken_end = timing
+            dependencies = [
+                str(value)
+                for value in event.get("depends_on_event_ids", [])
+                if isinstance(value, str) and value
+            ]
+            dependency_floor = max(
+                (event_peak[value] for value in dependencies if value in event_peak),
+                default=spoken_start,
+            )
+            reveal_start = max(float(spoken_start), float(dependency_floor))
+            if reveal_start >= float(beat.end) - 0.06:
+                continue
+            preferred = min(0.42, max(0.14, float(spoken_end) - float(spoken_start)))
+            settle_at = min(
+                float(beat.end),
+                max(float(spoken_end), reveal_start + preferred),
+            )
+            if settle_at - reveal_start < 0.06:
+                continue
+            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.61803398875
+
+            target_sequence = (
+                int(row["sequence_order"])
+                if isinstance(row.get("sequence_order"), int)
+                and not isinstance(row.get("sequence_order"), bool)
+                else 10_000
+            )
+            carrier_rows = group_windows.get(group_id, [])
+            dependency_proxy = next(
+                (proxy_by_event[value] for value in dependencies if value in proxy_by_event),
+                None,
+            )
+            if dependency_proxy is not None:
+                chosen = next(
+                    (item for item in carrier_rows if item.asset_id == dependency_proxy.asset_id),
+                    None,
+                )
+            else:
+                chosen = None
+            if chosen is None:
+                def carrier_rank(item: Any) -> tuple[object, ...]:
+                    sequence = (
+                        int(item.sequence_order)
+                        if item.sequence_order is not None else 10_000
+                    )
+                    dependency_rank = (
+                        0 if item.semantic_event_id in dependencies else 1
+                    )
+                    prior_rank = 0 if sequence <= target_sequence else 1
+                    distance = abs(target_sequence - sequence)
+                    focus_rank = (
+                        0 if str(item.visual_focus or "").upper() in {"PRIMARY", "RESULT"}
+                        else 1
+                    )
+                    return (
+                        dependency_rank, prior_rank, distance, focus_rank,
+                        -float(item.confidence), item.asset_id,
+                    )
+                chosen = min(carrier_rows, key=carrier_rank)
+
+            carrier_unit_id = chosen.semantic_unit_id
+            selected_rows = [
+                item for item in carrier_rows
+                if item.semantic_unit_id == carrier_unit_id
+            ] or [chosen]
+
+            roles: list[str] = []
+            if event.get("visual_leader_asset_id") == semantic_id:
+                roles.append("LEADER")
+            if semantic_id in event.get("participant_asset_ids", []):
+                roles.append("PARTICIPANT")
+            if semantic_id in event.get("context_asset_ids", []):
+                roles.append("CONTEXT")
+            if semantic_id in event.get("result_asset_ids", []):
+                roles.append("RESULT")
+            if event.get("text_anchor_asset_id") == semantic_id:
+                roles.append("TEXT_ANCHOR")
+            if not roles:
+                roles.append("PARTICIPANT")
+
+            created: list[SemanticEventProxy] = []
+            for carrier in selected_rows:
+                evidence = [
+                    "final_package_semantic_group_proxy",
+                    f"proxy_child_unit={semantic_id}",
+                    f"proxy_group={group_id}",
+                    f"proxy_carrier_unit={carrier.semantic_unit_id}",
+                    "no_new_cutout",
+                    "pass1_pass2_preserved",
+                    "missing_independent_runtime_cutout",
+                ]
+                if isinstance(row.get("visual_locator"), dict):
+                    evidence.append("explicit_locator_unresolved_group_proxy")
+                if dependency_floor > spoken_start + 1e-6:
+                    evidence.append("dependency_order_delays_visual_refocus")
+                created.append(SemanticEventProxy(
+                    asset_id=carrier.asset_id,
+                    semantic_unit_id=semantic_id,
+                    semantic_parent_id=None,
+                    semantic_group_id=group_id,
+                    semantic_event_id=event_id,
+                    semantic_event_order=(
+                        int(event["sequence_order"])
+                        if isinstance(event.get("sequence_order"), int)
+                        and not isinstance(event.get("sequence_order"), bool)
+                        else None
+                    ),
+                    semantic_event_roles=list(dict.fromkeys(roles)),
+                    semantic_event_dependency_ids=dependencies,
+                    trigger_text=str(row.get("script_text") or ""),
+                    trigger_char_start=char_start,
+                    trigger_char_end=char_end,
+                    spoken_start=spoken_start,
+                    spoken_end=spoken_end,
+                    reveal_start=reveal_start,
+                    semantic_peak=semantic_peak,
+                    settle_at=settle_at,
+                    confidence=min(
+                        float(row.get("confidence", 0.0)),
+                        float(carrier.confidence),
+                    ),
+                    authority="FINAL_PACKAGE_GROUP_PROXY",
+                    visual_focus=(
+                        str(row.get("visual_focus")).upper()
+                        if row.get("visual_focus") is not None else None
+                    ),
+                    evidence=evidence,
+                ))
+            proxies.extend(created)
+            if created:
+                proxy_by_event[event_id] = created[0]
+                event_peak[event_id] = min(
+                    event_peak.get(event_id, semantic_peak), semantic_peak
+                )
+                represented_events.add(event_id)
+
         return proxies
 
     def _runtime_diagnostics(self) -> None:
@@ -641,8 +997,7 @@ class SemanticActivationPlanner:
             activations = self._uniform_scene_binding_activations(
                 package=package,
                 transcript=transcript,
-                scene=scene,
-                assets=assets,
+                scene=scene,                assets=assets,
                 beat=beat,
             )
         used_assets: set[str] = {row.asset_id for row in activations}
@@ -1641,8 +1996,7 @@ class SemanticActivationPlanner:
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         return [
             word for word in transcript.words
-            if word.end > audio_start and word.start < audio_end
-        ]
+            if word.end > audio_start and word.start < audio_end        ]
 
     def _phrase_candidates(
         self,

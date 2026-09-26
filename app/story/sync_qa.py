@@ -661,7 +661,32 @@ class StorySyncQA:
         activation_event = activation.semantic_event_id
         dependency_ids = set(activation.semantic_event_dependency_ids)
         for segment in cue.segments:
-            if segment.phase not in {"INTERACT", "REACT", "PAYOFF"}:
+            if (
+                segment.phase == "ENTRY"
+                and activation_event is not None
+                and segment.semantic_event_id == activation_event
+            ):
+                # ENTRY is an arrival gesture. When Motion carries Story's explicit
+                # semantic peak inside the ENTRY window, that authored instant owns
+                # focus. Otherwise the arrival/settle at segment end is the readable
+                # focus moment, not the largest off-canvas displacement at the start.
+                declared_peak = cue.params.get("semantic_peak_time")
+                try:
+                    declared_peak_value = float(declared_peak)
+                except (TypeError, ValueError):
+                    declared_peak_value = float("nan")
+                if (
+                    isfinite(declared_peak_value)
+                    and float(segment.start) - 1e-9
+                    <= declared_peak_value
+                    <= float(segment.end) + 1e-9
+                ):
+                    arrival_peak = declared_peak_value
+                else:
+                    arrival_peak = float(segment.end)
+                candidates.append((abs(arrival_peak - expected_peak), 0, arrival_peak))
+                continue
+            if segment.phase not in {"ESTABLISH", "ADD", "INTERACT", "REACT", "PAYOFF"}:
                 continue
             peak = cls._program_peak_time(
                 program_payload=segment.program,

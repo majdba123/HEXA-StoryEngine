@@ -102,13 +102,35 @@ class SemanticAssetBinder:
     ) -> dict[str, str]:
         if scene is None:
             return {}
-        units = [unit for unit in scene.units if isinstance(unit, dict) and unit.get("unit_id")]
+        declared_units = [
+            unit
+            for unit in scene.units
+            if isinstance(unit, dict) and unit.get("unit_id")
+        ]
+        has_asset_intents = any(
+            str(unit.get("type") or "").upper() == "VISUAL_ASSET_INTENT"
+            for unit in declared_units
+        )
+        units = [
+            unit
+            for unit in declared_units
+            if not (
+                has_asset_intents
+                and str(unit.get("type") or "").upper() == "GROUP"
+            )
+        ]
         if not units:
             return {}
 
         asset_by_id = {asset.id: asset for asset in assets}
         mapping: dict[str, str] = {}
         used: set[str] = set()
+        abstained_units = {
+            str(activation.semantic_unit_id)
+            for activation in (beat.asset_activations if beat is not None else [])
+            if activation.semantic_unit_id
+            and getattr(activation, "activation_policy", None) == "SAFE_ABSTENTION"
+        }
 
         # Story's locator-proven semantic activations are the strongest semantic->real
         # identity evidence available to Choreography. Reuse them before any geometry
@@ -117,6 +139,9 @@ class SemanticAssetBinder:
             for activation in beat.asset_activations:
                 unit_id = activation.semantic_unit_id
                 asset_id = activation.asset_id
+                activation_policy = getattr(activation, "activation_policy", None)
+                if activation_policy == "SAFE_ABSTENTION":
+                    continue
                 if (
                     unit_id
                     and unit_id not in mapping
@@ -126,10 +151,25 @@ class SemanticAssetBinder:
                     mapping[unit_id] = asset_id
                     used.add(asset_id)
 
+            # Story semantic proxies are explicit authority to represent a semantic
+            # unit through an existing renderable carrier. Multiple units may share one
+            # carrier by design, so proxy mappings do not participate in one-to-one
+            # ``used`` ownership. Relations whose endpoints collapse to the same carrier
+            # remain non-executable rather than fabricating distinct visual identities.
+            for proxy in beat.semantic_event_proxies:
+                if (
+                    proxy.semantic_unit_id
+                    and proxy.semantic_unit_id not in mapping
+                    and proxy.asset_id in asset_by_id
+                ):
+                    mapping[proxy.semantic_unit_id] = proxy.asset_id
+
         # Authored unit identity outranks area/role heuristics. Never derive meaning
         # from image filenames or silently swap an explicitly bound asset.
         for unit in units:
             unit_id = str(unit["unit_id"])
+            if unit_id in abstained_units and unit_id not in mapping:
+                continue
             declared = str(unit.get("asset_id") or unit_id)
             if declared in asset_by_id and declared not in used:
                 mapping[unit_id] = declared
@@ -137,9 +177,12 @@ class SemanticAssetBinder:
 
         # Declared character units are the most reliable semantic->asset class mapping.
         for unit, asset_id in zip(self._character_units(scene), actor_ids):
-            if str(unit["unit_id"]) in mapping or asset_id in used:
+            unit_id = str(unit["unit_id"])
+            if unit_id in abstained_units and unit_id not in mapping:
                 continue
-            mapping[str(unit["unit_id"])] = asset_id
+            if unit_id in mapping or asset_id in used:
+                continue
+            mapping[unit_id] = asset_id
             used.add(asset_id)
 
         target_order = list(beat.semantic_targets) if beat else []
@@ -165,7 +208,7 @@ class SemanticAssetBinder:
         )
         for unit in non_character:
             unit_id = str(unit["unit_id"])
-            if unit_id in mapping:
+            if unit_id in mapping or unit_id in abstained_units:
                 continue
             candidate = next((asset for asset in candidates if asset.id not in used), None)
             if candidate is None:

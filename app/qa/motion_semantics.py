@@ -5,7 +5,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.choreography import ChoreographyPlan
-from app.choreography.relation_contract import relation_requires_reaction
+from app.choreography.relation_contract import (
+    RelationTimingMode,
+    relation_requires_reaction,
+    relation_timing_mode,
+)
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion.collision import authored_overlap_ratio, max_relation_overlap
 from app.qa.failure_identity import violation_failure_details
@@ -155,31 +159,40 @@ class MotionInteractionQA:
                         event_id=event_id,
                         detail=f"{relationship or action}: target has no REACT segment",
                     ))
-                elif min(source.end, target.end) - max(source.start, target.start) <= 1e-6:
-                    violations.append(MotionInteractionViolation(
-                        code="NO_RELATION_OVERLAP",
-                        beat_id=beat_id,
-                        asset_id=target_id,
-                        event_id=event_id,
-                        detail=(
-                            f"subject {source.start:.3f}-{source.end:.3f} and target "
-                            f"{target.start:.3f}-{target.end:.3f} do not overlap"
-                        ),
-                    ))
                 else:
-                    self._validate_relation_collision(
-                        beat_id=beat_id,
-                        event_id=event_id,
-                        source_id=source_id,
-                        target_id=target_id,
-                        source=source,
-                        target=target,
-                        source_cue=by_asset.get((beat_id, source_id)) if source_id else None,
-                        target_cue=by_asset.get((beat_id, target_id)),
-                        source_item=layout_by_asset.get((beat_id, source_id)) if source_id else None,
-                        target_item=layout_by_asset.get((beat_id, target_id)),
-                        violations=violations,
+                    timing_mode = relation_timing_mode(
+                        source_activation=activation_by_asset.get((beat_id, source_id)),
+                        target_activation=activation_by_asset.get((beat_id, target_id)),
                     )
+                    if (
+                        timing_mode == RelationTimingMode.OVERLAP_REQUIRED
+                        and min(source.end, target.end) - max(source.start, target.start) <= 1e-6
+                    ):
+                        violations.append(MotionInteractionViolation(
+                            code="NO_RELATION_OVERLAP",
+                            beat_id=beat_id,
+                            asset_id=target_id,
+                            event_id=event_id,
+                            detail=(
+                                f"subject {source.start:.3f}-{source.end:.3f} and target "
+                                f"{target.start:.3f}-{target.end:.3f} do not overlap "
+                                f"under {timing_mode.value}"
+                            ),
+                        ))
+                    else:
+                        self._validate_relation_collision(
+                            beat_id=beat_id,
+                            event_id=event_id,
+                            source_id=source_id,
+                            target_id=target_id,
+                            source=source,
+                            target=target,
+                            source_cue=by_asset.get((beat_id, source_id)) if source_id else None,
+                            target_cue=by_asset.get((beat_id, target_id)),
+                            source_item=layout_by_asset.get((beat_id, source_id)) if source_id else None,
+                            target_item=layout_by_asset.get((beat_id, target_id)),
+                            violations=violations,
+                        )
 
             if result_id:
                 payoff_event_ids = {event_id}

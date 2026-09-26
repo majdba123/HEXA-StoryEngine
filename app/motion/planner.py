@@ -3,7 +3,12 @@ from __future__ import annotations
 from math import hypot
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
-from app.choreography.relation_contract import relation_requires_reaction
+from app.choreography.relation_contract import (
+    SEMANTIC_PROXY_AUTHORITIES,
+    RelationTimingMode,
+    relation_requires_reaction,
+    relation_timing_mode,
+)
 from app.contracts import ContinuityContract
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
@@ -655,6 +660,9 @@ class MotionPlanner:
         phase outside Story authority.
         """
         by_asset = {cue.asset_id: cue for cue in cues}
+        activation_by_asset = {
+            activation.asset_id: activation for activation in beat.asset_activations
+        }
         updated: dict[str, list[MotionSegment]] = {
             cue.asset_id: list(cue.segments) for cue in cues
         }
@@ -691,6 +699,12 @@ class MotionPlanner:
                 if target_index is None:
                     continue
                 target = target_rows[target_index]
+                timing_mode = relation_timing_mode(
+                    source_activation=activation_by_asset.get(source.source_asset_id or ""),
+                    target_activation=activation_by_asset.get(source.target_asset_id or ""),
+                )
+                if timing_mode == RelationTimingMode.SEQUENTIAL_ALLOWED:
+                    continue
                 overlap = min(source.end, target.end) - max(source.start, target.start)
                 if overlap > 1e-6:
                     continue
@@ -752,6 +766,9 @@ class MotionPlanner:
     ) -> None:
         """Fail inside Motion if an authored event-flow relation cannot be represented."""
         by_asset = {cue.asset_id: cue for cue in cues}
+        activation_by_asset = {
+            activation.asset_id: activation for activation in beat.asset_activations
+        }
         source_segments = [
             segment
             for cue in cues
@@ -826,7 +843,14 @@ class MotionPlanner:
                         "reason": "no legal REACT window inside Story authority",
                     },
                 )
-            if min(source.end, target.end) - max(source.start, target.start) <= 1e-6:
+            timing_mode = relation_timing_mode(
+                source_activation=activation_by_asset.get(interaction.subject_asset_id or ""),
+                target_activation=activation_by_asset.get(interaction.object_asset_id or ""),
+            )
+            if (
+                timing_mode == RelationTimingMode.OVERLAP_REQUIRED
+                and min(source.end, target.end) - max(source.start, target.start) <= 1e-6
+            ):
                 raise StageFailedError(
                     "motion planner could not preserve causal relation overlap",
                     details={
@@ -837,7 +861,8 @@ class MotionPlanner:
                         "relationship": interaction.relationship,
                         "source_window": [source.start, source.end],
                         "target_window": [target.start, target.end],
-                        "reason": "relation timing is infeasible inside Story authority",
+                        "timing_mode": timing_mode.value,
+                        "reason": "co-present relation timing is infeasible inside Story authority",
                     },
                 )
 
@@ -869,7 +894,7 @@ class MotionPlanner:
             ):
                 return True
             if (
-                phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+                phase.authority in SEMANTIC_PROXY_AUTHORITIES
                 and phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
                 and phase.spoken_start is not None
                 and phase.spoken_end is not None
@@ -939,7 +964,7 @@ class MotionPlanner:
             and story_window.semantic_peak is not None
             else None
         )
-        aligned_semantic_phase = False
+        aligned_semantic_event_ids: set[str] = set()
         react_keys = {
             (phase.event_id, phase.target_asset_id)
             for phase in phases
@@ -962,7 +987,7 @@ class MotionPlanner:
                     EventFlowStage.PAYOFF,
                 }
                 and not (
-                    phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+                    phase.authority in SEMANTIC_PROXY_AUTHORITIES
                     and phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
                 )
             ):
@@ -972,8 +997,7 @@ class MotionPlanner:
                 phase.step_index,
                 phase.stage.value,
                 phase.involvement,
-                phase.source_asset_id,
-                phase.target_asset_id,
+                phase.source_asset_id,                phase.target_asset_id,
                 phase.result_asset_id,
                 phase.relationship,
             )
@@ -991,10 +1015,10 @@ class MotionPlanner:
                     "FINAL_PACKAGE_INTERACTION_TARGET",
                 }
             )
-            compound_proxy_phase = phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+            semantic_proxy_phase = phase.authority in SEMANTIC_PROXY_AUTHORITIES
             phase_deadline = (
                 float(beat.end)
-                if relation_phase or compound_proxy_phase
+                if relation_phase or semantic_proxy_phase
                 else deadline
             )
             if (
@@ -1020,9 +1044,17 @@ class MotionPlanner:
                 ),
                 None,
             )
-            phase_story_peak = (
-                None if compound_proxy_phase else story_peak
-            )
+            phase_story_peak = story_peak
+            if (
+                semantic_proxy_phase
+                and phase.spoken_start is not None
+                and phase.spoken_end is not None
+                and phase.spoken_end > phase.spoken_start
+            ):
+                phase_story_peak = float(phase.spoken_start) + (
+                    float(phase.spoken_end) - float(phase.spoken_start)
+                ) * GOLDEN_MAJOR
+            event_already_aligned = phase.event_id in aligned_semantic_event_ids
             window = cls._event_segment_window(
                 phase=phase,
                 activation=activation,
@@ -1036,10 +1068,10 @@ class MotionPlanner:
                 motion_ready_start=motion_ready_start,
                 semantic_peak_target=phase_story_peak,
                 align_to_peak=(
-                    not aligned_semantic_phase and phase_story_peak is not None
+                    not event_already_aligned and phase_story_peak is not None
                 ),
             )
-            if window is None and (relation_phase or compound_proxy_phase):
+            if window is None and (relation_phase or semantic_proxy_phase):
                 # Authored semantic phases outrank decorative/previous occupancy of the
                 # local cue timeline. Dense relation chains (including Pass2 compound
                 # members) may legitimately reuse one visual in several causal steps.
@@ -1055,8 +1087,8 @@ class MotionPlanner:
                     deadline=phase_deadline,
                     relation_source_start=source_activation_start,
                     motion_ready_start=float(cue.start),
-                    semantic_peak_target=story_peak,
-                    align_to_peak=not aligned_semantic_phase and story_peak is not None,
+                    semantic_peak_target=phase_story_peak,
+                    align_to_peak=not event_already_aligned and phase_story_peak is not None,
                 )
                 if retry is not None:
                     if entry_segment is not None:
@@ -1068,7 +1100,7 @@ class MotionPlanner:
                 continue
 
             align_current_phase = (
-                not aligned_semantic_phase and phase_story_peak is not None
+                not event_already_aligned and phase_story_peak is not None
             )
             story_aligned = bool(
                 align_current_phase
@@ -1198,7 +1230,7 @@ class MotionPlanner:
                 )
             )
             if story_aligned:
-                aligned_semantic_phase = True
+                aligned_semantic_event_ids.add(phase.event_id)
             motion_ready_start = max(motion_ready_start, float(window[1]))
 
         exit_segment = cls._exit_segment_before_handoff(
@@ -1233,6 +1265,8 @@ class MotionPlanner:
         With effectively no legal entry window, snap to Composition by omitting ENTRY;
         later semantic segments still execute normally from identity.
         """
+        if assignment.relation_only:
+            return None
         start = float(cue.start)
         original_end = float(cue.end)
         exit_reserve = cls._exit_reserve_seconds(
@@ -1504,7 +1538,7 @@ class MotionPlanner:
         has_story_window, story_window = story_activation_window(activation, beat)
 
         if (
-            phase.authority == "FINAL_PACKAGE_COMPOUND_PROXY"
+            phase.authority in SEMANTIC_PROXY_AUTHORITIES
             and phase.stage in {
                 EventFlowStage.ESTABLISH,
                 EventFlowStage.ADD,
@@ -1517,19 +1551,26 @@ class MotionPlanner:
                 or relation_end <= relation_start
             ):
                 return None
-            start_bound = max(lower, float(relation_start))
+            # Story proxy reveal is an authored semantic handoff. A prior segment on
+            # the same carrier may still have a visual tail, but the renderer gives the
+            # later-starting semantic segment priority during overlap. Do not delay the
+            # proxy behind local motion occupancy and accidentally destroy its feasible
+            # readability window.
+            start_bound = max(base_lower, float(relation_start))
             end_bound = min(upper, float(relation_end))
             if end_bound - start_bound < 0.06:
                 return None
-            proxy_peak = start_bound + (end_bound - start_bound) * GOLDEN_MAJOR
-            aligned = golden_window_around_peak(
-                peak=proxy_peak,
-                earliest=start_bound,
-                latest=end_bound,
-                preferred_duration=profile.target_seconds,
-                minimum_duration=0.06,
-            )
-            return aligned or (start_bound, end_bound)
+            proxy_peak = float(relation_start) + (
+                float(relation_end) - float(relation_start)
+            ) * GOLDEN_MAJOR
+            if not (start_bound + 1e-9 < proxy_peak < end_bound - 1e-9):
+                return None
+            # Story already owns the proxy's exact reveal/peak/settle envelope. Do not
+            # shrink that trusted window a second time in Motion; doing so can make an
+            # otherwise feasible semantic gesture fail readability/comfort contracts.
+            # The gesture program itself still settles before/at the segment end, so the
+            # extra authored time becomes readable HOLD rather than continuous motion.
+            return start_bound, end_bound
 
         if phase.stage in {EventFlowStage.INTERACT, EventFlowStage.REACT}:
             story_envelope = MotionPlanner._relation_story_envelope(phase=phase, beat=beat)
@@ -1955,8 +1996,7 @@ class MotionPlanner:
         *,
         item: LayoutItem,
         assignment: MotionEventAssignment,
-        items_by_id: dict[str, LayoutItem],
-    ) -> tuple[float, float]:
+        items_by_id: dict[str, LayoutItem],    ) -> tuple[float, float]:
         target = next(
             (
                 items_by_id[asset_id]
@@ -2305,7 +2345,7 @@ class MotionPlanner:
         a trusted activation window for the asset. Event-flow semantics therefore affect
         visual emphasis without moving any cue before speech or past semantic settle.
         """
-        if assignment is None or activation is None:
+        if assignment is None or activation is None or assignment.relation_only:
             return base_profile
         has_v2, window = story_activation_window(activation, beat)
         if (
@@ -2436,6 +2476,8 @@ class MotionPlanner:
         # The legacy/compatibility entry program belongs to the asset's dominant Story
         # event only. Cross-event relation phases are executed later as independent
         # MotionSegments and must not rewrite the entry program or semantic owner.
+        if assignment.relation_only:
+            return ()
         phases = [
             phase
             for phase in assignment.phase_chain

@@ -223,7 +223,8 @@ class SemanticEventProxy(BaseModel):
 
     asset_id: str
     semantic_unit_id: str
-    semantic_parent_id: str
+    semantic_parent_id: str | None = None
+    semantic_group_id: str | None = None
     semantic_event_id: str
     semantic_event_order: int | None = Field(default=None, ge=1)
     semantic_event_roles: list[str] = Field(default_factory=list)
