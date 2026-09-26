@@ -3,6 +3,7 @@ from __future__ import annotations
 from math import hypot
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
+from app.choreography.relation_contract import relation_requires_reaction
 from app.contracts import ContinuityContract
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
@@ -609,12 +610,236 @@ class MotionPlanner:
                         ),
                     )
             if len(cues) > beat_cue_start:
+                cues[beat_cue_start:] = self._enforce_relation_temporal_overlap(
+                    cues[beat_cue_start:],
+                    beat=beat,
+                )
                 cues[beat_cue_start:] = fit_relation_collisions(
                     cues[beat_cue_start:],
                     layout,
                 )
+                if directive is not None:
+                    self._assert_authored_relation_contract(
+                        cues[beat_cue_start:],
+                        directive=directive,
+                        beat=beat,
+                    )
             previous_layout = layout
         return cues
+
+    @staticmethod
+    def _retime_segment_end(segment: MotionSegment, new_end: float) -> MotionSegment:
+        old_duration = max(1e-9, float(segment.end) - float(segment.start))
+        new_duration = max(1e-9, float(new_end) - float(segment.start))
+        program = dict(segment.program)
+        active = program.get("semantic_active_duration")
+        if isinstance(active, (int, float)) and not isinstance(active, bool):
+            program["semantic_active_duration"] = max(
+                0.0, float(active) * (new_duration / old_duration)
+            )
+        return segment.model_copy(update={"end": float(new_end), "program": program})
+
+    @classmethod
+    def _enforce_relation_temporal_overlap(
+        cls,
+        cues: list[MotionCue],
+        *,
+        beat: StoryBeat,
+    ) -> list[MotionCue]:
+        """Make produced relation source/reaction segments causally overlap.
+
+        Story/Choreography own relation meaning and timing. Motion plans each asset
+        independently, so a Pass2 child without its own direct activation can otherwise
+        let TARGET REACT finish just before SOURCE INTERACT begins. Repair only segment
+        duration inside existing handoff/beat bounds; never invent a relation or move a
+        phase outside Story authority.
+        """
+        by_asset = {cue.asset_id: cue for cue in cues}
+        updated: dict[str, list[MotionSegment]] = {
+            cue.asset_id: list(cue.segments) for cue in cues
+        }
+
+        def relation_match(source: MotionSegment, target: MotionSegment) -> bool:
+            return bool(
+                target.phase == "REACT"
+                and target.semantic_event_id == source.semantic_event_id
+                and target.source_asset_id == source.source_asset_id
+                and target.target_asset_id == source.target_asset_id
+                and target.relationship == source.relationship
+            )
+
+        minimum_overlap = MIN_FOCUS_OVERLAP_SECONDS
+        for source_cue in cues:
+            source_rows = updated[source_cue.asset_id]
+            for source_index, source in enumerate(tuple(source_rows)):
+                if source.phase != "INTERACT" or source.involvement != "SOURCE":
+                    continue
+                if not source.target_asset_id:
+                    continue
+                target_cue = by_asset.get(source.target_asset_id)
+                if target_cue is None:
+                    continue
+                target_rows = updated[target_cue.asset_id]
+                target_index = next(
+                    (
+                        index
+                        for index, row in enumerate(target_rows)
+                        if relation_match(source, row)
+                    ),
+                    None,
+                )
+                if target_index is None:
+                    continue
+                target = target_rows[target_index]
+                overlap = min(source.end, target.end) - max(source.start, target.start)
+                if overlap > 1e-6:
+                    continue
+
+                if target.end <= source.start + 1e-9:
+                    deadline = min(
+                        float(beat.end),
+                        float(target.handoff_deadline)
+                        if target.handoff_deadline is not None
+                        else float(beat.end),
+                    )
+                    next_start = min(
+                        (
+                            row.start
+                            for index, row in enumerate(target_rows)
+                            if index != target_index and row.start >= target.end - 1e-9
+                        ),
+                        default=deadline,
+                    )
+                    new_end = min(deadline, next_start, source.start + minimum_overlap)
+                    if new_end > source.start + 1e-6:
+                        target_rows[target_index] = cls._retime_segment_end(
+                            target, new_end
+                        )
+                        continue
+
+                if source.end <= target.start + 1e-9:
+                    deadline = min(
+                        float(beat.end),
+                        float(source.handoff_deadline)
+                        if source.handoff_deadline is not None
+                        else float(beat.end),
+                    )
+                    next_start = min(
+                        (
+                            row.start
+                            for index, row in enumerate(source_rows)
+                            if index != source_index and row.start >= source.end - 1e-9
+                        ),
+                        default=deadline,
+                    )
+                    new_end = min(deadline, next_start, target.start + minimum_overlap)
+                    if new_end > target.start + 1e-6:
+                        source_rows[source_index] = cls._retime_segment_end(
+                            source, new_end
+                        )
+
+        return [
+            cue.model_copy(update={"segments": updated[cue.asset_id]})
+            for cue in cues
+        ]
+
+    @staticmethod
+    def _assert_authored_relation_contract(
+        cues: list[MotionCue],
+        *,
+        directive,
+        beat: StoryBeat,
+    ) -> None:
+        """Fail inside Motion if an authored event-flow relation cannot be represented."""
+        by_asset = {cue.asset_id: cue for cue in cues}
+        source_segments = [
+            segment
+            for cue in cues
+            for segment in cue.segments
+            if segment.phase == "INTERACT" and segment.involvement == "SOURCE"
+        ]
+        if not directive.event_flows:
+            return
+        interactions = tuple(dict.fromkeys(
+            interaction
+            for flow in directive.event_flows
+            for interaction in flow.interactions
+            if interaction.executable
+            and interaction.authority in {
+                "FINAL_PACKAGE_ASSET_RELATION",
+                "FINAL_PACKAGE_INTERACTION_TARGET",
+            }
+        ))
+        for interaction in interactions:
+            source = next(
+                (
+                    segment
+                    for segment in source_segments
+                    if segment.source_asset_id == interaction.subject_asset_id
+                    and segment.target_asset_id == interaction.object_asset_id
+                    and segment.result_asset_id == interaction.result_asset_id
+                    and segment.relationship == interaction.relationship
+                ),
+                None,
+            )
+            if source is None:
+                raise StageFailedError(
+                    "motion planner could not schedule an authored relation",
+                    details={
+                        "code": "MISSING_RELATION_TIMELINE",
+                        "beat_id": beat.id,
+                        "source_asset_id": interaction.subject_asset_id,
+                        "target_asset_id": interaction.object_asset_id,
+                        "result_asset_id": interaction.result_asset_id,
+                        "relationship": interaction.relationship,
+                        "reason": "no legal INTERACT window inside Story authority",
+                    },
+                )
+            if not relation_requires_reaction(
+                semantic_action=interaction.semantic_action,
+                executable=True,
+                target_asset_id=interaction.object_asset_id,
+            ):
+                continue
+            target_cue = by_asset.get(interaction.object_asset_id or "")
+            target = next(
+                (
+                    segment
+                    for segment in (target_cue.segments if target_cue else [])
+                    if segment.phase == "REACT"
+                    and segment.semantic_event_id == source.semantic_event_id
+                    and segment.source_asset_id == source.source_asset_id
+                    and segment.target_asset_id == source.target_asset_id
+                    and segment.relationship == source.relationship
+                ),
+                None,
+            )
+            if target is None:
+                raise StageFailedError(
+                    "motion planner could not schedule the authored target reaction",
+                    details={
+                        "code": "MISSING_TARGET_REACTION",
+                        "beat_id": beat.id,
+                        "source_asset_id": interaction.subject_asset_id,
+                        "target_asset_id": interaction.object_asset_id,
+                        "relationship": interaction.relationship,
+                        "reason": "no legal REACT window inside Story authority",
+                    },
+                )
+            if min(source.end, target.end) - max(source.start, target.start) <= 1e-6:
+                raise StageFailedError(
+                    "motion planner could not preserve causal relation overlap",
+                    details={
+                        "code": "NO_RELATION_OVERLAP",
+                        "beat_id": beat.id,
+                        "source_asset_id": interaction.subject_asset_id,
+                        "target_asset_id": interaction.object_asset_id,
+                        "relationship": interaction.relationship,
+                        "source_window": [source.start, source.end],
+                        "target_window": [target.start, target.end],
+                        "reason": "relation timing is infeasible inside Story authority",
+                    },
+                )
 
     @staticmethod
     def _has_explicit_semantic_timeline(
@@ -728,7 +953,7 @@ class MotionPlanner:
                 and (phase.event_id, phase.target_asset_id) in react_keys
             )
         ]
-        seen: set[tuple[str, int, str, str]] = set()
+        seen: set[tuple[object, ...]] = set()
         for phase in phases:
             if (
                 phase.stage not in {
@@ -742,7 +967,16 @@ class MotionPlanner:
                 )
             ):
                 continue
-            key = (phase.event_id, phase.step_index, phase.stage.value, phase.involvement)
+            key = (
+                phase.event_id,
+                phase.step_index,
+                phase.stage.value,
+                phase.involvement,
+                phase.source_asset_id,
+                phase.target_asset_id,
+                phase.result_asset_id,
+                phase.relationship,
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -805,15 +1039,14 @@ class MotionPlanner:
                     not aligned_semantic_phase and phase_story_peak is not None
                 ),
             )
-            if (
-                window is None
-                and (relation_phase or compound_proxy_phase)
-                and entry_segment is not None
-            ):
-                # A short authored relation/proxy may start immediately when the visual
-                # is spoken, leaving no room to run both ENTRY and the semantic action
-                # as separate transforms. Semantic meaning wins: retry from the cue
-                # boundary and remove decorative ENTRY if the authored accent fits.
+            if window is None and (relation_phase or compound_proxy_phase):
+                # Authored semantic phases outrank decorative/previous occupancy of the
+                # local cue timeline. Dense relation chains (including Pass2 compound
+                # members) may legitimately reuse one visual in several causal steps.
+                # Retry from the cue boundary rather than silently dropping the later
+                # authored relation. ENTRY is removed only when it exists; prior semantic
+                # phases remain explicit and the relation timing finalizer below enforces
+                # causal overlap without changing Story authority.
                 retry = cls._event_segment_window(
                     phase=phase,
                     activation=activation,
@@ -826,8 +1059,9 @@ class MotionPlanner:
                     align_to_peak=not aligned_semantic_phase and story_peak is not None,
                 )
                 if retry is not None:
-                    segments = [row for row in segments if row.phase != "ENTRY"]
-                    entry_segment = None
+                    if entry_segment is not None:
+                        segments = [row for row in segments if row.phase != "ENTRY"]
+                        entry_segment = None
                     motion_ready_start = float(cue.start)
                     window = retry
             if window is None:
@@ -1340,14 +1574,19 @@ class MotionPlanner:
                 peak_upper = min(peak_upper, float(story_window.settle_at))
 
             if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
-                # A source relation must remain logically active through the target's
-                # reaction window. Keep the authored relation interval for continuity;
-                # _event_segment_program localizes the visible pulse around Story peak
-                # and then holds Composition, so this does not create slow continuous
-                # drift across the whole phrase.
+                # One source may own several authored relations inside the same spoken
+                # phrase. Keep one bounded meaning-bearing gesture, then settle/HOLD so
+                # later relations retain legal Story-owned time. Causal overlap with the
+                # target is finalized before QA/render.
                 if peak_lower + 1e-9 < peak < peak_upper - 1e-9:
-                    start = max(base_lower, relation_bounds[0] if relation_bounds else base_lower)
-                    end = peak_upper
+                    start = max(
+                        base_lower,
+                        relation_bounds[0] if relation_bounds else base_lower,
+                    )
+                    end = min(
+                        peak_upper,
+                        max(peak + 0.06, start + profile.target_seconds),
+                    )
                     if end - start >= 0.06:
                         return start, end
             else:
@@ -1366,7 +1605,7 @@ class MotionPlanner:
             span = float(relation_end) - float(relation_start)
             if phase.stage == EventFlowStage.INTERACT and phase.involvement == "SOURCE":
                 start = max(lower, float(relation_start))
-                end = upper
+                end = min(upper, start + profile.target_seconds)
             elif phase.stage == EventFlowStage.REACT:
                 reaction_delay = min(
                     span * GOLDEN_MINOR,

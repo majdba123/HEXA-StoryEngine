@@ -297,6 +297,30 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
         FailureDisposition.FAIL_FAST,
         "Installed FFmpeg cannot encode the required H.264 output",
     ),
+    "RHYTHM_CONTRACT_VIOLATIONS": _policy(
+        "RHYTHM_CONTRACT_VIOLATIONS",
+        "choreography",
+        FailureDisposition.PREVENT,
+        "Choreography rhythm aggregates contain one or more construction-time contract violations",
+    ),
+    "MOTION_CONTRACT_VIOLATIONS": _policy(
+        "MOTION_CONTRACT_VIOLATIONS",
+        "motion",
+        FailureDisposition.PREVENT,
+        "Motion aggregate contains one or more authored semantic contract violations",
+    ),
+    "CONTINUITY_CONTRACT_VIOLATIONS": _policy(
+        "CONTINUITY_CONTRACT_VIOLATIONS",
+        "continuity",
+        FailureDisposition.PREVENT,
+        "Continuity aggregate contains one or more lifecycle/bridge contract violations",
+    ),
+    "RENDERED_MOTION_CONTRACT_VIOLATIONS": _policy(
+        "RENDERED_MOTION_CONTRACT_VIOLATIONS",
+        "render",
+        FailureDisposition.POST_RENDER_PROOF,
+        "Encoded motion aggregate contains one or more post-render proof violations",
+    ),
     "MISSING_RELATION_TIMELINE": _policy(
         "MISSING_RELATION_TIMELINE",
         "motion",

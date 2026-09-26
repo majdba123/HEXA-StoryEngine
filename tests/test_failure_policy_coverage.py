@@ -24,7 +24,7 @@ def _emitted_codes() -> set[str]:
             if isinstance(node, ast.Call):
                 for keyword in node.keywords:
                     if (
-                        keyword.arg == "code"
+                        keyword.arg in {"code", "aggregate_code"}
                         and isinstance(keyword.value, ast.Constant)
                         and isinstance(keyword.value.value, str)
                     ):
