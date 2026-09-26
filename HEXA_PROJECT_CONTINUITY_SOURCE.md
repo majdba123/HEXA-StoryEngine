@@ -10774,3 +10774,68 @@ exact behavior HEAD with real renders.
 4. If Gray passes end-to-end, rerun Black and White on the same exact behavior HEAD.
 5. Only after all three pass may Motion-polish work resume.
 
+
+
+## MONTAGE34 BOUNDED RENDERED-MOTION RECOVERY CHECKPOINT — 2026-09-26
+
+### Trigger diagnostic
+- Diagnostic job: `a253c3b2952f4481aa62b51e1957d37a`.
+- Source commit: `533ceaabf3ef35a64d280f1a1f610f366437528b` on `montage`.
+- Gray reached real render after Authoring QA passed with 161 semantic sync anchors, 7 conservative fallbacks, 23 relation timelines, 15 focus cohorts and 0 rhythm/layout/short-motion violations.
+- RenderedMotionQA then failed one segment only:
+  - code: `MOTION_BELOW_PERCEPTUAL_FLOOR`
+  - beat: `beat-010`
+  - asset: `SCENE_010:asset-03`
+  - phase: `REACT`
+  - expected normalized motion: `0.00693`
+  - shared readability floor: `0.01007`.
+
+### Root-cause mechanism
+- MotionPlanner enforces readability when the semantic segment program is first authored.
+- Relation temporal-overlap repair can later extend a relation segment and proportionally extend `semantic_active_duration`.
+- That later timing repair can increase the shared readability floor while leaving the already-authored transform amplitude unchanged.
+- Therefore the stable happy path can be valid when authored and become under-floor only after a later bounded relation-timing adjustment.
+
+### Locked recovery architecture
+- Do NOT rewrite or globally retune the previously validated Motion happy path for this class of runtime conflict.
+- `MOTION_BELOW_PERCEPTUAL_FLOOR` is now an explicit bounded RECOVER policy.
+- Normal execution is unchanged when RenderedMotionQA passes.
+- Only when RenderedMotionQA raises exactly this code:
+  1. catch the known failure,
+  2. locate only reported `(beat_id, asset_id, phase)` segments,
+  3. increase only that segment transform amplitude to the shared floor plus a small safety margin,
+  4. preserve Story timing, semantic ids, relations, easing, Composition geometry, text and unrelated Motion cues,
+  5. rerun MotionInteractionQA, ChoreographyRhythmQA, StorySyncQA and SceneContinuityQA,
+  6. rerender,
+  7. rerun RenderedMotionQA,
+  8. fail normally if another code appears or bounded repair cannot prove success.
+- Mixed failure classes are not swallowed by this recovery path.
+- Maximum recovery attempts: 2.
+- This is the project-standard pattern for package/runtime edge cases: stable core/happy path first, explicit error-code recovery second. Core code is changed only when evidence proves the core invariant itself is wrong.
+
+### Implementation
+- Behavior commit: `5f87c6973e499f1d3cc9775b827dee5d46011a94`
+- Commit message: `[recovery] Repair underfloor rendered motion without changing happy path`
+- New module: `app/recovery/motion_readability.py`.
+- Recovery registry/handler/policy updated for `MOTION_BELOW_PERCEPTUAL_FLOOR`.
+- Pipeline uses a narrow `try/except StageFailedError` and only enters this recovery when `effective_code == MOTION_BELOW_PERCEPTUAL_FLOOR`.
+- Regression tests prove:
+  - the recovery is explicitly registered,
+  - only the reported under-floor segment changes,
+  - timing and semantic identity remain unchanged,
+  - an unrelated cue remains unchanged,
+  - a real FFmpeg rerender passes RenderedMotionQA after repair.
+
+### Verification
+- Local targeted recovery/render tests: PASS.
+- Local application suite excluding the two unavailable V7 checkpoint artifact tests: PASS.
+- GitHub V2 CI #590 / run `36259367906` on exact behavior SHA `5f87c6973e499f1d3cc9775b827dee5d46011a94`: SUCCESS.
+- CI Compile: PASS.
+- CI Lint: PASS.
+- CI Test: PASS.
+- Tested-source artifact upload: PASS.
+
+### Production status / next proof
+- The failure class is closed in code + regression + CI.
+- Full Gray production proof is still pending a rerun with the exact original Gray Final Package and narration on `5f87c697...` or a descendant containing no behavior changes.
+- After Gray real render passes, Black and White must be regression-rendered on the same exact behavior source before Render Stability can be declared closed.
