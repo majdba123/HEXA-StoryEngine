@@ -38,6 +38,14 @@ def repair_text_layout(context: dict) -> HandlerResult:
     )
 
 
+def repair_motion_readability(context: dict) -> HandlerResult:
+    return HandlerResult(
+        True,
+        "motion_segment",
+        "raise only rendered segments proven below the shared readability floor",
+    )
+
+
 def rerender(context: dict) -> HandlerResult:
     return HandlerResult(True, "render", "rebuild rendered video from the current verified plan")
 
@@ -60,6 +68,7 @@ HANDLERS: dict[str, RecoveryHandler] = {
     "rebuild_composition": rebuild_composition,
     "rebuild_motion": rebuild_motion,
     "repair_text_layout": repair_text_layout,
+    "repair_motion_readability": repair_motion_readability,
     "rerender": rerender,
     "rerender_strict_handoff": rerender_strict_handoff,
     "remux_audio": remux_audio,

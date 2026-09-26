@@ -360,8 +360,8 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "MOTION_BELOW_PERCEPTUAL_FLOOR": _policy(
         "MOTION_BELOW_PERCEPTUAL_FLOOR",
         "motion",
-        FailureDisposition.PREVENT,
-        "Planner must meet the shared encoded-pixel readability floor",
+        FailureDisposition.RECOVER,
+        "A bounded segment-only amplitude repair may restore the shared readability floor",
     ),
     "TERMINAL_EXIT_ON_PERSISTENT_ASSET": _policy(
         "TERMINAL_EXIT_ON_PERSISTENT_ASSET",

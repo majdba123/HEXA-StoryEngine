@@ -31,6 +31,7 @@ from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.recovery.manager import RecoveryManager
+from app.recovery.motion_readability import repair_motion_readability
 from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
 from app.shared.errors import (
@@ -383,7 +384,22 @@ class StoryEnginePipeline:
             rendered_motion_report,
             workspace / "diagnostics" / "rendered-motion-qa.json",
         )
-        self.rendered_motion_qa.require(rendered_motion_report)
+        try:
+            self.rendered_motion_qa.require(rendered_motion_report)
+        except StageFailedError as exc:
+            if exc.effective_code != "MOTION_BELOW_PERCEPTUAL_FLOOR":
+                raise
+            plan, video_only, rendered_motion_report = self._recover_rendered_motion(
+                plan=plan,
+                video_only=video_only,
+                report=rendered_motion_report,
+                choreography=choreography,
+                package_id=package.package_id,
+                job_id=job_id,
+                workspace=workspace,
+                progress=progress,
+                cancelled=cancelled,
+            )
 
         self._check_cancel(cancelled)
         output_file = self._output_path(package.package_id, output_name)
@@ -851,6 +867,163 @@ class StoryEnginePipeline:
             text_motion=text_motion,
         )
         return plan
+
+    def _recover_rendered_motion(
+        self,
+        *,
+        plan: RenderPlan,
+        video_only: Path,
+        report,
+        choreography,
+        package_id: str,
+        job_id: str,
+        workspace: Path,
+        progress: ProgressCallback | None,
+        cancelled: CancellationCallback | None,
+    ):
+        """Recover only rendered segments proven below the readability floor.
+
+        The normal Motion path is immutable here. Recovery starts only after
+        RenderedMotionQA raises the known floor violation. It can increase transform
+        amplitude on the reported segment, but cannot change Story timing, semantic
+        ids, relationships, Composition geometry, text, or unrelated Motion cues.
+        """
+        code = "MOTION_BELOW_PERCEPTUAL_FLOOR"
+        current_plan = plan
+        current_video = video_only
+        current_report = report
+
+        for attempt in (1, 2):
+            self._check_cancel(cancelled)
+            floor_violations = tuple(
+                row for row in current_report.violations if row.code == code
+            )
+            other_violations = tuple(
+                row for row in current_report.violations if row.code != code
+            )
+            if not floor_violations or other_violations:
+                self.rendered_motion_qa.require(current_report)
+
+            context = {
+                "violation_count": len(floor_violations),
+                "violations": [
+                    {
+                        "beat_id": row.beat_id,
+                        "asset_id": row.asset_id,
+                        "phase": row.phase,
+                        "detail": row.detail,
+                    }
+                    for row in floor_violations
+                ],
+            }
+            handler_result = self.recovery.handle(
+                code=code,
+                context=context,
+                attempt=attempt,
+            )
+            if (
+                handler_result is None
+                or not handler_result.success
+                or handler_result.invalidate_from_stage != "motion_segment"
+            ):
+                self.rendered_motion_qa.require(current_report)
+
+            repair = repair_motion_readability(
+                current_plan,
+                violations=floor_violations,
+                attempt=attempt,
+                safety_margin=1.04 + 0.02 * (attempt - 1),
+            )
+            if repair.repaired_segments <= 0:
+                self.recovery.record_outcome(
+                    code=code,
+                    job_id=job_id,
+                    package_id=package_id,
+                    attempt=attempt,
+                    handler_result=handler_result,
+                    success=False,
+                    details={
+                        "reason": "no eligible segment could be repaired",
+                        "reported_violations": len(floor_violations),
+                    },
+                )
+                self.rendered_motion_qa.require(current_report)
+
+            candidate_plan = repair.plan
+            self._progress(
+                progress,
+                Stage.recovery,
+                0.78,
+                (
+                    "Repairing rendered motion readability "
+                    f"({attempt}/2, {repair.repaired_segments} segment(s))"
+                ),
+            )
+
+            interaction_report = self.motion_interaction_qa.inspect(
+                story=candidate_plan.story,
+                motion=candidate_plan.motion,
+                composition=candidate_plan.composition,
+                choreography=choreography,
+            )
+            self.motion_interaction_qa.require(interaction_report)
+            rhythm_report = self.choreography_rhythm_qa.inspect(
+                story=candidate_plan.story,
+                motion=candidate_plan.motion,
+                choreography=choreography,
+            )
+            self.choreography_rhythm_qa.require(rhythm_report)
+            sync_report = self.story_sync_qa.inspect(
+                story=candidate_plan.story,
+                motion=candidate_plan.motion,
+            )
+            self.story_sync_qa.require(sync_report)
+            continuity_report = self.scene_continuity_qa.inspect(
+                story=candidate_plan.story,
+                composition=candidate_plan.composition,
+                motion=candidate_plan.motion,
+            )
+            self.scene_continuity_qa.require(continuity_report)
+
+            candidate_video = self.renderer.render(
+                candidate_plan,
+                workspace / "render" / f"recovered-video-{code}-{attempt}.mp4",
+            )
+            candidate_report = self.rendered_motion_qa.inspect(
+                video=candidate_video,
+                plan=candidate_plan,
+            )
+            self.rendered_motion_qa.write(
+                candidate_report,
+                workspace
+                / "diagnostics"
+                / f"rendered-motion-qa-recovery-{attempt}.json",
+            )
+            success = candidate_report.ok
+            self.recovery.record_outcome(
+                code=code,
+                job_id=job_id,
+                package_id=package_id,
+                attempt=attempt,
+                handler_result=handler_result,
+                success=success,
+                details={
+                    "repaired_segments": repair.repaired_segments,
+                    "remaining_violation_count": len(candidate_report.violations),
+                    "remaining_codes": sorted(
+                        {row.code for row in candidate_report.violations}
+                    ),
+                },
+            )
+            if success:
+                return candidate_plan, candidate_video, candidate_report
+
+            current_plan = candidate_plan
+            current_video = candidate_video
+            current_report = candidate_report
+
+        self.rendered_motion_qa.require(current_report)
+        return current_plan, current_video, current_report
 
     def _recover_final(
         self,
