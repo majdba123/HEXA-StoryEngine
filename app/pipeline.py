@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -25,6 +26,7 @@ from app.final import FinalExporter
 from app.input import FinalPackageLoader
 from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
+from app.recovery import RecoveryCandidateEvaluator
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
@@ -106,6 +108,7 @@ class StoryEnginePipeline:
         self.final = FinalExporter(self.settings.ffmpeg_bin)
         self.detector = RecoveryDetector(self.settings.ffprobe_bin, self.settings.ffmpeg_bin)
         self.recovery = RecoveryManager(Path.home() / ".hexa-storyengine" / "recovery")
+        self.recovery_candidates = RecoveryCandidateEvaluator()
 
     def generate(
         self,
@@ -700,7 +703,7 @@ class StoryEnginePipeline:
                 raise self._unresolved(issue)
 
             self._progress(progress, Stage.recovery, 0.70, f"Recovering {issue.code}")
-            plan = self._rebuild_plan(
+            candidate = self._rebuild_plan(
                 invalidate_from=result.invalidate_from_stage,
                 current=plan,
                 package=package,
@@ -708,19 +711,25 @@ class StoryEnginePipeline:
                 detections=detections,
                 workspace=workspace,
             )
-            remaining = self.detector.inspect_plan(plan)
-            success = not any(item.code == issue.code for item in remaining)
+            remaining = self.detector.inspect_plan(candidate)
+            assessment = self.recovery_candidates.evaluate(
+                target=issue,
+                before_issues=issues,
+                after_issues=remaining,
+                before_plan=plan,
+                candidate_plan=candidate,
+            )
             self.recovery.record_outcome(
                 code=issue.code,
                 job_id=job_id,
                 package_id=package.package_id,
                 attempt=attempt,
                 handler_result=result,
-                success=success,
-                details={"remaining_issue_count": len(remaining)},
+                success=assessment.accepted,
+                details=assessment.to_details(),
             )
-            if not success and attempt >= 3:
-                raise self._unresolved(issue)
+            if assessment.accepted:
+                plan = candidate
 
     def _rebuild_plan(
         self,
@@ -814,31 +823,40 @@ class StoryEnginePipeline:
                 raise self._unresolved(issue)
 
             self._progress(progress, Stage.recovery, 0.94, f"Recovering {issue.code}")
+            candidate_final = workspace / "render" / f"recovered-final-{issue.code}-{attempt}.mp4"
+            candidate_video = video_only
             if result.invalidate_from_stage == "render":
-                video_only = self.renderer.render(
+                candidate_video = self.renderer.render(
                     plan,
-                    workspace / "render" / f"recovered-{attempt}.mp4",
+                    workspace / "render" / f"recovered-video-{issue.code}-{attempt}.mp4",
                     strict_boundary_coverage=(issue.code == "VISUAL_WHITE_FLASH"),
                 )
-                final_path = self.final.mux(video_only, audio_path, final_path)
+                candidate_final = self.final.mux(candidate_video, audio_path, candidate_final)
             elif result.invalidate_from_stage == "final":
-                final_path = self.final.mux(video_only, audio_path, final_path)
+                candidate_final = self.final.mux(video_only, audio_path, candidate_final)
             else:
                 raise self._unresolved(issue)
 
-            remaining = self.detector.inspect_final(final_path, audio_path)
-            success = not any(item.code == issue.code for item in remaining)
+            remaining = self.detector.inspect_final(candidate_final, audio_path)
+            assessment = self.recovery_candidates.evaluate(
+                target=issue,
+                before_issues=issues,
+                after_issues=remaining,
+            )
             self.recovery.record_outcome(
                 code=issue.code,
                 job_id=job_id,
                 package_id=package_id,
                 attempt=attempt,
                 handler_result=result,
-                success=success,
-                details={"remaining_issue_count": len(remaining)},
+                success=assessment.accepted,
+                details=assessment.to_details(),
             )
-            if not success and attempt >= 3:
-                raise self._unresolved(issue)
+            if assessment.accepted:
+                final_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(candidate_final, final_path)
+                if result.invalidate_from_stage == "render":
+                    video_only = candidate_video
 
     def _output_path(self, package_id: str, output_name: str | None) -> Path:
         name = output_name or f"{package_id}.mp4"
