@@ -9525,3 +9525,156 @@ Required next acceptance:
 Do not weaken the `15.36 px` contract to obtain green output. The Builder must meet it or fail closed before render.
 
 Black-Hat visual lifecycle/continuity/reference-strength audit remains OPEN and resumes after this White-Hat regression proof is locked.
+
+
+# MONTAGE31 LIFECYCLE + RECOVERY SAFETY + FAILURE IDENTITY — 2026-09-26
+
+## Scope of this checkpoint
+
+This checkpoint converts three observed generic failure classes into shared production contracts:
+1. persistent asset lifecycle / disappear-reappear prevention;
+2. monotonic rollback-safe Recovery;
+3. preservation of specific failure identity through diagnostics/API.
+
+No Final Package meaning, Composition geometry, reference gesture thresholds, or QA thresholds were weakened.
+
+## 1. Persistent asset lifecycle contract
+
+Black-Hat visual audit identified a generic lifecycle contradiction:
+
+`visible -> terminal EXIT/LEAVE -> hidden -> adjacent beat -> same asset_id visible again`
+
+Root cause:
+- renderer derived persistence from adjacent-layout asset-id intersection;
+- Motion could independently author terminal `EXIT` with `terminal_behavior=LEAVE`;
+- SceneContinuityQA previously checked only cross-scene transition quality and did not reject the contradiction on every adjacent beat.
+
+Generic prevention:
+- new `app/contracts/continuity.py` is shared authority for adjacent-beat asset lifecycle;
+- MotionPlanner does not author terminal EXIT when the exact same asset continues into the next layout;
+- SceneContinuityQA checks lifecycle on every adjacent beat, including within one scene;
+- invalid externally supplied/legacy plans receive `TERMINAL_EXIT_ON_PERSISTENT_ASSET`;
+- FFmpegRenderer consumes the same contract and fails closed if an invalid plan bypasses upstream QA.
+
+Behavior commit:
+`4be91516360450568b800e739e8cedca942fec8b`
+`[continuity] Enforce persistent asset lifecycle contract`
+
+CI:
+- run: `36206336359`
+- run number: `555`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `401 passed, 12 warnings`
+- exact tested-source artifact: `hexa-storyengine-source-842fbeade98b45ae3bb6ba537c3bd67ca69061e4`
+- digest: `sha256:9070d49da46d93440cda978f74bb852d3187df39f4168b0ffd92adb004fed9d6`
+
+Status:
+- generic code-level disappear/reappear failure class: PREVENTED + CI PROVEN;
+- Black-Hat encoded/visual proof: OPEN until a new exact-source render is inspected.
+
+## 2. Monotonic rollback-safe Recovery
+
+Historical Recovery behavior could accept a candidate merely because the same issue code disappeared. It did not prove that:
+- no new issue was introduced;
+- another issue count did not regress;
+- Final-Package-derived semantic authority remained unchanged;
+- the previous accepted plan/output remained available for rollback.
+
+Generic Recovery contract:
+`Problem -> bounded candidate -> same detector/contracts -> monotonic evaluator -> accept OR rollback/fail`
+
+Added `app/recovery/evaluator.py`:
+- fingerprints issue instances by code + normalized context;
+- verifies exact target resolution;
+- rejects newly introduced issue instances;
+- rejects issue-count regressions;
+- requires strict reduction of detected problems;
+- compares semantic-authority signatures for plan recovery;
+- rejects any candidate that changes semantic authority.
+
+Pipeline changes:
+- plan recovery builds and evaluates a candidate before replacing the accepted plan;
+- rejected plan candidate leaves the original plan intact;
+- final/render recovery writes to candidate paths first;
+- accepted candidate is copied to final output only after validation;
+- rejected candidate never overwrites the previously accepted output;
+- all assessments are recorded in Recovery details.
+
+Behavior commit:
+`a5e8543fdd9d474d46c8c1083b7bbc6102a626a2`
+`[recovery] Enforce monotonic rollback-safe candidates`
+
+CI:
+- run: `36206611878`
+- run number: `556`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `405 passed, 12 warnings`
+- exact tested-source artifact: `hexa-storyengine-source-374f3110b5c9d2c6fa1f560f400435faa3a1ab9a`
+- digest: `sha256:fda7ac4209ca6bb1e778f061ba2831fd2ebab6a5016e3e8447b431e14fddc541`
+
+Locked Recovery rule:
+Recovery is never allowed to trade one defect for another, silently change semantic authority, or overwrite an accepted state before candidate validation.
+
+## 3. Specific failure identity
+
+Root cause:
+- engine exceptions already carried precise generic codes in `details["code"]`, e.g.
+  `MOTION_INFEASIBLE_BEFORE_RENDER` and `TERMINAL_EXIT_ON_PERSISTENT_ASSET`;
+- API and diagnostic top-level output surfaced only broad category `STAGE_FAILED`;
+- this hid the real Failure Class from the operator and made recurrence analysis weaker.
+
+Generic error identity:
+- `HexaError.code` remains the compatibility/category code;
+- `HexaError.effective_code` exposes a nonblank specific detail code when present;
+- diagnostic JSON records both `code` (specific failure) and `category`;
+- diagnostic Markdown displays both;
+- API job `error_code` uses the specific effective code.
+
+Behavior commit:
+`33370db7cb26ba00bacc7ecd631fd6ae1bbc6d61`
+`[errors] Preserve specific failure identity`
+
+CI:
+- run: `36206805412`
+- run number: `557`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `408 passed, 12 warnings`
+- exact tested-source artifact: `hexa-storyengine-source-43f59da1bafba9a4c20a71109b374af32b897636`
+- digest: `sha256:fcee419793af24fb5f0ccb9b70b3337217120845b392cae74271d760e9fb37a5`
+
+## Current proof status
+
+Code/CI proven:
+- shared White-Hat readability-duration contract;
+- fail-before-render for infeasible readable+comfortable motion;
+- persistent asset lifecycle prevention;
+- continuity QA for terminal-exit/persistence contradiction;
+- renderer fail-closed lifecycle guard;
+- monotonic rollback-safe Recovery;
+- specific error identity through diagnostics/API.
+
+Still OPEN and must not be called visually closed:
+- White-Hat rerender from current exact source and encoded RenderedMotionQA;
+- Black-Hat rerender from current exact source to prove disappear/reappear is gone;
+- Black-Hat motion-language strength/rhythm gap vs approved references;
+- final payoff/focus authority;
+- full ReferenceMatchQA;
+- remaining shared contracts (focus, semantic gesture composition, generalized environment preflight, text lifetime-aware placement).
+
+## Next engineering order
+
+1. Add/strengthen production environment preflight so known FFmpeg/audio/alignment/output failures are rejected before expensive work.
+2. Rerender White and Black from the latest exact tested source when production inputs are available.
+3. Inspect encoded lifecycle, scene handoff, motion strength and final payoff.
+4. Implement FocusContract + semantic gesture composition against concrete remaining defects.
+5. Implement ReferenceMatchQA from measured approved-reference distributions, never invented thresholds.
+6. Extend Recovery only after each corresponding builder/shared contract exists.
+7. Run Black/White/Gray/Script Kiddie + synthetic stress matrix.
+8. Mark a failure class CLOSED only after code/CI + exact-source render + technical QA + visual review.
+
