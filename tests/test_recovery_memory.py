@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from app.recovery.builtins import BUILTIN_ISSUES
 from app.recovery.manager import RecoveryManager
 from app.recovery.models import KnownIssue, RecoveryStatus
 from app.recovery.policy import FailureDisposition, failure_policy
@@ -141,3 +142,24 @@ def test_all_known_historical_engine_failures_have_declared_disposition() -> Non
     }
     missing = sorted(code for code in codes if failure_policy(code) is None)
     assert missing == []
+
+
+def test_every_builtin_issue_has_declared_failure_policy() -> None:
+    missing = sorted(
+        issue.code
+        for issue in BUILTIN_ISSUES
+        if failure_policy(issue.code) is None
+    )
+    assert missing == []
+
+
+def test_white_halo_candidate_policy_cannot_be_used_as_proven_recovery(tmp_path: Path) -> None:
+    manager = RecoveryManager(tmp_path)
+    policy = failure_policy("ASSET_WHITE_HALO")
+    assert policy is not None
+    assert policy.disposition == FailureDisposition.PREVENT
+    assert manager.handle(
+        code="ASSET_WHITE_HALO",
+        context={"asset_id": "a"},
+        attempt=1,
+    ) is None

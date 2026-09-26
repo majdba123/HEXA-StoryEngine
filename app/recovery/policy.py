@@ -35,6 +35,48 @@ def _policy(
 
 
 HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
+    "ASSET_BAD_CUTOUT": _policy(
+        "ASSET_BAD_CUTOUT",
+        "cutout",
+        FailureDisposition.RECOVER,
+        "Bounded re-extraction is proven and must preserve Final Package semantics",
+    ),
+    "ASSET_WHITE_HALO": _policy(
+        "ASSET_WHITE_HALO",
+        "cutout",
+        FailureDisposition.PREVENT,
+        "Halo/ghost defects must fail extraction safety until candidate recovery is re-proven",
+    ),
+    "ELEMENT_APPEARS_TOO_EARLY": _policy(
+        "ELEMENT_APPEARS_TOO_EARLY",
+        "story",
+        FailureDisposition.RECOVER,
+        "Story timing owns reveal authority and may be rebuilt within narration bounds",
+    ),
+    "ELEMENT_APPEARS_TOO_LATE": _policy(
+        "ELEMENT_APPEARS_TOO_LATE",
+        "motion",
+        FailureDisposition.RECOVER,
+        "Motion timing may be rebuilt within the Story-owned activation window",
+    ),
+    "BAD_HANDOFF": _policy(
+        "BAD_HANDOFF",
+        "story",
+        FailureDisposition.RECOVER,
+        "Story timing may rebuild an invalid attention handoff without changing meaning",
+    ),
+    "LOW_SCREEN_OCCUPANCY": _policy(
+        "LOW_SCREEN_OCCUPANCY",
+        "composition",
+        FailureDisposition.RECOVER,
+        "Composition may be rebuilt while preserving semantic authority",
+    ),
+    "MULTI_ELEMENT_POP": _policy(
+        "MULTI_ELEMENT_POP",
+        "motion",
+        FailureDisposition.RECOVER,
+        "Motion may rebuild reveal spacing while preserving semantic order",
+    ),
     "INVALID_PACKAGE": _policy(
         "INVALID_PACKAGE",
         "input",
