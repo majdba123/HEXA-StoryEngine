@@ -16,12 +16,14 @@ from app.models import (
     CompositionBeat,
     LayoutItem,
     MotionCue,
+    MotionSegment,
     RenderPlan,
     StoryBeat,
     StorySemanticContext,
     VisualAsset,
 )
 from app.motion.timing import GOLDEN_MINOR
+from app.qa import SceneContinuityQA
 from app.recovery.detector import RecoveryDetector
 from app.shared.errors import StageFailedError
 from app.render.renderer import FFmpegRenderer
@@ -1103,3 +1105,105 @@ def test_renderer_preflight_runs_real_h264_encode(tmp_path: Path) -> None:
     script = output.parent / "ffmpeg-render-preflight-filter-complex.ffgraph"
     assert script.exists()
     assert "[0:v]format=yuv420p[vout]" in script.read_text(encoding="utf-8")
+
+
+def test_scene_continuity_rejects_terminal_exit_then_same_asset_reappears() -> None:
+    story = [
+        StoryBeat(
+            id="beat-1", scene_id="scene-1", start=0.0, end=1.0,
+            narration="first", action="EXPLAIN",
+        ),
+        StoryBeat(
+            id="beat-2", scene_id="scene-2", start=1.0, end=2.0,
+            narration="second", action="EXPLAIN", handoff_from="beat-1",
+        ),
+    ]
+    composition = [
+        CompositionBeat(
+            beat_id="beat-1",
+            items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.3, height=0.3)],
+        ),
+        CompositionBeat(
+            beat_id="beat-2",
+            items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.3, height=0.3)],
+        ),
+    ]
+    motion = [
+        MotionCue(
+            beat_id="beat-1", asset_id="shared", kind="program_v3",
+            start=0.0, end=0.2,
+            segments=[MotionSegment(
+                phase="EXIT", start=0.6, end=0.95,
+                program={"terminal_behavior": "LEAVE"},
+            )],
+        ),
+        MotionCue(
+            beat_id="beat-2", asset_id="shared", kind="program_v3",
+            start=1.2, end=1.4,
+        ),
+    ]
+
+    report = SceneContinuityQA().inspect(
+        story=story, composition=composition, motion=motion
+    )
+
+    assert not report.ok
+    violation = next(
+        row for row in report.violations
+        if row.code == "TERMINAL_EXIT_ON_PERSISTENT_ASSET"
+    )
+    assert violation.from_beat_id == "beat-1"
+    assert violation.to_beat_id == "beat-2"
+    assert "shared" in violation.detail
+
+
+def test_renderer_fails_closed_on_terminal_exit_then_same_asset_reappears(tmp_path: Path) -> None:
+    asset_path = tmp_path / "shared.png"
+    _write_rgba_asset(asset_path, (50, 90, 190, 255))
+    plan = RenderPlan(
+        width=320, height=180, fps=30, duration=2.0,
+        story=[
+            StoryBeat(
+                id="beat-1", scene_id="scene-1", start=0.0, end=1.0,
+                narration="first", action="EXPLAIN",
+            ),
+            StoryBeat(
+                id="beat-2", scene_id="scene-2", start=1.0, end=2.0,
+                narration="second", action="EXPLAIN",
+            ),
+        ],
+        composition=[
+            CompositionBeat(
+                beat_id="beat-1",
+                items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
+            ),
+            CompositionBeat(
+                beat_id="beat-2",
+                items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
+            ),
+        ],
+        motion=[
+            MotionCue(
+                beat_id="beat-1", asset_id="shared", kind="program_v3",
+                start=0.0, end=0.2,
+                segments=[MotionSegment(
+                    phase="EXIT", start=0.6, end=0.95,
+                    program={"terminal_behavior": "LEAVE"},
+                )],
+            ),
+            MotionCue(
+                beat_id="beat-2", asset_id="shared", kind="program_v3",
+                start=1.1, end=1.3,
+            ),
+        ],
+        assets=[VisualAsset(
+            id="shared", scene_id="scene-1", role="primary",
+            image_path=asset_path, extraction_method="test",
+        )],
+    )
+
+    with pytest.raises(StageFailedError) as exc_info:
+        FFmpegRenderer("ffmpeg").render(plan, tmp_path / "invalid.mp4")
+
+    assert exc_info.value.details["code"] == "TERMINAL_EXIT_ON_PERSISTENT_ASSET"
+    assert exc_info.value.details["asset_ids"] == ["shared"]

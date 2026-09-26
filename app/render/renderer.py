@@ -5,6 +5,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from app.contracts import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
@@ -34,6 +35,7 @@ class FFmpegRenderer:
         self._filter_complex_file_option_cache: str | None = None
         self.text_renderer = TextRenderer(font_family=text_font_family)
         self.transition_policy = VisualTransitionPolicy()
+        self.lifecycle = ContinuityContract()
         self.motion_adapter = FFmpegMotionAdapter()
 
 
@@ -187,6 +189,30 @@ class FFmpegRenderer:
             layout,
             current_beat=beat,
         )
+        previous_motion_by_asset = (
+            {
+                item.asset_id: motion[(previous_beat.id, item.asset_id)]
+                for item in previous_layout.items
+                if (previous_beat.id, item.asset_id) in motion
+            }
+            if previous_beat is not None and previous_layout is not None
+            else {}
+        )
+        lifecycle = self.lifecycle.classify_boundary(
+            previous_layout=previous_layout,
+            current_layout=layout,
+            previous_motion_by_asset=previous_motion_by_asset,
+        )
+        if lifecycle.invalid_terminal_persistence:
+            raise StageFailedError(
+                "render lifecycle contract violated",
+                details={
+                    "code": "TERMINAL_EXIT_ON_PERSISTENT_ASSET",
+                    "from_beat_id": previous_beat.id if previous_beat is not None else None,
+                    "to_beat_id": beat.id,
+                    "asset_ids": sorted(lifecycle.invalid_terminal_persistence),
+                },
+            )
         persistent_ids = transition.persistent_asset_ids
         object_target_by_outgoing = dict(transition.object_handoff_pairs)
         current_items_by_id = {item.asset_id: item for item in ordered_items}

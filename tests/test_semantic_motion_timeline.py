@@ -431,6 +431,36 @@ def test_handoff_creates_real_exit_for_outgoing_asset() -> None:
     assert report.ok, report.violations
 
 
+def test_handoff_does_not_terminally_exit_asset_that_continues_next_beat() -> None:
+    cue = MotionCue(
+        beat_id="beat", asset_id="shared", kind="program_v3",
+        start=1.0, end=1.2, params={"engine_version": 3},
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1", event_order=1, stage=EventFlowStage.INTERACT,
+        step_index=1, focus_asset_id="shared",
+        source_asset_id="shared", target_asset_id="target", result_asset_id=None,
+        relationship="CONNECTS", semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION", involvement="SOURCE",
+        handoff_to_event_ids=("E2",), handoff_to_asset_ids=("new",),
+        handoff_to_event_id="E2", handoff_to_asset_id="new",
+    )
+    shared = LayoutItem(asset_id="shared", x=0.25, y=0.5, width=0.2, height=0.3)
+    target = LayoutItem(asset_id="new", x=0.75, y=0.5, width=0.2, height=0.3)
+
+    segment = MotionPlanner._exit_segment_before_handoff(
+        cue=cue,
+        assignment=assignment,
+        deadline=2.0,
+        item=shared,
+        items_by_id={"shared": shared, "new": target},
+        existing_segments=[],
+        continues_next_beat=True,
+    )
+
+    assert segment is None
+
+
 def test_motion_planner_auto_fits_new_collision_from_stronger_motion() -> None:
     beat, composition, choreography = _fixture()
     close_composition = CompositionBeat(

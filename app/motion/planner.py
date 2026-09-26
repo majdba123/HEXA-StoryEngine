@@ -3,6 +3,7 @@ from __future__ import annotations
 from math import hypot
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
+from app.contracts import ContinuityContract
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
 from app.motion.collision import fit_relation_collisions
@@ -47,6 +48,7 @@ class MotionPlanner:
         self.compiler = MotionCompiler()
         self.event_flow = MotionEventFlowResolver()
         self.rhythm = ReferenceRhythmPolicy()
+        self.continuity_contract = ContinuityContract()
 
     def plan(
         self,
@@ -68,6 +70,11 @@ class MotionPlanner:
             layout = by_beat.get(beat.id)
             if layout is None or not layout.items:
                 continue
+            next_layout = (
+                by_beat.get(beats[beat_index + 1].id)
+                if beat_index + 1 < len(beats)
+                else None
+            )
             directive = choreography.for_beat(beat.id) if choreography else None
             activation_by_asset = {
                 row.asset_id: row for row in beat.asset_activations
@@ -593,6 +600,9 @@ class MotionPlanner:
                         energy=intensity,
                         cohort_gain=cohort_gain,
                         directive=directive,
+                        continues_next_beat=self.continuity_contract.continues_into_layout(
+                            item.asset_id, next_layout
+                        ),
                     )
             if len(cues) > beat_cue_start:
                 cues[beat_cue_start:] = fit_relation_collisions(
@@ -669,6 +679,7 @@ class MotionPlanner:
         energy: float,
         cohort_gain: float,
         directive,
+        continues_next_beat: bool = False,
     ) -> MotionCue:
         """Attach later semantic actions while keeping one backward-compatible cue."""
         deadline = cls._event_handoff_deadline(
@@ -959,6 +970,7 @@ class MotionPlanner:
             item=item,
             items_by_id=items_by_id,
             existing_segments=segments,
+            continues_next_beat=continues_next_beat,
         )
         if exit_segment is not None:
             segments.append(exit_segment)
@@ -1616,7 +1628,10 @@ class MotionPlanner:
         item: LayoutItem,
         items_by_id: dict[str, LayoutItem],
         existing_segments: list[MotionSegment],
+        continues_next_beat: bool = False,
     ) -> MotionSegment | None:
+        if continues_next_beat:
+            return None
         has_handoff = bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
         if not has_handoff or cue.asset_id in set(assignment.handoff_to_asset_ids):
             return None

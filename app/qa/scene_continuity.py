@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from app.contracts import ContinuityContract
 from app.models import CompositionBeat, MotionCue, StoryBeat
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.errors import StageFailedError
@@ -34,6 +35,7 @@ class SceneContinuityQA:
 
     def __init__(self) -> None:
         self.policy = VisualTransitionPolicy()
+        self.lifecycle = ContinuityContract()
 
     def inspect(
         self,
@@ -44,8 +46,10 @@ class SceneContinuityQA:
     ) -> SceneContinuityReport:
         layouts = {row.beat_id: row for row in composition}
         motion_by_beat: dict[str, list[MotionCue]] = {}
+        motion_by_key: dict[tuple[str, str], MotionCue] = {}
         for cue in motion:
             motion_by_beat.setdefault(cue.beat_id, []).append(cue)
+            motion_by_key[(cue.beat_id, cue.asset_id)] = cue
 
         ordered = sorted(story, key=lambda row: (row.start, row.end, row.id))
         checked = 0
@@ -54,11 +58,33 @@ class SceneContinuityQA:
         violations: list[SceneContinuityViolation] = []
 
         for previous, current in zip(ordered, ordered[1:]):
-            if previous.scene_id == current.scene_id:
-                continue
             previous_layout = layouts.get(previous.id)
             current_layout = layouts.get(current.id)
             if previous_layout is None or current_layout is None:
+                continue
+
+            lifecycle = self.lifecycle.classify_boundary(
+                previous_layout=previous_layout,
+                current_layout=current_layout,
+                previous_motion_by_asset={
+                    item.asset_id: motion_by_key.get((previous.id, item.asset_id))
+                    for item in previous_layout.items
+                    if motion_by_key.get((previous.id, item.asset_id)) is not None
+                },
+            )
+            for asset_id in sorted(lifecycle.invalid_terminal_persistence):
+                violations.append(SceneContinuityViolation(
+                    code="TERMINAL_EXIT_ON_PERSISTENT_ASSET",
+                    from_beat_id=previous.id,
+                    to_beat_id=current.id,
+                    detail=(
+                        f"{asset_id} has terminal EXIT/LEAVE in {previous.id} but the exact "
+                        f"same asset is authored in adjacent beat {current.id}; this would "
+                        "produce disappear/reappear lifecycle discontinuity"
+                    ),
+                ))
+
+            if previous.scene_id == current.scene_id:
                 continue
 
             checked += 1

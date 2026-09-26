@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, StoryBeat, StorySemanticContext
+from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, StorySemanticContext
 from app.qa import SceneContinuityQA
 
 
@@ -109,3 +109,47 @@ def test_scene_continuity_qa_accepts_object_handoff_without_blur() -> None:
     assert report.ok, report.violations
     assert report.bridged_boundaries == 1
     assert report.blur_boundaries == 0
+
+
+def test_scene_continuity_qa_checks_lifecycle_inside_same_scene() -> None:
+    story = [
+        StoryBeat(
+            id="a", scene_id="scene-a", start=0.0, end=1.0,
+            narration="a", primary_asset_ids=["shared"], action="EXPLAIN",
+        ),
+        StoryBeat(
+            id="b", scene_id="scene-a", start=1.0, end=2.0,
+            narration="b", primary_asset_ids=["shared"], action="EXPLAIN",
+        ),
+    ]
+    layouts = [
+        CompositionBeat(
+            beat_id="a",
+            items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
+        ),
+        CompositionBeat(
+            beat_id="b",
+            items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
+        ),
+    ]
+    motion = [
+        MotionCue(
+            beat_id="a", asset_id="shared", kind="program_v3",
+            start=0.0, end=0.2,
+            segments=[MotionSegment(
+                phase="EXIT", start=0.6, end=0.95,
+                program={"terminal_behavior": "LEAVE"},
+            )],
+        ),
+        MotionCue(beat_id="b", asset_id="shared", kind="program_v3", start=1.1, end=1.3),
+    ]
+
+    report = SceneContinuityQA().inspect(
+        story=story, composition=layouts, motion=motion
+    )
+
+    assert any(
+        row.code == "TERMINAL_EXIT_ON_PERSISTENT_ASSET"
+        for row in report.violations
+    )
+    assert report.checked_boundaries == 0
