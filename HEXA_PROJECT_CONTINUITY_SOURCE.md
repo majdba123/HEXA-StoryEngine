@@ -10016,3 +10016,521 @@ Closure status:
 - code/CI prevention: CLOSED.
 - Gray encoded/visual production proof: OPEN until the same Gray package + narration is rerendered from exact source `1ab23e54830b50039e365aba4dc3da5aea476154` or a descendant containing only documentation/non-behavior changes.
 - If any of the same relation failure classes recur on rerender, treat as engine regression under the permanent render-failure handling rule; do not patch the Gray package and do not weaken QA.
+
+
+# MONTAGE32 RENDER-STABILITY / CROSS-PACKAGE ERROR-HANDLING HANDOFF — 2026-09-26
+
+## Absolute current priority
+
+STOP all visual Motion-polish work until render stability is closed.
+
+Current product priority is:
+`known render failures -> generic prevention/recovery contract -> cross-package regression -> exact-source real render matrix`.
+
+No Hero-strength, final-shot, reference-strength, focus-polish, continuity-style, or other aesthetic work should resume until the stability gate below is complete.
+
+The user explicitly requires:
+- every real failure found while rendering any Final Package becomes a permanent engine-level failure class/contract;
+- fixing one package must never break a package that previously passed;
+- no package-specific patch, scene id, asset id, timestamp, phrase, or hacker-specific branch;
+- no QA threshold weakening;
+- no Final Package edits to make the engine pass;
+- no blind retry;
+- every known failure must have an owner, policy, regression, and cross-package proof.
+
+Permanent required engineering loop:
+`Failure evidence -> root cause -> owning layer -> generic fix -> failure policy -> permanent regression -> White/Black/Gray matrix -> CI -> real render proof -> handoff`.
+
+## Live repository state at this handoff
+
+Branch:
+- `montage`
+
+Live HEAD:
+- `e7eef94e21e36fe3fdd54a497e3b697f02abd884`
+- `[tests] Restore group proxy test newline`
+
+Behavior commit immediately below the two test-format cleanup commits:
+- `885027e869827e9751c83f72e29b31fd8fbfddc8`
+- `[story] Preserve authored events across proxy timing`
+
+Intermediate test-only cleanup commits:
+- `1a0a050d52b95fe598dcca08388f695c99023e75`
+  - `[tests] Fix semantic group proxy lint`
+- `e7eef94e21e36fe3fdd54a497e3b697f02abd884`
+  - `[tests] Restore group proxy test newline`
+
+Current accepted CI:
+- workflow: `V2 CI`
+- run: `36247899041`
+- run number: `578`
+- conclusion: **SUCCESS**
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: **449 passed, 12 warnings in 17.01 s**
+- tested-source artifact upload: SUCCESS
+
+Runs 576/577 were superseded by the cleanup commits above. Do not use them as accepted checkpoints.
+
+Always re-verify live `montage` HEAD + CI before editing because branch movement occurred during this work session.
+
+## Why this stability phase was reopened
+
+Gray Hat originally produced diagnostic:
+- `HEXA-diagnostic-9322cea6.zip`
+
+Historical Gray violations:
+- `MISSING_RELATION_TIMELINE`
+- `MISSING_TARGET_REACTION`
+- `NO_RELATION_OVERLAP`
+
+A first generic Motion fix for Gray was committed, but it introduced a serious regression in a previously working Black Hat package.
+
+New Black diagnostic:
+- `HEXA-diagnostic-e6f91917.zip`
+- failure: `NO_RELATION_OVERLAP`
+- beat: `beat-001`
+- relation: `REVEALS_IDENTITY`
+- approximate source interval: `0.10 -> 0.50 s`
+- approximate target interval: `1.496 -> 1.856 s`
+
+This proved that the earlier Gray fix had over-generalized:
+it assumed every SOURCE INTERACT / TARGET REACT pair must overlap.
+
+That is not a valid universal story rule.
+
+Some relations are co-present causal interactions and require overlap.
+Other authored relations are sequential handoffs/reveals/results and are correctly separated in time.
+
+This regression is the concrete reason the user now requires White + Black + Gray to pass together on one exact source before a fix is accepted.
+
+## Current shared relation timing contract
+
+Implemented in:
+- `app/choreography/relation_contract.py`
+
+New shared contract:
+- `RelationTimingMode.OVERLAP_REQUIRED`
+- `RelationTimingMode.SEQUENTIAL_ALLOWED`
+
+Producer and validator must consume the same timing authority.
+
+The decision uses authored Story/Final-Package evidence:
+1. same semantic event -> co-present / overlap-required;
+2. later authored semantic event order -> sequential allowed;
+3. script trigger spans as fallback;
+4. spoken windows as secondary fallback;
+5. missing/ambiguous evidence remains conservative.
+
+Important:
+`SEQUENTIAL_ALLOWED` means overlap is not required.
+It does NOT mean arbitrary reversed order is acceptable.
+
+Reaction policy was also corrected:
+- a named target does not automatically justify a second REACT accent;
+- actions such as physical/casual BLOCK/PROTECT/RESOLVE/CONNECT may require REACT;
+- REVEAL/result-style relations may be represented by the target's own ESTABLISH/ADD/PAYOFF rather than a duplicate REACT;
+- an explicitly authored Final Package visual-state transition can still require REACT.
+
+Do not revert to universal relation overlap.
+
+## Current semantic proxy authorities
+
+Shared constant:
+`SEMANTIC_PROXY_AUTHORITIES`
+
+Current authorities:
+- `FINAL_PACKAGE_COMPOUND_PROXY`
+- `FINAL_PACKAGE_GROUP_PROXY`
+
+These are semantic timing/event carriers only.
+They must NOT:
+- create a new cutout;
+- alter Composition geometry;
+- invent semantic meaning;
+- cause a new reveal without authored event authority.
+
+They exist to preserve Final Package semantic events when one runtime visual/cutout carries more than one authored semantic unit/event.
+
+## Gray semantic-event coverage defect discovered after relation fix
+
+With the original Gray package and the original narration, after the relation-timing regression was corrected, Gray advanced beyond the historical Motion failures and exposed a deeper Story defect:
+
+`FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE`
+
+Observed coverage:
+- authored Final Package semantic events: **75**
+- represented runtime semantic events: **62**
+- missing: **13**
+
+This was NOT a Final Package corruption.
+
+Investigation proved:
+- the missing events were authored and had valid semantic assets in `semantic_bindings.json`;
+- many of those semantic units did not become independent runtime cutouts;
+- Story semantic binding was effectively one-to-one;
+- a generic `GROUP` container could also consume a runtime cutout before a precise `VISUAL_ASSET_INTENT`;
+- unresolved authored semantic events were therefore silently lost before Choreography.
+
+This is a generic engine issue for any dense Final Package where:
+- multiple authored semantic units/events share one visual group/family;
+- not every semantic unit becomes an independent Pass1/Pass2 cutout.
+
+## Current Binder correction
+
+Implemented in:
+- `app/story/binding.py`
+
+Backward-compatible rule:
+- if modern scene units contain `VISUAL_ASSET_INTENT`, generic `GROUP` containers must not claim cutouts before those precise visual intents;
+- legacy scenes that do not contain `VISUAL_ASSET_INTENT` retain historical GROUP binding behavior.
+
+This rule was explicitly required because the first stricter binder change broke:
+`test_round2_final_package_relationship_becomes_executable_interaction`.
+
+The backward-compatible version preserves that legacy path.
+
+Do not change this to "GROUP is always forbidden".
+
+## Group Semantic Proxy contract
+
+Implemented in:
+- `app/story/activation.py`
+- `app/models.py`
+- `app/choreography/event_flow.py`
+- `app/motion/event_flow.py`
+- `app/motion/planner.py`
+- `app/story/sync_qa.py`
+
+Purpose:
+when an authored semantic event has no independent runtime cutout, but the Final Package explicitly places that semantic unit in a semantic group that already has a real runtime visual carrier, preserve the event on that carrier instead of silently deleting the event.
+
+Strict conditions:
+- authored semantic event exists;
+- semantic unit exists in Final Package authority;
+- explicit semantic_group_id exists;
+- a real runtime carrier from the same authored semantic group exists;
+- no new asset/cutout is created;
+- carrier geometry is unchanged;
+- original event id/order/dependencies/script timing are preserved;
+- dependency-carrier continuity is preferred when an earlier dependent proxy already owns a valid carrier;
+- proxy is explicit in diagnostics as `FINAL_PACKAGE_GROUP_PROXY`.
+
+Compound proxy remains the first/older path.
+Group proxy is a fallback for authored group events that otherwise have no independent cutout.
+
+Motion/Choreography must treat both proxy authorities consistently.
+
+## Canonical semantic-event dependency anchor
+
+Gray later exposed:
+`MOTION_INFEASIBLE_BEFORE_RENDER`
+
+Historical failing case after semantic coverage work:
+- scene/event: `SCENE_034_EVENT_03`
+- phase: `ESTABLISH`
+- asset: `SCENE_034:asset-01:secondary-01`
+- available active motion duration: approximately **0.115 s**
+- encoded readability requirement: approximately **7.39 px**
+- comfort ceiling in that window: approximately **6.19 px**
+
+Correct decision:
+do NOT lower readability.
+do NOT increase comfort/speed ceiling.
+do NOT make a Gray-specific motion exception.
+
+Root cause:
+dependency timing was effectively chained from the **latest support-member peak** of the previous event.
+In a dense event with leader + late support assets, that pushed later dependent events almost to the beat end and made readable motion physically infeasible.
+
+Current generic correction exists in:
+`app/story/activation.py::_canonical_event_anchor_peaks(...)`
+
+Canonical dependency anchor priority:
+1. LEADER;
+2. RESULT / TEXT_ANCHOR;
+3. PRIMARY semantic focus;
+4. generic support only as fallback.
+
+For equal authority, earlier meaning-bearing peak wins.
+
+Principle:
+event dependency handoff occurs when the previous event's meaning-bearing anchor has landed,
+not after every support member has finished.
+
+Do not revert to "max participant/support peak".
+
+## Current exact Gray input available to future work
+
+Gray Final Package:
+- `HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED(1).zip`
+- known file id from this project context: `file_00000000aaac8210a29a0330e4fae2b8`
+- known raw size: `40,603,724 bytes`
+
+Original Gray narration uploaded in this conversation:
+- `ElevenLabs_2026-09-23T07_14_02_Ahmed - Intellectual, Calm & Educational_pvc_sp101_s76_sb100_se0_b_m2(1).mp3`
+- raw conversation path during this session:
+  `/mnt/data/ElevenLabs_2026-09-23T07_14_02_Ahmed - Intellectual, Calm & Educational_pvc_sp101_s76_sb100_se0_b_m2(1).mp3`
+- measured duration: approximately **97.933 s**
+
+Do not replace Gray audio with a surrogate now; original narration is available in the conversation/file context and should be materialized/reused when possible.
+
+## Local render environment limitation
+
+The engineering container used during this session did NOT have:
+- WhisperX runtime;
+- semantic transformer model runtime.
+
+Therefore local integration renders used diagnostic settings:
+- forced alignment disabled;
+- semantic model disabled;
+- in some runs the text-layer production gate was disabled.
+
+This allowed real execution of:
+- package load;
+- Pass1;
+- Pass2;
+- Story fallback;
+- Choreography;
+- Composition;
+- Motion;
+- pre-render QA;
+- FFmpeg segment rendering;
+- RenderedMotionQA;
+- final export;
+- full decode.
+
+These runs are valuable integration/regression proof,
+but they are NOT production-equivalent proof of forced-alignment/text/semantic-model behavior.
+
+Never represent diagnostic-mode local renders as complete production acceptance.
+
+## Black integration evidence before the later Group-Proxy expansion
+
+A full local Black integration render succeeded on the relation-timing stabilized code before the later Gray semantic-coverage/proxy additions.
+
+Observed:
+- Pass1: **157 assets**
+- Pass2: **179 assets**
+- Story: **40 beats**
+- relation timelines: **14**
+- Authoring QA: **0 violations**
+- RenderedMotionQA: **168 segments checked / 0 violations**
+- final export: PASS
+- full FFmpeg decode: PASS
+- output: 1920x1080, CFR 30 fps, H.264 + AAC
+- duration approximately 97.066 s
+
+Historical Black regression `NO_RELATION_OVERLAP / REVEALS_IDENTITY` did not recur in that run.
+
+IMPORTANT:
+because later Story/Group-Proxy behavior was added after this successful render,
+Black MUST be rerun on the final exact accepted HEAD before this stability layer is closed.
+
+## White integration evidence before the later Group-Proxy expansion
+
+A full local White integration render also succeeded on the same relation-timing stabilized code before the later Gray semantic-coverage/proxy additions.
+
+Observed:
+- Pass1: **118 assets**
+- Pass2: **133 assets**
+- Story: **35 beats**
+- relation timelines: **11**
+- Authoring QA: **0 violations**
+- historical `MOTION_BELOW_PERCEPTUAL_FLOOR` did not recur
+- RenderedMotionQA: **150 segments checked / 0 violations**
+- final export: PASS
+- full decode: PASS
+- output: 1920x1080, CFR 30 fps, H.264 + AAC
+- duration approximately 99.200 s
+
+IMPORTANT:
+White must also be rerun on the final exact accepted HEAD after all Gray Story/proxy fixes are complete.
+
+## Latest Gray runtime blocker at handoff
+
+After:
+- relation timing correction;
+- semantic-event coverage/group proxy work;
+- binder compatibility;
+- canonical dependency-anchor correction;
+
+Gray progressed past the historical relation failures and past the earlier 62/75 semantic-event coverage failure.
+
+The latest known runtime blocker is now **StorySyncQA**, not FFmpeg and not relation overlap.
+
+Latest known violation summary:
+- total: **9**
+- **1** `focus_peak_too_early` around `beat-023`
+- **4** `proxy_peak_mismatch`
+- **4** `proxy_missing_semantic_segment`
+- the missing proxy semantic segments are concentrated around the final semantic chain / Scene 035.
+
+Interpretation at handoff:
+1. Story now creates/preserves the authored proxy events.
+2. Choreography/Motion receives proxy authority.
+3. StorySyncQA proves that some proxy Motion segments still do not use the exact Story semantic peak, or some later proxy events sharing the same carrier fail to receive an accepted semantic segment.
+4. This must be fixed in the Producer (Story/Motion proxy scheduling), NOT by increasing StorySync tolerance and NOT by deleting proxies/events.
+
+Root-cause direction already identified:
+- Motion historically recalculated a semantic peak from spoken_start/spoken_end instead of always consuming the proxy's exact Story `reveal_start / semantic_peak / settle_at`;
+- multiple authored proxy events on the same carrier must each retain an independent semantic segment/timeline;
+- one proxy event must not dedupe/suppress a later proxy event merely because the carrier asset is the same.
+
+Current `app/story/sync_qa.py` still checks proxy actual peak from the rendered/authored semantic segment and compares it against `proxy.semantic_peak`.
+Do not weaken `_SYNC_TOLERANCE_SECONDS` to get green.
+
+## Exact next engineering task
+
+Start from live `montage` HEAD and CI, then:
+
+1. Reproduce the latest Gray run using the exact Gray package + original Gray narration.
+2. Confirm current HEAD still produces the same latest StorySync blocker before making a new change.
+3. Inspect Scene 035 proxy list and resulting Motion segments together:
+   - proxy event id/order;
+   - carrier asset id;
+   - reveal_start;
+   - semantic_peak;
+   - settle_at;
+   - resulting Motion phase;
+   - segment start/end;
+   - semantic_peak_progress;
+   - whether segment exists.
+4. Fix proxy scheduling generically so:
+   - Story proxy timing is the one source of truth;
+   - Motion does not recompute a contradictory peak;
+   - every authored proxy event sharing a carrier receives its own semantic segment;
+   - dedupe keys include semantic event identity;
+   - event dependencies/order remain intact;
+   - final Composition geometry remains untouched.
+5. Add permanent regressions:
+   - multiple proxy events on same carrier;
+   - proxy semantic peak equals Story semantic peak;
+   - no proxy event lost after dedupe;
+   - focus peak not earlier than Story authority.
+6. Run focused Story/Choreography/Motion/StorySync tests.
+7. Run full CI.
+8. Rerender Gray with original narration.
+9. Only after Gray passes:
+   - rerender Black on the exact same HEAD;
+   - rerender White on the exact same HEAD;
+   - then Script Kiddie if available.
+10. Require for all three:
+   - no pre-render violations;
+   - RenderedMotionQA PASS;
+   - final export PASS;
+   - full decode PASS;
+   - no recurrence of historical failure classes.
+11. Only then mark the render-stability/error-handling layer CLOSED and return to visual Motion improvements.
+
+## Cross-package non-regression gate — permanent
+
+No Story/Choreography/Motion/Continuity/Recovery change is accepted by testing only the package that exposed the defect.
+
+Minimum acceptance matrix for every future general fix:
+- Gray Hat — triggering/current failure;
+- Black Hat — previous regression victim;
+- White Hat — historical readability/text/motion regression package.
+
+Then expand to:
+- Script Kiddie;
+- synthetic 1-asset;
+- dense 20-item;
+- 0.5 s beat;
+- 8 s beat;
+- repeated asset;
+- repeated enter/exit;
+- comparison;
+- timeline;
+- no character;
+- long Arabic text;
+- realistic/illustration cases.
+
+A fix that makes Gray pass but breaks Black or White is REJECTED.
+
+## Failure handling architecture remains strict
+
+Keep the existing four dispositions:
+- PREVENT
+- RECOVER
+- FAIL_FAST
+- POST_RENDER_PROOF
+
+Important interpretation:
+the user's desired "failure list with its solution" is implemented as an explicit failure-policy registry and contracts, NOT as blind runtime retries.
+
+For a known failure:
+- if it can be prevented by correct construction, PREVENT it before expensive render;
+- if a bounded safe repair exists, RECOVER with candidate validation + rollback;
+- if input/environment authority is invalid, FAIL_FAST;
+- if only encoded media can prove it, POST_RENDER_PROOF.
+
+Never turn PREVENT failures into broad auto-recovery just to keep rendering.
+
+## Files currently central to this stability work
+
+Shared relation policy:
+- `app/choreography/relation_contract.py`
+
+Choreography semantic flow:
+- `app/choreography/event_flow.py`
+
+Story model/proxy:
+- `app/models.py`
+- `app/story/activation.py`
+- `app/story/binding.py`
+- `app/story/sync_qa.py`
+
+Motion semantic flow:
+- `app/motion/event_flow.py`
+- `app/motion/planner.py`
+
+Motion semantic QA:
+- `app/qa/motion_semantics.py`
+
+Primary regressions:
+- `tests/test_choreography.py`
+- `tests/test_final_package_semantic_contract_v12.py`
+- `tests/test_motion_event_flow.py`
+- `tests/test_semantic_motion_timeline.py`
+- `tests/test_story_semantic_matching.py`
+- `tests/test_story_sync_qa.py`
+
+## Status labels at this handoff
+
+CLOSED / code+CI:
+- FFmpeg execution-probe transport selection.
+- persistent asset terminal-exit lifecycle guard.
+- rollback-safe Recovery evaluation.
+- specific failure identity/policies.
+- White readability geometry contract at code/CI level.
+- relation-timing distinction between co-present overlap and authored sequential handoff.
+- binder GROUP-vs-VISUAL_ASSET_INTENT backward-compatible priority.
+- semantic group proxy infrastructure.
+- canonical event dependency anchor (leader/result/text-anchor before late support).
+- current HEAD CI: 449 passed.
+
+PROVEN LOCALLY BUT MUST RERUN ON FINAL HEAD:
+- Black full integration render.
+- White full integration render.
+
+OPEN:
+- Gray StorySync 9-violation blocker.
+- Gray full final render + RenderedMotionQA + decode.
+- Black rerender on the final post-Gray exact HEAD.
+- White rerender on the final post-Gray exact HEAD.
+- Script Kiddie final regression.
+- visual Motion/reference improvements remain intentionally paused.
+
+## Mandatory next-chat communication behavior
+
+The user requires visible progress updates.
+
+For long work:
+- send a short update every meaningful step / every few tool calls;
+- state what is being inspected, why, and the result;
+- do not disappear during long renders/tests;
+- during a render, report stage/progress and whether the process is still advancing;
+- do not claim a failure is closed from tests alone.
+
+The next chat should not ask the user to repeat architecture, package rules, or the current blocker already recorded here.
