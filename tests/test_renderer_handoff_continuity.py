@@ -1046,69 +1046,83 @@ def test_filter_complex_file_option_renders_real_mp4(tmp_path: Path) -> None:
 
 
 
-def test_filter_file_option_uses_legacy_alias_when_ffmpeg_advertises_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    completed = subprocess.CompletedProcess(
-        args=["ffmpeg", "-hide_banner", "-h", "full"],
-        returncode=0,
-        stdout="... -filter_complex_script filename ...",
-        stderr="",
-    )
-    monkeypatch.setattr(renderer_module, "run_hidden", lambda *args, **kwargs: completed)
-    renderer = FFmpegRenderer("ffmpeg")
-    assert renderer._filter_complex_file_option() == "-filter_complex_script"
-
-
-def test_filter_file_option_uses_generic_file_syntax_when_legacy_alias_is_absent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    completed = subprocess.CompletedProcess(
-        args=["ffmpeg", "-hide_banner", "-h", "full"],
-        returncode=0,
-        stdout=(
-            "... -/filter_complex filename ... "
-            "read filtergraph description from a file ..."
-        ),
-        stderr="",
-    )
-    monkeypatch.setattr(renderer_module, "run_hidden", lambda *args, **kwargs: completed)
-    renderer = FFmpegRenderer("ffmpeg")
-    assert renderer._filter_complex_file_option() == "-/filter_complex"
-
-
-def test_filter_file_option_fails_closed_when_ffmpeg_exposes_no_supported_file_transport(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    completed = subprocess.CompletedProcess(
-        args=["ffmpeg", "-hide_banner", "-h", "full"],
-        returncode=0,
-        stdout="... -filter_complex filtergraph ...",
-        stderr="",
-    )
-    monkeypatch.setattr(renderer_module, "run_hidden", lambda *args, **kwargs: completed)
-    renderer = FFmpegRenderer("ffmpeg")
-
-    with pytest.raises(StageFailedError) as exc_info:
-        renderer._filter_complex_file_option()
-
-    assert exc_info.value.effective_code == "FFMPEG_FILTER_FILE_UNSUPPORTED"
-
-
-def test_historical_unknown_filter_complex_script_error_is_detected_in_preflight(
+def test_filter_file_option_prefers_generic_when_execution_probe_succeeds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls = []
+    calls: list[list[str]] = []
 
     def fake_run(command, **kwargs):
         calls.append(list(command))
-        if command[1:4] == ["-hide_banner", "-h", "full"]:
-            return subprocess.CompletedProcess(
-                args=command,
-                returncode=0,
-                stdout="... -filter_complex_script filename ...",
-                stderr="",
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(renderer_module, "run_hidden", fake_run)
+    renderer = FFmpegRenderer("ffmpeg")
+
+    assert renderer._filter_complex_file_option(tmp_path) == "-/filter_complex"
+    assert len(calls) == 1
+    assert "-/filter_complex" in calls[0]
+
+
+def test_filter_file_option_falls_back_to_legacy_after_generic_probe_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if "-/filter_complex" in command:
+            raise subprocess.CalledProcessError(
+                8, command, stderr="Unrecognized option '/filter_complex'"
             )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(renderer_module, "run_hidden", fake_run)
+    renderer = FFmpegRenderer("ffmpeg")
+
+    assert renderer._filter_complex_file_option(tmp_path) == "-filter_complex_script"
+    assert len(calls) == 2
+    assert "-/filter_complex" in calls[0]
+    assert "-filter_complex_script" in calls[1]
+
+
+def test_filter_file_option_fails_only_after_both_execution_probes_fail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        option = next(
+            arg for arg in command
+            if arg in {"-/filter_complex", "-filter_complex_script"}
+        )
+        raise subprocess.CalledProcessError(
+            8, command, stderr=f"unsupported {option}"
+        )
+
+    monkeypatch.setattr(renderer_module, "run_hidden", fake_run)
+    renderer = FFmpegRenderer("ffmpeg")
+
+    with pytest.raises(StageFailedError) as exc_info:
+        renderer._filter_complex_file_option(tmp_path)
+
+    assert exc_info.value.effective_code == "FFMPEG_FILTER_FILE_UNSUPPORTED"
+    assert set(exc_info.value.details["attempts"]) == {
+        "-/filter_complex",
+        "-filter_complex_script",
+    }
+    assert len(calls) == 2
+
+
+def test_historical_unknown_filter_complex_script_error_falls_back_to_generic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if "-/filter_complex" in command:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         raise subprocess.CalledProcessError(
             8,
             command,
@@ -1121,12 +1135,8 @@ def test_historical_unknown_filter_complex_script_error_is_detected_in_preflight
     monkeypatch.setattr(renderer_module, "run_hidden", fake_run)
     renderer = FFmpegRenderer("ffmpeg")
 
-    with pytest.raises(StageFailedError) as exc_info:
-        renderer.preflight(tmp_path / "preflight")
-
-    assert exc_info.value.effective_code == "FFMPEG_FILTER_FILE_UNSUPPORTED"
-    assert "filter_complex_script" in exc_info.value.details["stderr"]
-    assert len(calls) == 2
+    assert renderer._filter_complex_file_option(tmp_path) == "-/filter_complex"
+    assert len(calls) == 1
 
 
 def test_filter_file_transport_does_not_change_export_quality_contract(tmp_path: Path) -> None:

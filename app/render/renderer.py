@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -92,6 +93,10 @@ class FFmpegRenderer:
         motion = {(cue.beat_id, cue.asset_id): cue for cue in plan.motion}
         segment_root = output.parent / f"{output.stem}-segments"
         segment_root.mkdir(parents=True, exist_ok=True)
+        # Resolve file-backed filter transport before worker threads begin. Pipeline
+        # preflight normally seeds the cache, but direct renderer callers get the same
+        # fail-fast guarantee without a capability-probe race between segments.
+        self._filter_complex_file_option(segment_root)
 
         total_frames = max(1, round(plan.duration * plan.fps))
         first_frame = self._time_to_frame(story[0].start, plan.fps, total_frames)
@@ -825,7 +830,7 @@ class FFmpegRenderer:
         filter_script = target.parent / f"{target.stem}-filter-complex.ffgraph"
         filter_script.write_text(";\n".join(filters) + "\n", encoding="utf-8")
         return [
-            self._filter_complex_file_option(),
+            self._filter_complex_file_option(target.parent),
             str(filter_script),
             "-map",
             "[vout]",
@@ -848,53 +853,82 @@ class FFmpegRenderer:
         ]
 
 
-    def _filter_complex_file_option(self) -> str:
-        """Select the file-backed complex-filter option FFmpeg actually supports.
+    def _filter_complex_file_option(self, probe_root: Path | None = None) -> str:
+        """Select a file-backed complex-filter option by executing a real probe.
 
-        FFmpeg 6 exposes -filter_complex_script. Newer FFmpeg releases support the
-        generic file-option form -/filter_complex, while FFmpeg 9 builds may remove
-        the deprecated script alias entirely. Probe capabilities once per renderer
-        instance instead of hardcoding an FFmpeg major version.
+        FFmpeg builds vary across operating systems and versions, and help text does
+        not reliably advertise the generic file-option syntax. Capability must be
+        proven by execution, not inferred from ``ffmpeg -h full``.
         """
         if self._filter_complex_file_option_cache is not None:
             return self._filter_complex_file_option_cache
 
-        try:
-            result = run_hidden(
-                [self.ffmpeg_bin, "-hide_banner", "-h", "full"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError as exc:
-            raise DependencyUnavailableError(
-                "ffmpeg is not available",
-                details={"code": "FFMPEG_UNAVAILABLE", "binary": self.ffmpeg_bin},
-            ) from exc
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise StageFailedError(
-                "failed to inspect ffmpeg filter-file capabilities",
-                details={"code": "FFMPEG_CAPABILITY_PROBE_FAILED", "error": str(exc)},
-            ) from exc
+        if probe_root is None:
+            with tempfile.TemporaryDirectory(prefix="hexa-filter-probe-") as temp_dir:
+                return self._probe_filter_complex_file_option(Path(temp_dir))
+        return self._probe_filter_complex_file_option(probe_root)
 
-        help_text = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
-        if "filter_complex_script" in help_text:
-            option = "-filter_complex_script"
-        elif (
-            "-/filter_complex" in help_text
-            or "read filtergraph description from a file" in help_text
-        ):
-            option = "-/filter_complex"
-        else:
-            raise StageFailedError(
-                "ffmpeg does not expose a supported file-backed complex-filter option",
-                details={
-                    "code": "FFMPEG_FILTER_FILE_UNSUPPORTED",
-                    "binary": self.ffmpeg_bin,
-                },
-            )
-        self._filter_complex_file_option_cache = option
-        return option
+    def _probe_filter_complex_file_option(self, probe_root: Path) -> str:
+        probe_root.mkdir(parents=True, exist_ok=True)
+        filter_script = probe_root / "ffmpeg-filter-option-probe.ffgraph"
+        filter_script.write_text(
+            "[0:v]format=yuv420p[vout]\n",
+            encoding="utf-8",
+        )
+
+        failures: dict[str, str] = {}
+        for option in ("-/filter_complex", "-filter_complex_script"):
+            command = [
+                self.ffmpeg_bin,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:s=16x16:r=1:d=0.04",
+                option,
+                str(filter_script),
+                "-map",
+                "[vout]",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ]
+            try:
+                run_hidden(command, check=True, capture_output=True, text=True)
+            except FileNotFoundError as exc:
+                raise DependencyUnavailableError(
+                    "ffmpeg is not available",
+                    details={"code": "FFMPEG_UNAVAILABLE", "binary": self.ffmpeg_bin},
+                ) from exc
+            except OSError as exc:
+                raise StageFailedError(
+                    "failed to execute ffmpeg filter-file capability probe",
+                    details={
+                        "code": "FFMPEG_CAPABILITY_PROBE_FAILED",
+                        "binary": self.ffmpeg_bin,
+                        "os_error": str(exc),
+                    },
+                ) from exc
+            except subprocess.CalledProcessError as exc:
+                failures[option] = (exc.stderr or "")[-4000:]
+                continue
+
+            self._filter_complex_file_option_cache = option
+            return option
+
+        raise StageFailedError(
+            "ffmpeg does not support the production file-backed complex-filter path",
+            details={
+                "code": "FFMPEG_FILTER_FILE_UNSUPPORTED",
+                "binary": self.ffmpeg_bin,
+                "attempts": failures,
+            },
+        )
 
     @staticmethod
     def _time_to_frame(value: float, fps: int, total_frames: int) -> int:
