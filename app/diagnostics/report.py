@@ -76,7 +76,8 @@ class BuildReportSession:
         details = exc.details if isinstance(exc, HexaError) else {}
         self.error = {
             "type": type(exc).__name__,
-            "code": getattr(exc, "code", None),
+            "code": (exc.effective_code if isinstance(exc, HexaError) else None),
+            "category": (exc.code if isinstance(exc, HexaError) else None),
             "message": str(exc),
             "details": self._sanitize(details),
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
@@ -352,6 +353,7 @@ class BuildReportSession:
                 "",
                 f"- Type: `{error.get('type')}`",
                 f"- Code: `{error.get('code')}`",
+                f"- Category: `{error.get('category')}`",
                 f"- Message: {error.get('message')}",
                 "",
                 "```text",

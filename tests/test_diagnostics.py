@@ -59,7 +59,10 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
     )
     report.on_progress(Stage.input, 0.04, "Reading Final Package")
     report.on_progress(Stage.story, 0.43, "Building visual story")
-    report.fail(StageFailedError("story failed", details={"reason": "test"}))
+    report.fail(StageFailedError(
+        "story failed",
+        details={"code": "STORY_CONTRACT_VIOLATION", "reason": "test"},
+    ))
 
     destination = report.export_zip(tmp_path / "diagnostic.zip")
     assert destination.exists()
@@ -77,7 +80,8 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
 
     assert payload["status"] == "failed"
     assert payload["last_stage"] == "story"
-    assert payload["error"]["code"] == "STAGE_FAILED"
+    assert payload["error"]["code"] == "STORY_CONTRACT_VIOLATION"
+    assert payload["error"]["category"] == "STAGE_FAILED"
     assert payload["error"]["details"]["reason"] == "test"
     assert recovery[0]["issue_code"] == "LOW_SCREEN_OCCUPANCY"
     assert {row["path"] for row in workspace_payload["files"]} >= {"render-plan.json", "generation.log"}

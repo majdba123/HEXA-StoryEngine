@@ -8,6 +8,14 @@ class HexaError(RuntimeError):
         super().__init__(message)
         self.details = details or {}
 
+    @property
+    def effective_code(self) -> str:
+        detail_code = self.details.get("code")
+        if detail_code is None:
+            return self.code
+        value = str(detail_code).strip()
+        return value or self.code
+
 
 class InvalidPackageError(HexaError):
     code = "INVALID_PACKAGE"
