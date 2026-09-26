@@ -940,12 +940,28 @@ class MotionPlanner:
             beat=beat, assignment=assignment, directive=directive
         )
         segments: list[MotionSegment] = []
-        entry_segment = cls._entry_segment_before_handoff(
-            cue=cue,
-            entry_program=entry_program,
-            assignment=assignment,
-            deadline=deadline,
-            item=item,
+        # A runtime carrier can belong to a later owner activation while earlier
+        # authored proxy events reuse the same visual. Its first visual appearance
+        # must follow the earliest Story proxy reveal, not the owner's cue start.
+        earliest_proxy_reveal = min(
+            (
+                float(proxy.reveal_start)
+                for proxy in beat.semantic_event_proxies
+                if proxy.asset_id == cue.asset_id
+            ),
+            default=float(cue.start),
+        )
+        carrier_preexposed_by_proxy = earliest_proxy_reveal < float(cue.start) - 1e-9
+        entry_segment = (
+            None
+            if carrier_preexposed_by_proxy
+            else cls._entry_segment_before_handoff(
+                cue=cue,
+                entry_program=entry_program,
+                assignment=assignment,
+                deadline=deadline,
+                item=item,
+            )
         )
         if entry_segment is not None:
             segments.append(entry_segment)
@@ -980,6 +996,11 @@ class MotionPlanner:
         ]
         seen: set[tuple[object, ...]] = set()
         for phase in phases:
+            owner_refocus_phase = (
+                carrier_preexposed_by_proxy
+                and phase.event_id == assignment.event_id
+                and phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
+            )
             if (
                 phase.stage not in {
                     EventFlowStage.INTERACT,
@@ -990,6 +1011,7 @@ class MotionPlanner:
                     phase.authority in SEMANTIC_PROXY_AUTHORITIES
                     and phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
                 )
+                and not owner_refocus_phase
             ):
                 continue
             key = (
@@ -1565,7 +1587,9 @@ class MotionPlanner:
             # later-starting semantic segment priority during overlap. Do not delay the
             # proxy behind local motion occupancy and accidentally destroy its feasible
             # readability window.
-            start_bound = max(base_lower, float(relation_start))
+            # Exact Story proxy timing may legitimately precede the runtime
+            # carrier owner's cue. Do not clip it to cue.start and lose the event.
+            start_bound = max(float(beat.start), float(relation_start))
             end_bound = min(upper, float(relation_end))
             if end_bound - start_bound < 0.06:
                 return None
