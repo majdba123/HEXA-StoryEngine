@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 import random
 from pathlib import Path
+
+from PIL import Image
 
 from app.models import PackageModel, SceneSource
 
@@ -166,9 +170,6 @@ def make_package(
 
 # Disk-backed factory used to certify the actual Final Package boundary. The legacy
 # make_package() fixture above remains for representation-only Canonical tests.
-from dataclasses import dataclass
-import json
-from PIL import Image
 
 
 @dataclass(frozen=True, slots=True)
