@@ -9678,3 +9678,91 @@ Still OPEN and must not be called visually closed:
 7. Run Black/White/Gray/Script Kiddie + synthetic stress matrix.
 8. Mark a failure class CLOSED only after code/CI + exact-source render + technical QA + visual review.
 
+
+
+# MONTAGE31 ENVIRONMENT PREFLIGHT CONTRACT — 2026-09-26
+
+## Production environment preflight
+
+Behavior commit:
+`1d40fbe7d65db7e5a75d5a2d61b3193de28f0e77`
+`[preflight] Fail early on environment dependencies`
+
+The pipeline now proves known environment requirements before expensive visual stages.
+
+Early checks:
+- work workspace can be created and written;
+- output root can be written;
+- FFmpeg render path performs a real tiny H.264/yuv420p encode;
+- final export path performs a real copy-video + AAC + MP4 mux;
+- narration file exists;
+- ffprobe can read valid duration metadata;
+- when production forced alignment is required and a script exists, WhisperX runtime and language model are loaded during preflight and cached for the immediate alignment stage.
+
+Specific failure identities include:
+- `WORKSPACE_NOT_WRITABLE`
+- `OUTPUT_ROOT_NOT_WRITABLE`
+- `AUDIO_INPUT_MISSING`
+- `FFPROBE_UNAVAILABLE`
+- `MEDIA_PROBE_FAILED`
+- `MEDIA_PROBE_INVALID_METADATA`
+- `MEDIA_DURATION_INVALID`
+- `FFMPEG_UNAVAILABLE`
+- `FFMPEG_CAPABILITY_PROBE_FAILED`
+- `RENDER_PREFLIGHT_EMPTY`
+- `FINAL_MUX_PREFLIGHT_FAILED`
+- `FINAL_MUX_PREFLIGHT_EMPTY`
+- `FINAL_MUX_FAILED`
+- `ALIGNMENT_PREFLIGHT_UNAVAILABLE`
+- `ALIGNMENT_RUNTIME_UNAVAILABLE`
+- `ALIGNMENT_MODEL_NOT_CONFIGURED`
+- `ALIGNMENT_MODEL_LOAD_FAILED`
+- `ALIGNMENT_SCRIPT_UNSUPPORTED`
+- `RENDER_PROCESS_COMMAND_LIMIT`
+- `RENDER_PROCESS_OS_ERROR`
+- `FFMPEG_COMMAND_FAILED`
+
+The forced-alignment preflight intentionally loads the model early but does not load it twice: the same aligner instance caches the model and `align()` reuses it, then normal release logic frees it after transcription.
+
+CI:
+- workflow: `V2 CI`
+- run: `36207554935`
+- run number: `559`
+- conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: `All checks passed!`
+- Pytest: `416 passed, 12 warnings`
+- exact tested-source artifact: `hexa-storyengine-source-d728f0ab6f8e972941e5121db7853efdb94d28ed`
+- artifact digest: `sha256:b2bddef3724891af443570e32b566ab9b18625ffd9507163ad3bf6b26d56d48d`
+
+## Reference-match investigation status
+
+No standalone production `ReferenceMatchQA` exists yet.
+
+Existing `ReferenceAnalyzer` currently exposes static visual/reference constants only; it does not extract burst/hold/jerk distributions from reference video bytes.
+
+The three approved references are identifiable as:
+- `تأثير المتفرج2.mp4`
+- `انحياز 2.mp4`
+- `MONTAGE9_REF_HALLO2.mp4` (hallo 2 reference)
+
+The first two are available as raw local media in the current engineering environment. The third is indexed in Library/Project metadata but raw-byte materialization was not authorized in this session. Do not invent thresholds from only two references and do not mark ReferenceMatchQA complete.
+
+Black-Hat motion audit evidence remains:
+- motion language feels more fragmented than the approved reference family;
+- earlier measurement showed excess short motion bursts relative to the two raw references inspected;
+- lifecycle disappear/reappear prevention is now code/CI proven but still requires a fresh Black-Hat encoded render for visual closure.
+
+Semantic gesture-composition investigation:
+- EventFlow already prevents the same result asset from receiving redundant REACT+PAYOFF ownership;
+- source INTERACT and target REACT may overlap as one cause/reaction sentence;
+- PAYOFF timing remains owned by Story/result activation;
+- do not collapse or retime semantic phases merely to reduce burst count unless ReferenceMatch/diagnostic evidence proves a redundant accent. Story authority remains absolute.
+
+Next actions:
+1. build deterministic ReferenceMatch metric extraction against all three approved references once all three raw videos are available to the runtime;
+2. derive acceptable ranges from those videos, never hand-authored guesses;
+3. rerender White Hat from current exact tested source and close the historical encoded readability failure only after RenderedMotionQA + full decode + visual review;
+4. rerender Black Hat from current exact tested source and verify lifecycle continuity visually;
+5. use ReferenceMatch evidence to decide whether a SemanticGestureComposer change is required;
+6. continue Gray/Script Kiddie + stress matrix only after the Black/White gates pass.
