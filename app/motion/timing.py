@@ -89,27 +89,47 @@ def semantic_readability_floor(
     item_width: float,
     item_height: float,
     duration: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
 ) -> float:
-    """Canonical semantic-motion readability floor in Composition space.
+    """Canonical motion readability floor in normalized Composition space.
 
-    Planner and QA must share this contract. Pixel projection is renderer evidence,
-    not a second motion-authoring rule, otherwise 16:9 vertical/diagonal gestures can
-    be judged against an unreachable width-derived floor.
+    This is a shared *authoring* contract consumed by MotionPlanner and rendered QA.
+    No phase may use a private QA-only readability threshold: the planner must know
+    the minimum readable motion before it commits a segment. INTERACT/REACT/PAYOFF
+    retain the stronger semantic floors; ENTRY/ESTABLISH/ADD/EXIT use the historical
+    rendered perceptual floors projected back into Composition space.
     """
-    stage_floor = {
+    phase_name = str(phase).upper()
+    semantic_floor = {
         "INTERACT": 0.030,
         "REACT": 0.026,
         "PAYOFF": 0.020,
-    }.get(str(phase).upper(), 0.0)
-    if stage_floor <= 0.0:
-        return 0.0
+    }.get(phase_name)
 
-    size_floor = min(0.042, min(float(item_width), float(item_height)) * 0.14)
-    readable = max(stage_floor, size_floor) * comfort_gain(phase, duration)
-    comfort_budget = max_comfort_displacement(
-        phase,
-        max(0.0, float(duration)) * GOLDEN_MINOR,
-    )
+    if semantic_floor is not None:
+        size_floor = min(0.042, min(float(item_width), float(item_height)) * 0.14)
+        readable = max(semantic_floor, size_floor) * comfort_gain(phase_name, duration)
+        comfort_seconds = max(0.0, float(duration)) * GOLDEN_MINOR
+    else:
+        ratio = {
+            "ENTRY": 0.010,
+            "ESTABLISH": 0.008,
+            "ADD": 0.007,
+            "EXIT": 0.016,
+        }.get(phase_name, 0.0)
+        if ratio <= 0.0:
+            return 0.0
+        width = max(1.0, float(frame_width))
+        height = max(1.0, float(frame_height))
+        # Reproduce the historical encoded-QA pixel floor exactly, then normalize it
+        # by frame width so the planner consumes the same contract before rendering.
+        asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
+        base_px = max(6.0, min(36.0, width * ratio, asset_px * 0.25))
+        readable = (base_px / width) * comfort_gain(phase_name, duration)
+        comfort_seconds = max(0.0, float(duration))
+
+    comfort_budget = max_comfort_displacement(phase_name, comfort_seconds)
     if comfort_budget > 0.0:
         readable = min(readable, comfort_budget)
     return max(0.0, readable)

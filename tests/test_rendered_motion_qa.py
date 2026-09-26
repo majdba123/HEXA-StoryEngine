@@ -520,3 +520,26 @@ def test_rendered_motion_frame_cache_is_bounded_for_long_full_hd_video() -> None
         qa._FRAME_CACHE_LIMIT * 3,
         qa._FRAME_CACHE_LIMIT * 4,
     ))
+
+def test_establish_rendered_floor_matches_shared_planner_contract() -> None:
+    duration = 0.36
+    item_width = 0.298445
+    item_height = 0.579171
+    shared = semantic_readability_floor(
+        "ESTABLISH",
+        item_width=item_width,
+        item_height=item_height,
+        duration=duration,
+        frame_width=1920,
+        frame_height=1080,
+    )
+    rendered_px = RenderedMotionQA._perceptual_floor_px(
+        phase="ESTABLISH",
+        width=1920,
+        height=1080,
+        item_width=item_width,
+        item_height=item_height,
+        duration=duration,
+    )
+    assert rendered_px == pytest.approx(shared * 1920, abs=1e-9)
+    assert rendered_px == pytest.approx(15.36, abs=1e-6)

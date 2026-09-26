@@ -645,37 +645,15 @@ class RenderedMotionQA:
         item_height: float,
         duration: float,
     ) -> float:
-        ratios = {
-            "ENTRY": 0.010,
-            "ESTABLISH": 0.008,
-            "ADD": 0.007,
-            "INTERACT": 0.015,
-            "REACT": 0.013,
-            "PAYOFF": 0.009,
-            "EXIT": 0.016,
-        }
-        ratio = ratios.get(phase, 0.0)
-        if ratio <= 0:
-            return 0.0
-        asset_px = max(1.0, min(width * item_width, height * item_height))
-        base = max(6.0, min(36.0, width * ratio, asset_px * 0.25))
-        readable = base * comfort_gain(phase, duration)
-
-        # Readability and comfort must form a satisfiable contract. Semantic
-        # out-and-back accents have only the shorter golden leg (38.2%) to return
-        # to Composition, so a short Story window may not physically support the
-        # nominal pixel floor without exceeding the comfort-speed ceiling.
-        if phase in {"INTERACT", "REACT", "PAYOFF"}:
-            comfort_seconds = duration * GOLDEN_MINOR
-        else:
-            comfort_seconds = duration
-        comfort_budget_px = width * max_comfort_displacement(
+        """Project the shared planner readability contract into encoded pixels."""
+        return float(width) * semantic_readability_floor(
             phase,
-            comfort_seconds,
+            item_width=item_width,
+            item_height=item_height,
+            duration=duration,
+            frame_width=width,
+            frame_height=height,
         )
-        if comfort_budget_px > 0.0:
-            readable = min(readable, comfort_budget_px)
-        return readable
 
     @staticmethod
     def _expected_activity_px(

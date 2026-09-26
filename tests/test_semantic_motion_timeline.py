@@ -24,7 +24,7 @@ from app.models import (
     TranscriptWord,
 )
 from app.motion import MotionPlanner
-from app.motion.event_flow import MotionEventAssignment
+from app.motion.event_flow import MotionEventAssignment, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
     GOLDEN_MAJOR,
@@ -32,6 +32,7 @@ from app.motion.timing import (
     comfort_gain,
     max_comfort_displacement,
     motion_comfort,
+    semantic_readability_floor,
 )
 from app.qa import MotionInteractionQA, RenderedMotionQA
 from app.story.planner import StoryPlanner
@@ -653,3 +654,46 @@ def test_spanless_relation_timeline_uses_story_participant_envelope() -> None:
         choreography=choreography,
     )
     assert report.ok, report.violations
+
+def test_establish_readability_floor_is_enforced_before_render() -> None:
+    item = LayoutItem(
+        asset_id="white-scene-016-focus",
+        x=0.834629,
+        y=0.565887,
+        width=0.298445,
+        height=0.579171,
+    )
+    phase = MotionEventPhase(
+        event_id="SCENE_016_EVENT_01",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id=item.asset_id,
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+        involvement="FOCUS",
+    )
+    duration = 0.36
+    floor = semantic_readability_floor(
+        "ESTABLISH",
+        item_width=item.width,
+        item_height=item.height,
+        duration=duration,
+    )
+    assert floor * 1920 == pytest.approx(15.36, abs=1e-6)
+
+    dx, dy, _scale = MotionPlanner._enforce_event_readability(
+        phase=phase,
+        item=item,
+        dx=0.0,
+        dy=-(12.45 / 1920.0),
+        scale=1.0,
+        duration=duration,
+    )
+    magnitude = (dx * dx + dy * dy) ** 0.5
+    assert magnitude >= floor - 1e-9
+    assert magnitude <= max_comfort_displacement("ESTABLISH", duration) + 1e-9
