@@ -19,6 +19,7 @@ from app.motion.timing import (
     GOLDEN_MAJOR,
     GOLDEN_MINOR,
     max_comfort_displacement,
+    semantic_readability_duration,
     semantic_readability_floor,
 )
 from app.qa import RenderedMotionQA
@@ -520,6 +521,18 @@ def test_rendered_motion_frame_cache_is_bounded_for_long_full_hd_video() -> None
         qa._FRAME_CACHE_LIMIT * 3,
         qa._FRAME_CACHE_LIMIT * 4,
     ))
+
+def test_readability_duration_semantics_are_shared_by_phase() -> None:
+    assert semantic_readability_duration(
+        "ESTABLISH", segment_duration=0.36, active_duration=0.1945
+    ) == pytest.approx(0.36)
+    assert semantic_readability_duration(
+        "ADD", segment_duration=0.36, active_duration=0.1945
+    ) == pytest.approx(0.36)
+    assert semantic_readability_duration(
+        "REACT", segment_duration=0.36, active_duration=0.1945
+    ) == pytest.approx(0.1945)
+
 
 def test_establish_rendered_floor_matches_shared_planner_contract() -> None:
     duration = 0.36

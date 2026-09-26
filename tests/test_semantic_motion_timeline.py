@@ -655,7 +655,13 @@ def test_spanless_relation_timeline_uses_story_participant_envelope() -> None:
     )
     assert report.ok, report.violations
 
-def test_establish_readability_floor_is_enforced_before_render() -> None:
+def test_story_aligned_establish_program_cannot_fall_below_rendered_floor() -> None:
+    """Regression for White-Hat beat-016 encoded failure.
+
+    The old planner applied the shared floor to the shorter active window while
+    RenderedMotionQA applied it to the full ESTABLISH segment. With a late Story peak
+    this authored ~12.45 px even though encoded QA correctly required 15.36 px.
+    """
     item = LayoutItem(
         asset_id="white-scene-016-focus",
         x=0.834629,
@@ -674,26 +680,33 @@ def test_establish_readability_floor_is_enforced_before_render() -> None:
         result_asset_id=None,
         relationship=None,
         semantic_action="ESTABLISH",
-        authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+        authority="FINAL_PACKAGE_COMPOUND_PROXY",
         involvement="FOCUS",
     )
-    duration = 0.36
+    segment_duration = 0.36
+    # A late Story-owned peak reproduces the short active window that previously
+    # lowered Planner amplitude while QA still evaluated the full segment window.
+    program = MotionPlanner._event_segment_program(
+        phase=phase,
+        vector=(0.0, -1.0),
+        item=item,
+        focus_strength=1.0,
+        energy=0.30,
+        cohort_gain=0.25,
+        duration=segment_duration,
+        semantic_peak_progress=0.7936,
+    )
+    peak = max(
+        ((frame.dx * frame.dx + frame.dy * frame.dy) ** 0.5 for frame in program.keyframes),
+        default=0.0,
+    )
     floor = semantic_readability_floor(
         "ESTABLISH",
         item_width=item.width,
         item_height=item.height,
-        duration=duration,
+        duration=segment_duration,
     )
     assert floor * 1920 == pytest.approx(15.36, abs=1e-6)
+    assert peak >= floor - 1e-9
 
-    dx, dy, _scale = MotionPlanner._enforce_event_readability(
-        phase=phase,
-        item=item,
-        dx=0.0,
-        dy=-(12.45 / 1920.0),
-        scale=1.0,
-        duration=duration,
-    )
-    magnitude = (dx * dx + dy * dy) ** 0.5
-    assert magnitude >= floor - 1e-9
-    assert magnitude <= max_comfort_displacement("ESTABLISH", duration) + 1e-9
+

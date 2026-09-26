@@ -83,6 +83,31 @@ def golden_window_around_peak(
     return max(earliest, start), min(latest, end)
 
 
+def semantic_readability_duration(
+    phase: str,
+    *,
+    segment_duration: float,
+    active_duration: float | None = None,
+) -> float:
+    """Return the canonical duration used by the shared readability contract.
+
+    Semantic accent phases are judged over the interval where the gesture is actually
+    active. Entry/establish/add/exit phases are judged over their authored segment
+    window. Keeping this choice here prevents Planner and QA from using the same floor
+    formula with different duration semantics.
+    """
+    segment = max(0.0, float(segment_duration))
+    phase_name = str(phase).upper()
+    if phase_name in {"INTERACT", "REACT", "PAYOFF"}:
+        try:
+            active = float(active_duration) if active_duration is not None else segment
+        except (TypeError, ValueError):
+            active = segment
+        if active > 0.0:
+            return min(segment, active) if segment > 0.0 else active
+    return segment
+
+
 def semantic_readability_floor(
     phase: str,
     *,

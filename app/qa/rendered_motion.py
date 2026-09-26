@@ -13,6 +13,7 @@ from app.motion.timing import (
     GOLDEN_MINOR,
     max_comfort_displacement,
     motion_comfort,
+    semantic_readability_duration,
     semantic_readability_floor,
 )
 from app.shared.errors import StageFailedError
@@ -157,20 +158,24 @@ class RenderedMotionQA:
                 )
                 enforce_speed = "compound_unit" not in program_name
 
+                try:
+                    semantic_active_duration = float(
+                        segment.program.get("semantic_active_duration", duration)
+                    )
+                except (TypeError, ValueError):
+                    semantic_active_duration = duration
+                readability_duration = semantic_readability_duration(
+                    segment.phase,
+                    segment_duration=duration,
+                    active_duration=semantic_active_duration,
+                )
+
                 if enforce_floor and segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
                     normalized_activity = self._expected_activity_normalized(
                         segment,
                         item_width=item.width,
                         item_height=item.height,
                     )
-                    try:
-                        readability_duration = float(
-                            segment.program.get("semantic_active_duration", duration)
-                        )
-                    except (TypeError, ValueError):
-                        readability_duration = duration
-                    if readability_duration <= 0.0:
-                        readability_duration = duration
                     normalized_floor = semantic_readability_floor(
                         segment.phase,
                         item_width=item.width,
@@ -196,7 +201,7 @@ class RenderedMotionQA:
                         item_width=item.width,
                         item_height=item.height,
                         height=plan.height,
-                        duration=duration,
+                        duration=readability_duration,
                     )
                     if expected_px + 1e-6 < floor_px:
                         violations.append(RenderedMotionViolation(

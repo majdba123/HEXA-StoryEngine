@@ -4,6 +4,7 @@ from math import hypot
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
+from app.shared.errors import StageFailedError
 from app.motion.collision import fit_relation_collisions
 from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
@@ -24,6 +25,7 @@ from app.motion.timing import (
     golden_window_around_peak,
     max_comfort_displacement,
     motion_comfort,
+    semantic_readability_duration,
     semantic_readability_floor,
     story_activation_window,
 )
@@ -1439,6 +1441,11 @@ class MotionPlanner:
             dy=dy,
             scale=scale,
             duration=active_duration,
+            readability_duration=semantic_readability_duration(
+                phase.stage.value,
+                segment_duration=duration,
+                active_duration=active_duration,
+            ),
         )
 
         frames: list[MotionKeyframe] = [
@@ -1484,23 +1491,44 @@ class MotionPlanner:
         dy: float,
         scale: float,
         duration: float,
+        readability_duration: float | None = None,
     ) -> tuple[float, float, float]:
-        temporal_gain = comfort_gain(phase.stage.value, duration)
+        movement_duration = max(0.0, float(duration))
+        contract_duration = (
+            movement_duration
+            if readability_duration is None
+            else max(0.0, float(readability_duration))
+        )
+        temporal_gain = comfort_gain(phase.stage.value, movement_duration)
         floor = semantic_readability_floor(
             phase.stage.value,
             item_width=item.width,
             item_height=item.height,
-            duration=duration,
+            duration=contract_duration,
         )
         # Event accents travel out and then return to Composition. The return leg is
         # the shorter golden section (38.2%), so it is the actual speed bottleneck.
         # Cap displacement against that leg; otherwise the outbound average can look
         # comfortable while the settle snaps back too quickly.
-        comfort_leg_duration = duration * GOLDEN_MINOR
+        comfort_leg_duration = movement_duration * GOLDEN_MINOR
         max_displacement = max_comfort_displacement(
             phase.stage.value,
             comfort_leg_duration,
         )
+        if floor > 0.0 and max_displacement + 1e-9 < floor:
+            raise StageFailedError(
+                "semantic motion is not readable within the available comfort budget",
+                details={
+                    "code": "MOTION_INFEASIBLE_BEFORE_RENDER",
+                    "phase": phase.stage.value,
+                    "event_id": phase.event_id,
+                    "asset_id": item.asset_id,
+                    "readability_floor": floor,
+                    "comfort_ceiling": max_displacement,
+                    "segment_duration": contract_duration,
+                    "active_duration": movement_duration,
+                },
+            )
         magnitude = hypot(dx, dy)
         desired = max(magnitude, floor)
         if max_displacement > 0.0:
