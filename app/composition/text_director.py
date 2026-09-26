@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
+from app.contracts import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
 from app.text.metrics import TextTypographyMetrics
 from app.story.windows import StoryAssetActivation
@@ -28,6 +29,7 @@ class PlacementResult:
     zone: str
     score: float
     visual_overlap: float
+    text_overlap: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +65,7 @@ class TextPlacementDirector:
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
+        self.contract = TextLayoutContract()
 
     def place(
         self,
@@ -117,19 +120,28 @@ class TextPlacementDirector:
                 scored.append((*score_row, font_scale, width))
                 scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
 
-        acceptable = [row for row in scored if row[3] <= 0.012]
+        acceptable = [
+            row
+            for row in scored
+            if self.contract.accepts(visual_overlap=row[3], text_overlap=row[4])
+        ]
         pool = acceptable or scored
         best = min(
             pool,
             key=lambda row: (
-                row[0] if acceptable else row[3] * 1_000_000.0 + row[0],
-                -row[4],
+                row[0]
+                if acceptable
+                else (
+                    max(0.0, row[3] - self.contract.max_visual_overlap)
+                    + max(0.0, row[4] - self.contract.max_text_overlap)
+                ) * 1_000_000.0 + row[0],
+                -row[5],
                 row[1].prior,
                 row[1].y,
                 row[1].x,
             ),
         )
-        score, candidate, box, overlap, font_scale, width = best
+        score, candidate, box, overlap, text_overlap, font_scale, width = best
         item = TextLayoutItem(
             text_cue_id=cue.id,
             x=candidate.x,
@@ -146,6 +158,7 @@ class TextPlacementDirector:
             zone=candidate.zone,
             score=score,
             visual_overlap=overlap,
+            text_overlap=text_overlap,
         )
 
     @classmethod
@@ -340,7 +353,7 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         cue: TextCue,
         occupancy,
-    ) -> tuple[float, _Candidate, Box, float]:
+    ) -> tuple[float, _Candidate, Box, float, float]:
         box = self._box(candidate.x, candidate.y, width, height)
         score = candidate.prior
 
@@ -362,8 +375,11 @@ class TextPlacementDirector:
             protected = self._intersection_ratio(box, region.protected_box)
             score += protected * 18.0 * region.weight
 
-        for placed in concurrent_text:
-            score += self._intersection_ratio(box, placed.box) * 680.0
+        text_overlap = max(
+            (self._intersection_ratio(box, placed.box) for placed in concurrent_text),
+            default=0.0,
+        )
+        score += text_overlap * 680.0
 
         if anchor is not None:
             distance = self._center_distance(candidate.x, candidate.y, anchor.x, anchor.y)
@@ -380,7 +396,7 @@ class TextPlacementDirector:
         if cue.priority >= 85 and self._zone_family(candidate.zone) in {"top", "bottom"}:
             score -= 0.045
 
-        return score, candidate, box, actual_overlap
+        return score, candidate, box, actual_overlap, text_overlap
 
     def _visual_regions(
         self,

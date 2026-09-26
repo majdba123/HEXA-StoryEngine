@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.composition.text_director import TextPlacementDirector
 from app.composition.occupancy import VisualOccupancyMap
+from app.contracts import TextLayoutContract
 from app.layout import ConstraintLayoutSolver
 from app.layout.footprint import AlphaFootprintResolver
 from app.models import (
@@ -42,15 +43,13 @@ class AuthoringQAReport:
 class AuthoringVisualQA:
     """Validate spatial contracts without redesigning the authored Final Package scene."""
 
-    _TEXT_VISUAL_OVERLAP_LIMIT = 0.012
-    _TEXT_TEXT_OVERLAP_LIMIT = 0.04
-
     def __init__(self, profile: HexaVisualProfile | None = None) -> None:
         self.profile = profile or HexaVisualProfile.production()
         self.layout = ConstraintLayoutSolver(self.profile)
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
         self.text_visibility = TextVisibilityPolicy()
+        self.text_layout_contract = TextLayoutContract()
 
     def inspect(
         self,
@@ -174,7 +173,7 @@ class AuthoringVisualQA:
                     if occupancy is not None
                     else 0.0
                 )
-                if visual_overlap > self._TEXT_VISUAL_OVERLAP_LIMIT:
+                if visual_overlap > self.text_layout_contract.max_visual_overlap:
                     issues.append(
                         f"{text_beat.beat_id}:text_visual_overlap:{item.text_cue_id}:"
                         f"{visual_overlap:.3f}"
@@ -201,7 +200,7 @@ class AuthoringVisualQA:
                         self._intersection_ratio(left_box, right_box),
                         self._intersection_ratio(right_box, left_box),
                     )
-                    if ratio > self._TEXT_TEXT_OVERLAP_LIMIT:
+                    if ratio > self.text_layout_contract.max_text_overlap:
                         issues.append(
                             f"{text_beat.beat_id}:text_text_overlap:{left_id}:{right_id}:"
                             f"{ratio:.3f}:time={max(left_start, right_start):.3f}-"

@@ -1066,12 +1066,67 @@ def test_filter_file_option_uses_generic_file_syntax_when_legacy_alias_is_absent
     completed = subprocess.CompletedProcess(
         args=["ffmpeg", "-hide_banner", "-h", "full"],
         returncode=0,
-        stdout="... -filter_complex filtergraph ...",
+        stdout=(
+            "... -/filter_complex filename ... "
+            "read filtergraph description from a file ..."
+        ),
         stderr="",
     )
     monkeypatch.setattr(renderer_module, "run_hidden", lambda *args, **kwargs: completed)
     renderer = FFmpegRenderer("ffmpeg")
     assert renderer._filter_complex_file_option() == "-/filter_complex"
+
+
+def test_filter_file_option_fails_closed_when_ffmpeg_exposes_no_supported_file_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = subprocess.CompletedProcess(
+        args=["ffmpeg", "-hide_banner", "-h", "full"],
+        returncode=0,
+        stdout="... -filter_complex filtergraph ...",
+        stderr="",
+    )
+    monkeypatch.setattr(renderer_module, "run_hidden", lambda *args, **kwargs: completed)
+    renderer = FFmpegRenderer("ffmpeg")
+
+    with pytest.raises(StageFailedError) as exc_info:
+        renderer._filter_complex_file_option()
+
+    assert exc_info.value.effective_code == "FFMPEG_FILTER_FILE_UNSUPPORTED"
+
+
+def test_historical_unknown_filter_complex_script_error_is_detected_in_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if command[1:4] == ["-hide_banner", "-h", "full"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="... -filter_complex_script filename ...",
+                stderr="",
+            )
+        raise subprocess.CalledProcessError(
+            8,
+            command,
+            stderr=(
+                "Unrecognized option 'filter_complex_script'. "
+                "Error splitting the argument list: Option not found"
+            ),
+        )
+
+    monkeypatch.setattr(renderer_module, "run_hidden", fake_run)
+    renderer = FFmpegRenderer("ffmpeg")
+
+    with pytest.raises(StageFailedError) as exc_info:
+        renderer.preflight(tmp_path / "preflight")
+
+    assert exc_info.value.effective_code == "FFMPEG_FILTER_FILE_UNSUPPORTED"
+    assert "filter_complex_script" in exc_info.value.details["stderr"]
+    assert len(calls) == 2
 
 
 def test_filter_file_transport_does_not_change_export_quality_contract(tmp_path: Path) -> None:

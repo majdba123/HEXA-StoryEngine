@@ -878,11 +878,21 @@ class FFmpegRenderer:
             ) from exc
 
         help_text = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
-        option = (
-            "-filter_complex_script"
-            if "filter_complex_script" in help_text
-            else "-/filter_complex"
-        )
+        if "filter_complex_script" in help_text:
+            option = "-filter_complex_script"
+        elif (
+            "-/filter_complex" in help_text
+            or "read filtergraph description from a file" in help_text
+        ):
+            option = "-/filter_complex"
+        else:
+            raise StageFailedError(
+                "ffmpeg does not expose a supported file-backed complex-filter option",
+                details={
+                    "code": "FFMPEG_FILTER_FILE_UNSUPPORTED",
+                    "binary": self.ffmpeg_bin,
+                },
+            )
         self._filter_complex_file_option_cache = option
         return option
 
@@ -935,7 +945,21 @@ class FFmpegRenderer:
                 },
             ) from exc
         except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "")[-6000:]
+            normalized = stderr.lower()
+            if (
+                "filter_complex_script" in normalized
+                and ("unrecognized option" in normalized or "option not found" in normalized)
+            ):
+                code = "FFMPEG_FILTER_FILE_UNSUPPORTED"
+            elif (
+                "unknown encoder 'libx264'" in normalized
+                or "encoder (codec h264) not found" in normalized
+            ):
+                code = "FFMPEG_H264_ENCODER_UNAVAILABLE"
+            else:
+                code = "FFMPEG_COMMAND_FAILED"
             raise StageFailedError(
                 message,
-                details={"code": "FFMPEG_COMMAND_FAILED", "stderr": (exc.stderr or "")[-6000:]},
+                details={"code": code, "stderr": stderr},
             ) from exc

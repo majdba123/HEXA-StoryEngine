@@ -1,4 +1,5 @@
 from app.composition.text_director import PlacedTextRegion, TextPlacementDirector
+from app.contracts import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue
 
 
@@ -303,3 +304,48 @@ def test_director_ignores_later_semantic_visual_until_text_disappears(tmp_path) 
     assert "context" in visible_ids
     assert "future" not in visible_ids
     assert result.visual_overlap <= 0.001
+
+
+def test_text_director_and_authoring_qa_share_hard_overlap_contract() -> None:
+    from app.qa import AuthoringVisualQA
+
+    contract = TextLayoutContract()
+    director = TextPlacementDirector()
+    qa = AuthoringVisualQA()
+
+    assert director.contract == contract
+    assert qa.text_layout_contract == contract
+    assert contract.accepts(visual_overlap=0.012, text_overlap=0.04)
+    assert not contract.accepts(visual_overlap=0.0121, text_overlap=0.04)
+    assert not contract.accepts(visual_overlap=0.012, text_overlap=0.0401)
+
+
+def test_director_never_prefers_text_overlap_above_shared_contract_when_legal_space_exists(
+) -> None:
+    director = TextPlacementDirector()
+    visual = CompositionBeat(beat_id="beat-001", items=[])
+    first = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-001", "1000 ريال", 0.5, 1.2),
+        concurrent_text=[],
+        preferred_zone=None,
+    )
+    occupied = [
+        PlacedTextRegion(
+            cue_id="text-001",
+            start=0.5,
+            end=1.8,
+            box=first.box,
+            zone=first.zone,
+        )
+    ]
+    second = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-002", "300 محجوزة", 0.8, 1.5),
+        concurrent_text=occupied,
+        preferred_zone=first.zone,
+    )
+
+    assert second.text_overlap <= director.contract.max_text_overlap + 1e-12
