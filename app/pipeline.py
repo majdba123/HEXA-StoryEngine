@@ -201,25 +201,41 @@ class StoryEnginePipeline:
         )
 
         self._check_cancel(cancelled)
-        self._progress(progress, Stage.composition, 0.54, "Composing visuals and text")
+        self._progress(progress, Stage.composition, 0.54, "Composing authored visuals")
         composition = self.composition.plan(story, assets, choreography, directions)
-        text_composition = self.text_composition.plan(story, composition, text.cues, assets)
         self._progress(
             progress,
             Stage.composition,
-            0.58,
-            f"Composition locked to Final Package geometry; placed {len(text.cues)} text cues in negative space",
+            0.57,
+            "Visual Composition locked to Final Package geometry",
         )
 
         self._check_cancel(cancelled)
-        self._progress(progress, Stage.motion, 0.63, "Planning visual and text entrances")
-        motion = self.motion_reference.enforce(self.motion.plan(story, composition, choreography, assets=assets))
-        text_motion = self.text_motion.plan(
-            story,
-            text.cues,
-            text_composition,
-            choreography,
-            visual_motion=motion,
+        self._progress(progress, Stage.motion, 0.61, "Planning final visual motion")
+        motion = self.motion_reference.enforce(
+            self.motion.plan(story, composition, choreography, assets=assets)
+        )
+
+        self._check_cancel(cancelled)
+        self._progress(
+            progress,
+            Stage.text,
+            0.63,
+            "Placing text against final visual visibility windows",
+        )
+        text_composition, text_motion = self._compose_text_against_visual_motion(
+            story=story,
+            composition=composition,
+            motion=motion,
+            text=text,
+            assets=assets,
+            choreography=choreography,
+        )
+        self._progress(
+            progress,
+            Stage.composition,
+            0.64,
+            f"Placed {len(text.cues)} text cues against final visual lifetimes",
         )
 
         motion_interaction_report = self.motion_interaction_qa.inspect(
@@ -388,6 +404,38 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path
+
+    def _compose_text_against_visual_motion(
+        self,
+        *,
+        story,
+        composition,
+        motion,
+        text,
+        assets,
+        choreography,
+    ):
+        """Place text against final visual lifetimes before authoring QA.
+
+        Recovery must not be the normal path for discovering visual visibility. The
+        primary text placement pass consumes the same final visual Motion that QA and
+        rendering will use, then TextMotion is authored against that placement.
+        """
+        text_composition = self.text_composition.plan(
+            story,
+            composition,
+            text.cues,
+            assets,
+            visual_motion=motion,
+        )
+        text_motion = self.text_motion.plan(
+            story,
+            text.cues,
+            text_composition,
+            choreography,
+            visual_motion=motion,
+        )
+        return text_composition, text_motion
 
     def _recover_text_layout(
         self,

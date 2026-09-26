@@ -182,3 +182,43 @@ def test_optional_text_recovery_converges_when_reflow_exposes_new_collision(
     assert report.text_layout_violations == ()
     assert repaired_text.cues == []
 
+
+
+class _CaptureTextComposition:
+    def __init__(self) -> None:
+        self.visual_motion = None
+
+    def plan(self, *_args, visual_motion=None, **_kwargs):
+        self.visual_motion = visual_motion
+        return ["text-composition"]
+
+
+class _CaptureTextMotion:
+    def __init__(self) -> None:
+        self.visual_motion = None
+
+    def plan(self, *_args, visual_motion=None, **_kwargs):
+        self.visual_motion = visual_motion
+        return ["text-motion"]
+
+
+def test_primary_text_authoring_consumes_final_visual_motion() -> None:
+    pipeline = StoryEnginePipeline.__new__(StoryEnginePipeline)
+    pipeline.text_composition = _CaptureTextComposition()
+    pipeline.text_motion = _CaptureTextMotion()
+    motion = [SimpleNamespace(asset_id="hero")]
+    text = TextPlan(cues=[_recovery_cue("text-a", 90)], styles=[])
+
+    composition, text_motion = pipeline._compose_text_against_visual_motion(
+        story=[],
+        composition=[],
+        motion=motion,
+        text=text,
+        assets=[],
+        choreography=[],
+    )
+
+    assert composition == ["text-composition"]
+    assert text_motion == ["text-motion"]
+    assert pipeline.text_composition.visual_motion is motion
+    assert pipeline.text_motion.visual_motion is motion
