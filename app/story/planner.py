@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from app.models import PackageModel, SceneSource, StoryBeat, StorySemanticContext, Transcript, VisualAsset
 
-from app.models import PackageModel, SceneSource, StoryBeat, Transcript, VisualAsset
-
+from .activation import SemanticActivationPlanner
 from .graph import StoryGraph, StoryGraphBuilder
 from .semantic import PackageStoryInterpreter
 
@@ -16,13 +16,22 @@ class StoryPlanner:
     narrated idea instead of reacting after the listener has already heard it.
     """
 
-    _DEFAULT_VISUAL_LEAD = 0.24
-    _MAX_VISUAL_LEAD = 0.30
+    _DEFAULT_VISUAL_LEAD = 0.42
+    _MAX_VISUAL_LEAD = 0.62
     _MIN_VISUAL_BEAT = 0.08
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        semantic_model_name: str | None = None,
+        semantic_model_required: bool = False,
+    ) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
+        self.activation = SemanticActivationPlanner(
+            semantic_model_name=semantic_model_name,
+            semantic_model_required=semantic_model_required,
+        )
 
     def build_graph(self, beats: list[StoryBeat]) -> StoryGraph:
         return self.graph_builder.build(beats)
@@ -38,6 +47,12 @@ class StoryPlanner:
             assets_by_scene[asset.scene_id].append(asset)
         for rows in assets_by_scene.values():
             rows.sort(key=lambda asset: (asset.source_area_ratio or 0.0), reverse=True)
+
+        semantic_binding_by_scene = {
+            str(row.get("scene_id")): row
+            for row in package.semantic_bindings.get("scenes", [])
+            if isinstance(row, dict) and row.get("scene_id")
+        }
 
         beats: list[StoryBeat] = []
         previous_primary: str | None = None
@@ -82,6 +97,14 @@ class StoryPlanner:
                     scene,
                     event,
                     is_first_beat=(beat_number == 1),
+                    semantic_binding_scene=semantic_binding_by_scene.get(scene.id),
+                )
+                semantic_context = self._resolve_relation_timing(
+                    semantic_context,
+                    transcript=transcript,
+                    script=package.script,
+                    beat_start=audio_start,
+                    beat_end=audio_end,
                 )
                 beats.append(StoryBeat(
                     id=f"beat-{beat_number:03d}",
@@ -107,9 +130,63 @@ class StoryPlanner:
             beat.audio_end if beat.audio_end is not None else beat.end,
             beat.id,
         ))
-        return self._assign_visual_timeline(beats, transcript.duration)
+        beats = self._assign_visual_timeline(
+            beats,
+            transcript.duration,
+            preserve_spoken_completion=bool(package.semantic_bindings),
+        )
+        return self.activation.enrich(package, transcript, assets, beats)
 
-    def _assign_visual_timeline(self, beats: list[StoryBeat], duration: float) -> list[StoryBeat]:
+
+    @classmethod
+    def _resolve_relation_timing(
+        cls,
+        context: StorySemanticContext,
+        *,
+        transcript: Transcript,
+        script: str | None,
+        beat_start: float,
+        beat_end: float,
+    ) -> StorySemanticContext:
+        """Resolve authored relation char spans onto Story's narration clock."""
+        if not context.relations:
+            return context
+
+        lower = max(0.0, float(beat_start))
+        upper = max(lower, min(float(beat_end), float(transcript.duration)))
+        relations = []
+        for relation in context.relations:
+            if relation.trigger_char_start is None or relation.trigger_char_end is None:
+                relations.append(relation)
+                continue
+            # Semantic-binding script_span is validated by FinalPackageLoader as
+            # half-open [start, end). _timing_for_span is a legacy helper whose
+            # char_end parameter is inclusive, so convert only at this boundary.
+            inclusive_end = relation.trigger_char_end - 1
+            spoken_start, spoken_end, _ = cls._timing_for_span(
+                transcript,
+                script,
+                relation.trigger_char_start,
+                inclusive_end,
+                relation.trigger_text,
+            )
+            start = max(lower, min(upper, float(spoken_start)))
+            end = max(start, min(upper, float(spoken_end)))
+            if end - start < 0.025:
+                relations.append(relation)
+                continue
+            relations.append(
+                relation.model_copy(update={"spoken_start": start, "spoken_end": end})
+            )
+        return context.model_copy(update={"relations": relations})
+
+    def _assign_visual_timeline(
+        self,
+        beats: list[StoryBeat],
+        duration: float,
+        *,
+        preserve_spoken_completion: bool = False,
+    ) -> list[StoryBeat]:
         if not beats:
             return beats
 
@@ -128,6 +205,11 @@ class StoryPlanner:
                 )
             proposed = max(0.0, audio_start - lead)
             visual_start = max(proposed, previous_start + self._MIN_VISUAL_BEAT)
+            if preserve_spoken_completion and index > 0:
+                visual_start = max(
+                    visual_start,
+                    min(previous_audio_end, audio_start),
+                )
             starts.append(min(visual_start, max(0.0, duration - self._MIN_VISUAL_BEAT)))
             previous_start = starts[-1]
             previous_audio_end = beat.audio_end if beat.audio_end is not None else beat.end

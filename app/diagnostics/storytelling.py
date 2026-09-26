@@ -28,11 +28,15 @@ class StorytellingReport:
     semantic_hook_count: int
     grammar_sequence_count: int
     grammar_compliant_sequences: int
+    incomplete_grammar_sequences: tuple[str, ...]
     asset_requirement_count: int
     missing_asset_requirements: tuple[str, ...]
     neutral_hold_motion_count: int
     meaning_motion_count: int
     forbidden_jitter_programs: tuple[str, ...]
+    authored_semantic_events: int
+    represented_semantic_events: int
+    missing_semantic_events: tuple[str, ...]
     warnings: tuple[str, ...]
 
     @property
@@ -47,6 +51,10 @@ class StorytellingReport:
     @property
     def interaction_semantics_complete(self) -> bool:
         return self.represented_relationships >= self.explicit_relationships
+
+    @property
+    def semantic_event_coverage_complete(self) -> bool:
+        return not self.missing_semantic_events
 
     @property
     def downstream_metadata_complete(self) -> bool:
@@ -76,6 +84,7 @@ class StorytellingReport:
         return (
             self.metadata_complete
             and self.interaction_semantics_complete
+            and self.semantic_event_coverage_complete
             and self.downstream_metadata_complete
             and self.anti_jitter_pass
             and self.reference_grammar_complete
@@ -136,11 +145,15 @@ class StorytellingValidator:
             if row.semantic_unit_ids or row.package_evidence or row.relationship
         )
 
+        explicit_relation_authorities = {
+            "FINAL_PACKAGE_INTERACTION_TARGET",
+            "FINAL_PACKAGE_ASSET_RELATION",
+        }
         explicit_relationships = sum(
             1
             for beat in story
             for relation in (beat.semantic_context.relations if beat.semantic_context else [])
-            if relation.authority == "FINAL_PACKAGE_INTERACTION_TARGET"
+            if relation.authority in explicit_relation_authorities
         )
         represented_relationships = sum(
             1
@@ -149,8 +162,27 @@ class StorytellingValidator:
                 row.interactions
                 or ((row.interaction,) if row.interaction is not None else ())
             )
-            if interaction.authority == "FINAL_PACKAGE_INTERACTION_TARGET"
+            if interaction.authority in explicit_relation_authorities
         )
+
+        authored_event_keys = {
+            (str(scene.get("scene_id")), str(event.get("semantic_event_id")))
+            for scene in package.semantic_bindings.get("scenes", [])
+            if isinstance(scene, dict) and scene.get("scene_id")
+            for event in scene.get("semantic_events", [])
+            if isinstance(event, dict) and event.get("semantic_event_id")
+        }
+        beat_scene = {beat.id: beat.scene_id for beat in story}
+        represented_event_keys = {
+            (beat_scene.get(row.beat_id, ""), flow.event_id)
+            for row in choreography.directives
+            for flow in row.event_flows
+            if flow.event_id and beat_scene.get(row.beat_id)
+        }
+        missing_semantic_events = tuple(sorted(
+            f"{scene_id}:{event_id}"
+            for scene_id, event_id in authored_event_keys - represented_event_keys
+        ))
         executable_interactions = sum(
             1
             for row in choreography.directives
@@ -195,12 +227,15 @@ class StorytellingValidator:
 
         grammar_sequence_count = len(choreography.sequences)
         grammar_compliant_sequences = 0
+        incomplete_grammar_sequences: list[str] = []
         for sequence in choreography.sequences:
-            stages = {stage.value for stage in sequence.grammar_stages}
-            progressive = "ENTER" in stages and "READ" in stages and "RELEASE" in stages
-            meaning = bool(stages & {"ADD", "RELATE", "RESULT"})
-            if progressive and meaning:
+            if cls._grammar_sequence_is_compliant(sequence):
                 grammar_compliant_sequences += 1
+            else:
+                ordered_stages = ",".join(stage.value for stage in sequence.grammar_stages)
+                incomplete_grammar_sequences.append(
+                    f"{sequence.id}[beats={len(sequence.beat_ids)};stages={ordered_stages}]"
+                )
 
         asset_requirements = [
             requirement
@@ -231,6 +266,8 @@ class StorytellingValidator:
             warnings.append("FINAL_PACKAGE_METADATA_NOT_FULLY_REPRESENTED_IN_STORY")
         if explicit_relationships > represented_relationships:
             warnings.append("FINAL_PACKAGE_RELATIONSHIP_DROPPED_BEFORE_CHOREOGRAPHY")
+        if missing_semantic_events:
+            warnings.append("FINAL_PACKAGE_SEMANTIC_EVENT_DROPPED_BEFORE_CHOREOGRAPHY")
         if choreography.directives and meaningful_state_beats == 0:
             warnings.append("NO_MEANINGFUL_VISUAL_STATE_CHANGE")
         if hook_rows and semantic_hook_count < len(hook_rows):
@@ -266,13 +303,37 @@ class StorytellingValidator:
             semantic_hook_count=semantic_hook_count,
             grammar_sequence_count=grammar_sequence_count,
             grammar_compliant_sequences=grammar_compliant_sequences,
+            incomplete_grammar_sequences=tuple(incomplete_grammar_sequences),
             asset_requirement_count=len(asset_requirements),
             missing_asset_requirements=missing_asset_requirements,
             neutral_hold_motion_count=neutral_hold,
             meaning_motion_count=meaning_motion,
             forbidden_jitter_programs=tuple(sorted(set(forbidden))),
+            authored_semantic_events=len(authored_event_keys),
+            represented_semantic_events=len(authored_event_keys & represented_event_keys),
+            missing_semantic_events=missing_semantic_events,
             warnings=tuple(warnings),
         )
+
+    @staticmethod
+    def _grammar_sequence_is_compliant(sequence) -> bool:
+        """Validate progressive grammar without inventing meaning stages.
+
+        A one-beat sequence has no later beat available to ADD/RELATE/RESULT. Requiring
+        one of those stages would reject a structurally complete standalone beat. For
+        multi-beat sequences the stronger progressive-meaning requirement remains.
+        """
+        stages = {stage.value for stage in sequence.grammar_stages}
+        progressive = (
+            "ENTER" in stages
+            and "READ" in stages
+            and "RELEASE" in stages
+        )
+        if not progressive:
+            return False
+        if len(sequence.beat_ids) == 1:
+            return True
+        return bool(stages & {"ADD", "RELATE", "RESULT"})
 
     @classmethod
     def validate(cls, **kwargs) -> StorytellingReport:
@@ -282,6 +343,8 @@ class StorytellingValidator:
             hard_failures.append("FINAL_PACKAGE_METADATA_COVERAGE")
         if not report.interaction_semantics_complete:
             hard_failures.append("FINAL_PACKAGE_RELATIONSHIP_COVERAGE")
+        if not report.semantic_event_coverage_complete:
+            hard_failures.append("FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE")
         if not report.downstream_metadata_complete:
             hard_failures.append("FINAL_PACKAGE_DOWNSTREAM_METADATA_COVERAGE")
         if not report.anti_jitter_pass:

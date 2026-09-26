@@ -44,3 +44,209 @@ def test_loads_canonical_script_declared_by_final_package(tmp_path: Path) -> Non
     loaded = FinalPackageLoader().load(package, tmp_path / "work")
 
     assert loaded.script == "نص الاختبار"
+
+
+def test_loads_and_validates_optional_semantic_bindings(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("hello world", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_SEMANTIC_BINDINGS","scenes":[{"scene_id":"SCENE_001",'
+        '"assets":[{"scene_id":"SCENE_001","asset_id":"icon","script_text":"hello world",'
+        '"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    loaded = FinalPackageLoader().load(package, tmp_path / "work")
+
+    assert loaded.semantic_bindings["schema_name"] == "HEXA_SEMANTIC_BINDINGS"
+    assert loaded.semantic_bindings["scenes"][0]["assets"][0]["asset_id"] == "icon"
+
+
+def test_rejects_broken_semantic_binding_parent(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_SEMANTIC_BINDINGS","scenes":[{"scene_id":"SCENE_001",'
+        '"assets":[{"asset_id":"child","script_text":"hello","parent_asset_id":"missing"}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="parent is missing"):
+        FinalPackageLoader().load(package, tmp_path / "work")
+
+
+def test_loads_asset_level_semantic_bindings_contract(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "scene_plan.json").write_text(
+        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
+        '"image":"scenes/SCENE_001.png","script_span":'
+        '{"global_char_start":0,"global_char_end":10,"text":"alpha beta"},'
+        '"units":[{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT"},'
+        '{"unit_id":"intent-b","type":"VISUAL_ASSET_INTENT"}]}]}',
+        encoding="utf-8",
+    )
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",'
+        '"asset_is_semantic_intent_not_cutout":true,"no_fixed_timing":true,'
+        '"scenes":[{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
+        '"asset_ids":["intent-a","intent-b"]}],"assets":['
+        '{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g",'
+        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null},'
+        '{"asset_id":"intent-b","script_text":"alpha beta",'
+        '"binding_type":"SEMANTIC","semantic_group_id":"g",'
+        '"sequence_order":2,"confidence":0.9,"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    loaded = FinalPackageLoader().load(package, tmp_path / "work")
+
+    assert loaded.semantic_bindings["schema_name"] == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
+    assert loaded.semantic_bindings["scenes"][0]["assets"][1]["sequence_order"] == 2
+
+
+def test_rejects_asset_level_group_membership_mismatch(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
+        '{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
+        '"asset_ids":["intent-a"]}],"assets":['
+        '{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"other",'
+        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="membership mismatch"):
+        FinalPackageLoader().load(package, tmp_path / "work")
+
+
+def test_rejects_asset_level_phrase_missing_from_canonical_script(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
+        '{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"invented phrase",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
+        '"asset_ids":["intent-a"]}],"assets":['
+        '{"asset_id":"intent-a","script_text":"invented phrase",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g",'
+        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="not found in canonical script"):
+        FinalPackageLoader().load(package, tmp_path / "work")
+
+
+def test_loads_asset_level_visual_locator_contract(tmp_path: Path) -> None:
+    package = tmp_path / "package-locator"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "scene_plan.json").write_text(
+        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
+        '"image":"scenes/SCENE_001.png","units":['
+        '{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT"}]}]}',
+        encoding="utf-8",
+    )
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
+        '{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
+        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
+        '"confidence":1.0,"visual_locator":{"coordinate_space":"normalized_scene",'
+        '"cx":0.5,"cy":0.5,"width":0.2,"height":0.2}}]}]}',
+        encoding="utf-8",
+    )
+
+    loaded = FinalPackageLoader().load(package, tmp_path / "work-locator")
+
+    locator = loaded.semantic_bindings["scenes"][0]["assets"][0]["visual_locator"]
+    assert locator["cx"] == 0.5
+    assert locator["coordinate_space"] == "normalized_scene"
+
+
+def test_rejects_visual_locator_outside_normalized_scene(tmp_path: Path) -> None:
+    package = tmp_path / "package-bad-locator"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
+        '{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
+        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
+        '"confidence":1.0,"visual_locator":{"cx":0.95,"cy":0.5,'
+        '"width":0.2,"height":0.2}}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="inside scene bounds"):
+        FinalPackageLoader().load(package, tmp_path / "work-bad-locator")
+
+
+def test_rejects_invalid_scene_unit_visual_locator(tmp_path: Path) -> None:
+    package = tmp_path / "package-bad-unit-locator"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "scene_plan.json").write_text(
+        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
+        '"image":"scenes/SCENE_001.png","units":['
+        '{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT",'
+        '"visual_locator":{"cx":0.5,"cy":0.5,"width":1.2,"height":0.2}}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="size must be normalized"):
+        FinalPackageLoader().load(package, tmp_path / "work-bad-unit-locator")
+
+
+def test_rejects_incompatible_asset_level_cutout_mapping_cardinality(tmp_path: Path) -> None:
+    package = tmp_path / "package-bad-cardinality"
+    scenes = package / "scenes"
+    scenes.mkdir(parents=True)
+    (scenes / "SCENE_001.png").write_bytes(b"png")
+    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
+    (package / "semantic_bindings.json").write_text(
+        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",'
+        '"cutout_mapping_cardinality":"EXACTLY_ONE",'
+        '"scenes":[{"scene_id":"SCENE_001","semantic_groups":['
+        '{"semantic_group_id":"g","script_text":"alpha beta",'
+        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
+        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
+        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
+        '"confidence":1.0}]}]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPackageError, match="cutout_mapping_cardinality"):
+        FinalPackageLoader().load(package, tmp_path / "work-bad-cardinality")

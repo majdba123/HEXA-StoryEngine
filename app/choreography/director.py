@@ -7,15 +7,18 @@ from app.models import PackageModel, StoryBeat, VisualAsset
 from .actions import ActionDecision, SemanticActionResolver
 from .binding import AssetBinding, SemanticAssetBinder
 from .continuity import ContinuityResolver
+from .event_flow import SemanticEventFlowPlanner
 from .grammar import ReferenceGrammarPlanner
 from .interactions import InteractionCompiler
 from .models import (
     ChoreographyDirective,
     ChoreographyPlan,
     ChoreographySequence,
+    ChoreographyPattern,
     HookKind,
     HookMechanism,
     InteractionIntent,
+    SemanticEventFlow,
     SequencePhase,
     VisualStateTransition,
 )
@@ -42,6 +45,7 @@ class ChoreographyDirector:
         self.binding = SemanticAssetBinder()
         self.interactions = InteractionCompiler()
         self.states = VisualStateCompiler()
+        self.event_flows = SemanticEventFlowPlanner()
         self.grammar = ReferenceGrammarPlanner()
         self.requirements = AssetRequirementCompiler()
         self.continuity = ContinuityResolver()
@@ -65,6 +69,7 @@ class ChoreographyDirector:
         interaction_sets: dict[str, tuple[InteractionIntent, ...]] = {}
         primary_interactions: dict[str, InteractionIntent | None] = {}
         transitions: dict[str, tuple[VisualStateTransition, ...]] = {}
+        semantic_event_flows: dict[str, tuple[SemanticEventFlow, ...]] = {}
         requirements: dict[str, tuple] = {}
 
         for beat in beats:
@@ -84,6 +89,11 @@ class ChoreographyDirector:
                 decision.action,
                 all_interactions,
             )
+            event_flows = self.event_flows.compile(
+                beat=beat,
+                interactions=all_interactions,
+                transitions=state_changes,
+            )
             asset_requirements = self.requirements.compile_all(
                 beat, binding, all_interactions, decision.action
             )
@@ -92,6 +102,7 @@ class ChoreographyDirector:
             interaction_sets[beat.id] = all_interactions
             primary_interactions[beat.id] = primary_interaction
             transitions[beat.id] = state_changes
+            semantic_event_flows[beat.id] = event_flows
             requirements[beat.id] = asset_requirements
 
         groups = self.grouper.group(beats)
@@ -128,6 +139,7 @@ class ChoreographyDirector:
                 all_interactions = interaction_sets[beat.id]
                 interaction_intent = primary_interactions[beat.id]
                 state_changes = transitions[beat.id]
+                event_flows = semantic_event_flows[beat.id]
                 phase = self._phase(index, len(group), decision.action, beat)
                 grammar_stages = self.grammar.stages_for_beat(
                     beat=beat,
@@ -136,6 +148,7 @@ class ChoreographyDirector:
                     phase=phase,
                     interaction=interaction_intent,
                     transitions=state_changes,
+                    event_flows=event_flows,
                 )
                 sequence_grammar.extend(grammar_stages)
                 beat_hook = self._beat_hook(
@@ -149,10 +162,26 @@ class ChoreographyDirector:
 
                 phase_boost = 0.08 if phase == SequencePhase.CONSEQUENCE else 0.0
                 hook_boost = 0.18 if beat_hook != HookKind.NONE else 0.0
-                energy = min(1.0, decision.energy + phase_boost + hook_boost)
+                event_flow_boost = self._event_flow_energy_boost(event_flows)
+                energy = min(
+                    1.0,
+                    decision.energy + phase_boost + hook_boost + event_flow_boost,
+                )
 
                 current_asset_ids = set(beat.primary_asset_ids + beat.support_asset_ids)
-                focus = self.interactions.preferred_focus(interaction_intent, binding)
+                has_authored_focus = any(
+                    row.visual_focus
+                    for row in beat.asset_activations
+                )
+                event_focus = self._event_focus_asset_id(event_flows, current_asset_ids)
+                focus = (
+                    event_focus
+                    or (
+                        binding.focus_asset_id
+                        if has_authored_focus
+                        else self.interactions.preferred_focus(interaction_intent, binding)
+                    )
+                )
                 if focus is None or focus not in current_asset_ids:
                     focus = binding.focus_asset_id
                 if focus is None or focus not in current_asset_ids:
@@ -173,17 +202,29 @@ class ChoreographyDirector:
                     interaction_asset = None
 
                 continuity = self.continuity.decide_focus(previous_focus, focus, current_asset_ids)
+                pattern = self._pattern_for(
+                    beat,
+                    all_interactions,
+                    state_changes,
+                    event_flows,
+                )
                 context = beat.semantic_context
                 semantic_unit_ids = tuple(
                     entity.unit_id for entity in (context.entities if context else [])
                 )
                 package_evidence = tuple(context.evidence if context else [])
+                if event_flows:
+                    package_evidence = tuple(dict.fromkeys((
+                        *package_evidence,
+                        "final_package_event_flow_choreography",
+                    )))
 
                 directives.append(ChoreographyDirective(
                     beat_id=beat.id,
                     sequence_id=sequence_id,
                     phase=phase,
                     action=decision.action,
+                    pattern=pattern,
                     hook=beat_hook,
                     hook_mechanism=beat_mechanism,
                     energy=energy,
@@ -212,6 +253,7 @@ class ChoreographyDirector:
                     package_evidence=package_evidence,
                     grammar_stages=grammar_stages,
                     asset_requirements=requirements[beat.id],
+                    event_flows=event_flows,
                 ))
                 if focus:
                     previous_focus = focus
@@ -376,6 +418,119 @@ class ChoreographyDirector:
         if sequence_hook == HookKind.PAYOFF:
             return HookKind.PAYOFF if index >= max(0, count - 2) else HookKind.NONE
         return HookKind.NONE
+
+    @staticmethod
+    def _pattern_for(
+        beat: StoryBeat,
+        interactions: tuple[InteractionIntent, ...],
+        transitions: tuple[VisualStateTransition, ...],
+        event_flows: tuple[SemanticEventFlow, ...] = (),
+    ) -> ChoreographyPattern:
+        # Explicit Final Package semantics outrank inferred choreography. The order here
+        # intentionally mirrors the minimum-useful-metadata contract: state changes are
+        # strongest, then executable relationships, then focus, then ordered build.
+        if any(
+            row.authority == "FINAL_PACKAGE_VISUAL_STATE" and row.meaningful
+            for row in transitions
+        ):
+            return ChoreographyPattern.STATE_TRANSFORM
+
+        authored_relations = [
+            row
+            for row in interactions
+            if row.authority == "FINAL_PACKAGE_ASSET_RELATION" and row.executable
+        ]
+        if authored_relations:
+            non_compare = [
+                row
+                for row in authored_relations
+                if row.semantic_action != "COMPARE"
+                and str(row.relationship or "").upper() not in {
+                    "COMPARES_WITH",
+                    "CONTRASTS_WITH",
+                }
+            ]
+            if non_compare:
+                return ChoreographyPattern.CAUSE_EFFECT_CHAIN
+
+        # Final Package semantic events are the strongest non-relational authority for
+        # progressive staging. They tell Choreography which visual establishes the idea,
+        # which visuals participate, where payoff lives, and how events depend on each
+        # other. This avoids reducing a rich 1.2 event to a generic asset-by-asset reveal.
+        if event_flows:
+            executable = [
+                interaction
+                for flow in event_flows
+                for interaction in flow.interactions
+                if interaction.executable
+            ]
+            non_compare = [
+                interaction for interaction in executable
+                if str(interaction.semantic_action or "").upper() != "COMPARE"
+            ]
+            if non_compare:
+                return ChoreographyPattern.CAUSE_EFFECT_CHAIN
+            # Comparison/parallel relations are authored interactions, but they should
+            # not be visually mislabeled as a causal chain. Their Motion flavor is
+            # preserved later from the relation semantic_action.
+            if executable:
+                return ChoreographyPattern.PROGRESSIVE_BUILD
+            if len(event_flows) >= 2 or any(
+                len(flow.participant_asset_ids) >= 1 for flow in event_flows
+            ):
+                return ChoreographyPattern.PROGRESSIVE_BUILD
+            if any(flow.result_asset_ids for flow in event_flows):
+                return ChoreographyPattern.FOCUS_TRANSFER
+
+        context = beat.semantic_context
+        if context is not None:
+            progression = context.scene_metadata.get("semantic_progression")
+            event_count = int(context.scene_metadata.get("semantic_event_count") or 0)
+            if isinstance(progression, dict) and event_count >= 2:
+                return ChoreographyPattern.PROGRESSIVE_BUILD
+
+        if any(row.visual_focus for row in beat.asset_activations):
+            return ChoreographyPattern.FOCUS_TRANSFER
+
+        ordered = {
+            row.sequence_order
+            for row in beat.asset_activations
+            if (
+                row.source == "final_package_semantic_binding"
+                and row.sequence_order is not None
+            )
+        }
+        if len(ordered) >= 3:
+            return ChoreographyPattern.PROGRESSIVE_BUILD
+
+        return ChoreographyPattern.STANDARD
+
+    @staticmethod
+    def _event_focus_asset_id(
+        event_flows: tuple[SemanticEventFlow, ...],
+        current_asset_ids: set[str],
+    ) -> str | None:
+        """Use the first authored event leader as the beat's stable choreography anchor."""
+        for flow in event_flows:
+            for asset_id in flow.leader_asset_ids:
+                if asset_id in current_asset_ids:
+                    return asset_id
+        return None
+
+    @staticmethod
+    def _event_flow_energy_boost(event_flows: tuple[SemanticEventFlow, ...]) -> float:
+        """Reward authored visual progression without inventing extra motion semantics."""
+        if not event_flows:
+            return 0.0
+        stage_names = {stage.value for flow in event_flows for stage in flow.stages}
+        boost = 0.0
+        if "INTERACT" in stage_names or "REACT" in stage_names:
+            boost += 0.04
+        if "PAYOFF" in stage_names:
+            boost += 0.04
+        if len(event_flows) >= 2:
+            boost += 0.03
+        return min(0.10, boost)
 
     @staticmethod
     def _story_role(beat: StoryBeat) -> str:

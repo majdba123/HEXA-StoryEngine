@@ -17,7 +17,9 @@ from typing import Any
 from app import __version__
 from app.config import Settings
 from app.models import Stage
+from app.recovery.policy import failure_policy
 from app.shared.errors import HexaError
+from app.shared.process import run_hidden
 
 
 class BuildReportSession:
@@ -73,12 +75,29 @@ class BuildReportSession:
         self.status = "failed"
         self.finished_at = datetime.now(timezone.utc)
         details = exc.details if isinstance(exc, HexaError) else {}
+        effective_code = exc.effective_code if isinstance(exc, HexaError) else None
+        policy = failure_policy(effective_code) if effective_code else None
         self.error = {
             "type": type(exc).__name__,
-            "code": getattr(exc, "code", None),
+            "code": effective_code,
+            "category": (exc.code if isinstance(exc, HexaError) else None),
             "message": str(exc),
             "details": self._sanitize(details),
-            "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            "policy": (
+                {
+                    "owner_stage": policy.owner_stage,
+                    "disposition": policy.disposition.value,
+                    "reason": policy.reason,
+                    "semantic_authority_change_allowed": (
+                        policy.semantic_authority_change_allowed
+                    ),
+                }
+                if policy is not None
+                else None
+            ),
+            "traceback": "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            ),
         }
         self._append_log(f"FAILED: {type(exc).__name__}: {exc}")
 
@@ -143,7 +162,10 @@ class BuildReportSession:
                 "ffmpeg_bin": self.settings.ffmpeg_bin,
                 "ffprobe_bin": self.settings.ffprobe_bin,
                 "whisper_model": self.settings.whisper_model,
+                "semantic_text_model": self.settings.semantic_text_model,
+                "qwen3_vl_model": self.settings.qwen3_vl_model,
                 "allow_scene_fallback": self.settings.allow_scene_fallback,
+                "require_text_layer": self.settings.require_text_layer,
             },
             "stage_events": self.stage_events,
             "log_file": self._path_metadata(self.log_path),
@@ -268,7 +290,7 @@ class BuildReportSession:
     @staticmethod
     def _run_text(command: list[str], cwd: Path | None = None) -> str:
         try:
-            result = subprocess.run(
+            result = run_hidden(
                 command,
                 cwd=str(cwd) if cwd else None,
                 check=False,
@@ -348,7 +370,20 @@ class BuildReportSession:
                 "",
                 f"- Type: `{error.get('type')}`",
                 f"- Code: `{error.get('code')}`",
+                f"- Category: `{error.get('category')}`",
                 f"- Message: {error.get('message')}",
+                *(
+                    [
+                        f"- Owner stage: `{error['policy'].get('owner_stage')}`",
+                        f"- Disposition: `{error['policy'].get('disposition')}`",
+                        (
+                            "- Semantic authority change allowed: `"+
+                            f"{error['policy'].get('semantic_authority_change_allowed')}`"
+                        ),
+                    ]
+                    if error.get("policy")
+                    else []
+                ),
                 "",
                 "```text",
                 error.get("traceback") or "",

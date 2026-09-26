@@ -149,7 +149,7 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
     assert "لاير" not in visible_text
-    assert "Noto Kufi Arabic" in payload
+    assert "Noto Kufi Arabic Extra Bold" in payload
     assert "\\an6\\fscx100\\fscy100\\move(" in payload
     assert "\\pos(" in payload
     # Each reveal state is a complete logical phrase shaped as one bidi run. This avoids
@@ -157,6 +157,9 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     assert payload.count("Dialogue: 0,") == 2
     assert payload.count("\\alpha&HFF&") == 0
     assert "1000 ريال" in payload
+    assert "&H00FFFFFF" in payload
+    assert "&H00000000" in payload
+    assert "Style: Amount,Noto Kufi Arabic Extra Bold,188" in payload
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
@@ -174,3 +177,65 @@ def test_ffmpeg_renderer_burns_text_in_same_segment_encode(tmp_path: Path) -> No
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
     assert payload.count("Dialogue: 0,") == 2
+
+def test_text_renderer_semantic_entry_strength_changes_motion_only(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    plan.text_motion[0].params["entry_strength"] = 1.0
+    plan.text_motion[0].params["entry_duration_ms"] = 210
+
+    path = TextRenderer().write_beat_ass(
+        plan,
+        plan.story[0],
+        segment_start=0.0,
+        duration=1.5,
+        output=tmp_path / "focused.ass",
+    )
+
+    assert path is not None
+    payload = path.read_text(encoding="utf-8")
+    assert ",0,210)\\fad(50,0)" in payload
+    assert "Style: Amount,Noto Kufi Arabic Extra Bold,188" in payload
+    assert "&H00FFFFFF" in payload
+    assert "&H00000000" in payload
+
+
+
+def test_text_renderer_clamps_real_arabic_glyphs_and_entry_inside_safe_area(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    cue = plan.text.cues[0].model_copy(update={
+        "text": "يكتب وبسرعة",
+        "semantic_type": "warning",
+        "style_id": "warning",
+    })
+    plan.text.cues = [cue]
+    plan.text_composition[0].items[0].text_cue_id = cue.id
+    plan.text_composition[0].items[0].x = 0.16
+    plan.text_composition[0].items[0].max_width = 0.30
+    plan.text_motion[0].text_cue_id = cue.id
+    plan.text_motion[0].params["entry_strength"] = 1.0
+
+    renderer = TextRenderer()
+    x, y, scale = renderer._safe_text_geometry(
+        plan=plan,
+        cue_text=cue.text,
+        semantic_type=cue.semantic_type,
+        style_id=cue.style_id,
+        item=plan.text_composition[0].items[0],
+        rtl=True,
+        entry_strength=1.0,
+    )
+    glyph_width, glyph_height = renderer.metrics.measure(
+        cue.text,
+        style_id=cue.style_id,
+        semantic_type=cue.semantic_type,
+        font_scale=scale,
+    )
+    margin_x = plan.width * 0.045
+    margin_y = plan.height * 0.055
+    entry_x = 24
+    entry_y = 15
+
+    assert x - glyph_width >= margin_x - 1.0
+    assert x + entry_x <= plan.width - margin_x + 1.0
+    assert y - glyph_height / 2 >= margin_y - 1.0
+    assert y + glyph_height / 2 + entry_y <= plan.height - margin_y + 1.0

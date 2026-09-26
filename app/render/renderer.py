@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from app.contracts import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
+from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.shared.process import run_hidden
 from app.render.motion import FFmpegMotionAdapter
 from app.render.text import TextRenderer
-from app.render.transition import VisualTransitionPolicy
+from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 
 
 class FFmpegRenderer:
@@ -17,8 +21,9 @@ class FFmpegRenderer:
 
     Beat segments are encoded independently for bounded render cost and recovery. Visual
     cutouts stay opaque while moving: alpha crossfades on a white canvas create the exact
-    washed-out "ghost" silhouette that looks like a bad mask. True persistent assets are
-    held in place; unrelated outgoing artwork is never carried into the next beat.
+    washed-out "ghost" silhouette that looks like a bad mask. Scene boundaries instead
+    use a bounded opaque outgoing bridge behind crisp incoming artwork; explicit authored
+    handoffs may blur that old full-scene bridge before it is removed.
     """
 
     def __init__(
@@ -28,11 +33,56 @@ class FFmpegRenderer:
         text_font_family: str = "Noto Kufi Arabic",
     ) -> None:
         self.ffmpeg_bin = ffmpeg_bin
+        self._filter_complex_file_option_cache: str | None = None
         self.text_renderer = TextRenderer(font_family=text_font_family)
         self.transition_policy = VisualTransitionPolicy()
+        self.lifecycle = ContinuityContract()
         self.motion_adapter = FFmpegMotionAdapter()
 
-    def render(self, plan: RenderPlan, output: Path) -> Path:
+
+    def preflight(self, root: Path) -> Path:
+        """Run a real H.264 encode before expensive StoryEngine stages begin.
+
+        This validates the installed FFmpeg binary, the selected file-backed complex
+        filter syntax, libx264, pixel format, and the same CRF/fps path used by real
+        beat segments. It intentionally renders only two tiny frames.
+        """
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / "ffmpeg-render-preflight.mp4"
+        command = [
+            self.ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=white:s=160x90:r=30:d=0.10",
+        ]
+        command.extend(
+            self._encode_args(
+                ["[0:v]format=yuv420p[vout]"],
+                target,
+                fps=30,
+                frame_count=2,
+            )
+        )
+        self._run(command, "ffmpeg render preflight failed")
+        if not target.exists() or target.stat().st_size == 0:
+            raise StageFailedError(
+                "ffmpeg render preflight produced no output",
+                details={"code": "RENDER_PREFLIGHT_EMPTY"},
+            )
+        return target
+
+    def render(
+        self,
+        plan: RenderPlan,
+        output: Path,
+        *,
+        strict_boundary_coverage: bool = False,
+    ) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
         story = sorted(plan.story, key=lambda beat: (beat.start, beat.end, beat.id))
         if not story:
@@ -43,6 +93,10 @@ class FFmpegRenderer:
         motion = {(cue.beat_id, cue.asset_id): cue for cue in plan.motion}
         segment_root = output.parent / f"{output.stem}-segments"
         segment_root.mkdir(parents=True, exist_ok=True)
+        # Resolve file-backed filter transport before worker threads begin. Pipeline
+        # preflight normally seeds the cache, but direct renderer callers get the same
+        # fail-fast guarantee without a capability-probe race between segments.
+        self._filter_complex_file_option(segment_root)
 
         total_frames = max(1, round(plan.duration * plan.fps))
         first_frame = self._time_to_frame(story[0].start, plan.fps, total_frames)
@@ -93,6 +147,7 @@ class FFmpegRenderer:
                     assets,
                     composition,
                     motion,
+                    strict_boundary_coverage,
                 ): target
                 for _, beat, previous_beat, segment_start, frame_count, target in jobs
             }
@@ -126,6 +181,7 @@ class FFmpegRenderer:
         assets: dict,
         composition: dict,
         motion: dict[tuple[str, str], MotionCue],
+        strict_boundary_coverage: bool = False,
     ) -> None:
         duration = frame_count / plan.fps
         layout = composition.get(beat.id)
@@ -135,8 +191,82 @@ class FFmpegRenderer:
 
         ordered_items = sorted(layout.items, key=lambda row: row.z)
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
-        transition = self.transition_policy.decide(previous_beat, previous_layout, layout)
+        transition = self.transition_policy.decide(
+            previous_beat,
+            previous_layout,
+            layout,
+            current_beat=beat,
+        )
+        previous_motion_by_asset = (
+            {
+                item.asset_id: motion[(previous_beat.id, item.asset_id)]
+                for item in previous_layout.items
+                if (previous_beat.id, item.asset_id) in motion
+            }
+            if previous_beat is not None and previous_layout is not None
+            else {}
+        )
+        lifecycle = self.lifecycle.classify_boundary(
+            previous_layout=previous_layout,
+            current_layout=layout,
+            previous_motion_by_asset=previous_motion_by_asset,
+        )
+        if lifecycle.invalid_terminal_persistence:
+            raise StageFailedError(
+                "render lifecycle contract violated",
+                details={
+                    "code": "TERMINAL_EXIT_ON_PERSISTENT_ASSET",
+                    "from_beat_id": previous_beat.id if previous_beat is not None else None,
+                    "to_beat_id": beat.id,
+                    "asset_ids": sorted(lifecycle.invalid_terminal_persistence),
+                },
+            )
         persistent_ids = transition.persistent_asset_ids
+        object_target_by_outgoing = dict(transition.object_handoff_pairs)
+        current_items_by_id = {item.asset_id: item for item in ordered_items}
+        outgoing_items = (
+            sorted(
+                (
+                    item for item in previous_layout.items
+                    if item.asset_id in transition.carry_outgoing_asset_ids
+                ),
+                key=lambda row: row.z,
+            )
+            if previous_layout is not None
+            else []
+        )
+        incoming_start, _incoming_reveal = self._incoming_handoff_window(
+            beat=beat,
+            ordered_items=ordered_items,
+            segment_start=segment_start,
+            duration=duration,
+            motion=motion,
+        )
+        bridge_start = 0.0
+        bridge_end = 0.0
+        if outgoing_items and transition.mode in {
+            SceneTransitionMode.OBJECT_HANDOFF,
+            SceneTransitionMode.MOTION_HANDOFF,
+            SceneTransitionMode.BLUR_BRIDGE,
+        }:
+            bridge_start, bridge_end = self._scene_bridge_window(
+                incoming_start=incoming_start,
+                segment_duration=duration,
+                preferred_duration=float(transition.bridge_duration),
+            )
+        bridge_duration = max(0.0, bridge_end - bridge_start)
+        visual_carrier_id = (
+            None
+            if bridge_duration > 0 or previous_beat is None
+            else self._visual_carrier_asset_id(
+                beat=beat,
+                ordered_items=ordered_items,
+                motion=motion,
+                persistent_ids=persistent_ids,
+                fps=plan.fps,
+                strict_boundary_coverage=strict_boundary_coverage,
+            )
+        )
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
         for item in ordered_items:
@@ -147,6 +277,14 @@ class FFmpegRenderer:
                     details={"asset_id": item.asset_id, "beat_id": beat.id},
                 )
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
+        for item in outgoing_items:
+            asset = assets.get(item.asset_id)
+            if asset is None or not asset.image_path.exists():
+                raise StageFailedError(
+                    "scene bridge references missing outgoing asset",
+                    details={"asset_id": item.asset_id, "beat_id": beat.id},
+                )
+            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
 
         filters: list[str] = [
             f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:d={duration:.6f},"
@@ -154,24 +292,91 @@ class FFmpegRenderer:
         ]
         composite_label = "base0"
 
+        if bridge_duration > 0:
+            # Keep the outgoing scene crisp while waiting for a later Story-owned
+            # incoming reveal. Only the short handoff interval receives exit motion
+            # and optional blur; a narration gap must never become a long blurred hold.
+            filters.append(
+                f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:"
+                f"d={bridge_end:.6f},format=rgba[oldbase0]"
+            )
+            old_label = "oldbase0"
+            input_offset = len(ordered_items)
+            for bridge_index, item in enumerate(outgoing_items):
+                input_index = input_offset + bridge_index
+                box_w, box_h, target_x, target_y = self._geometry(plan, item)
+                source_label = f"oldasset{bridge_index}"
+                filters.append(
+                    f"[{input_index}:v]format=rgba,setsar=1,"
+                    f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:"
+                    f"force_divisible_by=2,"
+                    f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+                    f"loop=loop=-1:size=1:start=0,trim=duration={bridge_end:.6f},"
+                    f"setpts=PTS-STARTPTS[{source_label}]"
+                )
+                target_item = current_items_by_id.get(
+                    object_target_by_outgoing.get(item.asset_id, "")
+                )
+                horizontal, vertical = self._bridge_exit_offset(
+                    plan=plan,
+                    item=item,
+                    mode=transition.mode,
+                    target_item=target_item,
+                )
+                progress_expr = self._bridge_progress_expression(
+                    start=bridge_start,
+                    duration=bridge_duration,
+                )
+                next_old = f"oldmix{bridge_index}"
+                filters.append(
+                    f"[{old_label}][{source_label}]overlay="
+                    f"x='{target_x}+({horizontal})*{progress_expr}':"
+                    f"y='{target_y}+({vertical})*{progress_expr}':"
+                    f"enable='between(t,0,{bridge_end:.6f})':"
+                    f"eof_action=pass:shortest=0[{next_old}]"
+                )
+                old_label = next_old
+
+            if transition.mode == SceneTransitionMode.BLUR_BRIDGE:
+                filters.append(f"[{old_label}]split=2[oldcrisp][oldblurbase]")
+                filters.append(
+                    f"[oldblurbase]gblur=sigma={transition.blur_sigma:.3f}:steps=2[oldfx]"
+                )
+                filters.append(
+                    f"[{composite_label}][oldcrisp]overlay=x=0:y=0:"
+                    f"enable='between(t,0,{bridge_start:.6f})':"
+                    f"eof_action=pass:shortest=0[oldhold]"
+                )
+                filters.append(
+                    f"[oldhold][oldfx]overlay=x=0:y=0:"
+                    f"enable='between(t,{bridge_start:.6f},{bridge_end:.6f})':"
+                    f"eof_action=pass:shortest=0[bridgebase]"
+                )
+            else:
+                filters.append(
+                    f"[{composite_label}][{old_label}]overlay=x=0:y=0:"
+                    f"enable='between(t,0,{bridge_end:.6f})':"
+                    f"eof_action=pass:shortest=0[bridgebase]"
+                )
+            composite_label = "bridgebase"
+
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
-            start, end, fade_duration = self._cue_window(
+            start, end, _fade_duration = self._cue_window(
                 beat=beat,
                 cue=cue,
                 segment_start=segment_start,
                 duration=duration,
             )
             persistent = item.asset_id in persistent_ids
+            visual_carrier = item.asset_id == visual_carrier_id
             render_constraints = (
                 cue.params.get("render_constraints", {})
                 if cue is not None and isinstance(cue.params, dict)
                 else {}
             )
             geometry_locked = render_constraints.get("geometry_lock") == "authored_footprint"
-            alpha_only_reveal = render_constraints.get("reveal_mode") == "alpha_only"
-
             source_label = f"asset{layer_index}"
             base_source_label = f"asset{layer_index}base"
             # Keep cutout alpha exactly as authored. The transparent pad gives Motion a
@@ -184,14 +389,10 @@ class FFmpegRenderer:
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
                 f"[{base_source_label}]"
             )
+            # Keep authored alpha intact. Semantic visibility is controlled by the
+            # overlay enable window below; this avoids pale/ghost silhouettes from
+            # alpha-fading family-canvas members over a white background.
             transform_source_label = base_source_label
-            if alpha_only_reveal and not persistent:
-                reveal_label = f"asset{layer_index}reveal"
-                filters.append(
-                    f"[{transform_source_label}]fade=t=in:st={start:.6f}:"
-                    f"d={fade_duration:.6f}:alpha=1[{reveal_label}]"
-                )
-                transform_source_label = reveal_label
 
             scale_expr = "1"
             if (
@@ -244,23 +445,24 @@ class FFmpegRenderer:
                 y_expr = self._entry_expression(target_y, start, end, offset=30)
 
             next_label = f"mix{layer_index}"
-            enable_start = 0.0 if persistent else start
-            # Primary artwork must cover the entire authored visual beat. Motion may
-            # intentionally begin a few frames after beat.start (for anticipation or
-            # narration pacing), but hiding the primary until cue.start exposes the
-            # white canvas between beats. Keep it visible at the program's first offset
-            # from the beat boundary and let the trajectory begin at the exact cue time.
-            # Support layers still obey their staggered cue starts.
-            if not persistent and item.asset_id in beat.primary_asset_ids:
-                authored_start = max(0.0, beat.start - segment_start)
-                enable_start = (
-                    0.0
-                    if authored_start <= (1.0 / plan.fps) + 1e-6
-                    else authored_start
-                )
+            # Semantic visibility is authoritative: every non-persistent asset stays
+            # hidden until its Motion/Story reveal window. The only exception is one
+            # deliberately selected boundary carrier, used solely to avoid a blank
+            # frame between beats. Story's legacy area-ranked primary must never make
+            # a future semantic result visible early.
+            enable_start = 0.0 if (persistent or visual_carrier) else start
+            exit_segments = (
+                [segment for segment in cue.segments if segment.phase == "EXIT"]
+                if cue is not None
+                else []
+            )
+            enable_end = duration
+            if exit_segments:
+                exit_end = min(float(segment.end) for segment in exit_segments) - segment_start
+                enable_end = max(enable_start, min(duration, exit_end))
             filters.append(
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{enable_start:.6f},{duration:.6f})':eof_action=pass:shortest=0"
+                f"enable='between(t,{enable_start:.6f},{enable_end:.6f})':eof_action=pass:shortest=0"
                 f"[{next_label}]"
             )
             composite_label = next_label
@@ -280,6 +482,209 @@ class FFmpegRenderer:
         filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")
+
+
+
+    @staticmethod
+    def _bridge_exit_offset(
+        *,
+        plan: RenderPlan,
+        item,
+        mode: SceneTransitionMode,
+        target_item=None,
+    ) -> tuple[int, int]:
+        """Give outgoing artwork a readable directional exit before scene replacement."""
+        if mode == SceneTransitionMode.OBJECT_HANDOFF and target_item is not None:
+            raw_dx = round((float(target_item.x) - float(item.x)) * plan.width * 0.55)
+            raw_dy = round((float(target_item.y) - float(item.y)) * plan.height * 0.55)
+            dx = max(-140, min(140, raw_dx))
+            dy = max(-80, min(80, raw_dy))
+            if abs(dx) >= 48 or abs(dy) >= 18:
+                return dx, dy
+
+        if mode == SceneTransitionMode.BLUR_BRIDGE:
+            horizontal_ratio, vertical_ratio = 0.030, 0.020
+        elif mode == SceneTransitionMode.OBJECT_HANDOFF:
+            horizontal_ratio, vertical_ratio = 0.040, 0.026
+        else:
+            horizontal_ratio, vertical_ratio = 0.050, 0.032
+
+        horizontal = max(48, min(120, round(plan.width * horizontal_ratio)))
+        vertical = max(18, min(64, round(plan.height * vertical_ratio)))
+        if item.x < 0.44:
+            dx = -horizontal
+        elif item.x > 0.56:
+            dx = horizontal
+        else:
+            # Central visuals clear vertically so the incoming focal element can own
+            # the centre rather than inheriting a tiny near-zero horizontal nudge.
+            dx = 0
+        dy = -vertical if item.y <= 0.5 else vertical
+        return dx, dy
+
+
+    @staticmethod
+    def _bridge_progress_expression(*, start: float, duration: float) -> str:
+        """Smooth scene-handoff travel instead of a mechanical linear slide."""
+        duration = max(0.05, float(duration))
+        end = float(start) + duration
+        p = f"((t-{float(start):.6f})/{duration:.6f})"
+        smooth = f"(3*({p})*({p})-2*({p})*({p})*({p}))"
+        return (
+            f"if(lt(t,{float(start):.6f}),0,"
+            f"if(gte(t,{end:.6f}),1,{smooth}))"
+        )
+
+    @staticmethod
+    def _scene_bridge_window(
+        *,
+        incoming_start: float,
+        segment_duration: float,
+        preferred_duration: float,
+    ) -> tuple[float, float]:
+        """Place a bounded bridge around the first Story-owned incoming reveal.
+
+        A delayed semantic reveal keeps the old scene crisp until shortly before the
+        new visual enters. The bridge itself remains short, so blur never turns a
+        narration gap into a long soft background hold.
+        """
+        duration = max(0.0, float(segment_duration))
+        if duration <= 0.0 or preferred_duration <= 0.0:
+            return 0.0, 0.0
+        bridge = min(duration, max(0.20, float(preferred_duration)))
+        incoming = max(0.0, min(duration, float(incoming_start)))
+        lead = min(0.16, max(0.10, bridge * GOLDEN_MINOR))
+        start = max(0.0, incoming - lead)
+        end = min(duration, start + bridge)
+        if incoming < duration and end <= incoming:
+            end = min(duration, incoming + min(0.12, duration - incoming))
+        return start, max(start, end)
+
+    @classmethod
+    def _visual_carrier_asset_id(
+        cls,
+        *,
+        beat: StoryBeat,
+        ordered_items: list,
+        motion: dict[tuple[str, str], MotionCue],
+        persistent_ids: frozenset[str],
+        fps: int = 30,
+        strict_boundary_coverage: bool = False,
+    ) -> str | None:
+        """Choose one low-risk boundary carrier without leaking future semantics.
+
+        Only assets whose cue begins at (or very near) the earliest semantic reveal are
+        eligible. Within that cohort, authored CONTEXT/OBJECT/CHARACTER support is safer
+        than PRIMARY/ACTION and RESULT is deliberately last. This preserves the no-white
+        handoff guarantee while preventing a later result from being exposed just because
+        it is large or Story's legacy primary.
+        """
+        if persistent_ids or not ordered_items:
+            return None
+
+        rows: list[dict[str, object]] = []
+        for original_index, item in enumerate(ordered_items):
+            cue = motion.get((beat.id, item.asset_id))
+            start = float(cue.start if cue is not None else beat.start)
+            params = (
+                cue.params
+                if cue is not None and isinstance(cue.params, dict)
+                else {}
+            )
+            order = params.get("motion_order", {})
+            if not isinstance(order, dict):
+                order = {}
+            focus = params.get("semantic_focus", {})
+            if not isinstance(focus, dict):
+                focus = {}
+            try:
+                sequence_order = int(order.get("sequence_order", 10_000) or 10_000)
+            except (TypeError, ValueError):
+                sequence_order = 10_000
+            try:
+                internal_index = int(order.get("internal_index", 0) or 0)
+            except (TypeError, ValueError):
+                internal_index = 0
+            rows.append({
+                "start": start,
+                "sequence_order": sequence_order,
+                "internal_index": internal_index,
+                "original_index": original_index,
+                "asset_id": item.asset_id,
+                "coverage": max(0.0, float(item.width) * float(item.height)),
+                "semantic_role": str(
+                    focus.get("semantic_role") or "UNKNOWN"
+                ).upper(),
+                "focus_role": str(focus.get("role") or "SUPPORT").upper(),
+                "visual_focus": str(focus.get("visual_focus") or "").upper(),
+            })
+        if not rows:
+            return None
+
+        earliest = min(float(row["start"]) for row in rows)
+        tolerance = max(0.08, 2.0 / max(1, fps))
+        cohort = [
+            row for row in rows
+            if float(row["start"]) <= earliest + tolerance
+        ]
+
+        def safety_rank(
+            row: dict[str, object],
+        ) -> tuple[int, int, int, int]:
+            semantic_role = str(row["semantic_role"])
+            focus_role = str(row["focus_role"])
+            visual_focus = str(row["visual_focus"])
+            if visual_focus == "CONTEXT" or focus_role == "CONTEXT":
+                role_rank = 0
+            elif semantic_role == "OBJECT" and visual_focus != "RESULT":
+                role_rank = 1
+            elif (
+                semantic_role in {"CHARACTER", "ACTOR"}
+                or focus_role in {"CHARACTER", "ACTOR"}
+            ):
+                role_rank = 2
+            elif semantic_role == "SUPPORT" or focus_role == "SUPPORT":
+                role_rank = 3
+            elif semantic_role == "ACTION" or focus_role == "ACTION":
+                role_rank = 4
+            elif visual_focus == "PRIMARY" or focus_role == "PRIMARY":
+                role_rank = 5
+            elif (
+                semantic_role == "RESULT"
+                or visual_focus == "RESULT"
+                or focus_role == "RESULT"
+            ):
+                role_rank = 9
+            else:
+                role_rank = 6
+            return (
+                role_rank,
+                int(row["internal_index"]),
+                int(row["sequence_order"]),
+                int(row["original_index"]),
+            )
+
+        if strict_boundary_coverage:
+            non_result = [
+                row
+                for row in cohort
+                if safety_rank(row)[0] < 9
+            ]
+            pool = non_result or cohort
+            # Recovery mode trades only within the SAME earliest semantic cohort.
+            # It never exposes a later RESULT. Prefer enough authored footprint to
+            # guarantee a visibly occupied boundary, then use semantic safety as the
+            # deterministic tie-break.
+            chosen = min(
+                pool,
+                key=lambda row: (
+                    -float(row["coverage"]),
+                    *safety_rank(row),
+                ),
+            )
+            return str(chosen["asset_id"])
+
+        return str(min(cohort, key=safety_rank)["asset_id"])
 
     @classmethod
     def _incoming_handoff_window(
@@ -314,6 +719,22 @@ class FFmpegRenderer:
     ) -> tuple[float, float, float]:
         global_start = float(cue.start if cue else beat.start)
         global_end = float(cue.end if cue else min(beat.end, beat.start + 0.32))
+        if cue is not None and cue.segments:
+            # Motion owns execution lifetime. Semantic proxy segments may start
+            # before or finish after the owner's Story cue without changing the
+            # owner's timing authority, so the renderer must cover the full segment
+            # envelope rather than clipping execution to cue.start/cue.end.
+            visible_starts = [
+                float(segment.start)
+                for segment in cue.segments
+                if segment.phase != "EXIT"
+            ]
+            if visible_starts:
+                global_start = min(global_start, min(visible_starts))
+            global_end = max(
+                global_end,
+                max(float(segment.end) for segment in cue.segments),
+            )
         start = max(0.0, global_start - segment_start)
         end = min(duration, max(start + 0.05, global_end - segment_start))
         reveal_duration = max(0.05, end - start)
@@ -409,16 +830,24 @@ class FFmpegRenderer:
         if not output.exists() or output.stat().st_size == 0:
             raise StageFailedError("renderer produced no output")
 
-    @staticmethod
     def _encode_args(
+        self,
         filters: list[str],
         target: Path,
         fps: int,
         frame_count: int,
     ) -> list[str]:
+        # Never place a production filter graph directly on the process command
+        # line. Dense scenes can generate many overlays/motion expressions and
+        # exceed Windows CreateProcess limits (WinError 206) long before FFmpeg
+        # itself sees the request. A per-segment script keeps command length
+        # bounded on every platform and also leaves useful render diagnostics.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        filter_script = target.parent / f"{target.stem}-filter-complex.ffgraph"
+        filter_script.write_text(";\n".join(filters) + "\n", encoding="utf-8")
         return [
-            "-filter_complex",
-            ";".join(filters),
+            self._filter_complex_file_option(target.parent),
+            str(filter_script),
             "-map",
             "[vout]",
             "-an",
@@ -438,6 +867,84 @@ class FFmpegRenderer:
             str(frame_count),
             str(target),
         ]
+
+
+    def _filter_complex_file_option(self, probe_root: Path | None = None) -> str:
+        """Select a file-backed complex-filter option by executing a real probe.
+
+        FFmpeg builds vary across operating systems and versions, and help text does
+        not reliably advertise the generic file-option syntax. Capability must be
+        proven by execution, not inferred from ``ffmpeg -h full``.
+        """
+        if self._filter_complex_file_option_cache is not None:
+            return self._filter_complex_file_option_cache
+
+        if probe_root is None:
+            with tempfile.TemporaryDirectory(prefix="hexa-filter-probe-") as temp_dir:
+                return self._probe_filter_complex_file_option(Path(temp_dir))
+        return self._probe_filter_complex_file_option(probe_root)
+
+    def _probe_filter_complex_file_option(self, probe_root: Path) -> str:
+        probe_root.mkdir(parents=True, exist_ok=True)
+        filter_script = probe_root / "ffmpeg-filter-option-probe.ffgraph"
+        filter_script.write_text(
+            "[0:v]format=yuv420p[vout]\n",
+            encoding="utf-8",
+        )
+
+        failures: dict[str, str] = {}
+        for option in ("-/filter_complex", "-filter_complex_script"):
+            command = [
+                self.ffmpeg_bin,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:s=16x16:r=1:d=0.04",
+                option,
+                str(filter_script),
+                "-map",
+                "[vout]",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ]
+            try:
+                run_hidden(command, check=True, capture_output=True, text=True)
+            except FileNotFoundError as exc:
+                raise DependencyUnavailableError(
+                    "ffmpeg is not available",
+                    details={"code": "FFMPEG_UNAVAILABLE", "binary": self.ffmpeg_bin},
+                ) from exc
+            except OSError as exc:
+                raise StageFailedError(
+                    "failed to execute ffmpeg filter-file capability probe",
+                    details={
+                        "code": "FFMPEG_CAPABILITY_PROBE_FAILED",
+                        "binary": self.ffmpeg_bin,
+                        "os_error": str(exc),
+                    },
+                ) from exc
+            except subprocess.CalledProcessError as exc:
+                failures[option] = (exc.stderr or "")[-4000:]
+                continue
+
+            self._filter_complex_file_option_cache = option
+            return option
+
+        raise StageFailedError(
+            "ffmpeg does not support the production file-backed complex-filter path",
+            details={
+                "code": "FFMPEG_FILTER_FILE_UNSUPPORTED",
+                "binary": self.ffmpeg_bin,
+                "attempts": failures,
+            },
+        )
 
     @staticmethod
     def _time_to_frame(value: float, fps: int, total_frames: int) -> int:
@@ -459,8 +966,50 @@ class FFmpegRenderer:
     @staticmethod
     def _run(command: list[str], message: str) -> None:
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise DependencyUnavailableError("ffmpeg is not available") from exc
+            run_hidden(command, check=True, capture_output=True, text=True)
+        except OSError as exc:
+            # Windows may surface CreateProcess command-line overflow as a
+            # FileNotFoundError subclass with WinError 206. That is not a missing
+            # FFmpeg dependency and must never be misreported as one.
+            if getattr(exc, "winerror", None) == 206:
+                raise StageFailedError(
+                    "render process command exceeded the Windows process limit",
+                    details={
+                        "code": "RENDER_PROCESS_COMMAND_LIMIT",
+                        "winerror": 206,
+                        "argument_count": len(command),
+                        "command_characters": sum(len(str(arg)) + 1 for arg in command),
+                    },
+                ) from exc
+            if isinstance(exc, FileNotFoundError):
+                raise DependencyUnavailableError(
+                    "ffmpeg is not available",
+                    details={"code": "FFMPEG_UNAVAILABLE", "binary": command[0] if command else None},
+                ) from exc
+            raise StageFailedError(
+                message,
+                details={
+                    "code": "RENDER_PROCESS_OS_ERROR",
+                    "os_error": str(exc),
+                    "errno": getattr(exc, "errno", None),
+                },
+            ) from exc
         except subprocess.CalledProcessError as exc:
-            raise StageFailedError(message, details={"stderr": (exc.stderr or "")[-6000:]}) from exc
+            stderr = (exc.stderr or "")[-6000:]
+            normalized = stderr.lower()
+            if (
+                "filter_complex_script" in normalized
+                and ("unrecognized option" in normalized or "option not found" in normalized)
+            ):
+                code = "FFMPEG_FILTER_FILE_UNSUPPORTED"
+            elif (
+                "unknown encoder 'libx264'" in normalized
+                or "encoder (codec h264) not found" in normalized
+            ):
+                code = "FFMPEG_H264_ENCODER_UNAVAILABLE"
+            else:
+                code = "FFMPEG_COMMAND_FAILED"
+            raise StageFailedError(
+                message,
+                details={"code": code, "stderr": stderr},
+            ) from exc

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue
+from app.text.metrics import TextTypographyMetrics
 
 
 _RLI = "\u2067"
@@ -14,14 +15,14 @@ _PDI = "\u2069"
 class TextRenderTheme:
     """Premium high-contrast tokens for sparse keyword storytelling."""
 
-    font_family: str = "Noto Kufi Arabic"
-    primary: str = "&H00351D0B"       # #0B1D35 deep navy, ASS AABBGGRR
-    accent: str = "&H00EB7A0A"        # #0A7AEB electric blue
-    gold: str = "&H001AA2F4"          # #F4A21A warm gold
-    warning: str = "&H003F4BE3"       # #E34B3F warm red
-    light_outline: str = "&H00FFF9F3" # warm white separation
-    dark_outline: str = "&H00351D0B"  # navy edge for coloured titles
-    shadow: str = "&H520B1526"        # translucent navy depth
+    font_family: str = "Noto Kufi Arabic Extra Bold"
+    primary: str = "&H00FFFFFF"       # white fill
+    accent: str = "&H00FFFFFF"
+    gold: str = "&H00FFFFFF"
+    warning: str = "&H00FFFFFF"
+    light_outline: str = "&H00000000" # black outline
+    dark_outline: str = "&H00000000"  # black outline
+    shadow: str = "&H36000000"        # restrained black shadow
 
 
 class TextRenderer:
@@ -33,8 +34,9 @@ class TextRenderer:
     line grows into its final footprint without re-centering or reversing earlier words.
     """
 
-    def __init__(self, *, font_family: str = "Noto Kufi Arabic") -> None:
+    def __init__(self, *, font_family: str = "Noto Kufi Arabic Extra Bold") -> None:
         self.theme = TextRenderTheme(font_family=font_family)
+        self.metrics = TextTypographyMetrics(font_family=font_family)
 
     def write_beat_ass(
         self,
@@ -99,14 +101,16 @@ class TextRenderer:
                 continue
             style = style_by_id.get(cue.style_id)
             style_name = self._ass_style_name(style.id if style else cue.semantic_type)
-            y = round(plan.height * item.y)
             rtl = self._contains_arabic(cue.text)
-            if rtl:
-                # Right-edge anchoring makes cumulative Arabic phrases expand leftward
-                # while keeping the final lane fixed. This is stable for mixed numbers.
-                x = round(plan.width * min(0.97, item.x + item.max_width / 2))
-            else:
-                x = round(plan.width * max(0.03, item.x - item.max_width / 2))
+            x, y, safe_scale = self._safe_text_geometry(
+                plan=plan,
+                cue_text=cue.text,
+                semantic_type=cue.semantic_type,
+                style_id=style.id if style else cue.style_id,
+                item=item,
+                rtl=rtl,
+                entry_strength=float(motion.params.get("entry_strength", 0.0)),
+            )
             events.extend(self._cue_events(
                 cue_text=cue.text,
                 motion=motion,
@@ -115,6 +119,7 @@ class TextRenderer:
                 x=x,
                 y=y,
                 rtl=rtl,
+                font_scale=safe_scale,
                 segment_start=segment_start,
                 duration=duration,
             ))
@@ -130,10 +135,11 @@ class TextRenderer:
         x: int,
         y: int,
         rtl: bool,
+        font_scale: float,
         segment_start: float,
         duration: float,
     ) -> list[str]:
-        font_scale = max(0.55, min(1.0, float(item.font_scale)))
+        font_scale = max(0.40, min(1.0, float(font_scale)))
         visible_end = float(motion.params.get("visible_end", motion.end))
         event_global_start = max(motion.start, segment_start)
         local_end = min(duration, visible_end - segment_start)
@@ -145,7 +151,15 @@ class TextRenderer:
             start = max(0.0, event_global_start - segment_start)
             if local_end <= start + 0.04:
                 return []
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=True, font_scale=font_scale)
+            tags = self._line_tags(
+                x=x,
+                y=y,
+                rtl=rtl,
+                first=True,
+                font_scale=font_scale,
+                entry_strength=float(motion.params.get("entry_strength", 0.0)),
+                entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
+            )
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
         events: list[str] = []
@@ -166,7 +180,15 @@ class TextRenderer:
             state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
             if not state_text:
                 continue
-            tags = self._line_tags(x=x, y=y, rtl=rtl, first=index == 0, font_scale=font_scale)
+            tags = self._line_tags(
+                x=x,
+                y=y,
+                rtl=rtl,
+                first=index == 0,
+                font_scale=font_scale,
+                entry_strength=float(motion.params.get("entry_strength", 0.0)),
+                entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
+            )
             events.append(self._dialogue(
                 start,
                 end,
@@ -176,18 +198,102 @@ class TextRenderer:
             ))
         return events
 
+    def _safe_text_geometry(
+        self,
+        *,
+        plan: RenderPlan,
+        cue_text: str,
+        semantic_type: str,
+        style_id: str,
+        item: TextLayoutItem,
+        rtl: bool,
+        entry_strength: float,
+    ) -> tuple[int, int, float]:
+        """Clamp the actual shaped glyph footprint, including its entry excursion.
+
+        TextComposition chooses negative space, but the renderer is the last authority
+        on real glyph dimensions. This guard uses the production font metrics and cannot
+        move Final Package artwork; it only nudges/shrinks the text enough to keep every
+        rendered pixel inside the title-safe area.
+        """
+        width = max(1, int(plan.width))
+        height = max(1, int(plan.height))
+        margin_x = width * 0.045
+        margin_y = height * 0.055
+        strength = max(0.0, min(1.0, float(entry_strength)))
+        entry_x = 14.0 + round(10.0 * strength)
+        entry_y = 10.0 + round(5.0 * strength)
+        scale = max(0.40, min(1.0, float(item.font_scale)))
+        available_width = max(1.0, width - margin_x * 2.0 - entry_x)
+
+        for _ in range(3):
+            text_width, text_height = self.metrics.measure(
+                cue_text,
+                style_id=style_id,
+                semantic_type=semantic_type,
+                font_scale=scale,
+            )
+            if text_width <= available_width + 0.5:
+                break
+            ratio = available_width / max(1.0, text_width)
+            scale = max(0.40, scale * ratio * 0.985)
+
+        text_width, text_height = self.metrics.measure(
+            cue_text,
+            style_id=style_id,
+            semantic_type=semantic_type,
+            font_scale=scale,
+        )
+        preferred_y = height * item.y
+        y_low = margin_y + text_height / 2.0
+        y_high = height - margin_y - text_height / 2.0 - entry_y
+        if y_high < y_low:
+            y = height / 2.0
+        else:
+            y = max(y_low, min(y_high, preferred_y))
+
+        if rtl:
+            preferred_x = width * min(0.97, item.x + item.max_width / 2.0)
+            x_low = margin_x + text_width
+            x_high = width - margin_x - entry_x
+        else:
+            preferred_x = width * max(0.03, item.x - item.max_width / 2.0)
+            x_low = margin_x + entry_x
+            x_high = width - margin_x - text_width
+        if x_high < x_low:
+            x = width / 2.0
+        else:
+            x = max(x_low, min(x_high, preferred_x))
+        return round(x), round(y), scale
+
     @staticmethod
-    def _line_tags(*, x: int, y: int, rtl: bool, first: bool, font_scale: float = 1.0) -> str:
+    def _line_tags(
+        *,
+        x: int,
+        y: int,
+        rtl: bool,
+        first: bool,
+        font_scale: float = 1.0,
+        entry_strength: float = 0.0,
+        entry_duration_ms: int = 165,
+    ) -> str:
         alignment = 6 if rtl else 4  # middle-right for RTL, middle-left for LTR
-        scale = max(55, min(100, round(font_scale * 100)))
+        scale = max(40, min(100, round(font_scale * 100)))
         size_tag = f"\\fscx{scale}\\fscy{scale}"
         if first:
-            # One restrained entry gesture for the phrase. Later word states hold the
-            # exact anchor so the line does not bounce or re-center.
-            direction = 14 if rtl else -14
+            # One bounded entry gesture for the phrase. Semantic focus may make the
+            # gesture more decisive, but the final anchor/font/style stay unchanged and
+            # there is never a post-arrival bounce.
+            strength = max(0.0, min(1.0, float(entry_strength)))
+            horizontal = 14 + round(10 * strength)
+            vertical = 10 + round(5 * strength)
+            direction = horizontal if rtl else -horizontal
+            duration = max(130, min(240, int(entry_duration_ms)))
+            fade = max(45, min(65, round(65 - 15 * strength)))
             return (
-                f"\\an{alignment}{size_tag}\\move({x + direction},{y + 10},{x},{y},0,165)"
-                "\\fad(65,0)\\blur0.35"
+                f"\\an{alignment}{size_tag}\\move("
+                f"{x + direction},{y + vertical},{x},{y},0,{duration})"
+                f"\\fad({fade},0)\\blur0.35"
             )
         return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur0.25"
 
@@ -195,28 +301,28 @@ class TextRenderer:
         theme = self.theme
         styles = [
             self._style_line(
-                "Keyword", theme.primary, 112, outline_color=theme.light_outline,
-                outline=3.2, shadow=2.2,
+                "Keyword", theme.primary, 158, outline_color=theme.dark_outline,
+                outline=8.0, shadow=1.2,
             ),
             self._style_line(
-                "Number", theme.gold, 148, outline_color=theme.dark_outline,
-                outline=4.1, shadow=3.0,
+                "Number", theme.gold, 188, outline_color=theme.dark_outline,
+                outline=9.5, shadow=1.2,
             ),
             self._style_line(
-                "Amount", theme.accent, 136, outline_color=theme.dark_outline,
-                outline=3.8, shadow=2.8,
+                "Amount", theme.accent, 188, outline_color=theme.dark_outline,
+                outline=9.5, shadow=1.2,
             ),
             self._style_line(
-                "WarningAmount", theme.warning, 138, outline_color=theme.dark_outline,
-                outline=4.1, shadow=3.0,
+                "WarningAmount", theme.warning, 194, outline_color=theme.dark_outline,
+                outline=9.8, shadow=1.2,
             ),
             self._style_line(
-                "Warning", theme.warning, 126, outline_color=theme.dark_outline,
-                outline=3.7, shadow=2.8,
+                "Warning", theme.warning, 188, outline_color=theme.dark_outline,
+                outline=9.5, shadow=1.2,
             ),
             self._style_line(
-                "Emphasis", theme.accent, 122, outline_color=theme.dark_outline,
-                outline=3.6, shadow=2.6,
+                "Emphasis", theme.accent, 178, outline_color=theme.dark_outline,
+                outline=9.0, shadow=1.2,
             ),
         ]
         return "\n".join([

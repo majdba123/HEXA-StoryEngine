@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from app.choreography import ChoreographyPlan
+from app.choreography import ChoreographyDirective, ChoreographyPlan
 from app.models import PackageModel, StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
-from app.text.semantic import TextSemanticSelector
+from app.text.semantic import KeywordCandidate, TextSemanticSelector
 from app.text.style import TextStyleResolver
 from app.text.timing import TextTimingPlanner
 
@@ -44,21 +44,35 @@ class TextPlanner:
             directive = choreography.for_beat(beat.id) if choreography else None
             context = beat.semantic_context
             scene = scene_by_id.get(beat.scene_id)
-            candidates = self.semantic.select(beat, transcript)
+            candidates = self.semantic.select(beat, transcript, package=package)
             for candidate in candidates:
                 timed = self.timing.align(candidate, transcript)
                 if timed is None:
                     continue
                 style = self.style.resolve(timed)
                 styles[style.id] = style
-                anchor_asset_id = (
-                    directive.primary_asset_id
-                    if directive is not None and directive.primary_asset_id
-                    else (beat.primary_asset_ids or [None])[0]
+                anchor_asset_id = self._anchor_asset_id(
+                    beat=beat,
+                    candidate=candidate,
+                    directive=directive,
                 )
                 package_evidence = list(context.evidence) if context else []
                 if scene and scene.relation_to_previous:
                     package_evidence.append(f"scene_relation:{scene.relation_to_previous}")
+                if anchor_asset_id:
+                    anchor_activation = next(
+                        (row for row in beat.asset_activations if row.asset_id == anchor_asset_id),
+                        None,
+                    )
+                    if anchor_activation is not None:
+                        if anchor_activation.semantic_event_id:
+                            package_evidence.append(
+                                f"semantic_event:{anchor_activation.semantic_event_id}"
+                            )
+                        if "TEXT_ANCHOR" in anchor_activation.semantic_event_roles:
+                            package_evidence.append("final_package_text_anchor")
+                        if "LEADER" in anchor_activation.semantic_event_roles:
+                            package_evidence.append("final_package_visual_leader")
                 relationship = directive.relationship if directive is not None else None
                 cues.append(TextCue(
                     id=f"text-{cue_number:03d}",
@@ -71,7 +85,11 @@ class TextPlanner:
                     spoken_end=timed.spoken_end,
                     emphasis_time=timed.emphasis_time,
                     anchor_asset_id=anchor_asset_id,
-                    priority=self._priority(candidate.semantic_type),
+                    priority=min(
+                        100,
+                        self._priority(candidate.semantic_type)
+                        + max(0, round((candidate.score - 0.74) * 20)),
+                    ),
                     style_id=style.id,
                     placement_hint="anchor",
                     story_role=context.story_role if context else None,
@@ -96,6 +114,71 @@ class TextPlanner:
             cues=sorted(cues, key=lambda cue: (cue.spoken_start, -cue.priority, cue.id)),
             styles=sorted(styles.values(), key=lambda style: style.id),
         )
+
+    @staticmethod
+    def _anchor_asset_id(
+        *,
+        beat: StoryBeat,
+        candidate: KeywordCandidate,
+        directive: ChoreographyDirective | None,
+    ) -> str | None:
+        """Resolve text to the exact Story asset span before beat-level fallback.
+
+        Final Package/Story already owns canonical character spans for semantic assets.
+        Text wording and spoken timing stay untouched; this only chooses WHICH visual
+        receives the text relationship.
+        """
+        cue_start = int(candidate.source_char_start)
+        cue_end = int(candidate.source_char_end)
+        matches = []
+        for activation in beat.asset_activations:
+            start = activation.trigger_char_start
+            end = activation.trigger_char_end
+            if start is None or end is None or end <= start:
+                continue
+            overlap = max(0, min(cue_end, end) - max(cue_start, start))
+            if overlap <= 0:
+                continue
+            cue_len = max(1, cue_end - cue_start)
+            activation_len = max(1, end - start)
+            visual_focus = str(activation.visual_focus or "").upper()
+            focus_rank = {
+                "RESULT": 0,
+                "PRIMARY": 1,
+                "SUPPORT": 2,
+                "CONTEXT": 3,
+            }.get(visual_focus, 2)
+            event_anchor_rank = (
+                1 if "TEXT_ANCHOR" in activation.semantic_event_roles else 0
+            )
+            event_leader_rank = (
+                1 if "LEADER" in activation.semantic_event_roles else 0
+            )
+            matches.append((
+                overlap / cue_len,
+                event_anchor_rank,
+                event_leader_rank,
+                overlap / activation_len,
+                float(activation.confidence),
+                -focus_rank,
+                -activation_len,
+                activation.asset_id,
+            ))
+
+        if matches:
+            best_prefix = max(row[:-1] for row in matches)
+            tied_ids = sorted(row[-1] for row in matches if row[:-1] == best_prefix)
+            preferred = directive.primary_asset_id if directive is not None else None
+            if preferred in tied_ids:
+                return preferred
+            for asset_id in beat.primary_asset_ids:
+                if asset_id in tied_ids:
+                    return asset_id
+            return tied_ids[0]
+
+        if directive is not None and directive.primary_asset_id:
+            return directive.primary_asset_id
+        return (beat.primary_asset_ids or [None])[0]
 
     @staticmethod
     def _priority(semantic_type: str) -> int:

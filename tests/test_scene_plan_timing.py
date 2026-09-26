@@ -48,6 +48,9 @@ def test_scene_plan_drives_scene_ids_and_narration_timing(tmp_path: Path) -> Non
     assert 0.0 <= beats[0].start < beats[0].audio_start
     assert beats[0].end == beats[1].start
     assert beats[1].start < beats[1].audio_start
+    # Reference-calibrated motion needs enough pre-roll to decelerate smoothly
+    # into the spoken semantic anchor instead of snapping in the final 0.2s.
+    assert beats[1].audio_start - beats[1].start >= 0.35
     assert beats[1].end == transcript.duration
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,22 +76,12 @@ class VisionService:
     distant objects merely because they share a semantic class.
     """
 
-    def __init__(self) -> None:
-        self._florence = None
-        self._florence_checked = False
-
     def analyze(self, package: PackageModel) -> list[VisionObject]:
         declared = self._declared_boxes(package)
-        detector = self._get_florence()
         output: list[VisionObject] = []
         for scene in package.scenes:
             geometry = self._disconnected_objects(scene.id, scene.image_path)
             semantic_boxes = list(declared.get(scene.id, []))
-            if detector is not None:
-                try:
-                    semantic_boxes.extend(detector.detect(scene.image_path))
-                except Exception:
-                    pass
             output.extend(self._label_geometry(geometry, semantic_boxes))
         return output
 
@@ -116,24 +105,6 @@ class VisionService:
                 float(item.get("confidence", 1.0)),
             ))
         return by_scene
-
-    def _get_florence(self):
-        if self._florence_checked:
-            return self._florence
-        self._florence_checked = True
-        raw = os.getenv("HEXA_FLORENCE_MODEL")
-        if not raw:
-            return None
-        model_path = Path(raw).expanduser().resolve()
-        if not model_path.exists():
-            return None
-        try:
-            from app.vision.florence import FlorenceDetector
-
-            self._florence = FlorenceDetector(model_path)
-        except Exception:
-            self._florence = None
-        return self._florence
 
     def _disconnected_objects(self, scene_id: str, image_path: Path) -> list[VisionObject]:
         bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)

@@ -94,7 +94,7 @@ def _run_job(job_id: str, request: JobRequest) -> None:
             state=JobState.failed,
             progress=1.0,
             message=str(exc),
-            error_code=exc.code,
+            error_code=exc.effective_code,
         )
     except Exception as exc:
         _store.update(

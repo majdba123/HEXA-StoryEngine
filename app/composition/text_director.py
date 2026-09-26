@@ -4,7 +4,10 @@ from dataclasses import dataclass
 
 from app.composition.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
+from app.contracts import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
+from app.text.metrics import TextTypographyMetrics
+from app.story.windows import StoryAssetActivation
 
 
 Box = tuple[float, float, float, float]
@@ -26,6 +29,7 @@ class PlacementResult:
     zone: str
     score: float
     visual_overlap: float
+    text_overlap: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +65,7 @@ class TextPlacementDirector:
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
+        self.contract = TextLayoutContract()
 
     def place(
         self,
@@ -71,14 +76,30 @@ class TextPlacementDirector:
         concurrent_text: list[PlacedTextRegion],
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
+        visible_end: float | None = None,
+        repair_level: int = 0,
     ) -> PlacementResult:
         anchor = self._anchor(cue, visual)
         asset_map = assets_by_id or {}
-        visual_regions = self._visual_regions(beat, visual, asset_map)
-        occupancy = self.occupancy.build(visual.items, asset_map) if visual is not None and asset_map else None
+        visible_items = self.visible_visual_items(
+            beat=beat,
+            visual=visual,
+            visible_end=(visible_end if visible_end is not None else cue.spoken_end),
+        )
+        visible_visual = (
+            visual.model_copy(update={"items": visible_items})
+            if visual is not None
+            else None
+        )
+        visual_regions = self._visual_regions(beat, visible_visual, asset_map)
+        occupancy = (
+            self.occupancy.build(visible_items, asset_map)
+            if visible_items and asset_map
+            else None
+        )
 
         scored = []
-        for font_scale in self._font_scales(cue):
+        for font_scale in self._font_scales(cue, repair_level=repair_level):
             width, height = self.estimated_box(cue, scale=font_scale)
             candidates = self._candidate_field(width, height, anchor)
             for candidate in candidates:
@@ -99,8 +120,28 @@ class TextPlacementDirector:
                 scored.append((*score_row, font_scale, width))
                 scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
 
-        best = min(scored, key=lambda row: (row[0], -row[4], row[1].prior, row[1].y, row[1].x))
-        score, candidate, box, overlap, font_scale, width = best
+        acceptable = [
+            row
+            for row in scored
+            if self.contract.accepts(visual_overlap=row[3], text_overlap=row[4])
+        ]
+        pool = acceptable or scored
+        best = min(
+            pool,
+            key=lambda row: (
+                row[0]
+                if acceptable
+                else (
+                    max(0.0, row[3] - self.contract.max_visual_overlap)
+                    + max(0.0, row[4] - self.contract.max_text_overlap)
+                ) * 1_000_000.0 + row[0],
+                -row[5],
+                row[1].prior,
+                row[1].y,
+                row[1].x,
+            ),
+        )
+        score, candidate, box, overlap, text_overlap, font_scale, width = best
         item = TextLayoutItem(
             text_cue_id=cue.id,
             x=candidate.x,
@@ -117,34 +158,122 @@ class TextPlacementDirector:
             zone=candidate.zone,
             score=score,
             visual_overlap=overlap,
+            text_overlap=text_overlap,
+        )
+
+    @classmethod
+    def visible_visual_items(
+        cls,
+        *,
+        beat: StoryBeat,
+        visual: CompositionBeat | None,
+        visible_end: float,
+    ) -> list[LayoutItem]:
+        """Return artwork that can be visible while a text cue is readable.
+
+        Story V2 reveal windows are authoritative before Motion exists. Unknown or
+        legacy assets remain conservative and are treated as visible. The earliest
+        reveal cohort is also reserved because Renderer may use one member as the
+        anti-white boundary carrier. Later semantic results therefore do not consume
+        negative space before they actually appear.
+        """
+        if visual is None:
+            return []
+        activation_by_asset = {row.asset_id: row for row in beat.asset_activations}
+        reveal_by_asset: dict[str, float | None] = {}
+        known_reveals: list[float] = []
+        for item in visual.items:
+            activation = activation_by_asset.get(item.asset_id)
+            reveal = cls._story_reveal_start(activation, beat)
+            reveal_by_asset[item.asset_id] = reveal
+            if reveal is not None:
+                known_reveals.append(reveal)
+        earliest = min(known_reveals) if known_reveals else None
+        carrier_limit = (earliest + 0.08) if earliest is not None else None
+
+        output: list[LayoutItem] = []
+        for item in visual.items:
+            reveal = reveal_by_asset[item.asset_id]
+            if reveal is None:
+                output.append(item)
+                continue
+            if reveal < visible_end - 0.01:
+                output.append(item)
+                continue
+            if carrier_limit is not None and reveal <= carrier_limit + 1e-9:
+                output.append(item)
+        return output
+
+    @staticmethod
+    def _story_reveal_start(activation, beat: StoryBeat) -> float | None:
+        if activation is None:
+            return None
+        has_v2 = hasattr(activation, "activation_policy") or any(
+            row.startswith("story_activation_v2:") for row in activation.evidence
+        )
+        if not has_v2:
+            return None
+        try:
+            window = (
+                StoryAssetActivation.model_validate(activation.model_dump())
+                if hasattr(activation, "activation_policy")
+                else StoryAssetActivation.from_legacy(activation)
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if window.activation_policy not in {"OWN_WINDOW", "INHERITED_WINDOW"}:
+            return None
+        reveal = window.reveal_start
+        if reveal is None or reveal < beat.start - 1e-9 or reveal > beat.end + 1e-9:
+            return None
+        return float(reveal)
+
+    @staticmethod
+    def estimated_box(
+        cue: TextCue,
+        *,
+        scale: float = 1.0,
+        canvas_width: int = 1920,
+        canvas_height: int = 1080,
+    ) -> tuple[float, float]:
+        # Measure the shaped Arabic glyphs with the same production font geometry used
+        # by libass. Reserve the maximum entry excursion as well, so the first moving
+        # frame is safe instead of only the final resting position.
+        metrics = TextTypographyMetrics()
+        pixel_width, pixel_height = metrics.measure(
+            cue.text,
+            style_id=cue.style_id,
+            semantic_type=cue.semantic_type,
+            font_scale=scale,
+        )
+        entry_x = 28.0
+        entry_y = 18.0
+        width = (pixel_width + entry_x) / max(1, canvas_width)
+        height = (pixel_height + entry_y * 2.0) / max(1, canvas_height)
+        safe_width = 1.0 - TextPlacementDirector._SAFE_MARGIN_X * 2.0
+        safe_height = 1.0 - TextPlacementDirector._SAFE_MARGIN_Y * 2.0
+        return (
+            max(0.18, min(safe_width, width)),
+            max(0.11, min(safe_height, height)),
         )
 
     @staticmethod
-    def estimated_box(cue: TextCue, *, scale: float = 1.0) -> tuple[float, float]:
-        units = 0.0
-        for char in cue.text.strip():
-            if char.isspace():
-                units += 0.42
-            elif char.isdigit():
-                units += 0.78
-            elif char in ".,:;!?،؛؟-/":
-                units += 0.38
-            else:
-                units += 1.0
-        size_factor = 1.10 if cue.priority >= 85 else 1.0
-        # Deliberately conservative: libass shaping can make Arabic/mixed numeric
-        # phrases wider than a character-count estimate. Slight over-reservation is
-        # preferable to a title clipping into artwork.
-        width = 0.080 + units * 0.0235 * size_factor
-        width = max(0.22, min(0.58, width)) * scale
-        height = (0.155 if cue.priority >= 85 else 0.135) * scale
-        return width, height
-
-    @staticmethod
-    def _font_scales(cue: TextCue) -> tuple[float, ...]:
-        # Sparse keywords remain large by default. Dense artwork may force a controlled
-        # reduction, but never below a readable production floor.
-        return (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56) if cue.priority >= 85 else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
+    def _font_scales(
+        cue: TextCue,
+        *,
+        repair_level: int = 0,
+    ) -> tuple[float, ...]:
+        # Normal authoring keeps the established typography scale. Recovery may use
+        # two additional bounded sizes only when no collision-free production-sized
+        # placement exists. This is preferable to failing an otherwise valid video.
+        base = (
+            (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56)
+            if cue.priority >= 85
+            else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
+        )
+        if repair_level >= 2:
+            return (*base, 0.52, 0.50)
+        return base
 
     def _candidate_field(
         self,
@@ -224,7 +353,7 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         cue: TextCue,
         occupancy,
-    ) -> tuple[float, _Candidate, Box, float]:
+    ) -> tuple[float, _Candidate, Box, float, float]:
         box = self._box(candidate.x, candidate.y, width, height)
         score = candidate.prior
 
@@ -246,8 +375,11 @@ class TextPlacementDirector:
             protected = self._intersection_ratio(box, region.protected_box)
             score += protected * 18.0 * region.weight
 
-        for placed in concurrent_text:
-            score += self._intersection_ratio(box, placed.box) * 680.0
+        text_overlap = max(
+            (self._intersection_ratio(box, placed.box) for placed in concurrent_text),
+            default=0.0,
+        )
+        score += text_overlap * 680.0
 
         if anchor is not None:
             distance = self._center_distance(candidate.x, candidate.y, anchor.x, anchor.y)
@@ -264,7 +396,7 @@ class TextPlacementDirector:
         if cue.priority >= 85 and self._zone_family(candidate.zone) in {"top", "bottom"}:
             score -= 0.045
 
-        return score, candidate, box, actual_overlap
+        return score, candidate, box, actual_overlap, text_overlap
 
     def _visual_regions(
         self,

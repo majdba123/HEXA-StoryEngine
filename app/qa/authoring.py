@@ -6,11 +6,13 @@ from pathlib import Path
 
 from app.composition.text_director import TextPlacementDirector
 from app.composition.occupancy import VisualOccupancyMap
+from app.contracts import TextLayoutContract
 from app.layout import ConstraintLayoutSolver
 from app.layout.footprint import AlphaFootprintResolver
 from app.models import (
     CompositionBeat,
     MotionCue,
+    StoryBeat,
     TextCompositionBeat,
     TextPlan,
     Transcript,
@@ -18,6 +20,7 @@ from app.models import (
 )
 from app.reference import HexaVisualProfile
 from app.shared.errors import StageFailedError
+from app.text.timing.visibility import TextVisibilityPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,14 +43,13 @@ class AuthoringQAReport:
 class AuthoringVisualQA:
     """Validate spatial contracts without redesigning the authored Final Package scene."""
 
-    _TEXT_VISUAL_OVERLAP_LIMIT = 0.012
-    _TEXT_TEXT_OVERLAP_LIMIT = 0.04
-
     def __init__(self, profile: HexaVisualProfile | None = None) -> None:
         self.profile = profile or HexaVisualProfile.production()
         self.layout = ConstraintLayoutSolver(self.profile)
         self.footprints = AlphaFootprintResolver()
         self.occupancy = VisualOccupancyMap()
+        self.text_visibility = TextVisibilityPolicy()
+        self.text_layout_contract = TextLayoutContract()
 
     def inspect(
         self,
@@ -58,6 +60,7 @@ class AuthoringVisualQA:
         text: TextPlan,
         assets: list[VisualAsset],
         text_composition: list[TextCompositionBeat] | None = None,
+        story: list[StoryBeat] | None = None,
         fps: int = 30,
     ) -> AuthoringQAReport:
         by_id = {asset.id: asset for asset in assets}
@@ -69,9 +72,12 @@ class AuthoringVisualQA:
 
         text_issues = self._inspect_text_layout(
             composition=composition,
+            story=story or [],
             text=text,
             text_composition=text_composition or [],
             assets=by_id,
+            motion=motion,
+            fps=fps,
         )
 
         short: list[str] = []
@@ -99,23 +105,35 @@ class AuthoringVisualQA:
         self,
         *,
         composition: list[CompositionBeat],
+        story: list[StoryBeat],
         text: TextPlan,
         text_composition: list[TextCompositionBeat],
         assets: dict[str, VisualAsset],
+        motion: list[MotionCue],
+        fps: int,
     ) -> list[str]:
         visual_by_beat = {row.beat_id: row for row in composition}
+        beat_by_id = {row.id: row for row in story}
         cue_by_id = {cue.id: cue for cue in text.cues}
+        cues_by_beat: dict[str, list] = {}
+        for cue in text.cues:
+            cues_by_beat.setdefault(cue.beat_id, []).append(cue)
+        for rows in cues_by_beat.values():
+            rows.sort(key=lambda cue: (cue.spoken_start, cue.id))
         issues: list[str] = []
+        motion_by_key = {(row.beat_id, row.asset_id): row for row in motion}
 
         for text_beat in text_composition:
             visual = visual_by_beat.get(text_beat.beat_id)
-            occupancy = (
-                self.occupancy.build(visual.items, assets)
-                if visual is not None
-                else None
-            )
-
-            text_boxes: list[tuple[str, tuple[float, float, float, float]]] = []
+            beat = beat_by_id.get(text_beat.beat_id)
+            text_boxes: list[
+                tuple[
+                    str,
+                    tuple[float, float, float, float],
+                    float,
+                    float,
+                ]
+            ] = []
             for item in text_beat.items:
                 cue = cue_by_id.get(item.text_cue_id)
                 if cue is None:
@@ -129,29 +147,109 @@ class AuthoringVisualQA:
                 )
                 if box[0] < 0.0 or box[1] < 0.0 or box[2] > 1.0 or box[3] > 1.0:
                     issues.append(f"{text_beat.beat_id}:text_offscreen:{item.text_cue_id}")
+                visible_end = (
+                    self.text_visibility.visible_end(
+                        cue,
+                        beat,
+                        cues_by_beat.get(text_beat.beat_id, []),
+                    )
+                    if beat is not None
+                    else cue.spoken_end
+                )
+                visible_items = self._visible_visual_items(
+                    beat_id=text_beat.beat_id,
+                    visual=visual,
+                    motion_by_key=motion_by_key,
+                    visible_end=visible_end,
+                    fps=fps,
+                )
+                occupancy = (
+                    self.occupancy.build(visible_items, assets)
+                    if visible_items
+                    else None
+                )
                 visual_overlap = (
                     self.occupancy.overlap(occupancy, box).ratio
                     if occupancy is not None
                     else 0.0
                 )
-                if visual_overlap > self._TEXT_VISUAL_OVERLAP_LIMIT:
+                if visual_overlap > self.text_layout_contract.max_visual_overlap:
                     issues.append(
                         f"{text_beat.beat_id}:text_visual_overlap:{item.text_cue_id}:"
                         f"{visual_overlap:.3f}"
                     )
-                text_boxes.append((item.text_cue_id, box))
+                text_boxes.append(
+                    (
+                        item.text_cue_id,
+                        box,
+                        cue.spoken_start,
+                        visible_end,
+                    )
+                )
 
-            for index, (left_id, left_box) in enumerate(text_boxes):
-                for right_id, right_box in text_boxes[index + 1:]:
+            for index, (left_id, left_box, left_start, left_end) in enumerate(text_boxes):
+                for right_id, right_box, right_start, right_end in text_boxes[index + 1:]:
+                    if not self.text_visibility.overlaps(
+                        left_start,
+                        left_end,
+                        right_start,
+                        right_end,
+                    ):
+                        continue
                     ratio = max(
                         self._intersection_ratio(left_box, right_box),
                         self._intersection_ratio(right_box, left_box),
                     )
-                    if ratio > self._TEXT_TEXT_OVERLAP_LIMIT:
+                    if ratio > self.text_layout_contract.max_text_overlap:
                         issues.append(
-                            f"{text_beat.beat_id}:text_text_overlap:{left_id}:{right_id}:{ratio:.3f}"
+                            f"{text_beat.beat_id}:text_text_overlap:{left_id}:{right_id}:"
+                            f"{ratio:.3f}:time={max(left_start, right_start):.3f}-"
+                            f"{min(left_end, right_end):.3f}"
                         )
         return issues
+
+    @staticmethod
+    def _visible_visual_items(
+        *,
+        beat_id: str,
+        visual: CompositionBeat | None,
+        motion_by_key: dict[tuple[str, str], MotionCue],
+        visible_end: float,
+        fps: int,
+    ) -> list:
+        """Validate text only against artwork visible during its readability window.
+
+        Final Motion timing is authoritative at QA time. A final-composition asset that
+        has not reached its reveal cannot collide with text that disappears beforehand.
+        The earliest cue cohort remains conservative because Renderer may use one member
+        as the anti-white boundary carrier. Assets without Motion remain visible.
+        """
+        if visual is None:
+            return []
+        starts = [
+            float(cue.start)
+            for item in visual.items
+            if (cue := motion_by_key.get((beat_id, item.asset_id))) is not None
+        ]
+        earliest = min(starts) if starts else None
+        carrier_limit = (
+            earliest + max(0.08, 2.0 / max(1, fps))
+            if earliest is not None
+            else None
+        )
+        output = []
+        for item in visual.items:
+            cue = motion_by_key.get((beat_id, item.asset_id))
+            if cue is None:
+                output.append(item)
+                continue
+            start = float(cue.start)
+            if start < visible_end - 0.01:
+                output.append(item)
+                continue
+            if carrier_limit is not None and start <= carrier_limit + 1e-9:
+                output.append(item)
+        return output
 
     @staticmethod
     def _intersection_ratio(

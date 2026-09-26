@@ -45,6 +45,17 @@ class ParticipantRole(StrEnum):
     SUPPORT = "SUPPORT"
 
 
+class EventFlowStage(StrEnum):
+    """Reference-style semantic phases inside one Final Package event."""
+
+    ESTABLISH = "ESTABLISH"
+    ADD = "ADD"
+    INTERACT = "INTERACT"
+    REACT = "REACT"
+    PAYOFF = "PAYOFF"
+    RELEASE = "RELEASE"
+
+
 class VisualGrammarStage(StrEnum):
     ENTER = "ENTER"
     READ = "READ"
@@ -52,6 +63,20 @@ class VisualGrammarStage(StrEnum):
     RELATE = "RELATE"
     RESULT = "RESULT"
     RELEASE = "RELEASE"
+
+
+class ChoreographyPattern(StrEnum):
+    """Generic reference-style visual construction patterns.
+
+    Patterns describe how meaning is progressively staged. They are not animation
+    presets and never own final geometry or speech timing.
+    """
+
+    STANDARD = "STANDARD"
+    PROGRESSIVE_BUILD = "PROGRESSIVE_BUILD"
+    FOCUS_TRANSFER = "FOCUS_TRANSFER"
+    STATE_TRANSFORM = "STATE_TRANSFORM"
+    CAUSE_EFFECT_CHAIN = "CAUSE_EFFECT_CHAIN"
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +99,7 @@ class VisualStateTransition:
     semantic_unit_id: str | None = None
     confidence: float = 1.0
     meaningful: bool = True
+    authority: str = "INFERRED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +116,10 @@ class InteractionIntent:
     confidence: float = 0.0
     executable: bool = False
     requires_state_change: bool = False
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
     evidence: tuple[str, ...] = ()
 
     @property
@@ -103,11 +133,87 @@ class InteractionIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class EventFlowStep:
+    """One explicit semantic beat inside a Final Package event visual sentence.
+
+    Choreography owns WHO participates and WHAT semantic phase occurs. Motion still owns
+    trajectories, amplitudes and final rendering. Context assets intentionally never
+    become step focus unless the Final Package authored them in another semantic role.
+    """
+
+    stage: EventFlowStage
+    focus_asset_id: str | None = None
+    participant_asset_ids: tuple[str, ...] = ()
+    source_asset_id: str | None = None
+    target_asset_id: str | None = None
+    result_asset_id: str | None = None
+    relationship: str | None = None
+    semantic_action: str | None = None
+    authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
+    reveal_start: float | None = None
+    semantic_peak: float | None = None
+    settle_at: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticEventFlow:
+    """One Final Package semantic event compiled into a visual mini-story contract."""
+
+    event_id: str
+    order: int | None = None
+    dependency_ids: tuple[str, ...] = ()
+    leader_asset_ids: tuple[str, ...] = ()
+    participant_asset_ids: tuple[str, ...] = ()
+    context_asset_ids: tuple[str, ...] = ()
+    result_asset_ids: tuple[str, ...] = ()
+    text_anchor_asset_ids: tuple[str, ...] = ()
+    interactions: tuple[InteractionIntent, ...] = ()
+    stages: tuple[EventFlowStage, ...] = ()
+    steps: tuple[EventFlowStep, ...] = ()
+    progression_type: str | None = None
+    handoff_mode: str = "NONE"
+    handoff_to_event_ids: tuple[str, ...] = ()
+    handoff_to_asset_ids: tuple[str, ...] = ()
+    # Backward-compatible singular fields remain populated only when the handoff has
+    # exactly one target. Branches/parallel progressions use the plural fields above.
+    handoff_to_event_id: str | None = None
+    handoff_to_asset_id: str | None = None
+    confidence: float = 0.0
+    authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
+    evidence: tuple[str, ...] = ()
+
+    @property
+    def asset_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((
+            *self.leader_asset_ids,
+            *self.participant_asset_ids,
+            *self.context_asset_ids,
+            *self.result_asset_ids,
+            *self.text_anchor_asset_ids,
+        )))
+
+    @property
+    def primary_leader_asset_id(self) -> str | None:
+        return self.leader_asset_ids[0] if self.leader_asset_ids else None
+
+    @property
+    def focus_path_asset_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(
+            step.focus_asset_id for step in self.steps if step.focus_asset_id
+        ))
+
+
+@dataclass(frozen=True, slots=True)
 class ChoreographyDirective:
     beat_id: str
     sequence_id: str
     phase: SequencePhase
     action: str
+    pattern: ChoreographyPattern = ChoreographyPattern.STANDARD
     hook: HookKind = HookKind.NONE
     hook_mechanism: HookMechanism = HookMechanism.NONE
     energy: float = 0.5
@@ -128,6 +234,7 @@ class ChoreographyDirective:
     package_evidence: tuple[str, ...] = ()
     grammar_stages: tuple[VisualGrammarStage, ...] = ()
     asset_requirements: tuple[AssetRequirement, ...] = ()
+    event_flows: tuple[SemanticEventFlow, ...] = ()
 
     def participant_role(self, asset_id: str) -> ParticipantRole:
         # A declared human actor keeps ACTOR semantics even when an explicit relationship
@@ -149,6 +256,15 @@ class ChoreographyDirective:
     @property
     def has_meaningful_state_change(self) -> bool:
         return any(row.meaningful and row.from_state != row.to_state for row in self.state_transitions)
+
+    @property
+    def event_focus_path_asset_ids(self) -> tuple[str, ...]:
+        """Ordered authored focus handoff path across all semantic events in this beat."""
+        return tuple(dict.fromkeys(
+            asset_id
+            for flow in self.event_flows
+            for asset_id in flow.focus_path_asset_ids
+        ))
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +303,66 @@ class ChoreographyPlan:
             raise ValueError("choreography directives must preserve story beat order exactly")
         if self.directives and self.directives[0].hook != HookKind.OPEN:
             raise ValueError("choreography must open with an explicit hook")
+        for directive in self.directives:
+            event_ids = [flow.event_id for flow in directive.event_flows]
+            if len(event_ids) != len(set(event_ids)):
+                raise ValueError("choreography event flows must have unique event ids per beat")
+            explicit_orders = [flow.order for flow in directive.event_flows if flow.order is not None]
+            if explicit_orders != sorted(explicit_orders):
+                raise ValueError("choreography event flows must preserve authored event order")
+            order_by_id = {flow.event_id: flow.order for flow in directive.event_flows}
+            flow_by_id = {flow.event_id: flow for flow in directive.event_flows}
+            for flow in directive.event_flows:
+                if flow.stages and flow.stages[-1] != EventFlowStage.RELEASE:
+                    raise ValueError("semantic event flow must release after its final phase")
+                if flow.steps and flow.steps[-1].stage != EventFlowStage.RELEASE:
+                    raise ValueError("semantic event flow steps must end in RELEASE")
+                if flow.result_asset_ids and EventFlowStage.PAYOFF not in flow.stages:
+                    raise ValueError("semantic event result must compile a payoff phase")
+                payoff_assets = {
+                    asset_id
+                    for step in flow.steps
+                    if step.stage == EventFlowStage.PAYOFF
+                    for asset_id in (step.result_asset_id, *step.participant_asset_ids)
+                    if asset_id
+                }
+                if flow.result_asset_ids and not set(flow.result_asset_ids).issubset(payoff_assets):
+                    raise ValueError("every semantic event result must own an explicit payoff step")
+
+                target_event_ids = flow.handoff_to_event_ids or (
+                    (flow.handoff_to_event_id,) if flow.handoff_to_event_id else ()
+                )
+                target_asset_ids = flow.handoff_to_asset_ids or (
+                    (flow.handoff_to_asset_id,) if flow.handoff_to_asset_id else ()
+                )
+                for target_event_id in target_event_ids:
+                    target_flow = flow_by_id.get(target_event_id)
+                    if target_flow is None:
+                        raise ValueError("semantic event handoff must target an event in the beat")
+                    if (
+                        flow.order is not None
+                        and target_flow.order is not None
+                        and target_flow.order <= flow.order
+                    ):
+                        raise ValueError("semantic event handoff must move forward")
+                for target_asset_id in target_asset_ids:
+                    if not any(
+                        target_asset_id in flow_by_id[event_id].asset_ids
+                        for event_id in target_event_ids
+                        if event_id in flow_by_id
+                    ):
+                        raise ValueError("semantic event handoff asset must belong to a target event")
+                if flow.handoff_mode in {"BRANCH", "PARALLEL"} and len(target_event_ids) < 2:
+                    raise ValueError("branched semantic handoff requires multiple target events")
+                for dependency in flow.dependency_ids:
+                    dependency_order = order_by_id.get(dependency)
+                    if (
+                        dependency_order is not None
+                        and flow.order is not None
+                        and dependency_order >= flow.order
+                    ):
+                        raise ValueError("semantic event dependency must precede dependent event")
+
         for sequence in self.sequences:
             if not sequence.beat_ids:
                 raise ValueError("choreography sequence cannot be empty")

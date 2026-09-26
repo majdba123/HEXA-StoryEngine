@@ -1,4 +1,5 @@
 from app.composition.text_director import PlacedTextRegion, TextPlacementDirector
+from app.contracts import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue
 
 
@@ -187,3 +188,164 @@ def test_authoring_qa_checks_text_against_locked_visual_geometry(tmp_path) -> No
         assets=[asset],
     )
     assert report.text_layout_violations
+
+
+def test_arabic_kufi_measurement_reserves_real_glyph_width_and_entry_motion() -> None:
+    cue = _cue("text-wide", "يكتب وبسرعة", 0.2, 0.8)
+    width, height = TextPlacementDirector.estimated_box(cue, scale=1.0)
+
+    assert width > 0.55
+    assert height > 0.14
+
+def test_director_ignores_later_semantic_visual_until_text_disappears(tmp_path) -> None:
+    from PIL import Image, ImageDraw
+    from app.models import AssetActivation, VisualAsset
+    from app.story.windows import schedule_windows
+
+    context_path = tmp_path / "context.png"
+    future_path = tmp_path / "future.png"
+    for path, color in (
+        (context_path, (40, 120, 220, 255)),
+        (future_path, (220, 50, 60, 255)),
+    ):
+        image = Image.new("RGBA", (220, 220), (255, 255, 255, 0))
+        ImageDraw.Draw(image).rectangle((0, 0, 219, 219), fill=color)
+        image.save(path)
+    assets = {
+        "context": VisualAsset(
+            id="context",
+            scene_id="scene-001",
+            role="visual",
+            image_path=context_path,
+            extraction_method="fixture",
+        ),
+        "future": VisualAsset(
+            id="future",
+            scene_id="scene-001",
+            role="visual",
+            image_path=future_path,
+            extraction_method="fixture",
+        ),
+    }
+    activations = [
+        AssetActivation(
+            asset_id="context",
+            semantic_unit_id="context",
+            trigger_text="context",
+            spoken_start=0.35,
+            spoken_end=0.75,
+            confidence=1.0,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            semantic_group_id="g",
+            sequence_order=1,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+            visual_focus="CONTEXT",
+        ),
+        AssetActivation(
+            asset_id="future",
+            semantic_unit_id="future",
+            trigger_text="future result",
+            spoken_start=2.6,
+            spoken_end=3.2,
+            confidence=1.0,
+            source="final_package_semantic_binding",
+            policy="EXPLICIT",
+            semantic_group_id="g",
+            sequence_order=2,
+            group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+            visual_focus="RESULT",
+        ),
+    ]
+    beat = _beat().model_copy(update={"asset_activations": activations})
+    beat.asset_activations = schedule_windows(activations, beat, beat.end, set())
+    visual = CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(
+                asset_id="context",
+                x=0.20,
+                y=0.70,
+                width=0.22,
+                height=0.30,
+                z=10,
+            ),
+            LayoutItem(
+                asset_id="future",
+                x=0.50,
+                y=0.16,
+                width=0.58,
+                height=0.24,
+                z=20,
+            ),
+        ],
+    )
+    cue = _cue("text-early", "1000 ريال", 0.3, 0.8)
+    director = TextPlacementDirector()
+
+    result = director.place(
+        beat=beat,
+        visual=visual,
+        cue=cue,
+        concurrent_text=[],
+        preferred_zone="top",
+        assets_by_id=assets,
+        visible_end=1.0,
+    )
+
+    visible_ids = {
+        row.asset_id
+        for row in director.visible_visual_items(
+            beat=beat,
+            visual=visual,
+            visible_end=1.0,
+        )
+    }
+    assert "context" in visible_ids
+    assert "future" not in visible_ids
+    assert result.visual_overlap <= 0.001
+
+
+def test_text_director_and_authoring_qa_share_hard_overlap_contract() -> None:
+    from app.qa import AuthoringVisualQA
+
+    contract = TextLayoutContract()
+    director = TextPlacementDirector()
+    qa = AuthoringVisualQA()
+
+    assert director.contract == contract
+    assert qa.text_layout_contract == contract
+    assert contract.accepts(visual_overlap=0.012, text_overlap=0.04)
+    assert not contract.accepts(visual_overlap=0.0121, text_overlap=0.04)
+    assert not contract.accepts(visual_overlap=0.012, text_overlap=0.0401)
+
+
+def test_director_never_prefers_text_overlap_above_shared_contract_when_legal_space_exists(
+) -> None:
+    director = TextPlacementDirector()
+    visual = CompositionBeat(beat_id="beat-001", items=[])
+    first = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-001", "1000 ريال", 0.5, 1.2),
+        concurrent_text=[],
+        preferred_zone=None,
+    )
+    occupied = [
+        PlacedTextRegion(
+            cue_id="text-001",
+            start=0.5,
+            end=1.8,
+            box=first.box,
+            zone=first.zone,
+        )
+    ]
+    second = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-002", "300 محجوزة", 0.8, 1.5),
+        concurrent_text=occupied,
+        preferred_zone=first.zone,
+    )
+
+    assert second.text_overlap <= director.contract.max_text_overlap + 1e-12

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,8 +10,9 @@ from app.transcription.alignment import (
     ForcedAligner,
     WhisperXForcedAligner,
 )
-from app.shared.errors import DependencyUnavailableError
+from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.media import probe_duration
+from app.shared.process import run_hidden
 
 _WORD_RE = re.compile(r"\S+")
 _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
@@ -24,19 +24,43 @@ class TranscriptionService:
         self,
         *,
         model_name: str,
+        ffmpeg_bin: str = "ffmpeg",
         ffprobe_bin: str = "ffprobe",
         forced_aligner: ForcedAligner | None = None,
         require_forced_alignment: bool = False,
     ) -> None:
         self.model_name = model_name
+        self.ffmpeg_bin = ffmpeg_bin
         self.ffprobe_bin = ffprobe_bin
-        self.forced_aligner = forced_aligner or WhisperXForcedAligner()
+        self.forced_aligner = forced_aligner or WhisperXForcedAligner(ffmpeg_bin=ffmpeg_bin)
         self.require_forced_alignment = require_forced_alignment
+
+    def preflight(self, audio: Path, script: str | None = None) -> float:
+        """Validate narration and strict timing dependencies before expensive visual work."""
+        audio = audio.expanduser().resolve()
+        if not audio.is_file():
+            raise StageFailedError(
+                "audio file not found",
+                details={"code": "AUDIO_INPUT_MISSING", "path": str(audio)},
+            )
+        duration = probe_duration(audio, self.ffprobe_bin)
+        if self.require_forced_alignment and script:
+            preflight = getattr(self.forced_aligner, "preflight", None)
+            if not callable(preflight):
+                raise DependencyUnavailableError(
+                    "forced aligner does not expose production preflight",
+                    details={"code": "ALIGNMENT_PREFLIGHT_UNAVAILABLE"},
+                )
+            preflight(script)
+        return duration
 
     def transcribe(self, audio: Path, script: str | None = None) -> Transcript:
         audio = audio.expanduser().resolve()
-        if not audio.exists():
-            raise FileNotFoundError(audio)
+        if not audio.is_file():
+            raise StageFailedError(
+                "audio file not found",
+                details={"code": "AUDIO_INPUT_MISSING", "path": str(audio)},
+            )
         if script:
             duration = probe_duration(audio, self.ffprobe_bin)
             try:
@@ -49,6 +73,13 @@ class TranscriptionService:
                 # Controlled fallback for tests/diagnostics only. Product Settings use
                 # strict forced alignment so unsafe timing never silently drives render.
                 pass
+            finally:
+                # Forced alignment is a completed stage once the Transcript is materialized.
+                # Do not keep its heavy CTC model resident while later visual models
+                # (Florence/E5) run on low-memory production machines.
+                release = getattr(self.forced_aligner, "release", None)
+                if callable(release):
+                    release()
 
         try:
             return self._faster_whisper(audio, script)
@@ -164,7 +195,7 @@ class TranscriptionService:
     def _speech_intervals(self, audio: Path, duration: float) -> list[tuple[float, float]]:
         """Return speech-active intervals from FFmpeg silence detection."""
         command = [
-            "ffmpeg",
+            self.ffmpeg_bin,
             "-hide_banner",
             "-nostats",
             "-i",
@@ -176,7 +207,7 @@ class TranscriptionService:
             "-",
         ]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            result = run_hidden(command, capture_output=True, text=True, check=False)
         except FileNotFoundError:
             return [(0.0, duration)]
         log = result.stderr or ""

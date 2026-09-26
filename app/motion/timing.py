@@ -1,8 +1,279 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import hypot, isfinite
+from typing import TYPE_CHECKING
 
-from app.models import StoryBeat
+from app.models import AssetActivation, StoryBeat
+
+GOLDEN_MAJOR = 0.6180339887498949
+GOLDEN_MINOR = 1.0 - GOLDEN_MAJOR
+
+
+@dataclass(frozen=True, slots=True)
+class MotionComfortProfile:
+    target_seconds: float
+    minimum_seconds: float
+    max_normalized_speed: float
+
+
+_MOTION_COMFORT: dict[str, MotionComfortProfile] = {
+    "ENTRY": MotionComfortProfile(0.42, 0.26, 0.14),
+    "INTERACT": MotionComfortProfile(0.40, 0.28, 0.13),
+    "REACT": MotionComfortProfile(0.36, 0.26, 0.12),
+    "PAYOFF": MotionComfortProfile(0.42, 0.30, 0.11),
+    "EXIT": MotionComfortProfile(0.40, 0.32, 0.14),
+}
+
+
+def motion_comfort(phase: str) -> MotionComfortProfile:
+    return _MOTION_COMFORT.get(
+        str(phase).upper(),
+        MotionComfortProfile(0.36, 0.24, 0.13),
+    )
+
+
+def comfort_gain(phase: str, duration: float) -> float:
+    """Scale amplitude down when Story cannot provide a comfortable motion window."""
+    profile = motion_comfort(phase)
+    duration = max(0.0, float(duration))
+    return max(0.0, min(1.0, duration / max(profile.minimum_seconds, 1e-6)))
+
+
+def max_comfort_displacement(phase: str, duration: float) -> float:
+    profile = motion_comfort(phase)
+    return max(0.0, float(duration)) * profile.max_normalized_speed
+
+
+def golden_window_around_peak(
+    *,
+    peak: float,
+    earliest: float,
+    latest: float,
+    preferred_duration: float,
+    minimum_duration: float = 0.06,
+) -> tuple[float, float] | None:
+    """Fit a Golden-ratio gesture around a Story-owned semantic peak.
+
+    Story owns ``peak``. Motion only chooses how much executable time can fit around
+    it while preserving the 61.8% outbound / 38.2% return relationship. This avoids
+    the common failure where a long ENTRY pushes INTERACT/REACT/PAYOFF after the
+    spoken emphasis, and it gives Planner/QA one deterministic timing shape.
+    """
+    peak = float(peak)
+    earliest = float(earliest)
+    latest = float(latest)
+    preferred_duration = max(0.0, float(preferred_duration))
+    minimum_duration = max(0.0, float(minimum_duration))
+    if not all(isfinite(value) for value in (peak, earliest, latest, preferred_duration)):
+        return None
+    if latest <= earliest or peak <= earliest or peak >= latest:
+        return None
+
+    before_capacity = (peak - earliest) / GOLDEN_MAJOR
+    after_capacity = (latest - peak) / GOLDEN_MINOR
+    duration = min(preferred_duration, before_capacity, after_capacity)
+    if duration < minimum_duration - 1e-9:
+        return None
+
+    start = peak - duration * GOLDEN_MAJOR
+    end = peak + duration * GOLDEN_MINOR
+    if start < earliest - 1e-9 or end > latest + 1e-9:
+        return None
+    return max(earliest, start), min(latest, end)
+
+
+def semantic_readability_duration(
+    phase: str,
+    *,
+    segment_duration: float,
+    active_duration: float | None = None,
+) -> float:
+    """Return the canonical duration used by the shared readability contract.
+
+    Semantic accent phases are judged over the interval where the gesture is actually
+    active. Entry/establish/add/exit phases are judged over their authored segment
+    window. Keeping this choice here prevents Planner and QA from using the same floor
+    formula with different duration semantics.
+    """
+    segment = max(0.0, float(segment_duration))
+    phase_name = str(phase).upper()
+    if phase_name in {"INTERACT", "REACT", "PAYOFF"}:
+        try:
+            active = float(active_duration) if active_duration is not None else segment
+        except (TypeError, ValueError):
+            active = segment
+        if active > 0.0:
+            return min(segment, active) if segment > 0.0 else active
+    return segment
+
+
+def semantic_readability_floor(
+    phase: str,
+    *,
+    item_width: float,
+    item_height: float,
+    duration: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Canonical motion readability floor in normalized Composition space.
+
+    This is a shared *authoring* contract consumed by MotionPlanner and rendered QA.
+    No phase may use a private QA-only readability threshold: the planner must know
+    the minimum readable motion before it commits a segment. INTERACT/REACT/PAYOFF
+    retain the stronger semantic floors; ENTRY/ESTABLISH/ADD/EXIT use the historical
+    rendered perceptual floors projected back into Composition space.
+    """
+    phase_name = str(phase).upper()
+    semantic_floor = {
+        "INTERACT": 0.030,
+        "REACT": 0.026,
+        "PAYOFF": 0.020,
+    }.get(phase_name)
+
+    if semantic_floor is not None:
+        size_floor = min(0.042, min(float(item_width), float(item_height)) * 0.14)
+        readable = max(semantic_floor, size_floor) * comfort_gain(phase_name, duration)
+        comfort_seconds = max(0.0, float(duration)) * GOLDEN_MINOR
+    else:
+        ratio = {
+            "ENTRY": 0.010,
+            "ESTABLISH": 0.008,
+            "ADD": 0.007,
+            "EXIT": 0.016,
+        }.get(phase_name, 0.0)
+        if ratio <= 0.0:
+            return 0.0
+        width = max(1.0, float(frame_width))
+        height = max(1.0, float(frame_height))
+        # Reproduce the historical encoded-QA pixel floor exactly, then normalize it
+        # by frame width so the planner consumes the same contract before rendering.
+        asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
+        base_px = max(6.0, min(36.0, width * ratio, asset_px * 0.25))
+        readable = (base_px / width) * comfort_gain(phase_name, duration)
+        comfort_seconds = max(0.0, float(duration))
+
+    comfort_budget = max_comfort_displacement(phase_name, comfort_seconds)
+    if comfort_budget > 0.0:
+        readable = min(readable, comfort_budget)
+    return max(0.0, readable)
+
+
+
+def semantic_readability_floor_px(
+    phase: str,
+    *,
+    item_width: float,
+    item_height: float,
+    duration: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Return the exact encoded-pixel floor projected from the shared contract."""
+    width = max(1, int(frame_width))
+    return float(width) * semantic_readability_floor(
+        phase,
+        item_width=item_width,
+        item_height=item_height,
+        duration=duration,
+        frame_width=width,
+        frame_height=max(1, int(frame_height)),
+    )
+
+
+def projected_motion_activity_px(
+    *,
+    dx: float,
+    dy: float,
+    scale: float,
+    item_width: float,
+    item_height: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Measure the exact pixel activity used by encoded-motion QA."""
+    width = max(1.0, float(frame_width))
+    height = max(1.0, float(frame_height))
+    translation_px = hypot(float(dx) * width, float(dy) * height)
+    asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
+    scale_px = abs(float(scale) - 1.0) * asset_px
+    return max(translation_px, scale_px)
+
+
+def required_translation_for_pixel_floor(
+    *,
+    dx: float,
+    dy: float,
+    floor_px: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    """Return normalized translation magnitude required to reach the pixel floor."""
+    floor_px = max(0.0, float(floor_px))
+    if floor_px <= 0.0:
+        return 0.0
+    magnitude = hypot(float(dx), float(dy))
+    if magnitude <= 1e-9:
+        return floor_px / max(1.0, float(frame_height))
+    ux = float(dx) / magnitude
+    uy = float(dy) / magnitude
+    pixels_per_normalized = hypot(
+        ux * max(1.0, float(frame_width)),
+        uy * max(1.0, float(frame_height)),
+    )
+    return floor_px / max(1e-9, pixels_per_normalized)
+
+
+def required_scale_delta_for_pixel_floor(
+    *,
+    floor_px: float,
+    item_width: float,
+    item_height: float,
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+) -> float:
+    width = max(1.0, float(frame_width))
+    height = max(1.0, float(frame_height))
+    asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
+    return max(0.0, float(floor_px)) / asset_px
+
+
+if TYPE_CHECKING:
+    from app.story.windows import StoryAssetActivation
+
+
+def story_activation_window(
+    activation: AssetActivation | None, beat: StoryBeat,
+) -> tuple[bool, StoryAssetActivation | None]:
+    """Distinguish absent V2 (legacy) from V2 abstention/invalid data.
+
+    Read the versioned evidence too: base-typed serialized Story containers omit
+    subclass fields. Invalid V2 must never silently become a spoken_start anchor.
+    """
+    if activation is None:
+        return False, None
+    has_v2 = hasattr(activation, "activation_policy") or any(
+        row.startswith("story_activation_v2:") for row in activation.evidence
+    )
+    if not has_v2:
+        return False, None
+    from app.story.windows import StoryAssetActivation
+
+    try:
+        window = (
+            StoryAssetActivation.model_validate(activation.model_dump())
+            if hasattr(activation, "activation_policy")
+            else StoryAssetActivation.from_legacy(activation)
+        )
+        if window.activation_policy not in {"OWN_WINDOW", "INHERITED_WINDOW"}:
+            return True, None
+        if not (isfinite(beat.start) and isfinite(beat.end)
+                and beat.start <= window.reveal_start < window.settle_at <= beat.end):
+            return True, None
+    except (ValueError, TypeError, OverflowError):
+        return True, None
+    return True, window
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +282,9 @@ class MotionWindow:
     end: float
     semantic_settle: float
     pace_tier: str
+    semantic_peak: float | None = None
+    story_v2: bool = False
+    sequence_staggered: bool = False
 
     @property
     def duration(self) -> float:
@@ -45,6 +319,9 @@ class MotionTimingPolicy:
         settle_progress: float = 0.58,
         hook: bool = False,
         pace_tier: str | None = None,
+        activation: AssetActivation | None = None,
+        visual_unit_index: int = 0,
+        visual_unit_count: int = 1,
     ) -> MotionWindow:
         visual_duration = max(0.08, beat.end - beat.start)
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -66,10 +343,14 @@ class MotionTimingPolicy:
 
         if primary:
             base_duration = {
-                "snap": 0.34,
-                "brisk": 0.46,
-                "balanced": 0.64,
-                "deliberate": 0.84,
+                # Reference videos sustain meaningful entry motion for roughly
+                # 0.4-0.8s instead of snapping into place in 0.15-0.30s.
+                # These are preferred window lengths; short beats and semantic
+                # anchors still clamp them safely to executable capacity.
+                "snap": 0.42,
+                "brisk": 0.54,
+                "balanced": 0.70,
+                "deliberate": 0.86,
             }[pace_tier]
             if hook:
                 base_duration = max(base_duration, 0.56)
@@ -78,6 +359,17 @@ class MotionTimingPolicy:
                 self._MIN_DURATION,
                 min(self._MAX_PRIMARY_DURATION, max(self._MIN_DURATION, visual_duration)),
             )
+            anchored = self._activation_window(
+                beat=beat,
+                activation=activation,
+                preferred_duration=preferred,
+                settle_progress=settle_progress,
+                pace_tier=pace_tier,
+                visual_unit_index=visual_unit_index,
+                visual_unit_count=visual_unit_count,
+            )
+            if anchored is not None:
+                return anchored
             return self._primary_window(
                 beat=beat,
                 audio_start=audio_start,
@@ -88,10 +380,10 @@ class MotionTimingPolicy:
             )
 
         base_duration = {
-            "snap": 0.20,
-            "brisk": 0.30,
-            "balanced": 0.43,
-            "deliberate": 0.58,
+            "snap": 0.34,
+            "brisk": 0.44,
+            "balanced": 0.56,
+            "deliberate": 0.68,
         }[pace_tier]
         if hook:
             base_duration = min(base_duration, 0.32)
@@ -100,6 +392,17 @@ class MotionTimingPolicy:
             self._MIN_DURATION,
             min(self._MAX_SUPPORT_DURATION, max(self._MIN_DURATION, visual_duration)),
         )
+        anchored = self._activation_window(
+            beat=beat,
+            activation=activation,
+            preferred_duration=preferred,
+            settle_progress=settle_progress,
+            pace_tier=pace_tier,
+            visual_unit_index=visual_unit_index,
+            visual_unit_count=visual_unit_count,
+        )
+        if anchored is not None:
+            return anchored
         return self._support_window(
             beat=beat,
             audio_start=audio_start,
@@ -120,6 +423,10 @@ class MotionTimingPolicy:
         index: int,
         count: int,
         primary: bool,
+        activation: AssetActivation | None = None,
+        settle_progress: float = 0.58,
+        visual_unit_index: int = 0,
+        visual_unit_count: int = 1,
     ) -> MotionWindow:
         visual_duration = max(0.08, beat.end - beat.start)
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
@@ -140,6 +447,18 @@ class MotionTimingPolicy:
             0.12,
             min(cap, max(0.12, visual_duration - 0.04)),
         )
+        anchored = self._activation_window(
+            beat=beat,
+            activation=activation,
+            preferred_duration=preferred,
+            settle_progress=settle_progress,
+            pace_tier=self._pace_tier(words_per_second),
+            visual_unit_index=visual_unit_index,
+            visual_unit_count=visual_unit_count,
+        )
+        if anchored is not None:
+            return anchored
+
         if primary:
             start = beat.start
             settle_deadline = min(beat.end, audio_start + 0.04)
@@ -262,6 +581,133 @@ class MotionTimingPolicy:
             end=end,
             semantic_settle=min(end, semantic_settle),
             pace_tier=pace_tier,
+        )
+
+    def _activation_window(
+        self,
+        *,
+        beat: StoryBeat,
+        activation: AssetActivation | None,
+        preferred_duration: float,
+        settle_progress: float,
+        pace_tier: str,
+        visual_unit_index: int = 0,
+        visual_unit_count: int = 1,
+    ) -> MotionWindow | None:
+        has_v2, story_window = story_activation_window(activation, beat)
+        if has_v2:
+            if story_window is None:
+                return None
+            base = MotionWindow(
+                start=story_window.reveal_start,
+                end=story_window.settle_at,
+                semantic_settle=story_window.settle_at,
+                pace_tier=pace_tier,
+                semantic_peak=story_window.semantic_peak,
+                story_v2=True,
+            )
+            return self._stagger_visual_unit_window(
+                base,
+                index=visual_unit_index,
+                count=visual_unit_count,
+            )
+        if (
+            activation is None
+            or activation.spoken_start is None
+            or activation.policy not in {"SEMANTIC", "EXPLICIT", "GROUP"}
+        ):
+            return None
+
+        anchor = float(activation.spoken_start)
+        if anchor < beat.start + 0.015 or anchor > beat.end - 0.015:
+            return None
+
+        settle_progress = self._clamp(settle_progress, 0.05, 1.0)
+        before_capacity = max(0.0, anchor - beat.start)
+        max_by_before = before_capacity / settle_progress
+        if settle_progress >= 1.0 - 1e-9:
+            max_by_after = float("inf")
+        else:
+            after_capacity = max(0.0, beat.end - anchor)
+            max_by_after = after_capacity / (1.0 - settle_progress)
+
+        duration = min(preferred_duration, max_by_before, max_by_after)
+        if duration < 0.025:
+            return None
+
+        start = anchor - settle_progress * duration
+        end = start + duration
+        base = MotionWindow(
+            start=max(beat.start, start),
+            end=min(beat.end, end),
+            semantic_settle=anchor,
+            pace_tier=pace_tier,
+        )
+        return self._stagger_visual_unit_window(
+            base,
+            index=visual_unit_index,
+            count=visual_unit_count,
+        )
+
+    @classmethod
+    def _stagger_visual_unit_window(
+        cls,
+        window: MotionWindow,
+        *,
+        index: int,
+        count: int,
+    ) -> MotionWindow:
+        """Subdivide one Story-owned window for locator-backed multi-cutout units.
+
+        Final Package/Story still own the outer semantic window. Motion only determines
+        the ordered reveal choreography inside that window. The first member starts at
+        the Story reveal boundary and the final member completes at Story settle.
+        """
+        if count <= 1:
+            return window
+        index = max(0, min(count - 1, int(index)))
+        span = max(0.0, window.end - window.start)
+        if span <= cls._MIN_EXECUTABLE_DURATION + 1e-9:
+            return window
+
+        preferred_motion = min(0.48, max(0.08, span * 0.56))
+        preferred_gap = 0.04
+        maximum_motion_for_gap = span - preferred_gap * (count - 1)
+        if maximum_motion_for_gap >= cls._MIN_EXECUTABLE_DURATION:
+            motion_duration = min(preferred_motion, maximum_motion_for_gap)
+        else:
+            motion_duration = max(cls._MIN_EXECUTABLE_DURATION, span * 0.45)
+            motion_duration = min(motion_duration, span)
+
+        if motion_duration >= span - 1e-9:
+            return window
+        step = (span - motion_duration) / (count - 1)
+        if step <= 1e-6:
+            return window
+
+        start = window.start + step * index
+        end = min(window.end, start + motion_duration)
+        if index == count - 1:
+            end = window.end
+        if end <= start:
+            return window
+        return MotionWindow(
+            start=start,
+            end=end,
+            semantic_settle=end,
+            pace_tier=window.pace_tier,
+            semantic_peak=(
+                start
+                + (end - start)
+                * (
+                    (window.semantic_peak - window.start)
+                    / max(cls._MIN_EXECUTABLE_DURATION, window.end - window.start)
+                )
+                if window.semantic_peak is not None
+                else None
+            ),
+            story_v2=window.story_v2,
+            sequence_staggered=True,
         )
 
     def pace_tier_for_beat(

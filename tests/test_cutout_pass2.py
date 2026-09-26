@@ -257,3 +257,75 @@ def test_pass2_semantic_priority_is_generic_for_animation_useful_objects() -> No
     unknown_score = service._semantic_priority(unknown, shape, [])
 
     assert wallet_score > unknown_score
+
+
+def test_pass2_extractor_preserves_enclosed_white_interior() -> None:
+    from app.cutout.pass2.extractor import Pass1StyleExtractor
+    from app.cutout.pass2.models import CandidateProposal, ProposalSource
+
+    canvas = Image.new("RGBA", (300, 180), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle(
+        (15, 35, 115, 145),
+        radius=14,
+        fill=(30, 105, 220, 255),
+    )
+    draw.ellipse(
+        (180, 40, 270, 130),
+        fill=(255, 255, 255, 255),
+        outline=(25, 55, 120, 255),
+        width=10,
+    )
+    draw.ellipse((215, 75, 235, 95), fill=(230, 150, 35, 255))
+    rgba = np.asarray(canvas)
+
+    yy, xx = np.ogrid[:180, :300]
+    dist = np.sqrt((xx - 225.0) ** 2 + (yy - 85.0) ** 2)
+    core = (dist >= 35.0) & (dist <= 46.0) & (rgba[:, :, 3] > 0)
+    protected = np.zeros(core.shape, dtype=bool)
+    protected[35:146, 15:116] = rgba[35:146, 15:116, 3] > 0
+    proposal = CandidateProposal(
+        id="white-interior-badge",
+        bbox=(178, 38, 95, 95),
+        center=(225.0, 85.0),
+        area_share=0.30,
+        stability=1.0,
+        source=ProposalSource.cv,
+        core_mask=core,
+    )
+
+    result = Pass1StyleExtractor().extract(rgba, proposal, protected)
+
+    assert result is not None
+    assert result.mask[85, 205]
+    assert rgba[85, 205, 0:3].tolist() == [255, 255, 255]
+    assert not np.any(result.mask & protected)
+
+
+def test_whole_object_completer_moves_soft_halo_with_detached_object() -> None:
+    from app.cutout.pass2.completeness import WholeObjectCompleter
+    from app.cutout.pass2.safety import PartitionSafetyGate
+
+    rgba = np.zeros((180, 320, 4), dtype=np.uint8)
+    rgba[45:145, 20:115, :3] = (25, 100, 220)
+    rgba[45:145, 20:115, 3] = 255
+
+    yy, xx = np.ogrid[:180, :320]
+    distance = np.sqrt((xx - 235.0) ** 2 + (yy - 90.0) ** 2)
+    body = distance <= 34.0
+    halo = (distance > 34.0) & (distance <= 40.0)
+    rgba[body, :3] = (220, 65, 45)
+    rgba[body, 3] = 255
+    rgba[halo, :3] = (230, 120, 110)
+    rgba[halo, 3] = 72
+
+    seed = body.copy()
+    protected = np.zeros(seed.shape, dtype=bool)
+    protected[45:145, 20:115] = True
+
+    completed = WholeObjectCompleter().complete(rgba, seed, protected)
+
+    assert completed is not None
+    assert completed.mask[90, 273]
+    assert not np.any(completed.mask & protected)
+    assert PartitionSafetyGate().validate(rgba[:, :, 3], [completed.mask])

@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class JobState(StrEnum):
@@ -42,6 +42,8 @@ class SceneSource(BaseModel):
     relation_to_previous: str | None = None
     units: list[dict[str, Any]] = Field(default_factory=list)
     visual_progression: list[dict[str, Any]] = Field(default_factory=list)
+    semantic_events: list[dict[str, Any]] = Field(default_factory=list)
+    semantic_progression: dict[str, Any] | None = None
 
 
 class PackageModel(BaseModel):
@@ -51,6 +53,7 @@ class PackageModel(BaseModel):
     script: str | None = None
     manifest: dict[str, Any] = Field(default_factory=dict)
     scene_plan: dict[str, Any] = Field(default_factory=dict)
+    semantic_bindings: dict[str, Any] = Field(default_factory=dict)
 
 
 class TranscriptWord(BaseModel):
@@ -139,6 +142,12 @@ class StoryRelation(BaseModel):
     target_unit_id: str
     kind: str
     authority: str
+    result_unit_id: str | None = None
+    trigger_text: str | None = None
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = Field(default=None, ge=0)
+    spoken_end: float | None = Field(default=None, ge=0)
     confidence: float = Field(default=1.0, ge=0, le=1)
     causal: bool = False
 
@@ -157,12 +166,94 @@ class StorySemanticContext(BaseModel):
     subject_unit_ids: list[str] = Field(default_factory=list)
     object_unit_ids: list[str] = Field(default_factory=list)
     result_unit_ids: list[str] = Field(default_factory=list)
+    focus_unit_ids: list[str] = Field(default_factory=list)
+    visual_states: dict[str, dict[str, str]] = Field(default_factory=dict)
+    continuity_by_unit: dict[str, dict[str, Any]] = Field(default_factory=dict)
     narrative_functions: list[str] = Field(default_factory=list)
     semantic_intents: list[str] = Field(default_factory=list)
     continuity_relation: str | None = None
     evidence: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0, le=1)
     tension: float = Field(default=0.0, ge=0, le=1)
+
+
+class AssetActivation(BaseModel):
+    """Narration anchor chosen by Story for one extracted visual asset.
+
+    Story owns semantic timing. Motion consumes this record but never infers meaning.
+    The policy is explicit so low-confidence evidence can abstain instead of fabricating
+    a word-level synchronization.
+    """
+
+    asset_id: str
+    semantic_unit_id: str | None = None
+    trigger_text: str | None = None
+    trigger_char_start: int | None = None
+    trigger_char_end: int | None = None
+    spoken_start: float | None = Field(default=None, ge=0)
+    spoken_end: float | None = Field(default=None, ge=0)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    source: str = "none"
+    policy: str = "FALLBACK"
+    semantic_group_id: str | None = None
+    sequence_order: int | None = Field(default=None, ge=1)
+    binding_type: str | None = None
+    semantic_parent_id: str | None = None
+    group_animation_policy: str | None = None
+    visual_focus: str | None = None
+    visual_state: dict[str, str] | None = None
+    continuity: dict[str, Any] | None = None
+    semantic_event_id: str | None = None
+    semantic_event_order: int | None = Field(default=None, ge=1)
+    semantic_event_roles: list[str] = Field(default_factory=list)
+    semantic_event_dependency_ids: list[str] = Field(default_factory=list)
+    compound_visual_classification: str | None = None
+    internal_progression_unavailable: bool = False
+    evidence: list[str] = Field(default_factory=list)
+
+
+class SemanticEventProxy(BaseModel):
+    """Story-owned semantic event rendered through an existing compound parent.
+
+    A Final Package may author a meaningful child inside a compound visual even when
+    Pass1/Pass2 correctly keep that child attached to its parent. This record preserves
+    the child event and narration timing without fabricating a new cutout or adding a
+    second AssetActivation for the same rendered asset.
+    """
+
+    asset_id: str
+    semantic_unit_id: str
+    semantic_parent_id: str | None = None
+    semantic_group_id: str | None = None
+    semantic_event_id: str
+    semantic_event_order: int | None = Field(default=None, ge=1)
+    semantic_event_roles: list[str] = Field(default_factory=list)
+    semantic_event_dependency_ids: list[str] = Field(default_factory=list)
+    trigger_text: str
+    trigger_char_start: int
+    trigger_char_end: int
+    spoken_start: float = Field(ge=0)
+    spoken_end: float = Field(gt=0)
+    reveal_start: float = Field(ge=0)
+    semantic_peak: float = Field(ge=0)
+    settle_at: float = Field(gt=0)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    authority: str = "FINAL_PACKAGE_COMPOUND_PROXY"
+    visual_focus: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_proxy_window(self) -> "SemanticEventProxy":
+        if self.trigger_char_end <= self.trigger_char_start:
+            raise ValueError("semantic event proxy script span must be increasing")
+        if self.spoken_end <= self.spoken_start:
+            raise ValueError("semantic event proxy spoken span must be increasing")
+        if not (
+            self.spoken_start <= self.reveal_start
+            <= self.semantic_peak <= self.settle_at
+        ):
+            raise ValueError("semantic event proxy visual window must follow Story timing")
+        return self
 
 
 class StoryBeat(BaseModel):
@@ -179,6 +270,8 @@ class StoryBeat(BaseModel):
     handoff_from: str | None = None
     semantic_targets: list[str] = Field(default_factory=list)
     semantic_context: StorySemanticContext | None = None
+    asset_activations: list[AssetActivation] = Field(default_factory=list)
+    semantic_event_proxies: list[SemanticEventProxy] = Field(default_factory=list)
 
 
 class LayoutItem(BaseModel):
@@ -199,6 +292,29 @@ class CompositionBeat(BaseModel):
     state_evidence: list[str] = Field(default_factory=list)
 
 
+class MotionSegment(BaseModel):
+    """Absolute semantic re-activation window inside one visual Motion cue."""
+
+    phase: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    program: dict[str, Any] = Field(default_factory=dict)
+    semantic_event_id: str | None = None
+    semantic_action: str | None = None
+    relationship: str | None = None
+    involvement: str | None = None
+    source_asset_id: str | None = None
+    target_asset_id: str | None = None
+    result_asset_id: str | None = None
+    handoff_deadline: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> "MotionSegment":
+        if self.end <= self.start:
+            raise ValueError("motion segment end must be after start")
+        return self
+
+
 class MotionCue(BaseModel):
     beat_id: str
     asset_id: str
@@ -206,6 +322,7 @@ class MotionCue(BaseModel):
     start: float
     end: float
     params: dict[str, Any] = Field(default_factory=dict)
+    segments: list[MotionSegment] = Field(default_factory=list)
 
 
 class TextTokenCue(BaseModel):
@@ -274,7 +391,7 @@ class TextLayoutItem(BaseModel):
     x: float
     y: float
     max_width: float
-    font_scale: float = Field(default=1.0, ge=0.55, le=1.0)
+    font_scale: float = Field(default=1.0, ge=0.50, le=1.0)
     z: int = 50
     anchor_asset_id: str | None = None
     placement: str = "safe_top"

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
-from app.models import StoryBeat, Transcript, TranscriptWord
+from app.models import PackageModel, SceneSource, StoryBeat, Transcript, TranscriptWord
 
 _TOKEN_EDGE_RE = re.compile(r"^[\W_]+|[\W_]+$", re.UNICODE)
 _DIGIT_RE = re.compile(r"[0-9٠-٩]")
@@ -14,7 +16,10 @@ _ARABIC_STOPWORDS = frozenset({
     "يكون", "تكون", "إذا", "اذا", "كل", "أي", "اي", "ما", "لا", "لم", "لن",
     "و", "ف", "ب", "ل", "التي", "الذي", "عند", "عندما", "بعد", "قبل", "فقط",
     "إن", "ان", "إنك", "انك", "لك", "منها", "له", "لها", "اللي", "هنا", "كذا",
-    "خلال", "بعدها", "وحتى", "حتى",
+    "خلال", "بعدها", "وحتى", "حتى", "عشان", "عنها", "منه", "منهم", "منهن",
+    "فيه", "فيها", "فيهم", "داخل", "خارج", "بدون", "دون", "أحد", "احد",
+    "شيء", "شي", "تقريبًا", "تقريبا", "غالبًا", "غالبا", "عنه", "عنها",
+    "عليه", "عليها", "إليه", "اليه", "إليها", "اليها", "أمام", "امام", "قدام",
 })
 _ENGLISH_STOPWORDS = frozenset({
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
@@ -67,6 +72,11 @@ _GENERIC_ENTITY_TERMS = frozenset({
     "البنك", "بنك", "البطاقة", "بطاقة", "العملة", "عملة",
     "bank", "card", "currency",
 })
+_WEAK_STANDALONE_TERMS = frozenset({
+    "يحاول", "تحاول", "نحاول", "يقلل", "تقلل", "يقدر", "تقدر", "يمكن", "يبدأ", "تبدأ",
+    "يستخدم", "تستخدم", "يكون", "تكون", "يصير", "يعمل", "تعمل", "يسوي",
+    "يخلي", "يخليه", "يريد", "تريد",
+})
 _IMPORTANCE_TERMS = frozenset({
     "الرصيد", "المتاح", "متاح", "فعليًا", "فعليا", "محجوز", "محجوزة", "الحد", "حد",
     "اليومي", "رفض", "مرفوض", "تنرفض", "رفضها", "البنك", "بنك", "البطاقة", "البطاقات",
@@ -94,6 +104,7 @@ class KeywordCandidate:
     source_char_end: int
     score: float
     tokens: tuple[KeywordToken, ...] = ()
+    authority_rank: int = 0
 
 
 class TextSemanticSelector:
@@ -108,7 +119,7 @@ class TextSemanticSelector:
     def __init__(
         self,
         *,
-        max_keywords_per_beat: int = 2,
+        max_keywords_per_beat: int = 4,
         max_display_chars: int = 24,
         min_candidate_score: float = 0.74,
     ) -> None:
@@ -116,13 +127,28 @@ class TextSemanticSelector:
         self.max_display_chars = max(8, max_display_chars)
         self.min_candidate_score = min_candidate_score
 
-    def select(self, beat: StoryBeat, transcript: Transcript) -> list[KeywordCandidate]:
+    def select(
+        self,
+        beat: StoryBeat,
+        transcript: Transcript,
+        *,
+        package: PackageModel | None = None,
+    ) -> list[KeywordCandidate]:
         words = self._aligned_words_for_beat(beat, transcript)
         if not words:
             return []
 
         candidates = self._number_candidates(words)
-        candidates.extend(self._semantic_candidates(words, beat))
+        package_candidates = self._package_semantic_candidates(words, beat, package)
+        if package_candidates:
+            # A semantic Final Package is authoritative for topic wording. Do not fill
+            # unused text budget with unrelated generic speech merely to increase count.
+            candidates.extend(package_candidates)
+        else:
+            # Topic-agnostic fallback for legacy packages that carry no usable semantic
+            # bindings. This path does not depend on a specific business domain.
+            candidates.extend(self._generic_semantic_candidates(words, beat, package))
+            candidates.extend(self._semantic_candidates(words, beat))
 
         deduped: dict[str, KeywordCandidate] = {}
         for candidate in candidates:
@@ -132,13 +158,31 @@ class TextSemanticSelector:
             if not key:
                 continue
             current = deduped.get(key)
-            if current is None or candidate.score > current.score:
+            if (
+                current is None
+                or (
+                    candidate.authority_rank,
+                    candidate.score,
+                )
+                > (
+                    current.authority_rank,
+                    current.score,
+                )
+            ):
                 deduped[key] = candidate
 
-        budget = self._budget(beat)
+        budget = self._budget(
+            beat,
+            semantic_package=bool(package_candidates),
+        )
         ranked = sorted(
             deduped.values(),
-            key=lambda item: (-item.score, item.source_char_start, item.display_text),
+            key=lambda item: (
+                -item.authority_rank,
+                -item.score,
+                item.source_char_start,
+                item.display_text,
+            ),
         )
         selected: list[KeywordCandidate] = []
         for candidate in ranked:
@@ -230,8 +274,538 @@ class TextSemanticSelector:
                 source_char_end=last.char_end,
                 score=1.22 if reserved is not None else 1.10,
                 tokens=tuple(token_parts),
+                authority_rank=4,
             ))
         return output
+
+    def _package_semantic_candidates(
+        self,
+        words: list[TranscriptWord],
+        beat: StoryBeat,
+        package: PackageModel | None,
+    ) -> list[KeywordCandidate]:
+        """Derive on-screen keywords from the Final Package semantic contract.
+
+        The Final Package decides what concepts matter; Text only chooses a compact
+        exact-script phrase suitable for display. Rendered wording is never invented,
+        so TextTiming can continue to use canonical-script character spans as the
+        authority for forced-alignment timestamps.
+        """
+        if package is None or not package.script or not package.semantic_bindings:
+            return []
+        scenes = package.semantic_bindings.get("scenes")
+        if not isinstance(scenes, list):
+            return []
+        binding_scene = next(
+            (
+                row for row in scenes
+                if isinstance(row, dict) and row.get("scene_id") == beat.scene_id
+            ),
+            None,
+        )
+        if binding_scene is None:
+            return []
+        scene = next((row for row in package.scenes if row.id == beat.scene_id), None)
+        groups = binding_scene.get("semantic_groups")
+        assets = [row for row in binding_scene.get("assets", []) if isinstance(row, dict)]
+        assets_by_id = {
+            str(row.get("asset_id")): row
+            for row in assets
+            if row.get("asset_id")
+        }
+        event_roles_by_asset: dict[str, set[str]] = {}
+        for event in binding_scene.get("semantic_events", []) or []:
+            if not isinstance(event, dict):
+                continue
+            leader = event.get("visual_leader_asset_id")
+            text_anchor = event.get("text_anchor_asset_id")
+            if isinstance(leader, str) and leader:
+                event_roles_by_asset.setdefault(leader, set()).add("LEADER")
+            if isinstance(text_anchor, str) and text_anchor:
+                event_roles_by_asset.setdefault(text_anchor, set()).add("TEXT_ANCHOR")
+            for field, role in (
+                ("participant_asset_ids", "PARTICIPANT"),
+                ("context_asset_ids", "CONTEXT"),
+                ("result_asset_ids", "RESULT"),
+            ):
+                for asset_id in event.get(field, []) or []:
+                    if isinstance(asset_id, str) and asset_id:
+                        event_roles_by_asset.setdefault(asset_id, set()).add(role)
+
+        phrase_rows: list[tuple[str, list[dict]]] = []
+        if isinstance(groups, list) and groups:
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                phrase = str(group.get("script_text") or "").strip()
+                if not phrase:
+                    continue
+                group_assets = [
+                    assets_by_id[asset_id]
+                    for asset_id in group.get("asset_ids", [])
+                    if asset_id in assets_by_id
+                ]
+                phrase_rows.append((phrase, group_assets))
+        else:
+            grouped: dict[str, list[dict]] = {}
+            for asset in assets:
+                phrase = str(asset.get("script_text") or "").strip()
+                if phrase:
+                    grouped.setdefault(phrase, []).append(asset)
+            phrase_rows.extend(grouped.items())
+
+        if not phrase_rows:
+            return []
+
+        corpus_frequency = self._content_frequency(package.script)
+        output: list[KeywordCandidate] = []
+        for phrase, semantic_assets in phrase_rows:
+            span = self._phrase_span(package.script, scene, phrase, words)
+            if span is None:
+                continue
+            phrase_words = [
+                word for word in words
+                if word.char_start is not None
+                and word.char_end is not None
+                and word.char_end > span[0]
+                and word.char_start < span[1]
+            ]
+            if not phrase_words:
+                continue
+
+            output.extend(
+                self._precise_asset_candidates(
+                    phrase_words,
+                    semantic_assets,
+                    event_roles_by_asset=event_roles_by_asset,
+                )
+            )
+
+            produced = False
+            for semantic_asset in semantic_assets:
+                binding_type = str(semantic_asset.get("binding_type") or "").upper()
+                if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
+                    continue
+                semantic_terms, explicit_terms = self._semantic_evidence_terms([semantic_asset])
+                rows = self._semantic_phrase_windows(
+                    phrase_words,
+                    semantic_assets=[semantic_asset],
+                    semantic_terms=semantic_terms,
+                    explicit_terms=explicit_terms,
+                    corpus_frequency=corpus_frequency,
+                    action=beat.action,
+                    require_semantic_match=True,
+                    require_full_semantic_coverage=False,
+                )
+                if rows:
+                    produced = True
+                    output.extend(rows)
+
+            aggregate_terms, aggregate_explicit = self._semantic_evidence_terms(semantic_assets)
+            output.extend(self._semantic_phrase_windows(
+                phrase_words,
+                semantic_assets=semantic_assets,
+                semantic_terms=aggregate_terms,
+                explicit_terms=aggregate_explicit,
+                corpus_frequency=corpus_frequency,
+                action=beat.action,
+                require_semantic_match=True,
+                require_full_semantic_coverage=True,
+            ))
+            if not produced:
+                output.extend(self._semantic_phrase_windows(
+                    phrase_words,
+                    semantic_assets=semantic_assets,
+                    semantic_terms=aggregate_terms,
+                    explicit_terms=aggregate_explicit,
+                    corpus_frequency=corpus_frequency,
+                    action=beat.action,
+                    require_semantic_match=False,
+                    require_full_semantic_coverage=False,
+                ))
+        return output
+
+    def _precise_asset_candidates(
+        self,
+        words: list[TranscriptWord],
+        semantic_assets: list[dict],
+        *,
+        event_roles_by_asset: dict[str, set[str]] | None = None,
+    ) -> list[KeywordCandidate]:
+        """Prefer exact Final Package asset spans as on-screen semantic labels.
+
+        This keeps text selection aligned with the same semantic units that drive
+        visual focus. CHARACTER/CONTEXT are intentionally de-emphasized so a broad
+        character phrase cannot steal the text budget from an ACTION/OBJECT/RESULT
+        bound to a more precise script span.
+        """
+        output: list[KeywordCandidate] = []
+        for asset in semantic_assets:
+            binding_type = str(asset.get("binding_type") or "").upper()
+            if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
+                continue
+            span = asset.get("script_span")
+            if not isinstance(span, dict):
+                continue
+            start_value = (
+                span.get("char_start")
+                if span.get("char_start") is not None
+                else span.get("global_char_start")
+            )
+            end_value = (
+                span.get("char_end")
+                if span.get("char_end") is not None
+                else span.get("global_char_end")
+            )
+            try:
+                char_start = int(start_value)
+                char_end = int(end_value)
+            except (TypeError, ValueError):
+                continue
+            if char_end <= char_start:
+                continue
+
+            matched = [
+                word
+                for word in words
+                if word.char_start is not None
+                and word.char_end is not None
+                and word.char_end > char_start
+                and word.char_start < char_end
+            ]
+            if not matched or len(matched) > 3:
+                continue
+            cleaned = [self._clean(row.text) for row in matched]
+            if any(not token for token in cleaned):
+                continue
+            display = " ".join(cleaned).strip()
+            if not display or len(display) > self.max_display_chars:
+                continue
+
+            role = str(
+                asset.get("semantic_role")
+                or asset.get("role")
+                or ""
+            ).upper()
+            visual_focus = str(asset.get("visual_focus") or "").upper()
+            # Exact asset-level script spans outrank aggregate/group phrase mining.
+            # They are the strongest available evidence for WHAT should be written.
+            base = 1.15 if binding_type == "EXPLICIT" else 1.05
+            role_bonus = {
+                "RESULT": 0.26,
+                "ACTION": 0.20,
+                "PRIMARY": 0.18,
+                "OBJECT": 0.16,
+                "SUBJECT": 0.14,
+                "STATE": 0.16,
+                "SUPPORT": -0.10,
+                "ACTOR": -0.10,
+                "CHARACTER": -0.18,
+                "CONTEXT": -0.20,
+            }.get(role, 0.0)
+            focus_bonus = {
+                "RESULT": 0.16,
+                "PRIMARY": 0.12,
+                "SUPPORT": -0.04,
+                "CONTEXT": -0.14,
+            }.get(visual_focus, 0.0)
+            state_bonus = 0.08 if asset.get("visual_state") else 0.0
+            asset_id = str(asset.get("asset_id") or "")
+            event_roles = (event_roles_by_asset or {}).get(asset_id, set())
+            event_bonus = 0.0
+            if "TEXT_ANCHOR" in event_roles:
+                event_bonus += 0.30
+            if "LEADER" in event_roles:
+                event_bonus += 0.16
+            if "RESULT" in event_roles:
+                event_bonus += 0.12
+            if "CONTEXT" in event_roles:
+                event_bonus -= 0.12
+            score = base + role_bonus + focus_bonus + state_bonus + event_bonus
+            score -= 0.015 * max(0, len(matched) - 1)
+
+            if "TEXT_ANCHOR" in event_roles:
+                authority_rank = 5
+            elif "LEADER" in event_roles or "RESULT" in event_roles:
+                authority_rank = 4
+            else:
+                authority_rank = (
+                    3
+                    if role in {
+                        "RESULT", "ACTION", "OBJECT", "SUBJECT", "PRIMARY", "STATE"
+                    }
+                    or visual_focus in {"RESULT", "PRIMARY"}
+                    else 1
+                )
+            candidate = self._candidate_from_words(
+                matched,
+                "emphasis",
+                score,
+                authority_rank=authority_rank,
+            )
+            if candidate is not None:
+                output.append(candidate)
+        return output
+
+    def _generic_semantic_candidates(
+        self,
+        words: list[TranscriptWord],
+        beat: StoryBeat,
+        package: PackageModel | None,
+    ) -> list[KeywordCandidate]:
+        """Topic-agnostic fallback based on linguistic salience, not domain words."""
+        corpus = package.script if package is not None and package.script else beat.narration
+        frequency = self._content_frequency(corpus or "")
+        output: list[KeywordCandidate] = []
+        action_bonus = 0.05 if beat.action in {"EMPHASIZE", "RESULT", "HANDOFF"} else 0.0
+        for index, word in enumerate(words):
+            cleaned = self._clean(word.text)
+            if not self._is_content_word(cleaned):
+                continue
+            norm = self._semantic_lexeme(cleaned)
+            if not norm:
+                continue
+            rarity = 1.0 / max(1, frequency.get(norm, 1))
+            score = 0.70 + min(0.10, rarity * 0.06) + action_bonus
+            if len(cleaned) >= 5:
+                score += 0.03
+            candidate = self._candidate_from_words([word], "keyword", score)
+            if candidate:
+                output.append(candidate)
+
+            if index + 1 < len(words):
+                neighbor = words[index + 1]
+                neighbor_clean = self._clean(neighbor.text)
+                if self._is_content_word(neighbor_clean):
+                    combined = f"{cleaned} {neighbor_clean}".strip()
+                    if len(combined) <= self.max_display_chars:
+                        pair = self._candidate_from_words(
+                            [word, neighbor], "keyword", score + 0.045,
+                        )
+                        if pair:
+                            output.append(pair)
+        return output
+
+    def _semantic_phrase_windows(
+        self,
+        words: list[TranscriptWord],
+        *,
+        semantic_assets: list[dict],
+        semantic_terms: set[str],
+        explicit_terms: set[str],
+        corpus_frequency: Counter[str],
+        action: str,
+        require_semantic_match: bool,
+        require_full_semantic_coverage: bool,
+    ) -> list[KeywordCandidate]:
+        output: list[KeywordCandidate] = []
+        binding_types = {
+            str(row.get("binding_type") or "").upper() for row in semantic_assets
+        }
+        binding_bonus = (
+            0.12 if "EXPLICIT" in binding_types
+            else 0.055 if "SEMANTIC" in binding_types
+            else 0.0
+        )
+        roles = {
+            str(row.get("semantic_role") or row.get("role") or "").upper()
+            for row in semantic_assets
+        }
+        role_bonus = 0.035 if roles & {"PRIMARY", "RESULT", "ACTION", "OBJECT"} else 0.0
+        action_bonus = 0.035 if action in {"EMPHASIZE", "RESULT", "HANDOFF"} else 0.0
+
+        max_window = min(3, len(words))
+        for size in range(1, max_window + 1):
+            for start in range(0, len(words) - size + 1):
+                window = words[start:start + size]
+                if self._crosses_clause_boundary(window):
+                    continue
+                cleaned = [self._clean(row.text) for row in window]
+                if not cleaned or any(not token for token in cleaned):
+                    continue
+                if not self._is_content_word(cleaned[0]) or not self._is_content_word(cleaned[-1]):
+                    continue
+                display = " ".join(cleaned)
+                if len(display) > self.max_display_chars:
+                    continue
+                content = [token for token in cleaned if self._is_content_word(token)]
+                if not content:
+                    continue
+                if size == 1 and cleaned[0].lower() in _WEAK_STANDALONE_TERMS:
+                    continue
+                strong_content = [
+                    token for token in content
+                    if token.lower() not in _WEAK_STANDALONE_TERMS
+                ]
+                if not strong_content:
+                    continue
+
+                lexemes = [self._semantic_lexeme(token) for token in content]
+                semantic_matches = sum(
+                    1 for token in lexemes
+                    if token and any(self._terms_related(token, term) for term in semantic_terms)
+                )
+                explicit_matches = sum(
+                    1 for token in lexemes
+                    if token and any(self._terms_related(token, term) for term in explicit_terms)
+                )
+                if require_semantic_match and semantic_matches + explicit_matches == 0:
+                    continue
+                if require_full_semantic_coverage and semantic_matches < len(content):
+                    continue
+
+                rarity = sum(
+                    1.0 / max(1, corpus_frequency.get(token, 1))
+                    for token in lexemes if token
+                ) / max(1, len(lexemes))
+                score = 0.74 + binding_bonus + role_bonus + action_bonus
+                score += min(0.28, semantic_matches * 0.14)
+                score += min(0.18, explicit_matches * 0.09)
+                score += min(0.07, rarity * 0.05)
+                unmatched_content = max(0, len(content) - semantic_matches)
+                score -= 0.045 * unmatched_content
+                score -= 0.025 * (size - 1)
+                semantic_type = (
+                    "emphasis"
+                    if "EXPLICIT" in binding_types or semantic_matches or explicit_matches
+                    else "keyword"
+                )
+                candidate = self._candidate_from_words(
+                    window,
+                    semantic_type,
+                    score,
+                    authority_rank=2,
+                )
+                if candidate:
+                    output.append(candidate)
+        return output
+
+    @staticmethod
+    def _crosses_clause_boundary(words: list[TranscriptWord]) -> bool:
+        if len(words) <= 1:
+            return False
+        boundary = ("،", "؛", ",", ";", ".", "!", "?", "؟", ":")
+        return any(str(word.text).rstrip().endswith(boundary) for word in words[:-1])
+
+    @classmethod
+    def _semantic_evidence_terms(cls, assets: list[dict]) -> tuple[set[str], set[str]]:
+        all_terms: set[str] = set()
+        explicit_terms: set[str] = set()
+        fields = ("semantic_meaning", "visual_concept", "semantic_role")
+        for asset in assets:
+            row_terms: set[str] = set()
+            for field in fields:
+                value = str(asset.get(field) or "")
+                for raw in re.findall(r"[w؀-ۿ]+", value, flags=re.UNICODE):
+                    term = cls._semantic_lexeme(raw)
+                    if term:
+                        row_terms.add(term)
+            all_terms.update(row_terms)
+            if str(asset.get("binding_type") or "").upper() == "EXPLICIT":
+                explicit_terms.update(row_terms)
+        return all_terms, explicit_terms
+
+    @classmethod
+    def _content_frequency(cls, text: str) -> Counter[str]:
+        output: Counter[str] = Counter()
+        for raw in re.findall(r"[w؀-ۿ]+", text, flags=re.UNICODE):
+            cleaned = cls._clean(raw)
+            if not cls._is_content_word(cleaned):
+                continue
+            term = cls._semantic_lexeme(cleaned)
+            if term:
+                output[term] += 1
+        return output
+
+    @classmethod
+    def _semantic_lexeme(cls, value: str) -> str:
+        token = cls._clean(value).lower()
+        token = re.sub(r"[ًٌٍَُِّْـ]", "", token)
+        token = token.translate(
+            str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه"})
+        )
+        if token.startswith("وال") and len(token) > 5:
+            token = token[1:]
+        elif token.startswith("فال") and len(token) > 5:
+            token = token[1:]
+        if token.startswith("ال") and len(token) > 4:
+            token = token[2:]
+        return token
+
+    @classmethod
+    def _terms_related(cls, left: str, right: str) -> bool:
+        if left == right:
+            return True
+        if min(len(left), len(right)) < 4:
+            return False
+        if left in right or right in left:
+            return True
+        left_key = cls._morphology_key(left)
+        right_key = cls._morphology_key(right)
+        if min(len(left_key), len(right_key)) < 4:
+            return False
+        if left_key in right_key or right_key in left_key:
+            return True
+        return SequenceMatcher(None, left_key, right_key).ratio() >= 0.72
+
+    @staticmethod
+    def _morphology_key(value: str) -> str:
+        token = value
+        if len(token) > 5 and token[0] in {"و", "ف"}:
+            token = token[1:]
+        if len(token) > 5 and token[0] in {"ي", "ت", "ن", "ا"}:
+            token = token[1:]
+        for suffix in (
+            "يات", "ات", "ون", "ين", "ها", "هم", "هن", "نا", "ية", "يه", "ه", "ك",
+        ):
+            if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+                token = token[:-len(suffix)]
+                break
+        return token
+
+    @staticmethod
+    def _phrase_span(
+        script: str,
+        scene: SceneSource | None,
+        phrase: str,
+        words: list[TranscriptWord],
+    ) -> tuple[int, int] | None:
+        if not phrase:
+            return None
+        candidates: list[int] = []
+        cursor = 0
+        while True:
+            index = script.find(phrase, cursor)
+            if index < 0:
+                break
+            candidates.append(index)
+            cursor = index + 1
+        if not candidates:
+            return None
+
+        if scene is not None and scene.script_char_start is not None and scene.script_char_end is not None:
+            scene_start = scene.script_char_start
+            scene_end = scene.script_char_end + 1
+            in_scene = [
+                index for index in candidates
+                if index < scene_end and index + len(phrase) > scene_start
+            ]
+            if in_scene:
+                candidates = in_scene
+
+        word_starts = [row.char_start for row in words if row.char_start is not None]
+        word_ends = [row.char_end for row in words if row.char_end is not None]
+        if word_starts and word_ends:
+            beat_start = min(word_starts)
+            beat_end = max(word_ends)
+            candidates.sort(
+                key=lambda index: -max(
+                    0,
+                    min(index + len(phrase), beat_end) - max(index, beat_start),
+                )
+            )
+        start = candidates[0]
+        return start, start + len(phrase)
 
     def _semantic_candidates(
         self,
@@ -315,6 +889,8 @@ class TextSemanticSelector:
         words: list[TranscriptWord],
         semantic_type: str,
         score: float,
+        *,
+        authority_rank: int = 0,
     ) -> KeywordCandidate | None:
         if not words:
             return None
@@ -342,6 +918,7 @@ class TextSemanticSelector:
             source_char_end=last.char_end,
             score=score,
             tokens=tokens,
+            authority_rank=max(0, int(authority_rank)),
         )
 
     @staticmethod
@@ -357,11 +934,30 @@ class TextSemanticSelector:
             and word.start < audio_end
         ]
 
-    def _budget(self, beat: StoryBeat) -> int:
+    def _budget(
+        self,
+        beat: StoryBeat,
+        *,
+        semantic_package: bool = False,
+    ) -> int:
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         duration = max(0.0, audio_end - audio_start)
-        return min(self.max_keywords_per_beat, 2 if duration >= 3.2 else 1)
+        if not semantic_package:
+            # Preserve the proven sparse legacy behavior when no Final Package
+            # semantics exist to justify extra text density.
+            if duration >= 5.0:
+                return min(self.max_keywords_per_beat, 3)
+            if duration >= 2.2:
+                return min(self.max_keywords_per_beat, 2)
+            return 1
+        if duration >= 4.5:
+            return min(self.max_keywords_per_beat, 4)
+        if duration >= 2.2:
+            return min(self.max_keywords_per_beat, 3)
+        if duration >= 1.2:
+            return min(self.max_keywords_per_beat, 2)
+        return 1
 
     @classmethod
     def _is_number_token(cls, value: str) -> bool:
@@ -420,6 +1016,8 @@ class TextSemanticSelector:
             token = token[1:]
         elif token.startswith("لل") and len(token) > 3:
             token = "ال" + token[2:]
+        elif token.startswith("وا") and len(token) > 6:
+            token = token[1:]
         elif token.startswith("و") and len(token) > 4 and token[1:] in _ARABIC_STOPWORDS:
             token = token[1:]
         return token

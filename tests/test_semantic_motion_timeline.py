@@ -1,0 +1,1361 @@
+from __future__ import annotations
+
+import pytest
+
+from app.choreography import (
+    ChoreographyDirective,
+    ChoreographyPattern,
+    ChoreographyPlan,
+    EventFlowStage,
+    EventFlowStep,
+    HookKind,
+    InteractionIntent,
+    SemanticEventFlow,
+    SequencePhase,
+)
+from app.models import (
+    AssetActivation,
+    CompositionBeat,
+    LayoutItem,
+    MotionCue,
+    MotionSegment,
+    StoryBeat,
+    StoryRelation,
+    StorySemanticContext,
+    Transcript,
+    TranscriptWord,
+)
+from app.motion import MotionPlanner
+from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
+from app.motion.models import MotionKeyframe, MotionProgram
+from app.motion.timing import (
+    GOLDEN_MAJOR,
+    GOLDEN_MINOR,
+    comfort_gain,
+    max_comfort_displacement,
+    motion_comfort,
+    projected_motion_activity_px,
+    semantic_readability_floor_px,
+)
+from app.qa import MotionInteractionQA, RenderedMotionQA
+from app.shared.errors import StageFailedError
+from app.story.planner import StoryPlanner
+from app.story.windows import StoryAssetActivation
+
+
+def test_relation_script_span_resolves_to_spoken_window() -> None:
+    transcript = Transcript(
+        duration=4.0,
+        segments=[],
+        words=[
+            TranscriptWord(start=1.00, end=1.18, text="A", char_start=0, char_end=1),
+            TranscriptWord(start=2.00, end=2.28, text="attacks", char_start=2, char_end=9),
+            TranscriptWord(start=2.30, end=2.55, text="B", char_start=10, char_end=11),
+        ],
+    )
+    context = StorySemanticContext(relations=[
+        StoryRelation(
+            source_unit_id="A",
+            target_unit_id="B",
+            kind="ATTACKS",
+            authority="FINAL_PACKAGE_ASSET_RELATION",
+            trigger_text="attacks",
+            trigger_char_start=2,
+            trigger_char_end=9,
+        )
+    ])
+    resolved = StoryPlanner._resolve_relation_timing(
+        context, transcript=transcript, script="A attacks B",
+        beat_start=0.8, beat_end=3.0,
+    )
+    relation = resolved.relations[0]
+    assert relation.spoken_start == pytest.approx(2.00)
+    assert relation.spoken_end == pytest.approx(2.28)
+
+
+def _activation(asset_id: str, *, spoken_start: float, spoken_end: float, roles: list[str]):
+    return StoryAssetActivation(
+        asset_id=asset_id,
+        semantic_unit_id=asset_id,
+        trigger_text=asset_id,
+        trigger_char_start=0,
+        trigger_char_end=1,
+        spoken_start=spoken_start,
+        spoken_end=spoken_end,
+        confidence=0.99,
+        source="final_package_semantic_binding",
+        policy="EXPLICIT",
+        semantic_event_id="E1",
+        semantic_event_order=1,
+        semantic_event_roles=roles,
+        phrase_start=spoken_start,
+        phrase_end=spoken_end,
+        reveal_start=spoken_start,
+        semantic_peak=spoken_start + (spoken_end - spoken_start) * 0.5,
+        settle_at=spoken_end,
+        activation_policy="OWN_WINDOW",
+    )
+
+
+def _fixture():
+    a = _activation("a", spoken_start=1.0, spoken_end=1.3, roles=["LEADER"])
+    b = _activation("b", spoken_start=2.0, spoken_end=2.3, roles=["PARTICIPANT"])
+    c = _activation("c", spoken_start=2.6, spoken_end=2.9, roles=["RESULT"])
+    beat = StoryBeat(
+        id="beat", scene_id="scene", start=0.0, end=3.2,
+        audio_start=0.0, audio_end=3.0, narration="A then B relation then C",
+        primary_asset_ids=["a"], support_asset_ids=["b", "c"],
+        action="REVEAL_DETAIL", asset_activations=[a, b, c],
+    )
+    composition = CompositionBeat(beat_id=beat.id, items=[
+        LayoutItem(asset_id="a", x=0.22, y=0.50, width=0.18, height=0.22),
+        LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
+        LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
+    ])
+    common = dict(
+        participant_asset_ids=("a", "b", "c"),
+        source_asset_id="a", target_asset_id="b", result_asset_id="c",
+        relationship="ATTACKS", semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        trigger_char_start=10, trigger_char_end=20,
+        spoken_start=2.0, spoken_end=2.7,
+    )
+    flow = SemanticEventFlow(
+        event_id="E1", order=1,
+        leader_asset_ids=("a",), participant_asset_ids=("b",), result_asset_ids=("c",),
+        stages=(
+            EventFlowStage.ESTABLISH, EventFlowStage.ADD, EventFlowStage.INTERACT,
+            EventFlowStage.REACT, EventFlowStage.PAYOFF, EventFlowStage.RELEASE,
+        ),
+        steps=(
+            EventFlowStep(EventFlowStage.ESTABLISH, focus_asset_id="a", participant_asset_ids=("a",)),
+            EventFlowStep(EventFlowStage.ADD, focus_asset_id="b", participant_asset_ids=("b",)),
+            EventFlowStep(EventFlowStage.INTERACT, focus_asset_id="a", **common),
+            EventFlowStep(EventFlowStage.REACT, focus_asset_id="b", **common),
+            EventFlowStep(EventFlowStage.PAYOFF, focus_asset_id="c", **common),
+            EventFlowStep(EventFlowStage.RELEASE, focus_asset_id="c", participant_asset_ids=("c",)),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id, sequence_id="sequence-001", phase=SequencePhase.ACTION,
+        action="CONNECT", pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.OPEN, energy=0.82, primary_asset_id="a", event_flows=(flow,),
+    )
+    return beat, composition, ChoreographyPlan(directives=(directive,))
+
+
+def test_motion_timeline_reactivates_relation_with_overlap_and_payoff() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    by_id = {cue.asset_id: cue for cue in cues}
+    a = {row.phase: row for row in by_id["a"].segments}
+    b = {row.phase: row for row in by_id["b"].segments}
+    c = {row.phase: row for row in by_id["c"].segments}
+
+    assert {"ENTRY", "INTERACT"} <= set(a)
+    assert "REACT" in b
+    if "ENTRY" in b:
+        assert b["ENTRY"].end <= b["REACT"].start + 1e-9
+    assert "PAYOFF" in c
+    if "ENTRY" in c:
+        assert c["ENTRY"].end <= c["PAYOFF"].start + 1e-9
+    assert a["ENTRY"].start == pytest.approx(by_id["a"].start)
+    assert a["INTERACT"].start == pytest.approx(2.0)
+    source_peak = a["INTERACT"].start + (
+        a["INTERACT"].end - a["INTERACT"].start
+    ) * float(a["INTERACT"].program["semantic_peak_progress"])
+    target_peak = b["REACT"].start + (
+        b["REACT"].end - b["REACT"].start
+    ) * float(b["REACT"].program["semantic_peak_progress"])
+    assert source_peak < target_peak
+    assert min(a["INTERACT"].end, b["REACT"].end) > max(
+        a["INTERACT"].start, b["REACT"].start
+    )
+    assert c["PAYOFF"].start >= 2.6
+
+    for cue in cues:
+        for segment in cue.segments:
+            final = segment.program["keyframes"][-1]
+            assert final["dx"] == pytest.approx(0.0)
+            assert final["dy"] == pytest.approx(0.0)
+            assert final["scale"] == pytest.approx(1.0)
+
+    report = MotionInteractionQA().inspect(story=[beat], motion=cues)
+    assert report.ok, report.violations
+    assert report.checked_relations == 1
+
+
+def test_motion_interaction_qa_rejects_non_overlapping_relation() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    cue = next(row for row in cues if row.asset_id == "b")
+    index = next(i for i, row in enumerate(cue.segments) if row.phase == "REACT")
+    source = next(
+        segment
+        for row in cues
+        for segment in row.segments
+        if row.asset_id == "a" and segment.phase == "INTERACT"
+    )
+    bad = cue.segments[index].model_copy(
+        update={"start": source.end + 0.01, "end": source.end + 0.15}
+    )
+    segments = list(cue.segments)
+    segments[index] = bad
+    broken_cue = cue.model_copy(update={"segments": segments})
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=[broken_cue if row.asset_id == "b" else row for row in cues],
+    )
+    assert not report.ok
+    assert any(row.code == "NO_RELATION_OVERLAP" for row in report.violations)
+
+
+def test_motion_interaction_qa_rejects_geometry_drift() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    cue = next(row for row in cues if row.asset_id == "a")
+    index = next(i for i, row in enumerate(cue.segments) if row.phase == "INTERACT")
+    segment = cue.segments[index]
+    program = dict(segment.program)
+    keyframes = [dict(row) for row in program["keyframes"]]
+    keyframes[-1]["dx"] = 0.01
+    program["keyframes"] = keyframes
+    bad_segment = segment.model_copy(update={"program": program})
+    segments = list(cue.segments)
+    segments[index] = bad_segment
+    broken_cue = cue.model_copy(update={"segments": segments})
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=[broken_cue if row.asset_id == "a" else row for row in cues],
+    )
+    assert not report.ok
+    assert any(row.code == "SEGMENT_GEOMETRY_DRIFT" for row in report.violations)
+
+
+@pytest.mark.parametrize(
+    ("cue_end", "handoff_deadline"),
+    [
+        (37.759, 37.087),
+        (46.037, 45.749),
+        (58.410, 57.572),
+        (87.734, 87.117),
+    ],
+)
+def test_entry_is_fitted_before_real_diagnostic_handoff(
+    cue_end: float,
+    handoff_deadline: float,
+) -> None:
+    """Regression for diagnostic job 3d5bd61b707b43fe8507eeca5e73bbe4."""
+    cue_start = handoff_deadline - 0.16
+    cue = MotionCue(
+        beat_id="beat",
+        asset_id="asset",
+        kind="program_v3",
+        start=cue_start,
+        end=cue_end,
+        params={"engine_version": 3},
+    )
+    program = MotionProgram(
+        name="entry",
+        settle_progress=1.0,
+        keyframes=(
+            MotionKeyframe(0.0, -0.05, 0.0, 0.92, "ease_out_cubic"),
+            MotionKeyframe(0.55, -0.02, 0.0, 0.98, "ease_out_cubic"),
+            MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+        ),
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id="asset",
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+        involvement="FOCUS",
+    )
+
+    segment = MotionPlanner._entry_segment_before_handoff(
+        cue=cue,
+        entry_program=program,
+        assignment=assignment,
+        deadline=handoff_deadline,
+    )
+
+    assert segment is not None
+    assert segment.start == pytest.approx(cue_start)
+    assert segment.end == pytest.approx(handoff_deadline)
+    assert segment.end <= handoff_deadline
+    assert segment.end < cue.end
+    final = segment.program["keyframes"][-1]
+    assert final["dx"] == pytest.approx(0.0)
+    assert final["dy"] == pytest.approx(0.0)
+    assert final["scale"] == pytest.approx(1.0)
+    assert abs(segment.program["keyframes"][0]["dx"]) < 0.05
+
+    report = MotionInteractionQA().inspect(
+        story=[],
+        motion=[cue.model_copy(update={"segments": [segment]})],
+    )
+    assert report.ok, report.violations
+
+
+def test_entry_with_no_pre_handoff_time_snaps_to_composition() -> None:
+    cue = MotionCue(
+        beat_id="beat",
+        asset_id="asset",
+        kind="program_v3",
+        start=10.0,
+        end=10.4,
+        params={"engine_version": 3},
+    )
+    program = MotionProgram(
+        name="entry",
+        settle_progress=1.0,
+        keyframes=(
+            MotionKeyframe(0.0, -0.04, 0.0, 0.95),
+            MotionKeyframe(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id="asset",
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+        involvement="FOCUS",
+    )
+
+    assert MotionPlanner._entry_segment_before_handoff(
+        cue=cue,
+        entry_program=program,
+        assignment=assignment,
+        deadline=10.0,
+    ) is None
+
+
+def test_event_motion_has_perceptual_floor() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    by_id = {cue.asset_id: cue for cue in cues}
+    interact = next(row for row in by_id["a"].segments if row.phase == "INTERACT")
+    react = next(row for row in by_id["b"].segments if row.phase == "REACT")
+    payoff = next(row for row in by_id["c"].segments if row.phase == "PAYOFF")
+
+    for segment in (interact, react):
+        peak = max(
+            (float(frame["dx"]) ** 2 + float(frame["dy"]) ** 2) ** 0.5
+            for frame in segment.program["keyframes"]
+        )
+        duration = segment.end - segment.start
+        active_duration = float(segment.program.get("semantic_active_duration", duration))
+        comfort_cap = max_comfort_displacement(
+            segment.phase,
+            active_duration * GOLDEN_MINOR,
+        )
+        base_floor = 0.030 if segment.phase == "INTERACT" else 0.026
+        floor = min(
+            base_floor * comfort_gain(segment.phase, active_duration),
+            comfort_cap,
+        )
+        assert peak >= floor - 1e-6
+        assert peak <= comfort_cap + 1e-6
+        peak_progress = float(segment.program["semantic_peak_progress"])
+        assert 0.0 < peak_progress < 1.0
+        assert any(
+            float(frame["progress"]) == pytest.approx(peak_progress)
+            for frame in segment.program["keyframes"]
+        )
+        assert active_duration >= 0.06
+    payoff_scale = max(
+        abs(float(frame["scale"]) - 1.0) for frame in payoff.program["keyframes"]
+    )
+    payoff_duration = payoff.end - payoff.start
+    payoff_active_duration = float(
+        payoff.program.get("semantic_active_duration", payoff_duration)
+    )
+    payoff_cap = max_comfort_displacement(
+        "PAYOFF", payoff_active_duration * GOLDEN_MINOR
+    ) / min(composition.items[2].width, composition.items[2].height)
+    expected_payoff = min(
+        0.075 * comfort_gain("PAYOFF", payoff_active_duration),
+        payoff_cap,
+    )
+    assert payoff_scale == pytest.approx(expected_payoff, abs=1e-6)
+
+
+def test_handoff_creates_real_exit_for_outgoing_asset() -> None:
+    cue = MotionCue(
+        beat_id="beat", asset_id="old", kind="program_v3",
+        start=1.0, end=1.2, params={"engine_version": 3},
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1", event_order=1, stage=EventFlowStage.INTERACT,
+        step_index=1, focus_asset_id="old",
+        source_asset_id="old", target_asset_id="target", result_asset_id=None,
+        relationship="CONNECTS", semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION", involvement="SOURCE",
+        handoff_to_event_ids=("E2",), handoff_to_asset_ids=("new",),
+        handoff_to_event_id="E2", handoff_to_asset_id="new",
+    )
+    old = LayoutItem(asset_id="old", x=0.25, y=0.5, width=0.2, height=0.3)
+    new = LayoutItem(asset_id="new", x=0.75, y=0.5, width=0.2, height=0.3)
+    segment = MotionPlanner._exit_segment_before_handoff(
+        cue=cue,
+        assignment=assignment,
+        deadline=2.0,
+        item=old,
+        items_by_id={"old": old, "new": new},
+        existing_segments=[],
+    )
+    assert segment is not None
+    assert segment.phase == "EXIT"
+    assert segment.end == pytest.approx(2.0)
+    assert segment.end - segment.start >= motion_comfort("EXIT").minimum_seconds
+    golden = segment.program["keyframes"][1]
+    assert golden["progress"] == pytest.approx(GOLDEN_MAJOR)
+    final = segment.program["keyframes"][-1]
+    assert float(golden["dx"]) == pytest.approx(float(final["dx"]) * GOLDEN_MAJOR)
+    assert float(final["dx"]) < -0.035
+    assert float(final["scale"]) < 1.0
+    report = MotionInteractionQA().inspect(
+        story=[], motion=[cue.model_copy(update={"segments": [segment]})],
+    )
+    assert report.ok, report.violations
+
+
+def test_handoff_does_not_terminally_exit_asset_that_continues_next_beat() -> None:
+    cue = MotionCue(
+        beat_id="beat", asset_id="shared", kind="program_v3",
+        start=1.0, end=1.2, params={"engine_version": 3},
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1", event_order=1, stage=EventFlowStage.INTERACT,
+        step_index=1, focus_asset_id="shared",
+        source_asset_id="shared", target_asset_id="target", result_asset_id=None,
+        relationship="CONNECTS", semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION", involvement="SOURCE",
+        handoff_to_event_ids=("E2",), handoff_to_asset_ids=("new",),
+        handoff_to_event_id="E2", handoff_to_asset_id="new",
+    )
+    shared = LayoutItem(asset_id="shared", x=0.25, y=0.5, width=0.2, height=0.3)
+    target = LayoutItem(asset_id="new", x=0.75, y=0.5, width=0.2, height=0.3)
+
+    segment = MotionPlanner._exit_segment_before_handoff(
+        cue=cue,
+        assignment=assignment,
+        deadline=2.0,
+        item=shared,
+        items_by_id={"shared": shared, "new": target},
+        existing_segments=[],
+        continues_next_beat=True,
+    )
+
+    assert segment is None
+
+
+def test_motion_planner_auto_fits_new_collision_from_stronger_motion() -> None:
+    beat, composition, choreography = _fixture()
+    close_composition = CompositionBeat(
+        beat_id=composition.beat_id,
+        items=[
+            # Authored boxes just touch without overlap. The relation pulse would cross
+            # the collision envelope, so the planner must fit amplitude safely.
+            LayoutItem(asset_id="a", x=0.320, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
+        ],
+    )
+    cues = MotionPlanner().plan([beat], [close_composition], choreography)
+    limited = [
+        segment
+        for cue in cues
+        for segment in cue.segments
+        if bool(segment.program.get("collision_limited"))
+    ]
+    assert limited
+    assert all(0.0 <= float(row.program["collision_gain"]) < 1.0 for row in limited)
+
+    report = MotionInteractionQA().inspect(
+        story=[beat], motion=cues, composition=[close_composition],
+    )
+    assert report.ok, report.violations
+
+
+def test_motion_interaction_qa_still_rejects_collision_if_planner_fit_is_bypassed() -> None:
+    beat, composition, choreography = _fixture()
+    close_composition = CompositionBeat(
+        beat_id=composition.beat_id,
+        items=[
+            LayoutItem(asset_id="a", x=0.315, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
+        ],
+    )
+    cues = MotionPlanner().plan([beat], [close_composition], choreography)
+    broken: list[MotionCue] = []
+    for cue in cues:
+        rows = []
+        for segment in cue.segments:
+            if segment.phase not in {"INTERACT", "REACT"}:
+                rows.append(segment)
+                continue
+            program = dict(segment.program)
+            keyframes = [dict(frame) for frame in program["keyframes"]]
+            for frame in keyframes:
+                frame["dx"] = float(frame.get("dx", 0.0)) * 4.0
+                frame["dy"] = float(frame.get("dy", 0.0)) * 4.0
+                scale = float(frame.get("scale", 1.0))
+                frame["scale"] = 1.0 + (scale - 1.0) * 4.0
+            program["keyframes"] = keyframes
+            program.pop("collision_limited", None)
+            rows.append(segment.model_copy(update={"program": program}))
+        broken.append(cue.model_copy(update={"segments": rows}))
+
+    report = MotionInteractionQA().inspect(
+        story=[beat], motion=broken, composition=[close_composition],
+    )
+    assert not report.ok
+    assert any(row.code == "MOTION_CREATES_COLLISION" for row in report.violations)
+
+
+def test_motion_interaction_qa_accepts_readable_motion_with_safe_spacing() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    report = MotionInteractionQA().inspect(
+        story=[beat], motion=cues, composition=[composition],
+    )
+    assert report.ok, report.violations
+
+
+def test_tight_handoff_omits_rushed_exit_instead_of_accelerating() -> None:
+    cue = MotionCue(
+        beat_id="beat", asset_id="old", kind="program_v3",
+        start=1.0, end=1.18, params={"engine_version": 3},
+    )
+    assignment = MotionEventAssignment(
+        event_id="E1", event_order=1, stage=EventFlowStage.INTERACT,
+        step_index=1, focus_asset_id="old",
+        source_asset_id="old", target_asset_id="target", result_asset_id=None,
+        relationship="CONNECTS", semantic_action="CONNECT",
+        authority="FINAL_PACKAGE_ASSET_RELATION", involvement="SOURCE",
+        handoff_to_event_ids=("E2",), handoff_to_asset_ids=("new",),
+        handoff_to_event_id="E2", handoff_to_asset_id="new",
+    )
+    old = LayoutItem(asset_id="old", x=0.25, y=0.5, width=0.2, height=0.3)
+    new = LayoutItem(asset_id="new", x=0.75, y=0.5, width=0.2, height=0.3)
+    segment = MotionPlanner._exit_segment_before_handoff(
+        cue=cue,
+        assignment=assignment,
+        deadline=1.50,
+        item=old,
+        items_by_id={"old": old, "new": new},
+        existing_segments=[],
+    )
+    assert segment is None
+
+
+
+def test_entry_scale_respects_same_comfort_speed_contract_as_encoded_qa() -> None:
+    item = LayoutItem(asset_id="large", x=0.5, y=0.5, width=0.72, height=0.82)
+    program = MotionProgram(
+        name="large_entry",
+        settle_progress=0.82,
+        keyframes=(
+            MotionKeyframe(0.0, -0.04, 0.0, 1.20, "ease_in_out_cubic"),
+            MotionKeyframe(0.50, -0.02, 0.0, 1.10, "ease_in_out_cubic"),
+            MotionKeyframe(0.82, 0.0, 0.0, 1.0, "smoothstep"),
+            MotionKeyframe(1.0, 0.0, 0.0, 1.0, "smoothstep"),
+        ),
+    )
+    duration = 0.30
+    fitted = MotionPlanner._ensure_readable_entry(program, item=item, duration=duration)
+    segment = MotionSegment(
+        phase="ENTRY",
+        start=0.0,
+        end=duration,
+        program=fitted.to_payload(),
+    )
+    speed = RenderedMotionQA._max_normalized_keyframe_speed(
+        segment,
+        duration=duration,
+        item_width=item.width,
+        item_height=item.height,
+    )
+    limit = motion_comfort("ENTRY").max_normalized_speed * 1.08
+    assert speed <= limit + 1e-6
+
+
+def test_entry_completes_before_semantic_relation_phase_on_same_asset() -> None:
+    beat, composition, choreography = _fixture()
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    for cue in cues:
+        entry = next((row for row in cue.segments if row.phase == "ENTRY"), None)
+        if entry is None:
+            continue
+        for segment in cue.segments:
+            if segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
+                assert segment.start >= entry.end - 1e-9
+
+
+
+def test_spanless_relation_timeline_uses_story_participant_envelope() -> None:
+    """Gray-Hat regression: Pass2-bound relations need no relation-level script span."""
+    beat, composition, choreography = _fixture()
+    directive = choreography.directives[0]
+    flow = directive.event_flows[0]
+    steps = tuple(
+        step
+        if step.stage not in {EventFlowStage.INTERACT, EventFlowStage.REACT}
+        else EventFlowStep(
+            stage=step.stage,
+            focus_asset_id=step.focus_asset_id,
+            participant_asset_ids=step.participant_asset_ids,
+            source_asset_id=step.source_asset_id,
+            target_asset_id=step.target_asset_id,
+            result_asset_id=step.result_asset_id,
+            relationship=step.relationship,
+            semantic_action=step.semantic_action,
+            authority=step.authority,
+            spoken_start=None,
+            spoken_end=None,
+        )
+        for step in flow.steps
+    )
+    flow = SemanticEventFlow(
+        event_id=flow.event_id,
+        order=flow.order,
+        dependency_ids=flow.dependency_ids,
+        leader_asset_ids=flow.leader_asset_ids,
+        participant_asset_ids=flow.participant_asset_ids,
+        context_asset_ids=flow.context_asset_ids,
+        result_asset_ids=flow.result_asset_ids,
+        text_anchor_asset_ids=flow.text_anchor_asset_ids,
+        interactions=flow.interactions,
+        stages=flow.stages,
+        steps=steps,
+        progression_type=flow.progression_type,
+        handoff_mode=flow.handoff_mode,
+        handoff_to_event_ids=flow.handoff_to_event_ids,
+        handoff_to_asset_ids=flow.handoff_to_asset_ids,
+        handoff_to_event_id=flow.handoff_to_event_id,
+        handoff_to_asset_id=flow.handoff_to_asset_id,
+        confidence=flow.confidence,
+        authority=flow.authority,
+        evidence=flow.evidence,
+    )
+    choreography = ChoreographyPlan(
+        directives=(
+            ChoreographyDirective(
+                beat_id=directive.beat_id,
+                sequence_id=directive.sequence_id,
+                phase=directive.phase,
+                action=directive.action,
+                pattern=directive.pattern,
+                hook=directive.hook,
+                energy=directive.energy,
+                primary_asset_id=directive.primary_asset_id,
+                event_flows=(flow,),
+            ),
+        )
+    )
+
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    by_id = {cue.asset_id: cue for cue in cues}
+    source = next(segment for segment in by_id["a"].segments if segment.phase == "INTERACT")
+    target = next(segment for segment in by_id["b"].segments if segment.phase == "REACT")
+
+    assert source.start >= beat.asset_activations[0].spoken_start
+    assert source.end <= beat.asset_activations[1].spoken_end
+    assert target.start >= beat.asset_activations[1].spoken_start
+    assert target.end <= beat.asset_activations[1].spoken_end
+    assert min(source.end, target.end) > max(source.start, target.start)
+
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=cues,
+        composition=[composition],
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
+
+def test_infeasible_establish_motion_fails_before_render() -> None:
+    item = LayoutItem(
+        asset_id="infeasible-establish",
+        x=0.5,
+        y=0.5,
+        width=0.30,
+        height=0.50,
+    )
+    phase = MotionEventPhase(
+        event_id="EVENT_INFEASIBLE",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id=item.asset_id,
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_COMPOUND_PROXY",
+        involvement="FOCUS",
+    )
+
+    with pytest.raises(StageFailedError) as exc_info:
+        MotionPlanner._enforce_event_readability(
+            phase=phase,
+            item=item,
+            dx=0.0,
+            dy=-0.004,
+            scale=1.0,
+            duration=0.08,
+            readability_duration=0.36,
+        )
+
+    assert exc_info.value.details["code"] == "MOTION_INFEASIBLE_BEFORE_RENDER"
+    assert exc_info.value.details["readability_floor_px"] > max(
+        exc_info.value.details["translation_ceiling_px"],
+        exc_info.value.details["scale_ceiling_px"],
+    )
+
+
+def test_story_aligned_establish_program_cannot_fall_below_rendered_floor() -> None:
+    """Regression for White-Hat beat-016 encoded failure.
+
+    The old planner applied the shared floor to the shorter active window while
+    RenderedMotionQA applied it to the full ESTABLISH segment. With a late Story peak
+    this authored ~12.45 px even though encoded QA correctly required 15.36 px.
+    """
+    item = LayoutItem(
+        asset_id="white-scene-016-focus",
+        x=0.834629,
+        y=0.565887,
+        width=0.298445,
+        height=0.579171,
+    )
+    phase = MotionEventPhase(
+        event_id="SCENE_016_EVENT_01",
+        event_order=1,
+        stage=EventFlowStage.ESTABLISH,
+        step_index=0,
+        focus_asset_id=item.asset_id,
+        source_asset_id=None,
+        target_asset_id=None,
+        result_asset_id=None,
+        relationship=None,
+        semantic_action="ESTABLISH",
+        authority="FINAL_PACKAGE_COMPOUND_PROXY",
+        involvement="FOCUS",
+    )
+    segment_duration = 0.36
+    # A late Story-owned peak reproduces the short active window that previously
+    # lowered Planner amplitude while QA still evaluated the full segment window.
+    program = MotionPlanner._event_segment_program(
+        phase=phase,
+        vector=(0.0, -1.0),
+        item=item,
+        focus_strength=1.0,
+        energy=0.30,
+        cohort_gain=0.25,
+        duration=segment_duration,
+        semantic_peak_progress=0.7936,
+    )
+    peak_px = max(
+        (
+            projected_motion_activity_px(
+                dx=frame.dx,
+                dy=frame.dy,
+                scale=frame.scale,
+                item_width=item.width,
+                item_height=item.height,
+                frame_width=1920,
+                frame_height=1080,
+            )
+            for frame in program.keyframes
+        ),
+        default=0.0,
+    )
+    floor_px = semantic_readability_floor_px(
+        "ESTABLISH",
+        item_width=item.width,
+        item_height=item.height,
+        duration=segment_duration,
+        frame_width=1920,
+        frame_height=1080,
+    )
+    assert floor_px == pytest.approx(15.36, abs=1e-6)
+    assert peak_px >= floor_px - 1e-6
+
+
+def test_dense_authored_relations_keep_every_source_timeline() -> None:
+    """Regression for Gray diagnostic 9322cea6 relation-drop class."""
+    asset_ids = ("source", "target-1", "target-2", "target-3")
+    activations = [
+        _activation(
+            asset_id,
+            spoken_start=1.0 + index * 0.2,
+            spoken_end=1.2 + index * 0.2,
+            roles=["LEADER"] if index == 0 else ["PARTICIPANT"],
+        )
+        for index, asset_id in enumerate(asset_ids)
+    ]
+    beat = StoryBeat(
+        id="beat-dense-relations",
+        scene_id="scene",
+        start=0.0,
+        end=2.8,
+        audio_start=0.0,
+        audio_end=2.6,
+        narration="dense authored relations",
+        primary_asset_ids=["source"],
+        support_asset_ids=list(asset_ids[1:]),
+        action="CONNECT",
+        asset_activations=activations,
+    )
+    composition = CompositionBeat(
+        beat_id=beat.id,
+        items=[
+            LayoutItem(
+                asset_id=asset_id,
+                x=0.15 + index * 0.22,
+                y=0.5,
+                width=0.12,
+                height=0.20,
+            )
+            for index, asset_id in enumerate(asset_ids)
+        ],
+    )
+
+    steps: list[EventFlowStep] = []
+    interactions: list[InteractionIntent] = []
+    for index, target_id in enumerate(asset_ids[1:], start=1):
+        relationship = f"REL-{index}"
+        common = dict(
+            participant_asset_ids=("source", target_id),
+            source_asset_id="source",
+            target_asset_id=target_id,
+            relationship=relationship,
+            semantic_action="CONNECT",
+            authority="FINAL_PACKAGE_ASSET_RELATION",
+            spoken_start=1.1,
+            spoken_end=2.3,
+        )
+        steps.extend((
+            EventFlowStep(EventFlowStage.INTERACT, focus_asset_id="source", **common),
+            EventFlowStep(EventFlowStage.REACT, focus_asset_id=target_id, **common),
+        ))
+        interactions.append(InteractionIntent(
+            semantic_action="CONNECT",
+            relationship=relationship,
+            subject_asset_id="source",
+            object_asset_id=target_id,
+            authority="FINAL_PACKAGE_ASSET_RELATION",
+            confidence=0.99,
+            executable=True,
+            requires_state_change=True,
+            spoken_start=1.1,
+            spoken_end=2.3,
+        ))
+    steps.append(EventFlowStep(
+        EventFlowStage.RELEASE,
+        focus_asset_id="target-3",
+        participant_asset_ids=("target-3",),
+    ))
+    flow = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("source",),
+        participant_asset_ids=asset_ids[1:],
+        interactions=tuple(interactions),
+        stages=tuple(dict.fromkeys(step.stage for step in steps)),
+        steps=tuple(steps),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id,
+        sequence_id="sequence-dense",
+        phase=SequencePhase.ACTION,
+        action="CONNECT",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.OPEN,
+        energy=0.8,
+        primary_asset_id="source",
+        interaction=interactions[0],
+        interactions=tuple(interactions),
+        event_flows=(flow,),
+    )
+    choreography = ChoreographyPlan(directives=(directive,))
+
+    cues = MotionPlanner().plan([beat], [composition], choreography)
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=cues,
+        composition=[composition],
+        choreography=choreography,
+    )
+
+    assert report.ok, report.violations
+    source = next(cue for cue in cues if cue.asset_id == "source")
+    assert {
+        segment.relationship
+        for segment in source.segments
+        if segment.phase == "INTERACT" and segment.involvement == "SOURCE"
+    } == {"REL-1", "REL-2", "REL-3"}
+
+
+def test_relation_overlap_finalizer_repairs_pass2_style_activation_gap() -> None:
+    """Regression for Gray diagnostic 9322cea6 NO_RELATION_OVERLAP timing gap."""
+    program = {
+        "semantic_active_duration": 0.08,
+        "semantic_peak_progress": 0.5,
+        "keyframes": [
+            {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+            {"progress": 0.5, "dx": 0.01, "dy": 0.0, "scale": 1.0},
+            {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+        ],
+    }
+    source = MotionSegment(
+        phase="INTERACT",
+        start=31.858,
+        end=32.745,
+        program=program,
+        semantic_event_id="E1",
+        semantic_action="CONNECT",
+        relationship="REL",
+        involvement="SOURCE",
+        source_asset_id="source:secondary-01",
+        target_asset_id="target:secondary-02",
+        handoff_deadline=32.745,
+    )
+    target = MotionSegment(
+        phase="REACT",
+        start=31.705,
+        end=31.856,
+        program=program,
+        semantic_event_id="E1",
+        semantic_action="CONNECT",
+        relationship="REL",
+        involvement="TARGET",
+        source_asset_id="source:secondary-01",
+        target_asset_id="target:secondary-02",
+        handoff_deadline=32.745,
+    )
+    cues = [
+        MotionCue(
+            beat_id="beat",
+            asset_id="source:secondary-01",
+            kind="program_v3",
+            start=31.0,
+            end=33.0,
+            params={"engine_version": 3},
+            segments=[source],
+        ),
+        MotionCue(
+            beat_id="beat",
+            asset_id="target:secondary-02",
+            kind="program_v3",
+            start=31.0,
+            end=33.0,
+            params={"engine_version": 3},
+            segments=[target],
+        ),
+    ]
+    beat = StoryBeat(
+        id="beat",
+        scene_id="scene",
+        start=31.0,
+        end=33.0,
+        narration="relation",
+        action="CONNECT",
+    )
+
+    repaired = MotionPlanner._enforce_relation_temporal_overlap(cues, beat=beat)
+    repaired_source = repaired[0].segments[0]
+    repaired_target = repaired[1].segments[0]
+
+    assert min(repaired_source.end, repaired_target.end) > max(
+        repaired_source.start, repaired_target.start
+    )
+    assert repaired_target.start == pytest.approx(target.start)
+    assert repaired_target.end > target.end
+    assert repaired_target.program["semantic_active_duration"] > target.program[
+        "semantic_active_duration"
+    ]
+
+
+def test_relation_contract_assertion_fails_inside_motion_when_target_reaction_is_missing() -> None:
+    """Known authored relation defects fail in Motion before downstream QA/render."""
+    beat = StoryBeat(
+        id="beat-contract",
+        scene_id="scene",        start=0.0,
+        end=2.0,
+        narration="authored relation",
+        action="CONNECT",
+    )
+    source = MotionSegment(
+        phase="INTERACT",
+        start=0.7,
+        end=1.1,
+        program={
+            "semantic_active_duration": 0.2,
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+                {"progress": 1.0, "dx": 0.01, "dy": 0.0, "scale": 1.0},
+            ],
+        },
+        semantic_event_id="E1",
+        semantic_action="CONNECT",
+        relationship="REL",
+        involvement="SOURCE",
+        source_asset_id="source",
+        target_asset_id="target",
+        handoff_deadline=1.8,
+    )
+    cues = [
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="source",
+            kind="program_v3",
+            start=beat.start,
+            end=beat.end,
+            params={"engine_version": 3},
+            segments=[source],
+        ),
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="target",
+            kind="program_v3",
+            start=beat.start,
+            end=beat.end,
+            params={"engine_version": 3},
+            segments=[],
+        ),
+    ]
+    interaction = InteractionIntent(
+        semantic_action="CONNECT",
+        relationship="REL",
+        subject_asset_id="source",
+        object_asset_id="target",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.99,
+        executable=True,
+        requires_state_change=True,
+        spoken_start=0.6,
+        spoken_end=1.3,
+    )
+    flow = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("source",),
+        participant_asset_ids=("target",),
+        interactions=(interaction,),
+        stages=(EventFlowStage.INTERACT, EventFlowStage.REACT),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.INTERACT,
+                focus_asset_id="source",
+                participant_asset_ids=("source", "target"),
+                source_asset_id="source",
+                target_asset_id="target",
+                relationship="REL",
+                semantic_action="CONNECT",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.6,
+                spoken_end=1.3,
+            ),
+            EventFlowStep(
+                EventFlowStage.REACT,
+                focus_asset_id="target",
+                participant_asset_ids=("source", "target"),
+                source_asset_id="source",
+                target_asset_id="target",
+                relationship="REL",
+                semantic_action="CONNECT",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.6,
+                spoken_end=1.3,
+            ),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id,
+        sequence_id="sequence-contract",
+        phase=SequencePhase.ACTION,
+        action="CONNECT",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.OPEN,
+        energy=0.7,
+        primary_asset_id="source",
+        interaction=interaction,
+        interactions=(interaction,),
+        event_flows=(flow,),
+    )
+
+    with pytest.raises(StageFailedError) as exc_info:
+        MotionPlanner._assert_authored_relation_contract(
+            cues, directive=directive, beat=beat
+        )
+
+    assert exc_info.value.effective_code == "MISSING_TARGET_REACTION"
+
+def test_black_style_later_target_relation_is_sequential_not_forced_overlap() -> None:
+    """Regression for Black diagnostic e6f91917 after Gray overlap hardening."""
+    program = {
+        "semantic_active_duration": 0.20,
+        "semantic_peak_progress": 0.5,
+        "keyframes": [
+            {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+            {"progress": 0.5, "dx": 0.01, "dy": 0.0, "scale": 1.0},
+            {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+        ],
+    }
+    source = MotionSegment(
+        phase="INTERACT",
+        start=0.10,
+        end=0.50,
+        program=program,
+        semantic_event_id="E1",
+        semantic_action="REVEAL",
+        relationship="REL",
+        involvement="SOURCE",
+        source_asset_id="lock",
+        target_asset_id="identity",
+        handoff_deadline=2.0,
+    )
+    target = MotionSegment(
+        phase="REACT",
+        start=1.496,
+        end=1.856,
+        program=program,
+        semantic_event_id="E1",
+        semantic_action="REVEAL",
+        relationship="REL",
+        involvement="TARGET",
+        source_asset_id="lock",
+        target_asset_id="identity",
+        handoff_deadline=2.0,
+    )
+    beat = StoryBeat(
+        id="beat-black-sequential",
+        scene_id="scene",
+        start=0.0,
+        end=2.2,
+        narration="source then identity",
+        action="REVEAL",
+        asset_activations=[
+            AssetActivation(
+                asset_id="lock",
+                trigger_text="source",
+                trigger_char_start=0,
+                trigger_char_end=6,
+                spoken_start=0.10,
+                spoken_end=0.50,
+                confidence=1.0,
+                source="final_package",
+                policy="OWN_WINDOW",
+                semantic_event_id="E1",
+                semantic_event_order=1,
+            ),
+            AssetActivation(
+                asset_id="identity",
+                trigger_text="identity",
+                trigger_char_start=10,
+                trigger_char_end=24,
+                spoken_start=1.496,
+                spoken_end=1.856,
+                confidence=1.0,
+                source="final_package",
+                policy="OWN_WINDOW",
+                semantic_event_id="E2",
+                semantic_event_order=2,
+            ),
+        ],
+    )
+    cues = [
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="lock",
+            kind="program_v3",
+            start=beat.start,
+            end=beat.end,
+            params={"engine_version": 3},
+            segments=[source],
+        ),
+        MotionCue(
+            beat_id=beat.id,
+            asset_id="identity",
+            kind="program_v3",
+            start=beat.start,
+            end=beat.end,
+            params={"engine_version": 3},
+            segments=[target],
+        ),
+    ]
+    interaction = InteractionIntent(
+        semantic_action="REVEAL",
+        relationship="REL",
+        subject_asset_id="lock",
+        object_asset_id="identity",
+        authority="FINAL_PACKAGE_ASSET_RELATION",
+        confidence=0.99,
+        executable=True,
+        requires_state_change=True,
+        spoken_start=0.10,
+        spoken_end=1.856,
+    )
+    flow = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("lock",),
+        participant_asset_ids=("identity",),
+        interactions=(interaction,),
+        stages=(EventFlowStage.INTERACT, EventFlowStage.REACT),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.INTERACT,
+                focus_asset_id="lock",
+                participant_asset_ids=("lock", "identity"),
+                source_asset_id="lock",
+                target_asset_id="identity",
+                relationship="REL",
+                semantic_action="REVEAL",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.10,
+                spoken_end=1.856,
+            ),
+            EventFlowStep(
+                EventFlowStage.REACT,
+                focus_asset_id="identity",
+                participant_asset_ids=("lock", "identity"),
+                source_asset_id="lock",
+                target_asset_id="identity",
+                relationship="REL",
+                semantic_action="REVEAL",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.10,
+                spoken_end=1.856,
+            ),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id=beat.id,
+        sequence_id="sequence-black",
+        phase=SequencePhase.ACTION,
+        action="REVEAL",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.OPEN,
+        energy=0.7,
+        primary_asset_id="lock",
+        interaction=interaction,
+        interactions=(interaction,),
+        event_flows=(flow,),
+    )
+    choreography = ChoreographyPlan(directives=(directive,))
+
+    repaired = MotionPlanner._enforce_relation_temporal_overlap(cues, beat=beat)
+    assert repaired[0].segments[0].end == pytest.approx(source.end)
+    assert repaired[1].segments[0].start == pytest.approx(target.start)
+    MotionPlanner._assert_authored_relation_contract(
+        repaired, directive=directive, beat=beat
+    )
+    report = MotionInteractionQA().inspect(
+        story=[beat],
+        motion=repaired,
+        choreography=choreography,
+    )
+    assert report.ok, report.violations
+
+
+def test_cross_event_relation_only_source_keeps_executable_phase_without_stealing_event_ownership() -> None:
+    """Pass2/source relation participants must not disappear when they own no local stage.
+
+    Regression for Gray beat-024: the source cutout belongs to E1, while its authored
+    INTERACT step is compiled into E2. The resolver must preserve that cross-event
+    relation phase without promoting E2 to the source asset's Story event.
+    """
+    own_flow = SemanticEventFlow(
+        event_id="E1",
+        order=1,
+        leader_asset_ids=("parent",),
+        participant_asset_ids=("source",),
+        stages=(EventFlowStage.ADD,),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.ADD,
+                focus_asset_id="parent",
+                participant_asset_ids=("parent",),
+                authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+            ),
+        ),
+    )
+    relation_flow = SemanticEventFlow(
+        event_id="E2",
+        order=2,
+        leader_asset_ids=("target",),
+        participant_asset_ids=("source", "target"),
+        stages=(EventFlowStage.ESTABLISH, EventFlowStage.INTERACT),
+        steps=(
+            EventFlowStep(
+                EventFlowStage.ESTABLISH,
+                focus_asset_id="target",
+                participant_asset_ids=("target",),
+                authority="FINAL_PACKAGE_SEMANTIC_EVENT",
+            ),
+            EventFlowStep(
+                EventFlowStage.INTERACT,
+                focus_asset_id="source",
+                participant_asset_ids=("source", "target"),
+                source_asset_id="source",
+                target_asset_id="target",
+                result_asset_id="parent",
+                relationship="ENTERS",
+                semantic_action="REVEAL",
+                authority="FINAL_PACKAGE_ASSET_RELATION",
+                spoken_start=0.4,
+                spoken_end=1.4,
+            ),
+        ),
+    )
+    directive = ChoreographyDirective(
+        beat_id="beat",
+        sequence_id="seq",
+        phase=SequencePhase.ACTION,
+        action="REVEAL",
+        pattern=ChoreographyPattern.CAUSE_EFFECT_CHAIN,
+        hook=HookKind.NONE,
+        energy=0.7,
+        primary_asset_id="parent",
+        event_flows=(own_flow, relation_flow),
+    )
+
+    assignment = MotionEventFlowResolver().resolve(
+        directive,
+        "source",
+        semantic_event_id="E1",
+    )
+
+    assert assignment is not None
+    assert assignment.relation_only is True
+    assert assignment.event_id == "E1"
+    assert assignment.event_order == 1
+    assert assignment.handoff_mode == "NONE"
+    assert assignment.handoff_to_event_ids == ()
+    assert assignment.handoff_to_asset_ids == ()
+    assert any(
+        phase.event_id == "E2"
+        and phase.stage == EventFlowStage.INTERACT
+        and phase.involvement == "SOURCE"
+        and phase.source_asset_id == "source"
+        and phase.target_asset_id == "target"
+        for phase in assignment.phase_chain
+    )

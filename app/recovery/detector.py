@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from app.models import RenderPlan
+from app.motion.timing import story_activation_window
 from app.shared.errors import DependencyUnavailableError
+from app.shared.process import run_hidden
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,37 +76,48 @@ class RecoveryDetector:
                     {"beat_id": cue.beat_id, "asset_id": cue.asset_id},
                 ))
             if beat and cue.asset_id in beat.primary_asset_ids:
-                audio_anchor = beat.audio_start if beat.audio_start is not None else beat.start
-                # Motion V3+ may continue a semantic reaction/follow-through after the
-                # object has already reached its readable Composition target. QA must
-                # judge semantic arrival, not the tail of the gesture. Legacy cues have
-                # no explicit settle marker, so cue.end remains the safe fallback.
-                semantic_settle = cue.params.get("semantic_settle_time", cue.end)
-                try:
-                    semantic_settle = float(semantic_settle)
-                except (TypeError, ValueError):
-                    semantic_settle = cue.end
-                peak_offset = semantic_settle - audio_anchor
-                if peak_offset > 0.12:
-                    issues.append(DetectedIssue(
-                        "ELEMENT_APPEARS_TOO_LATE",
-                        f"Primary motion settles after narration anchor: {cue.asset_id}",
-                        {
-                            "beat_id": cue.beat_id,
-                            "asset_id": cue.asset_id,
-                            "peak_offset": peak_offset,
-                        },
-                    ))
-                elif peak_offset < -0.18:
-                    issues.append(DetectedIssue(
-                        "ELEMENT_APPEARS_TOO_EARLY",
-                        f"Primary motion settles too far before narration anchor: {cue.asset_id}",
-                        {
-                            "beat_id": cue.beat_id,
-                            "asset_id": cue.asset_id,
-                            "peak_offset": peak_offset,
-                        },
-                    ))
+                activation = next(
+                    (row for row in beat.asset_activations if row.asset_id == cue.asset_id),
+                    None,
+                )
+                has_v2, trusted_v2 = story_activation_window(activation, beat)
+                # Story V2 owns semantic timing. StorySyncQA already validates the
+                # compiled visual settle against the trusted reveal/settle contract, so
+                # the legacy "near beat audio_start" heuristic must not reinterpret a
+                # later narration phrase as a recovery defect. Invalid/abstaining V2 is
+                # left to conservative fallback behavior.
+                if not (has_v2 and trusted_v2 is not None):
+                    audio_anchor = beat.audio_start if beat.audio_start is not None else beat.start
+                    # Motion V3+ may continue a semantic reaction/follow-through after the
+                    # object has already reached its readable Composition target. QA must
+                    # judge semantic arrival, not the tail of the gesture. Legacy cues have
+                    # no explicit settle marker, so cue.end remains the safe fallback.
+                    semantic_settle = cue.params.get("semantic_settle_time", cue.end)
+                    try:
+                        semantic_settle = float(semantic_settle)
+                    except (TypeError, ValueError):
+                        semantic_settle = cue.end
+                    peak_offset = semantic_settle - audio_anchor
+                    if peak_offset > 0.12:
+                        issues.append(DetectedIssue(
+                            "ELEMENT_APPEARS_TOO_LATE",
+                            f"Primary motion settles after narration anchor: {cue.asset_id}",
+                            {
+                                "beat_id": cue.beat_id,
+                                "asset_id": cue.asset_id,
+                                "peak_offset": peak_offset,
+                            },
+                        ))
+                    elif peak_offset < -0.18:
+                        issues.append(DetectedIssue(
+                            "ELEMENT_APPEARS_TOO_EARLY",
+                            f"Primary motion settles too far before narration anchor: {cue.asset_id}",
+                            {
+                                "beat_id": cue.beat_id,
+                                "asset_id": cue.asset_id,
+                                "peak_offset": peak_offset,
+                            },
+                        ))
         for beat_id, cues in by_beat.items():
             if len(cues) >= 3:
                 starts = sorted(cue.start for cue in cues)
@@ -116,7 +129,34 @@ class RecoveryDetector:
                     else None
                 )
                 narration_locked = False
-                if audio_anchor is not None:
+                if beat is not None:
+                    activations = {row.asset_id: row for row in beat.asset_activations}
+                    trusted_windows = []
+                    for cue in cues:
+                        has_v2, window = story_activation_window(
+                            activations.get(cue.asset_id), beat
+                        )
+                        if not has_v2 or window is None:
+                            trusted_windows = []
+                            break
+                        trusted_windows.append(window)
+
+                    # A semantic-binding scene may intentionally reveal several real
+                    # cutouts on the exact same spoken phrase. That is Story V2's
+                    # explicit WHAT+WHEN contract, not an accidental multi-element pop.
+                    # Require every cue to match its trusted Story window so malformed
+                    # or partially-bound groups still fall through to recovery.
+                    if trusted_windows:
+                        narration_locked = all(
+                            abs(cue.start - window.reveal_start) <= 0.05
+                            and abs(
+                                float(cue.params.get("semantic_settle_time", cue.end))
+                                - window.settle_at
+                            ) <= 0.05
+                            for cue, window in zip(cues, trusted_windows, strict=True)
+                        )
+
+                if not narration_locked and audio_anchor is not None:
                     settle_offsets = [cue.end - audio_anchor for cue in cues]
                     narration_locked = all(-0.18 <= offset <= 0.14 for offset in settle_offsets)
 
@@ -227,16 +267,92 @@ class RecoveryDetector:
             "null",
             "-",
         ]
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = run_hidden(command, check=True, capture_output=True, text=True)
         pattern = re.compile(r"frame:(\d+).*?t:([0-9.]+)")
         flashes: list[dict[str, float | int]] = []
         guard = min(0.12, duration / 4.0)
         for match in pattern.finditer(result.stderr or ""):
             frame = int(match.group(1))
             timestamp = float(match.group(2))
-            if guard < timestamp < duration - guard:
-                flashes.append({"frame": frame, "time": timestamp})
+            if not (guard < timestamp < duration - guard):
+                continue
+            # blackframe is intentionally a broad first-pass detector. HEXA's
+            # reference grammar often uses sparse white scenes with one small semantic
+            # object, so >99% white is not sufficient evidence of a flash. Confirm that
+            # the encoded frame is actually devoid of meaningful foreground.
+            if self._frame_has_meaningful_foreground(video, frame):
+                continue
+            flashes.append({"frame": frame, "time": timestamp})
         return flashes
+
+    def _frame_has_meaningful_foreground(
+        self,
+        video: Path,
+        frame_index: int,
+    ) -> bool:
+        """Distinguish an intentional sparse white scene from a true blank frame.
+
+        Decode one tiny RGB frame only for blackframe candidates. A few hundred colored
+        or dark pixels are enough to represent a valid semantic icon; an encoded white
+        flash has essentially no such foreground. This second pass is cheap because it
+        runs only on already-suspicious timestamps.
+        """
+        command = [
+            self.ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-frames:v",
+            "1",
+            "-vf",
+            (
+                f"select=eq(n\\,{max(0, int(frame_index))}),"
+                "scale=160:90:flags=fast_bilinear,format=rgb24"
+            ),
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+        try:
+            sampled = run_hidden(
+                command,
+                check=True,
+                capture_output=True,
+                text=False,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError):
+            # Conservative failure mode: if verification itself fails, keep the
+            # original flash candidate instead of silently accepting bad output.
+            return False
+        expected = 160 * 90 * 3
+        if not isinstance(sampled, (bytes, bytearray)) or len(sampled) < expected:
+            return False
+        data = sampled[:expected]
+        pixels = 160 * 90
+        foreground = 0
+        strong_foreground = 0
+        for offset in range(0, expected, 3):
+            red = data[offset]
+            green = data[offset + 1]
+            blue = data[offset + 2]
+            minimum = min(red, green, blue)
+            maximum = max(red, green, blue)
+            if minimum < 245 or maximum - minimum > 7:
+                foreground += 1
+            if minimum < 235 or maximum - minimum > 16:
+                strong_foreground += 1
+
+        foreground_ratio = foreground / pixels
+        strong_ratio = strong_foreground / pixels
+        # Uniform codec-white often decodes around RGB 252-254, so mean
+        # distance from 255 is not foreground evidence. Require actual colored/dark
+        # pixel occupancy instead.
+        return (
+            foreground_ratio >= 0.0030
+            or strong_ratio >= 0.0015
+        )
 
     @staticmethod
     def _duration(stream: dict, probe: dict) -> float:
@@ -260,7 +376,7 @@ class RecoveryDetector:
             str(path),
         ]
         try:
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
+            result = run_hidden(command, check=True, capture_output=True, text=True)
         except FileNotFoundError as exc:
             raise DependencyUnavailableError("ffprobe is not available") from exc
         except subprocess.CalledProcessError as exc:

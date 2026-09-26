@@ -5,7 +5,7 @@ import pytest
 from app.models import CompositionBeat, LayoutItem, StoryBeat
 from app.motion import MotionPlanner
 from app.motion.easing import sample_easing
-from app.motion.timing import MotionTimingPolicy
+from app.motion.timing import GOLDEN_MAJOR, GOLDEN_MINOR, MotionTimingPolicy
 
 
 def _beat(
@@ -72,8 +72,15 @@ def test_result_program_uses_one_clean_entry_then_holds() -> None:
     program = primary.params["program"]
     keyframes = program["keyframes"]
 
-    assert program["name"] == "result_impact"
-    assert len(keyframes) <= 3
+    assert program["name"] == "reference_result_enter"
+    assert len(keyframes) <= 4
+    assert keyframes[0]["easing"] == "ease_in_out_cubic"
+    assert program["settle_progress"] >= 0.78
+    assert keyframes[1]["progress"] == pytest.approx(
+        program["settle_progress"] * GOLDEN_MAJOR
+    )
+    assert keyframes[1]["dx"] == pytest.approx(keyframes[0]["dx"] * GOLDEN_MINOR)
+    assert keyframes[1]["dy"] == pytest.approx(keyframes[0]["dy"] * GOLDEN_MINOR)
     settle = program["settle_progress"]
     post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
     assert post_settle
@@ -125,8 +132,8 @@ def test_choreography_reject_creates_meaningful_interaction_and_scale_reaction()
     keyframes = cue.params["program"]["keyframes"]
 
     assert cue.params["choreography"]["action"] == "REJECT"
-    assert cue.params["program"]["name"] == "reject_attempt_recoil"
-    assert len(keyframes) <= 3
+    assert cue.params["program"]["name"] == "reference_short_impact"
+    assert len(keyframes) <= 4
     assert abs(keyframes[0]["dx"]) + abs(keyframes[0]["dy"]) > 0.0
     assert keyframes[-1]["dx"] == 0.0
     assert keyframes[-1]["dy"] == 0.0
@@ -206,7 +213,7 @@ def test_semantic_handoff_freezes_reject_asset_after_arrival() -> None:
     ][0]
     program = cue.params["program"]
 
-    assert program["name"] == "reject_attempt_recoil"
+    assert program["name"] == "reference_short_impact"
     settle = program["settle_progress"]
     tail = [frame for frame in program["keyframes"] if frame["progress"] >= settle]
     assert tail
@@ -280,7 +287,7 @@ def test_every_planned_asset_is_frozen_from_semantic_settle_to_beat_end() -> Non
         program = cue.params["program"]
         settle = program["settle_progress"]
         keyframes = program["keyframes"]
-        assert len(keyframes) <= 3
+        assert len(keyframes) <= 4
         post_settle = [frame for frame in keyframes if frame["progress"] >= settle]
         assert post_settle
         for frame in post_settle:
