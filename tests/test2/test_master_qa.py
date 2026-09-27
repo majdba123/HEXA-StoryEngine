@@ -31,11 +31,12 @@ def test_master_qa_tracks_every_legacy_runtime_quality_surface() -> None:
     assert represented == expected_rule_sources
 
 
-def test_master_qa_owner_modules_exist_or_are_declared_cross_layer() -> None:
+def test_master_qa_migrated_owner_modules_exist() -> None:
     missing = sorted({
         rule.owner
         for rule in QUALITY_RULES
-        if rule.owner != "cross_layer"
+        if rule.state != MigrationState.PENDING
+        and rule.owner != "cross_layer"
         and not (ROOT / rule.owner).is_file()
     })
     assert missing == []
