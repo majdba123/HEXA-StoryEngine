@@ -24,7 +24,7 @@ from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter
-from app.canonical import CanonicalNormalizer
+from app.canonical import CanonicalNormalizer, CanonicalPackage
 from app.final_package import FinalPackageLoader
 from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
@@ -749,13 +749,18 @@ class StoryEnginePipeline:
             unsafe.update(ids)
         return unsafe
 
-    def _apply_refinement(self, package, assets, workspace: Path):
+    def _apply_refinement(
+        self,
+        package: CanonicalPackage,
+        assets,
+        workspace: Path,
+    ):
         mode = self.settings.refinement_mode
         if mode in {"off", "pass1", "disabled"}:
             return assets
         if mode in {"vnext", "pass2_vnext", "hybrid"}:
             unit_types = {
-                scene.id: [str(unit.get("type") or "") for unit in scene.units]
+                scene.id: [str(unit.type or "") for unit in scene.units]
                 for scene in package.scenes
             }
             return self.cutout_pass2.refine(
