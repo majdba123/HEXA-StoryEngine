@@ -77,8 +77,7 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
         visible_end: float | None = None,
-        repair_level: int = 0,
-    ) -> PlacementResult:
+    ) -> PlacementResult | None:
         anchor = self._anchor(cue, visual)
         asset_map = assets_by_id or {}
         visible_items = self.visible_visual_items(
@@ -99,7 +98,7 @@ class TextPlacementDirector:
         )
 
         scored = []
-        for font_scale in self._font_scales(cue, repair_level=repair_level):
+        for font_scale in self._font_scales(cue):
             width, height = self.estimated_box(cue, scale=font_scale)
             candidates = self._candidate_field(width, height, anchor)
             for candidate in candidates:
@@ -125,16 +124,13 @@ class TextPlacementDirector:
             for row in scored
             if self.contract.accepts(visual_overlap=row[3], text_overlap=row[4])
         ]
-        pool = acceptable or scored
+        if not acceptable:
+            return None
+        pool = acceptable
         best = min(
             pool,
             key=lambda row: (
-                row[0]
-                if acceptable
-                else (
-                    max(0.0, row[3] - self.contract.max_visual_overlap)
-                    + max(0.0, row[4] - self.contract.max_text_overlap)
-                ) * 1_000_000.0 + row[0],
+                row[0],
                 -row[5],
                 row[1].prior,
                 row[1].y,
@@ -260,20 +256,15 @@ class TextPlacementDirector:
     @staticmethod
     def _font_scales(
         cue: TextCue,
-        *,
-        repair_level: int = 0,
     ) -> tuple[float, ...]:
-        # Normal authoring keeps the established typography scale. Recovery may use
-        # two additional bounded sizes only when no collision-free production-sized
-        # placement exists. This is preferable to failing an otherwise valid video.
+        # Primary authoring searches the complete model-valid typography ladder once.
+        # Visual artwork never moves to create text space.
         base = (
             (1.0, 0.90, 0.82, 0.74, 0.68, 0.62, 0.56)
             if cue.priority >= 85
             else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
         )
-        if repair_level >= 2:
-            return (*base, 0.52, 0.50)
-        return base
+        return (*base, 0.52, 0.50)
 
     def _candidate_field(
         self,

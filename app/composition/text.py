@@ -21,7 +21,6 @@ class TextCompositionPlanner:
         text_cues: list[TextCue],
         assets: list[VisualAsset] | None = None,
         visual_motion: list[MotionCue] | None = None,
-        repair_level: int = 0,
     ) -> list[TextCompositionBeat]:
         visual_by_beat = {beat.beat_id: beat for beat in visual_composition}
         assets_by_id = {asset.id: asset for asset in (assets or [])}
@@ -74,8 +73,9 @@ class TextCompositionPlanner:
                     preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
                     assets_by_id=assets_by_id,
                     visible_end=visible_end,
-                    repair_level=repair_level,
                 )
+                if result is None:
+                    continue
                 items.append(result.item)
                 placed.append(
                     PlacedTextRegion(
@@ -94,7 +94,8 @@ class TextCompositionPlanner:
                         result.zone
                     )
 
-            output.append(TextCompositionBeat(beat_id=beat.id, items=items))
+            if items:
+                output.append(TextCompositionBeat(beat_id=beat.id, items=items))
 
         return output
 
@@ -106,12 +107,7 @@ class TextCompositionPlanner:
         visible_end: float,
         motion_by_key: dict[tuple[str, str], MotionCue],
     ) -> CompositionBeat | None:
-        """Use final Motion timing when repairing text after Motion planning.
-
-        Initial authoring has no Motion and therefore falls back to Story V2 timing in
-        TextPlacementDirector. Recovery calls this planner again with Motion available,
-        giving text placement the exact rendered reveal schedule.
-        """
+        """Use final Motion timing during the single primary text-authoring pass."""
         if visual is None or not motion_by_key:
             return visual
         starts = [

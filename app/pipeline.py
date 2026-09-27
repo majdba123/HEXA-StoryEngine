@@ -227,7 +227,7 @@ class StoryEnginePipeline:
             0.63,
             "Placing text against final visual visibility windows",
         )
-        text_composition, text_motion = self._compose_text_against_visual_motion(
+        text, text_composition, text_motion = self._compose_text_against_visual_motion(
             story=story,
             composition=composition,
             motion=motion,
@@ -305,36 +305,6 @@ class StoryEnginePipeline:
             text_composition=text_composition,
             assets=assets,
         )
-        if visual_report.text_layout_violations:
-            text, text_composition, text_motion, visual_report = self._recover_text_layout(
-                package_id=package.package_id,
-                job_id=job_id,
-                transcript=transcript,
-                story=story,
-                composition=composition,
-                motion=motion,
-                text=text,
-                text_composition=text_composition,
-                text_motion=text_motion,
-                assets=assets,
-                choreography=choreography,
-                progress=progress,
-                cancelled=cancelled,
-                initial_report=visual_report,
-            )
-            authoring_report = StorytellingValidator.validate(
-                package=package,
-                story=story,
-                choreography=choreography,
-                composition=composition,
-                motion=motion,
-                text=text,
-                text_motion=text_motion,
-            )
-            StorytellingValidator.write(
-                authoring_report,
-                workspace / "diagnostics" / "storytelling-authoring.json",
-            )
         self.authoring_qa.write(
             visual_report,
             workspace / "diagnostics" / "authoring-visual-qa.json",
@@ -435,12 +405,7 @@ class StoryEnginePipeline:
         assets,
         choreography,
     ):
-        """Place text against final visual lifetimes before authoring QA.
-
-        Recovery must not be the normal path for discovering visual visibility. The
-        primary text placement pass consumes the same final visual Motion that QA and
-        rendering will use, then TextMotion is authored against that placement.
-        """
+        """Author the final legal text set against final visual lifetimes once."""
         text_composition = self.text_composition.plan(
             story,
             composition,
@@ -448,6 +413,24 @@ class StoryEnginePipeline:
             assets,
             visual_motion=motion,
         )
+        accepted_ids = {
+            item.text_cue_id
+            for beat in text_composition
+            for item in beat.items
+        }
+        if len(accepted_ids) != len(text.cues):
+            if self.settings.require_text_layer:
+                missing = sorted(cue.id for cue in text.cues if cue.id not in accepted_ids)
+                raise StageFailedError(
+                    "Required text cannot be placed safely",
+                    details={
+                        "code": "TEXT_LAYOUT_REFERENCE_VIOLATION",
+                        "text_cue_ids": missing,
+                    },
+                )
+            text = text.model_copy(
+                update={"cues": [cue for cue in text.cues if cue.id in accepted_ids]}
+            )
         text_motion = self.text_motion.plan(
             story,
             text.cues,
@@ -455,7 +438,7 @@ class StoryEnginePipeline:
             choreography,
             visual_motion=motion,
         )
-        return text_composition, text_motion
+        return text, text_composition, text_motion
 
     def _recover_text_layout(
         self,
