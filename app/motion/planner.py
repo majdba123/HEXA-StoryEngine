@@ -972,7 +972,11 @@ class MotionPlanner:
         motion_ready_start = (
             float(entry_segment.end)
             if entry_segment is not None
-            else float(cue.start)
+            else (
+                float(earliest_proxy_reveal)
+                if carrier_preexposed_by_proxy
+                else float(cue.start)
+            )
         )
 
         phases = list(assignment.phase_chain)
@@ -1565,13 +1569,17 @@ class MotionPlanner:
         relation_start = phase.spoken_start
         relation_end = phase.spoken_end
         profile = motion_comfort(phase.stage.value)
-        base_lower = max(float(cue.start), float(beat.start))
-        lower = max(
-            base_lower,
+        ready_floor = (
             float(motion_ready_start)
             if motion_ready_start is not None
-            else base_lower,
+            else float(cue.start)
         )
+        # A semantic proxy can make a carrier visibly available before the cue owner's
+        # normal entry. In that case Story visibility, not cue.start, is the lower bound
+        # for cross-event semantic relation phases. For normal cues ready_floor is at or
+        # after cue.start, so existing entry/settle behavior is unchanged.
+        base_lower = max(float(beat.start), min(float(cue.start), ready_floor))
+        lower = max(base_lower, ready_floor)
         upper = min(float(beat.end), float(deadline))
         relation_bounds: tuple[float, float] | None = None
         has_story_window, story_window = story_activation_window(activation, beat)

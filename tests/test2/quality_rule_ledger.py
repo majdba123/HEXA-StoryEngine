@@ -65,7 +65,7 @@ QUALITY_RULES: tuple[QualityRule, ...] = (
 
     # MotionInteractionQA.
     QualityRule("MISSING_RELATION_TIMELINE", "app/qa/motion_semantics.py", "app/motion/planner.py", "tests/test2/motion/test_relation_contracts.py"),
-    QualityRule("MISSING_TARGET_REACTION", "app/qa/motion_semantics.py", "app/motion/planner.py", "tests/test2/motion/test_relation_contracts.py"),
+    QualityRule("MISSING_TARGET_REACTION", "app/qa/motion_semantics.py", "app/motion/planner.py", "tests/test2/motion/test_relation_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("NO_RELATION_OVERLAP", "app/qa/motion_semantics.py", "app/motion/planner.py", "tests/test2/motion/test_relation_contracts.py"),
     QualityRule("MISSING_RESULT_PAYOFF", "app/qa/motion_semantics.py", "app/motion/planner.py", "tests/test2/motion/test_relation_contracts.py"),
     QualityRule("PAYOFF_PRECEDES_CAUSE", "app/qa/motion_semantics.py", "app/motion/planner.py", "tests/test2/motion/test_relation_contracts.py"),
