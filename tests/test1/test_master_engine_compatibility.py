@@ -48,10 +48,10 @@ def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
     assert raw_boundary_violations() == []
     assert contract_bucket_violations() == []
 
-    # The dedicated full-layer module owns the exhaustive 80-120 case matrix.
+    # The dedicated full-layer module owns the expanded 250+ case matrix.
     # Master certification executes a deterministic representative sample and
     # verifies that the exhaustive matrix remains configured at release strength.
-    assert 80 <= len(FULL_LAYER_SEEDS) <= 120
+    assert len(FULL_LAYER_SEEDS) >= 250
     sample_step = max(1, len(FULL_LAYER_SEEDS) // 10)
     master_sample_seeds = FULL_LAYER_SEEDS[::sample_step]
     generated_checked = 0

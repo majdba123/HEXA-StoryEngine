@@ -33,6 +33,30 @@ def _policy(
 
 
 FAILURE_POLICIES: dict[str, FailurePolicy] = {
+    "ASSET_HANDOFF_CONTRACT_VIOLATIONS": _policy(
+        "ASSET_HANDOFF_CONTRACT_VIOLATIONS", "refinement", FailureDisposition.PREVENT,
+        "Pass1/Pass2 assets must be unique and belong to the active Final Package before Story consumes them",
+    ),
+    "STORY_HANDOFF_CONTRACT_VIOLATIONS": _policy(
+        "STORY_HANDOFF_CONTRACT_VIOLATIONS", "story", FailureDisposition.PREVENT,
+        "Story output must remain scene-local, time-bounded, and semantically consumable by Choreography",
+    ),
+    "CHOREOGRAPHY_HANDOFF_CONTRACT_VIOLATIONS": _policy(
+        "CHOREOGRAPHY_HANDOFF_CONTRACT_VIOLATIONS", "choreography", FailureDisposition.PREVENT,
+        "Choreography output must preserve Story ownership and legal asset/event references for Composition",
+    ),
+    "COMPOSITION_HANDOFF_CONTRACT_VIOLATIONS": _policy(
+        "COMPOSITION_HANDOFF_CONTRACT_VIOLATIONS", "composition", FailureDisposition.PREVENT,
+        "Composition output must provide one finite, scene-local geometry contract per Story beat for Motion",
+    ),
+    "MOTION_HANDOFF_CONTRACT_VIOLATIONS": _policy(
+        "MOTION_HANDOFF_CONTRACT_VIOLATIONS", "motion", FailureDisposition.PREVENT,
+        "Motion output must cover Composition, remain within Story timing, and preserve semantic/geometry contracts",
+    ),
+    "TEXT_HANDOFF_CONTRACT_VIOLATIONS": _policy(
+        "TEXT_HANDOFF_CONTRACT_VIOLATIONS", "text", FailureDisposition.PREVENT,
+        "Text timing, anchors, layout, and text motion must remain consumable by the final RenderPlan",
+    ),
     "ASSET_REACHES_COMPOSITION": _policy(
         "ASSET_REACHES_COMPOSITION", "composition", FailureDisposition.FAIL_FAST,
         "Composition must preserve every independently animatable scene asset",

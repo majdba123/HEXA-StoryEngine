@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.choreography import ChoreographyDirector
+from app.shared.handoff import LayerHandoffValidator
 from app.assets import AssetManager
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
@@ -80,6 +81,7 @@ class StoryEnginePipeline:
         self.asset_manager = AssetManager()
         self.director = VisualDirector(semantic_vlm)
         self.choreography = ChoreographyDirector()
+        self.handoff_contracts = LayerHandoffValidator()
         self.text = TextPlanner()
         self.composition = CompositionPlanner()
         self.text_composition = TextCompositionPlanner()
@@ -154,6 +156,7 @@ class StoryEnginePipeline:
         self._progress(progress, Stage.refinement, 0.38, "Checking isolated secondary visuals")
         assets = self._apply_refinement(package, assets, workspace)
         assets = self.asset_manager.normalize(assets)
+        self.handoff_contracts.require_assets_for_story(package=package, assets=assets)
         self._progress(
             progress,
             Stage.refinement,
@@ -164,8 +167,14 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
         story = self.story.plan(package, transcript, assets)
+        self.handoff_contracts.require_story_for_choreography(
+            package=package, transcript=transcript, assets=assets, story=story
+        )
         directions = self.director.plan(package, story, assets)
         choreography = self.choreography.plan(package, story, assets)
+        self.handoff_contracts.require_choreography_for_composition(
+            story=story, assets=assets, choreography=choreography
+        )
         max_scene_assets = max(
             (sum(1 for asset in assets if asset.scene_id == scene.id) for scene in package.scenes),
             default=0,
@@ -186,10 +195,16 @@ class StoryEnginePipeline:
             package=package,
             choreography=choreography,
         )
+        self.handoff_contracts.require_text_for_composition(
+            transcript=transcript, story=story, assets=assets, text=text
+        )
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.composition, 0.54, "Composing authored visuals")
         composition = self.composition.plan(story, assets, choreography, directions)
+        self.handoff_contracts.require_composition_for_motion(
+            story=story, assets=assets, composition=composition
+        )
         self._progress(
             progress,
             Stage.composition,
@@ -201,6 +216,13 @@ class StoryEnginePipeline:
         self._progress(progress, Stage.motion, 0.61, "Planning final visual motion")
         motion = self.motion_reference.enforce(
             self.motion.plan(story, composition, choreography, assets=assets)
+        )
+        self.handoff_contracts.require_motion_for_text_and_render(
+            story=story,
+            assets=assets,
+            composition=composition,
+            choreography=choreography,
+            motion=motion,
         )
 
         self._check_cancel(cancelled)
@@ -217,6 +239,13 @@ class StoryEnginePipeline:
             text=text,
             assets=assets,
             choreography=choreography,
+        )
+        self.handoff_contracts.require_text_render_contract(
+            story=story,
+            assets=assets,
+            text=text,
+            text_composition=text_composition,
+            text_motion=text_motion,
         )
         self._progress(
             progress,

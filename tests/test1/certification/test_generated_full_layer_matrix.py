@@ -7,6 +7,7 @@ import pytest
 from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
+from app.shared.handoff import LayerHandoffValidator
 from app.final_package import FinalPackageLoader
 from app.motion import MotionPlanner
 from app.render import RenderPlanner
@@ -27,16 +28,34 @@ def _plan(tmp_path, shape: DiskPackageShape):
     canonical = CanonicalNormalizer().normalize(raw)
     transcript = deterministic_transcript(canonical)
     assets = controlled_visual_assets(canonical)
+    contracts = LayerHandoffValidator()
+    contracts.require_assets_for_story(package=canonical, assets=assets)
     story = StoryPlanner().plan(canonical, transcript, assets)
+    contracts.require_story_for_choreography(
+        package=canonical, transcript=transcript, assets=assets, story=story
+    )
     choreography = ChoreographyDirector().plan(canonical, story, assets)
+    contracts.require_choreography_for_composition(
+        story=story, assets=assets, choreography=choreography
+    )
     composition = CompositionPlanner().plan(story, assets, choreography)
+    contracts.require_composition_for_motion(
+        story=story, assets=assets, composition=composition
+    )
     motion = MotionPlanner().plan(story, composition, choreography, assets)
+    contracts.require_motion_for_text_and_render(
+        story=story, assets=assets, composition=composition,
+        choreography=choreography, motion=motion,
+    )
     text = TextPlanner().plan(
         transcript=transcript,
         story=story,
         assets=assets,
         package=canonical,
         choreography=choreography,
+    )
+    contracts.require_text_for_composition(
+        transcript=transcript, story=story, assets=assets, text=text
     )
     render_workspace = tmp_path / "render"
     render_workspace.mkdir(parents=True, exist_ok=True)
@@ -73,7 +92,7 @@ def test_generated_package_reaches_render_plan_with_resolved_references(tmp_path
     assert {beat.id for beat in plan.story} == beat_ids
 
 
-FULL_LAYER_SEEDS = tuple(range(4101, 4201))
+FULL_LAYER_SEEDS = tuple(range(4101, 4351))
 
 
 @pytest.mark.parametrize("seed", FULL_LAYER_SEEDS)
