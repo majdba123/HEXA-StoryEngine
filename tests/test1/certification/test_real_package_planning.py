@@ -9,14 +9,14 @@ import pytest
 from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
+from app.cutout import CutoutService, Pass2CutoutService
 from app.final_package import FinalPackageLoader
-from app.models import VisualAsset
 from app.motion import MotionPlanner
+from app.pipeline import StoryEnginePipeline
 from app.render import RenderPlanner
 from app.story import StoryPlanner
 from app.text import TextPlanner
 from app.vision import VisionService
-from PIL import Image
 from tests.test1.factory import deterministic_transcript
 
 _REAL_PACKAGES = (
@@ -33,6 +33,7 @@ class RealPlanningResult:
     scenes: int
     semantic_assets: int
     semantic_events: int
+    pass1_assets: int
     runtime_assets: int
     story_beats: int
     motion_cues: int
@@ -77,40 +78,15 @@ def certify_real_package_to_render_plan(
     detections = VisionService().analyze(canonical)
     assert detections, f"{filename}: Vision produced no structural detections"
 
-    # Planning certification needs the real runtime object topology/geometry, not
-    # PNG encoding. Build descriptors from Vision detections using the same stable
-    # scene-local IDs as Pass1. This preserves real carrier cardinality while
-    # avoiding expensive cutout file I/O in release certification.
-    counters: dict[str, int] = {}
-    canvas_sizes: dict[Path, tuple[int, int]] = {}
-    assets: list[VisualAsset] = []
-    for detection in detections:
-        if detection.bbox is None:
-            continue
-        counters[detection.scene_id] = counters.get(detection.scene_id, 0) + 1
-        number = counters[detection.scene_id]
-        canvas = canvas_sizes.get(detection.source_image)
-        if canvas is None:
-            with Image.open(detection.source_image) as source_image:
-                canvas = source_image.size
-            canvas_sizes[detection.source_image] = canvas
-        assets.append(VisualAsset(
-            id=f"{detection.scene_id}:asset-{number:02d}",
-            scene_id=detection.scene_id,
-            role=detection.role,
-            image_path=detection.source_image,
-            source_bbox=detection.bbox,
-            confidence=detection.confidence,
-            extraction_method="test1-real-vision-structural",
-            independent=True,
-            compound=bool(detection.compound),
-            component_count=max(1, int(detection.component_count)),
-            source_area_ratio=detection.area_ratio or None,
-            source_canvas_width=canvas[0],
-            source_canvas_height=canvas[1],
-            can_animate_independently=True,
-        ))
-    assert assets, f"{filename}: Vision produced no usable runtime assets"
+    assets = CutoutService().extract(canonical, detections, workspace / "pass1")
+    assert assets, f"{filename}: Pass1 produced no usable runtime assets"
+    pass1_assets = len(assets)
+    pipeline = StoryEnginePipeline.__new__(StoryEnginePipeline)
+    pipeline.settings = type("Settings", (), {"refinement_mode": "pass2_vnext"})()
+    pipeline.cutout_pass2 = Pass2CutoutService()
+    pipeline.refinement = None
+    assets = pipeline._apply_refinement(canonical, assets, workspace / "pass2")
+    assert assets, f"{filename}: Pass2 produced no usable runtime assets"
 
     story = StoryPlanner().plan(canonical, transcript, assets)
     choreography = ChoreographyDirector().plan(canonical, story, assets)
@@ -150,6 +126,7 @@ def certify_real_package_to_render_plan(
         scenes=len(canonical.scenes),
         semantic_assets=len(canonical.asset_by_id),
         semantic_events=len(canonical.event_by_id),
+        pass1_assets=pass1_assets,
         runtime_assets=len(assets),
         story_beats=len(story),
         motion_cues=len(motion),
@@ -168,6 +145,7 @@ def test_real_package_reaches_render_plan_structurally(tmp_path: Path, filename:
     assert result.scenes > 0
     assert result.semantic_assets > 0
     assert result.semantic_events > 0
+    assert result.pass1_assets > 0
     assert result.runtime_assets > 0
     assert result.story_beats == result.scenes
     assert result.motion_cues == result.runtime_assets
