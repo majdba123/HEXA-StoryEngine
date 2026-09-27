@@ -1,0 +1,134 @@
+from __future__ import annotations
+# Owner-scoped Test2 coverage; historical regression content is preserved.
+
+import json
+import zipfile
+from pathlib import Path
+
+from app.config import Settings
+from app.diagnostics import BuildReportSession
+from app.models import Stage
+from app.shared.errors import StageFailedError
+
+
+def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "scene.png").write_bytes(b"fake-scene")
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"fake-audio")
+
+    settings = Settings(
+        work_root=tmp_path / "work",
+        output_root=tmp_path / "outputs",
+        ffmpeg_bin="ffmpeg",
+        ffprobe_bin="ffprobe",
+        whisper_model="small",
+        engine_host="127.0.0.1",
+        engine_port=8765,
+        allow_scene_fallback=False,
+    )
+    job_id = "diagnostic-test-job"
+    workspace = settings.work_root / job_id
+    workspace.mkdir(parents=True)
+    (workspace / "render-plan.json").write_text("{}", encoding="utf-8")
+
+    report = BuildReportSession(
+        job_id=job_id,
+        settings=settings,
+        package_path=package,
+        audio_path=audio,
+    )
+    report.on_progress(Stage.input, 0.04, "Reading Final Package")
+    report.on_progress(Stage.story, 0.43, "Building visual story")
+    report.fail(StageFailedError(
+        "story failed",
+        details={"code": "STORY_CONTRACT_VIOLATION", "reason": "test"},
+    ))
+
+    destination = report.export_zip(tmp_path / "diagnostic.zip")
+    assert destination.exists()
+
+    with zipfile.ZipFile(destination) as archive:
+        assert set(archive.namelist()) == {
+            "report.json",
+            "report.md",
+            "workspace-manifest.json",
+        }
+        payload = json.loads(archive.read("report.json"))
+        workspace_payload = json.loads(archive.read("workspace-manifest.json"))
+
+    assert payload["status"] == "failed"
+    assert payload["last_stage"] == "story"
+    assert payload["error"]["code"] == "STORY_CONTRACT_VIOLATION"
+    assert payload["error"]["category"] == "STAGE_FAILED"
+    assert payload["error"]["details"]["reason"] == "test"
+    assert payload["schema_version"] == 3
+    assert {row["path"] for row in workspace_payload["files"]} >= {"render-plan.json", "generation.log"}
+
+
+def test_diagnostic_report_persists_generation_log(tmp_path: Path) -> None:
+    package = tmp_path / "package-log"
+    package.mkdir()
+    audio = tmp_path / "audio-log.wav"
+    audio.write_bytes(b"fake")
+    settings = Settings(
+        work_root=tmp_path / "work-log",
+        output_root=tmp_path / "outputs-log",
+        ffmpeg_bin="ffmpeg",
+        ffprobe_bin="ffprobe",
+        whisper_model="small",
+        engine_host="127.0.0.1",
+        engine_port=8765,
+        allow_scene_fallback=False,
+    )
+    report = BuildReportSession(
+        job_id="log-job",
+        settings=settings,
+        package_path=package,
+        audio_path=audio,
+    )
+    report.on_progress(Stage.cutout, 0.35, "Pass1 ready: 20 assets")
+    assert report.log_path.is_file()
+    content = report.log_path.read_text(encoding="utf-8")
+    assert "Pass1 ready: 20 assets" in content
+    assert "cutout" in content
+
+
+def test_diagnostic_report_includes_failure_disposition_metadata(tmp_path: Path) -> None:
+    package = tmp_path / "package-policy"
+    package.mkdir()
+    audio = tmp_path / "audio-policy.wav"
+    audio.write_bytes(b"fake")
+    settings = Settings(
+        work_root=tmp_path / "work-policy",
+        output_root=tmp_path / "outputs-policy",
+        ffmpeg_bin="ffmpeg",
+        ffprobe_bin="ffprobe",
+        whisper_model="small",
+        engine_host="127.0.0.1",
+        engine_port=8765,
+        allow_scene_fallback=False,
+    )
+    report = BuildReportSession(
+        job_id="policy-job",
+        settings=settings,
+        package_path=package,
+        audio_path=audio,
+    )
+    report.fail(StageFailedError(
+        "motion too fast",
+        details={"code": "MOTION_TOO_FAST", "asset_id": "a"},
+    ))
+
+    destination = report.export_zip(tmp_path / "diagnostic-policy.zip")
+    with zipfile.ZipFile(destination) as archive:
+        payload = json.loads(archive.read("report.json"))
+        markdown = archive.read("report.md").decode("utf-8")
+
+    policy = payload["error"]["policy"]
+    assert policy["owner_stage"] == "motion"
+    assert policy["disposition"] == "prevent"
+    assert "semantic_authority_change_allowed" not in policy
+    assert "Owner stage: `motion`" in markdown
+    assert "Disposition: `prevent`" in markdown
