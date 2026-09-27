@@ -62,7 +62,7 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
     assert payload["error"]["code"] == "STORY_CONTRACT_VIOLATION"
     assert payload["error"]["category"] == "STAGE_FAILED"
     assert payload["error"]["details"]["reason"] == "test"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert {row["path"] for row in workspace_payload["files"]} >= {"render-plan.json", "generation.log"}
 
 
@@ -128,6 +128,6 @@ def test_diagnostic_report_includes_failure_disposition_metadata(tmp_path: Path)
     policy = payload["error"]["policy"]
     assert policy["owner_stage"] == "motion"
     assert policy["disposition"] == "prevent"
-    assert policy["semantic_authority_change_allowed"] is False
+    assert "semantic_authority_change_allowed" not in policy
     assert "Owner stage: `motion`" in markdown
     assert "Disposition: `prevent`" in markdown

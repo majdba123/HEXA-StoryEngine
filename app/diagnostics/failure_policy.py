@@ -16,7 +16,6 @@ class FailurePolicy:
     owner_stage: str
     disposition: FailureDisposition
     reason: str
-    semantic_authority_change_allowed: bool = False
 
 
 def _policy(
@@ -124,7 +123,7 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
     ),
     "FINAL_MUX_FAILED": _policy(
         "FINAL_MUX_FAILED", "final", FailureDisposition.FAIL_FAST,
-        "Actual final mux failure requires diagnosis; blind remux retry is not accepted",
+        "Final mux failure is terminal and remains owned by Final",
     ),
     "FFMPEG_COMMAND_FAILED": _policy(
         "FFMPEG_COMMAND_FAILED", "render", FailureDisposition.FAIL_FAST,
@@ -132,7 +131,7 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
     ),
     "RENDER_PROCESS_OS_ERROR": _policy(
         "RENDER_PROCESS_OS_ERROR", "render", FailureDisposition.FAIL_FAST,
-        "Operating-system process failure is not safe for blind render retry",
+        "Operating-system render process failure is terminal and remains owned by Render",
     ),
     "RENDER_PROCESS_COMMAND_LIMIT": _policy(
         "RENDER_PROCESS_COMMAND_LIMIT", "render", FailureDisposition.PREVENT,
@@ -234,43 +233,43 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "ASSET_BAD_CUTOUT",
         "cutout",
         FailureDisposition.PREVENT,
-        "Bounded re-extraction is proven and must preserve Final Package semantics",
+        "Extraction must reject invalid cutouts while preserving Final Package semantics",
     ),
     "ASSET_WHITE_HALO": _policy(
         "ASSET_WHITE_HALO",
         "cutout",
         FailureDisposition.PREVENT,
-        "Halo/ghost defects must fail extraction safety until a candidate fix is proven",
+        "Extraction safety must reject halo/ghost defects before assets leave Pass2",
     ),
     "ELEMENT_APPEARS_TOO_EARLY": _policy(
         "ELEMENT_APPEARS_TOO_EARLY",
         "story",
         FailureDisposition.PREVENT,
-        "Story timing owns reveal authority and may be rebuilt within narration bounds",
+        "Story owns reveal timing and must emit narration-bounded timing",
     ),
     "ELEMENT_APPEARS_TOO_LATE": _policy(
         "ELEMENT_APPEARS_TOO_LATE",
         "motion",
         FailureDisposition.PREVENT,
-        "Motion timing may be rebuilt within the Story-owned activation window",
+        "Motion must fit execution inside the Story-owned activation window",
     ),
     "BAD_HANDOFF": _policy(
         "BAD_HANDOFF",
         "story",
         FailureDisposition.PREVENT,
-        "Story timing may rebuild an invalid attention handoff without changing meaning",
+        "Story must produce a valid attention handoff without changing semantic authority",
     ),
     "LOW_SCREEN_OCCUPANCY": _policy(
         "LOW_SCREEN_OCCUPANCY",
         "composition",
         FailureDisposition.PREVENT,
-        "Composition may be rebuilt while preserving semantic authority",
+        "Composition must produce a legal layout while preserving semantic authority",
     ),
     "MULTI_ELEMENT_POP": _policy(
         "MULTI_ELEMENT_POP",
         "motion",
         FailureDisposition.PREVENT,
-        "Motion may rebuild reveal spacing while preserving semantic order",
+        "Motion must produce reveal spacing that preserves semantic order",
     ),
     "INVALID_PACKAGE": _policy(
         "INVALID_PACKAGE",
@@ -360,7 +359,7 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "MOTION_BELOW_PERCEPTUAL_FLOOR",
         "motion",
         FailureDisposition.POST_RENDER_PROOF,
-        "A bounded segment-only amplitude repair may restore the shared readability floor",
+        "Encoded motion below the perceptual floor is post-render evidence of a Motion/Render contract failure",
     ),
     "TERMINAL_EXIT_ON_PERSISTENT_ASSET": _policy(
         "TERMINAL_EXIT_ON_PERSISTENT_ASSET",
@@ -390,7 +389,7 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "RENDERED_SEGMENT_FRAME_MISSING",
         "render",
         FailureDisposition.POST_RENDER_PROOF,
-        "Encoded evidence frames are missing and require diagnosis, not blind retry",
+        "Missing encoded evidence frames are a post-render proof failure requiring owner diagnosis",
     ),
     "RENDERED_SEGMENT_ROI_EMPTY": _policy(
         "RENDERED_SEGMENT_ROI_EMPTY",
@@ -408,37 +407,37 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "VISUAL_WHITE_FLASH",
         "render",
         FailureDisposition.POST_RENDER_PROOF,
-        "A bounded strict-handoff rerender can repair an encoded blank boundary",
+        "Encoded blank handoff frames are post-render proof failures owned by Renderer/Continuity",
     ),
     "AUDIO_VIDEO_DRIFT": _policy(
         "AUDIO_VIDEO_DRIFT",
         "final",
         FailureDisposition.POST_RENDER_PROOF,
-        "Final mux can be rebuilt without changing semantic authority",
+        "A/V timing mismatch is a post-render proof failure owned by Final muxing",
     ),
     "FINAL_MISSING_AUDIO": _policy(
         "FINAL_MISSING_AUDIO",
         "final",
         FailureDisposition.POST_RENDER_PROOF,
-        "Final mux can restore the authored narration stream",
+        "Missing narration audio is a post-render proof failure owned by Final muxing",
     ),
     "FINAL_MISSING_OUTPUT": _policy(
         "FINAL_MISSING_OUTPUT",
         "render",
         FailureDisposition.POST_RENDER_PROOF,
-        "Verified plan may be rendered again when the output file is absent",
+        "Missing output is a post-render proof failure owned by Render",
     ),
     "FINAL_UNREADABLE_MEDIA": _policy(
         "FINAL_UNREADABLE_MEDIA",
         "render",
         FailureDisposition.POST_RENDER_PROOF,
-        "Verified plan may be rendered again when output media is structurally unreadable",
+        "Structurally unreadable output is a post-render proof failure owned by Render",
     ),
     "FINAL_MISSING_VIDEO": _policy(
         "FINAL_MISSING_VIDEO",
         "render",
         FailureDisposition.POST_RENDER_PROOF,
-        "Verified plan may be rendered again when the video stream is missing",
+        "Missing video stream is a post-render proof failure owned by Render",
     ),
 }
 

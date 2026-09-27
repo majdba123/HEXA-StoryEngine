@@ -79,6 +79,18 @@ def test_recovery_architecture_cannot_be_reintroduced() -> None:
         "recovered-final-",
         "strict_boundary_coverage",
         "repair_motion_readability",
+        "semantic_authority_change_allowed",
+        "RecoveryStatus",
+        "KnownIssue",
+        "invalidate_from_stage",
+        "record_outcome",
+        "retry_cutout",
+        "rebuild_story_timing",
+        "rebuild_composition",
+        "rebuild_motion",
+        "repair_text_layout",
+        "rerender_strict_handoff",
+        "remux_audio",
     }
     sources = {
         path.relative_to(REPOSITORY_ROOT): path.read_text(encoding="utf-8")

@@ -25,7 +25,7 @@ from app.shared.process import run_hidden
 class BuildReportSession:
     """Collects one generation run and exports a portable diagnostic bundle."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(
         self,
@@ -86,9 +86,6 @@ class BuildReportSession:
                     "owner_stage": policy.owner_stage,
                     "disposition": policy.disposition.value,
                     "reason": policy.reason,
-                    "semantic_authority_change_allowed": (
-                        policy.semantic_authority_change_allowed
-                    ),
                 }
                 if policy is not None
                 else None
@@ -347,10 +344,6 @@ class BuildReportSession:
                     [
                         f"- Owner stage: `{error['policy'].get('owner_stage')}`",
                         f"- Disposition: `{error['policy'].get('disposition')}`",
-                        (
-                            "- Semantic authority change allowed: `"+
-                            f"{error['policy'].get('semantic_authority_change_allowed')}`"
-                        ),
                     ]
                     if error.get("policy")
                     else []
