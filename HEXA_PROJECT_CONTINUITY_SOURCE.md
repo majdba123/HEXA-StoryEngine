@@ -11893,3 +11893,275 @@ Do not turn this fix into permissive identity matching. Region/dependency carrie
 event-execution evidence only. They must not promote ambiguous geometry into semantic
 identity, weaken strict binder thresholds, add package-specific IDs, or introduce Recovery,
 Pass3, or Layer3.
+
+
+# REAL RENDER CROSS-LAYER FEASIBILITY FAILURE + NEXT SPRINT MISSION — 2026-09-27
+
+## Trigger diagnostic
+
+A fresh real HEXA.bat production run on the current continuity HEAD failed after the Story
+event-carrier fix. This is a different failure family and must not be confused with the old
+56-missing-event Story bug.
+
+Diagnostic:
+
+- job: `7d584f9e43b442ed8a459f302315896b`
+- branch: `montage`
+- commit: `228ae5ab8ac2b7902992840d363d396aeccd67db`
+- Final Package: `HEXA_SCRIPT_KIDDIE_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+- real narration audio supplied
+- duration before failure: 261.804s
+- platform: Windows 10
+- failure owner reported by runtime: Motion
+
+Pipeline evidence:
+
+- Transcription: completed
+- Vision: completed
+- Pass1: 114 authored assets / 35 scenes
+- Pass2: 122 assets (+8)
+- Story: PASS — 35 beats; densest scene 9 assets
+- Text: completed
+- Composition: PASS — Final Package geometry locked
+- Motion: FAILED before render
+
+Failure:
+
+`MOTION_INFEASIBLE_BEFORE_RENDER`
+
+Message:
+
+`motion cannot satisfy encoded readability within comfort budget`
+
+Exact failing contract:
+
+- phase: `ESTABLISH`
+- event: `SCENE_035_EVENT_02`
+- runtime asset: `SCENE_035:asset-01`
+- segment / readability contract duration: `0.24919060675000537s`
+- active duration: `0.2491906067499388s`
+- encoded readability floor: `15.36 px`
+- maximum comfortable translation: `13.363600831017976 px`
+- maximum comfortable scale activity: `13.363600831017978 px`
+
+Therefore the consumer received an impossible envelope:
+
+`required readable activity 15.36px > maximum comfortable activity 13.36px`
+
+The planner correctly failed closed, but a production pipeline should normally prevent this
+infeasible cross-layer contract from being constructed in the first place.
+
+## Real authored event involved
+
+`SCENE_035_EVENT_02` is not ambiguous metadata. It is an explicit authored event:
+
+- script text: `في الصف.`
+- sequence order: 2
+- visual leader: `SCENE_035_final_hexa`
+- text anchor: `SCENE_035_final_hexa`
+- locator: cx 0.22, cy 0.68, width 0.25, height 0.31
+- visual focus: SUPPORT
+- confidence: 0.97
+- dependency: `SCENE_035_EVENT_01`
+
+Do not add any production branch for this scene/event/package. Convert the failure family
+into generic owner and cross-layer regressions.
+
+## Architectural interpretation
+
+The previous sprint proved Story can preserve authored events on proven runtime carriers.
+That fix is working here: Story reaches 35 beats and the old semantic coverage failure is
+gone.
+
+The new issue is cross-layer feasibility. A producer layer can currently emit a semantically
+valid plan that a downstream layer cannot execute while respecting its own quality contract.
+
+For this case, the most suspicious boundary is:
+
+`Story timing -> Choreography event-flow schedule -> Composition geometry -> Motion feasibility`
+
+Composition is not redesigning the scene here; it is locked to authored source geometry.
+The concrete contradiction appears between the event-flow time allocation / phase grammar
+and Motion's readability + comfort envelope.
+
+Do not assume Motion alone is the root cause merely because it throws the error. Determine
+which owner first created the impossible contract. Possible outcomes include:
+
+- Choreography emitted too many mandatory phases for the available event window;
+- an event-stage scheduler allocated less than the minimum executable duration;
+- Story/Choreography handoff compressed a dependent event too aggressively;
+- Motion selected a gesture family whose required readable amplitude is impossible for the
+  supplied duration and geometry;
+- a shared timing/quality policy is inconsistent across producer and consumer.
+
+The fix must make construction feasible by design, not suppress the exception.
+
+## New mandatory principle: producer-consumer compatibility
+
+Every layer must prove not only that its own output is internally valid, but that the
+contract it hands to the immediate consumer is executable.
+
+Do NOT create a new runtime QA or Recovery layer.
+
+Use owner construction + Test2 boundary certification.
+
+Required boundaries to certify:
+
+1. Final Package -> Canonical
+   - IDs, spans, locators, events, relations and authority survive normalization.
+   - no foreign/stale IDs; no malformed ranges; no silent semantic loss.
+
+2. Canonical -> Vision
+   - scene identity and source geometry/canvas information remain sufficient for downstream
+     extraction and mapping.
+
+3. Vision -> Pass1
+   - detections are scene-local, finite, in-bounds and convertible to stable runtime assets.
+
+4. Pass1 -> Pass2
+   - parent/secondary topology, source geometry and independent-animation eligibility remain
+     coherent; Pass2 never invalidates the parent's identity/geometry contract.
+
+5. Pass2 -> Story
+   - every required authored event has a proven runtime execution carrier or fails closed
+     for real ambiguity;
+   - exact/window/region/dependency/group/compound authorities remain explicit;
+   - no event points to a missing/foreign runtime asset.
+
+6. Story -> Choreography
+   - event timing, dependencies, sequence order and carrier identity remain intact;
+   - emitted event-flow grammar must fit the available semantic/narration window;
+   - no mandatory stage may be scheduled when its downstream minimum executable budget
+     cannot fit.
+
+7. Choreography -> Composition
+   - all focus/interaction/result/support ids exist in the same beat/scene;
+   - no directive requires a visual that Composition cannot place.
+
+8. Composition -> Motion
+   - geometry is finite and valid;
+   - for every scheduled event phase, the time + geometry envelope must admit at least one
+     Motion program that satisfies both perceptual readability and comfort;
+   - boundary cases must be checked around equality:
+     readability < ceiling, readability == ceiling, readability just above ceiling;
+   - the exact 0.249s-class failure family must become a generic regression.
+
+9. Story/Choreography -> Text
+   - cues reference current-package/current-story semantics only;
+   - timing remains inside narration/beat ownership;
+   - text does not require impossible placement against the final composition.
+
+10. Motion/Text/Composition -> RenderPlan
+    - every reference resolves;
+    - segment timing is monotonic/finite;
+    - no required phase is missing;
+    - frame-time windows are executable at CFR 30.
+
+11. Render -> Final encoded proof
+    - existing FFmpeg decode/probe/A-V/CFR/motion/no-white-flash proof remains unchanged.
+
+## Required cross-layer test strategy
+
+Keep the current Test1/Test2 structure. Do not introduce another top-level test architecture.
+
+Add owner regressions in the owning folder and producer-consumer integration matrices in
+`tests/test2/integration/` and/or `tests/test2/pipeline/`.
+
+The matrix must be deterministic and representative, not a Cartesian explosion.
+
+At minimum vary:
+
+- scene/event windows: about 0.20, 0.249, 0.25, 0.30, 0.33, 0.50, 0.75, 1.0, 1.5, 3, 8s;
+- asset counts: 1, 2, 3, 5, 9, 20;
+- semantic event counts: 1, 2, 3, 5, 8, 12;
+- dependency topology: none, chain, fan-out, diamond, multiple dependencies;
+- carrier authority: exact identity, trusted Story window, region proxy, dependency proxy,
+  group proxy, compound proxy;
+- geometry: tiny, narrow, tall, wide, large, near-edge, authored non-square canvases;
+- density: sparse and high-density;
+- focus roles: leader, participant, context, result, text-anchor, support;
+- event-flow grammar: establish-only, multi-stage interaction, reaction, payoff, handoff;
+- timing: fast / normal / slow narration;
+- Pass2 parent-child combinations;
+- ambiguous cases that must stay fail-closed.
+
+For Motion feasibility specifically include generated/adversarial cases around:
+
+- readability floor just below comfort ceiling;
+- exactly equal;
+- just above;
+- short segment + small asset;
+- short segment + large asset;
+- long segment + small/large asset;
+- translation feasible / scale infeasible;
+- scale feasible / translation infeasible;
+- both feasible;
+- neither feasible.
+
+A valid production input must either be constructed into a feasible program or have its
+upstream event grammar/schedule simplified/coalesced by the proper owner before Motion.
+Do not fix this by lowering readability floors, increasing comfort ceilings arbitrarily,
+ignoring the failing event, or adding package-specific exceptions.
+
+## Regression-safety requirement
+
+The current accepted baseline before this sprint is:
+
+- Story carrier fix present;
+- 974 passed, 8 skipped on full pytest;
+- Test1 385 passed, 8 skipped;
+- Compile PASS;
+- Ruff PASS;
+- CI push #668 SUCCESS;
+- CI PR #669 SUCCESS;
+- Black/White/Gray/Script Kiddie structural/planning corpus reached RenderPlan under the
+  deterministic certification path before the real-audio production failure was exposed.
+
+All existing tests must remain green.
+
+Any solution that fixes the 0.249s case but changes previously correct reveal order,
+semantic carrier identity, authored geometry, relation order, Motion readability, or
+encoded proof is a regression.
+
+## Next sprint execution order
+
+1. Reproduce `MOTION_INFEASIBLE_BEFORE_RENDER` from the supplied diagnostic and accepted
+   Script Kiddie package/audio if available.
+2. Trace `SCENE_035_EVENT_02` from Final Package -> Canonical -> Story proxy/activation ->
+   Choreography event flow -> Composition item -> Motion phase/window.
+3. Print/record, for that event:
+   - authored span and dependency;
+   - Story reveal/peak/settle;
+   - Choreography stages and each requested phase window;
+   - Composition width/height;
+   - Motion comfort profile;
+   - readability floor;
+   - translation/scale ceilings.
+4. Identify the FIRST owner that creates an infeasible downstream contract.
+5. Fix that owner generically.
+6. Add owner tests for the root cause.
+7. Add producer-consumer contract matrix tests across all boundaries listed above.
+8. Run Story/Choreography/Composition/Motion tests.
+9. Run Test2.
+10. Run Test1.
+11. Run full pytest + compile + Ruff.
+12. Run all four accepted real Final Packages as far as the environment allows.
+13. Run Script Kiddie with real narration through actual render; do not stop at RenderPlan.
+14. Verify encoded output with FFmpeg/final proof.
+15. Compare visual behavior with the pre-fix baseline to ensure no regression.
+16. Update this continuity file with exact commits, test counts, CI IDs and real-render proof.
+
+## Prohibitions remain locked
+
+- no Recovery;
+- no runtime QA resurrection;
+- no Pass3 / Layer3;
+- no package-name / scene-id / seed-specific production branches;
+- no threshold weakening merely to pass tests;
+- no silent dropping of semantic events;
+- no redesign of Final Package geometry in Composition;
+- no claiming success from deterministic RenderPlan certification alone when a real-audio
+  production render is the failing scenario.
+
+The target is not merely "no exception". The target is a pipeline in which every layer
+hands the next layer a semantically correct, spatially valid, temporally executable contract.
