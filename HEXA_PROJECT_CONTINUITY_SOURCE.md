@@ -10839,3 +10839,161 @@ exact behavior HEAD with real renders.
 - The failure class is closed in code + regression + CI.
 - Full Gray production proof is still pending a rerun with the exact original Gray Final Package and narration on `5f87c697...` or a descendant containing no behavior changes.
 - After Gray real render passes, Black and White must be regression-rendered on the same exact behavior source before Render Stability can be declared closed.
+
+
+# MONTAGE35 CANONICAL TYPED-CONSUMER REGRESSION CLOSURE — 2026-09-27
+
+## Scope and trigger evidence
+
+Validation Gateway did not start. This checkpoint closes a production Canonical
+typed-consumer regression and the certification gap that allowed it to escape.
+
+Trigger diagnostic:
+- archive: `HEXA-diagnostic-30b48a8a.zip`
+- job: `30b48a8a1449432bb9ff0583fef165af`
+- source: `a58ed0047854ee0f30c40825124a13778436de3d` on `montage`
+- input: Black-Hat corrected Final Package plus its original narration
+- observed progress: 40 scenes, Pass1 157 assets
+- failure stage: entry to Pass2/refinement
+- exact exception: `AttributeError: 'CanonicalAsset' object has no attribute 'get'`
+
+Root cause:
+- Canonical normalization correctly changed `scene.units` into deeply immutable
+  `tuple[CanonicalAsset, ...]`;
+- `StoryEnginePipeline._apply_refinement()` remained a stale downstream dictionary
+  consumer and called `unit.get("type")`;
+- Canonical architecture and the Final Package schema were not defective.
+
+Permanent statement:
+
+**Canonical architectural design remains closed.
+A downstream typed-consumer regression was discovered and permanently closed.
+No Mapping-style Canonical compatibility was restored.**
+
+## Implementation and downstream audit
+
+Behavior commits:
+1. `ad4b046` `[canonical] Fix typed refinement dispatch`
+2. `347ee35` `[architecture] Remove obsolete compatibility surfaces`
+3. `235c8f7` `[certification] Exercise real Pass1 to Pass2 boundary`
+
+Final behavior HEAD:
+- `235c8f7e6cd23daf68c292ed4bacf1c0b2101292`
+
+The refinement consumer now:
+- declares `package: CanonicalPackage`;
+- reads `CanonicalScene.id`, `CanonicalScene.units`, and `CanonicalAsset.type`
+  through typed attributes;
+- preserves the existing Pass2 `scene_unit_types` payload, asset order, mode dispatch,
+  and legacy/default refinement behavior;
+- does not mutate Canonical data.
+
+The repository-wide downstream audit classified mapping operations by ownership.
+Confirmed stale Canonical mapping consumers found and fixed:
+- `app/pipeline.py`: `unit.get("type")` in `_apply_refinement()`.
+
+No other confirmed Canonical-as-Mapping consumer was found. Dictionary operations in
+Story metadata, Motion cue params/programs, QA payloads, recovery state, diagnostics,
+and internal lookup tables remain valid normal dictionaries. Raw Final Package access
+remains confined to `app/final_package/` and Canonical normalization.
+
+## Obsolete architecture removed
+
+- removed `app/input/`; tests now import `FinalPackageLoader` from `app.final_package`;
+- renamed `tests/test_input_security.py` to `tests/test_final_package_security.py`;
+- removed `app/choreography/binding.py`; all Choreography consumers import the
+  Story-owned `AssetBinding` / `SemanticAssetBinder` directly;
+- removed the obsolete Choreography binding re-exports;
+- removed duplicate `app/composition/footprint.py` and routed Text Composition to the
+  single owner `app/layout/footprint.py` without changing its implementation;
+- verified `app/contracts/` remains absent from tracked architecture;
+- expanded `.gitignore` with `build/` and `*.egg-info/` while retaining the existing
+  Python/cache/runtime exclusions.
+
+Intentionally deferred:
+- `app/refinement/` remains supported for explicit legacy/default modes;
+- `app/motion/easing.py` remains an active reference/test contract;
+- no Pass1, Pass2, Story, Choreography, Composition, Motion, Text, QA, Recovery,
+  FFmpeg, or encoded-visual behavior was redesigned.
+
+## Certification gap and permanent coverage
+
+The prior real-corpus planning test ran real Final Package, Canonical, and Vision, then
+manually built structural `VisualAsset` rows. It did not execute CutoutService/Pass1,
+`StoryEnginePipeline._apply_refinement()`, or Pass2CutoutService. Therefore four green
+packages could not detect the stale typed consumer that crashed before Pass2.
+
+New permanent coverage:
+- exact typed regression using `CanonicalPackage`, `CanonicalScene`, and
+  `CanonicalAsset`, calling the real pipeline refinement dispatch;
+- refinement mode matrix for `off`, `pass1`, `disabled`, `vnext`, `pass2_vnext`,
+  `hybrid`, and supported legacy/default fallback;
+- immutable-input, service-selection, scene-ID, unit-type, output identity/order, and
+  no-unexpected-fallback assertions;
+- generated disk-backed integration through FinalPackageLoader -> CanonicalNormalizer
+  -> VisionService -> CutoutService/Pass1 -> real pipeline dispatch ->
+  Pass2CutoutService -> Story -> Choreography -> Composition -> Motion -> Text ->
+  RenderPlan;
+- focused architecture guards for removed surfaces, raw-boundary ownership,
+  non-Mapping Canonical records, typed refinement access, and single footprint owner;
+- strict real-corpus certification now uses actual Pass1 and Pass2 output instead of
+  synthetic post-Vision descriptors.
+
+## Verification
+
+Local deterministic verification on behavior HEAD `235c8f7e...`:
+- Compile: PASS
+- Ruff: PASS (`All checks passed!`)
+- focused new regression/integration/architecture tests: `15 passed`
+- `tests/test1`: `384 passed, 8 skipped`
+- strict four-package real corpus: `4 passed` through real Vision/Pass1/Pass2 and
+  downstream planning (116 Pillow deprecation warnings)
+- full pytest: `869 passed, 8 skipped, 2 failed, 17 warnings`
+
+The two local full-suite failures are pre-existing Windows text-placement assertions:
+- `test_director_keeps_text_off_large_primary_artwork`
+- `test_director_uses_actual_alpha_footprint_for_negative_space`
+
+Both were reproduced with identical values on an untouched detached worktree at the
+requested starting HEAD `a58ed004...`; no historical expectation was rewritten and the
+kept/deleted footprint implementations were verified identical. Exact behavior-head
+GitHub CI is green, including the full Test step.
+
+Exact behavior-head GitHub CI:
+- workflow: `V2 CI`
+- run `36288460104`: SUCCESS
+- duplicate branch event run `36288458136`: SUCCESS
+- source: `235c8f7e6cd23daf68c292ed4bacf1c0b2101292`
+- Compile: PASS
+- Lint: PASS
+- Test1 canonical compatibility: PASS
+- full Test: PASS
+- tested-source snapshot upload: PASS
+
+## Black-Hat production acceptance
+
+The exact triggering Black package and original narration were replayed with job
+`black-canonical-regression-closure` on the final behavior HEAD.
+
+Observed production result:
+- Final Package / Canonical: PASS
+- Vision: PASS
+- Pass1: PASS, 157 assets across 40 scenes
+- Pass2: PASS, 179 assets (+22)
+- Story: PASS, 40 beats
+- Choreography / Composition / Motion / Text: PASS
+- pre-render QA: PASS, 179 semantic anchors, 0 fallbacks, 14 relation timelines,
+  14 focus cohorts, and 0 rhythm/visual/text/short-motion violations
+- RenderPlan: PASS
+- Render: PASS
+- RenderedMotionQA: PASS, 165 checked segments, 33 static skips, 0 violations
+- final export: PASS
+- independent full decode: PASS
+- output: `HEXA_BLACK_CANONICAL_REGRESSION_CLOSURE.mp4`
+- media: 1920x1080, CFR 30 fps, H.264 video + AAC audio, 97.066667 s
+- output SHA256:
+  `a9c49a0bf38d85ae18f8e2924ae8122d74b4a77b612b58a8fb9d1e34387a95f7`
+
+The historical `'CanonicalAsset' object has no attribute 'get'` failure did not recur.
+This Canonical consumer regression family is closed. Validation Gateway remains
+separate and has not begun.
