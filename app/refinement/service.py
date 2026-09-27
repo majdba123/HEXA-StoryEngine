@@ -228,7 +228,7 @@ class RefinementService:
         Refinement is allowed only when the candidate and the dominant illustration
         have an actual horizontal background gutter. This rejects overlapping/touching
         characters even when morphology can visually separate their colored cores.
-        Once a gutter exists, the complete edge-side object is recovered with the same
+        Once a gutter exists, the complete edge-side object is extracted with the same
         border-background rule as Pass 1 so white faces, shoes, internal labels, and
         antialiasing stay attached to the object.
         """

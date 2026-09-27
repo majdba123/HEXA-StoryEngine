@@ -13,13 +13,13 @@ from app.cutout.pass2.safety import PartitionSafetyGate
 from app.cutout.pass2.segmenter import MaskBackend
 from app.cutout.pass2.semantic import SemanticProposalBackend
 from app.cutout.pass2.service_geometry import _GeometryHelpersMixin
-from app.cutout.pass2.service_semantic import _SemanticRecoveryMixin
+from app.cutout.pass2.service_semantic import _SemanticCandidateMixin
 from app.cutout.pass2.validator import DetachedObjectValidator
 from app.shared.errors import StageFailedError
 
 
-class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
-    """Detached-object recovery layer built around strict geometry preservation."""
+class Pass2CutoutService(_SemanticCandidateMixin, _GeometryHelpersMixin):
+    """Detached-object refinement layer built around strict geometry preservation."""
 
     _MAX_SECONDARIES = 4
     _MAX_ASSETS_PER_SCENE = 6
@@ -60,7 +60,7 @@ class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
             rows = by_scene[scene_id]
             unit_types = (scene_unit_types or {}).get(scene_id, [])
             # Scene-plan units are semantic hints, not a hard object-count ceiling.
-            # Pass 2's job is geometric recovery: if a truly detached object exists,
+            # Pass 2 extracts secondary detached objects: if one truly exists,
             # it should be available to Story/Motion even when authoring grouped the
             # scene into one semantic unit. Keep the global Story limit of six assets.
             scene_budget = max(0, self._MAX_ASSETS_PER_SCENE - len(rows))
@@ -175,7 +175,7 @@ class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
                 )
             ):
                 # A real exterior object can sit extremely close to the parent cluster.
-                # Recover it from its own hard core rather than lowering the global gap
+                # Extract it from its own hard core rather than lowering the global gap
                 # threshold and risking widespread over-segmentation.
                 extracted = self.extractor.extract_hard_core(rgba, candidate, protected)
 
@@ -206,7 +206,7 @@ class Pass2CutoutService(_SemanticRecoveryMixin, _GeometryHelpersMixin):
 
         remaining_slots = min(self._MAX_SECONDARIES, max_secondaries) - len(accepted_masks)
         if remaining_slots > 0 and self.semantic_backend is not None and self.mask_backend is not None:
-            semantic_masks = self._semantic_recovery(
+            semantic_masks = self._semantic_candidates(
                 asset=asset,
                 rgba=rgba,
                 dominant=dominant,

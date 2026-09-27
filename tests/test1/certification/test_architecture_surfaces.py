@@ -59,3 +59,49 @@ def test_refinement_consumer_has_no_canonical_mapping_access() -> None:
         and call.func.attr in {"get", "items", "keys", "values"}
         for call in calls
     )
+
+
+def test_recovery_architecture_cannot_be_reintroduced() -> None:
+    app_root = REPOSITORY_ROOT / "app"
+    assert not (app_root / "recovery").exists()
+
+    forbidden = {
+        "app.recovery",
+        "Stage.recovery",
+        "RecoveryManager",
+        "RecoveryDetector",
+        "RecoveryCandidateEvaluator",
+        "RecoveryRegistry",
+        "RecoveryHistory",
+        "recovery-history.jsonl",
+        "known-issues.json",
+        "recovered-video-",
+        "recovered-final-",
+        "strict_boundary_coverage",
+        "repair_motion_readability",
+    }
+    sources = {
+        path.relative_to(REPOSITORY_ROOT): path.read_text(encoding="utf-8")
+        for path in app_root.rglob("*.py")
+    }
+    violations = {
+        str(path): sorted(token for token in forbidden if token in source)
+        for path, source in sources.items()
+        if any(token in source for token in forbidden)
+    }
+    assert not violations
+
+    pipeline_tree = ast.parse(sources[Path("app/pipeline.py")])
+    pipeline_methods = {
+        node.name
+        for node in ast.walk(pipeline_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert not {name for name in pipeline_methods if name.startswith("_recover_")}
+
+    obsolete_terminology = {
+        str(path): "recovery"
+        for path, source in sources.items()
+        if "recovery" in source.lower()
+    }
+    assert not obsolete_terminology

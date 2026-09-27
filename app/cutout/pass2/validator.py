@@ -7,7 +7,7 @@ from app.cutout.pass2.models import CandidateProposal, DetachedDecision
 
 
 class DetachedObjectValidator:
-    """Fail-closed validator for *externally detached* object recovery.
+    """Fail-closed validator for *externally detached* object extraction.
 
     The key distinction is topological rather than semantic: a candidate may be a
     meaningful icon/person/card, but Pass 2 accepts it only when its surrounding free

@@ -8,8 +8,8 @@ from app.cutout.pass2.models import CandidateProposal, ProposalSource
 from app.cutout.pass2.semantic import SemanticDetection
 
 
-class _SemanticRecoveryMixin:
-    def _semantic_recovery(
+class _SemanticCandidateMixin:
+    def _semantic_candidates(
         self,
         *,
         asset: VisualAsset,

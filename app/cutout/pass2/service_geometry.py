@@ -86,7 +86,7 @@ class _GeometryHelpersMixin:
     @staticmethod
     def _candidate_allowed_for_target(candidate, shape: tuple[int, int], target_types: list[str]) -> bool:
         # Semantic target types influence ranking only. They must never suppress a
-        # geometrically detached object; this layer is product-wide object recovery.
+        # geometrically detached object; this is product-wide detached-object extraction.
         return True
 
     @staticmethod

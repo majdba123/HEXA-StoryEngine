@@ -7,7 +7,7 @@ from app.cutout.pass2.models import CandidateProposal, ExtractionResult
 
 
 class Pass1StyleExtractor:
-    """Recover a whole object on the parent canvas using Pass-1-style flood fill.
+    """Extract a whole object on the parent canvas using Pass-1-style flood fill.
 
     This never crops, resizes, or repositions output geometry. A local ROI is used only
     as an internal flood-fill workspace; the returned mask is always parent-canvas sized.

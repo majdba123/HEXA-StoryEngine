@@ -36,7 +36,7 @@ def _policy(
 FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "HEXA_ERROR": _policy(
         "HEXA_ERROR", "pipeline", FailureDisposition.FAIL_FAST,
-        "Generic HEXA failure is terminal and requires diagnosis rather than blind recovery",
+        "Generic HEXA failure is terminal and requires diagnosis",
     ),
     "DEPENDENCY_UNAVAILABLE": _policy(
         "DEPENDENCY_UNAVAILABLE", "input", FailureDisposition.FAIL_FAST,
@@ -44,11 +44,11 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
     ),
     "STAGE_FAILED": _policy(
         "STAGE_FAILED", "pipeline", FailureDisposition.FAIL_FAST,
-        "Unclassified stage failure must be diagnosed before a recovery is introduced",
+        "Unclassified stage failure must be diagnosed at its owner",
     ),
     "GENERATION_CANCELLED": _policy(
         "GENERATION_CANCELLED", "pipeline", FailureDisposition.FAIL_FAST,
-        "Explicit cancellation is terminal control flow and must never be recovered",
+        "Explicit cancellation is terminal control flow and must not be intercepted",
     ),
     "AUDIO_INPUT_MISSING": _policy(
         "AUDIO_INPUT_MISSING", "input", FailureDisposition.FAIL_FAST,
@@ -128,7 +128,7 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
     ),
     "FFMPEG_COMMAND_FAILED": _policy(
         "FFMPEG_COMMAND_FAILED", "render", FailureDisposition.FAIL_FAST,
-        "Unclassified FFmpeg command failure requires stderr diagnosis before recovery",
+        "Unclassified FFmpeg command failure requires stderr diagnosis",
     ),
     "RENDER_PROCESS_OS_ERROR": _policy(
         "RENDER_PROCESS_OS_ERROR", "render", FailureDisposition.FAIL_FAST,
@@ -240,7 +240,7 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "ASSET_WHITE_HALO",
         "cutout",
         FailureDisposition.PREVENT,
-        "Halo/ghost defects must fail extraction safety until candidate recovery is re-proven",
+        "Halo/ghost defects must fail extraction safety until a candidate fix is proven",
     ),
     "ELEMENT_APPEARS_TOO_EARLY": _policy(
         "ELEMENT_APPEARS_TOO_EARLY",

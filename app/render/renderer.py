@@ -19,7 +19,7 @@ from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 class FFmpegRenderer:
     """Parallel beat-segment renderer with deterministic concat.
 
-    Beat segments are encoded independently for bounded render cost and recovery. Visual
+    Beat segments are encoded independently for bounded render cost. Visual
     cutouts stay opaque while moving: alpha crossfades on a white canvas create the exact
     washed-out "ghost" silhouette that looks like a bad mask. Scene boundaries instead
     use a bounded opaque outgoing bridge behind crisp incoming artwork; explicit authored
