@@ -77,10 +77,13 @@ class TextPlacementDirector:
         preferred_zone: str | None,
         assets_by_id: dict[str, VisualAsset] | None = None,
         visible_end: float | None = None,
+        visual_visibility_resolved: bool = False,
     ) -> PlacementResult | None:
         anchor = self._anchor(cue, visual)
         asset_map = assets_by_id or {}
-        visible_items = self.visible_visual_items(
+        visible_items = (
+            list(visual.items) if visual is not None else []
+        ) if visual_visibility_resolved else self.visible_visual_items(
             beat=beat,
             visual=visual,
             visible_end=(visible_end if visible_end is not None else cue.spoken_end),

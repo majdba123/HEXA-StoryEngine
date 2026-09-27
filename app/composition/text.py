@@ -73,6 +73,7 @@ class TextCompositionPlanner:
                     preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
                     assets_by_id=assets_by_id,
                     visible_end=visible_end,
+                    visual_visibility_resolved=bool(motion_by_key),
                 )
                 if result is None:
                     continue

@@ -320,6 +320,36 @@ def test_text_director_and_authoring_qa_share_hard_overlap_contract() -> None:
     assert not contract.accepts(visual_overlap=0.012, text_overlap=0.0401)
 
 
+def test_final_motion_visibility_is_not_refiltered_by_story_windows(monkeypatch) -> None:
+    director = TextPlacementDirector()
+    visual = CompositionBeat(
+        beat_id="beat-001",
+        items=[
+            LayoutItem(
+                asset_id="final-visible",
+                x=0.5,
+                y=0.5,
+                width=0.98,
+                height=0.98,
+                z=20,
+            )
+        ],
+    )
+    monkeypatch.setattr(director, "visible_visual_items", lambda **_kwargs: [])
+
+    result = director.place(
+        beat=_beat(),
+        visual=visual,
+        cue=_cue("text-final-motion", "final motion", 0.5, 1.1),
+        concurrent_text=[],
+        preferred_zone=None,
+        visible_end=1.2,
+        visual_visibility_resolved=True,
+    )
+
+    assert result is None
+
+
 def test_director_never_prefers_text_overlap_above_shared_contract_when_legal_space_exists(
 ) -> None:
     director = TextPlacementDirector()
