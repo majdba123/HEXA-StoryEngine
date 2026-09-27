@@ -11787,3 +11787,109 @@ Do not spend the next sprint rebuilding QA/Recovery. First produce timestamped,
 evidence-based differences, then map each visual-quality gap to its true owner
 (Story/Choreography/Composition/Motion/Text/Render), implement generic improvements,
 and prove every change against Test1/Test2 plus fresh real renders.
+
+
+# STORY EVENT-CARRIER PRODUCTION FIX + REAL-CORPUS REGRESSION EXPANSION — 2026-09-27
+
+## Trigger
+
+A real HEXA.bat run of the accepted Script Kiddie Final Package failed at Story with
+`FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE`: 56 authored semantic events had no proven
+runtime carrier after Vision -> Pass1 -> Pass2.
+
+Exact reproduction on the certified `fd58d684...` source proved the failure was not
+Whisper/alignment drift: the same 56 events failed even with a deterministic transcript.
+
+## Root cause
+
+Strict semantic identity correctly abstained when authored visual locators were approximate
+rather than pixel-tight. The runtime cutouts existed, but Story only knew how to preserve an
+event through an existing trusted Story window or exact authored/runtime asset identity.
+That was too narrow for real Final Packages after cutout renaming/splitting.
+
+The fix preserves strict identity fail-closed behavior and adds event-carrier evidence only:
+
+- `FINAL_PACKAGE_REGION_CARRIER_PROXY`: an unresolved authored locator may carry an event
+  only when one eligible runtime visual covers the locator region sufficiently and beats the
+  runner-up by a conservative coverage margin.
+- `FINAL_PACKAGE_DEPENDENCY_CARRIER_PROXY`: a later authored event may reuse its explicit
+  dependency's carrier only when all available dependency evidence resolves to one runtime
+  carrier.
+- ambiguous/near-tie geometry still abstains;
+- background/decorative/non-independent assets remain ineligible;
+- no new cutout is invented;
+- semantic identity thresholds were not weakened.
+
+Production changes:
+
+- `app/story/identity.py`
+- `app/story/activation.py`
+- `app/choreography/relation_contract.py`
+
+Commits:
+
+- `719d16ac59ce37bc9d7a6282e5371d2c85fd8854` — [story] Preserve events on proven visual carriers
+- `49ba6a94f82bc7cc360450b6351e08e3f19c1bb6` — [test2] Cover proven event carrier variants
+- `6daf1852cb0ec0005cd55472636c9255fe872081` — [test2] Cover event carriers across planning layers
+- `9178ebf818d3c54cd3da93d6ebecb65c18dab4d7` — [tests] Format event carrier regression matrix
+
+## Regression expansion
+
+The suite gained 94 passing cases without removing existing regressions. New coverage
+includes:
+
+- locator coverage boundary behavior;
+- runner-up/margin ambiguity and exact ties;
+- 1/2/3/5 candidate carrier sets;
+- different locator positions and aspect shapes;
+- non-square canvases from 640x360 through 3840x2160;
+- Pass2-like parent/secondary-child competition;
+- ineligible/background/decorative rejection;
+- input-order determinism;
+- dense scenes with up to 19 explicit distractors and Story tests with up to 40;
+- reused-carrier chains from 1 through 12 authored events;
+- dependency chain, fan-out, diamond and multi-dependency topologies;
+- fast/normal/slow timing;
+- positive full planning propagation through Story -> Choreography -> Composition -> Motion
+  -> Text -> RenderPlan;
+- negative ambiguous cases that must fail closed at Story.
+
+## Real accepted corpus proof
+
+The four authoritative corrected Final Packages were materialized and run through their
+real scene-image structural path with Vision + Pass1 + Pass2 and planning to RenderPlan:
+
+- Black Hat: PASS; 40 scenes; Pass1 157; Pass2 179; missing semantic events 0.
+- White Hat: PASS; 35 scenes; Pass1 118; Pass2 133; missing semantic events 0.
+- Gray Hat: PASS; 35 scenes; Pass1 127; Pass2 153; missing semantic events 0.
+- Script Kiddie: PASS; 35 scenes; Pass1 114; Pass2 122; the previous 56 missing events are
+  now preserved; missing semantic events 0.
+
+Script Kiddie's real unresolved-locator family contained candidate cardinalities of
+1/2/3/5 and locator coverage ranging roughly from 0.14 to 1.0. Most cases were safely
+handled by region-carrier evidence; genuinely ambiguous cases remained fail-closed and
+were preserved only when a single explicit dependency carrier supplied proof.
+
+This is structural/planning certification to RenderPlan, not a claim of a fresh encoded
+production render for all four packages.
+
+## Exact-head CI proof
+
+GitHub V2 CI on `9178ebf818d3c54cd3da93d6ebecb65c18dab4d7`:
+
+- push #666: SUCCESS
+- PR #667: SUCCESS
+- Compile: PASS
+- Ruff: PASS — `All checks passed!`
+- Test1: `385 passed, 8 skipped, 4 warnings`
+- Full pytest: `974 passed, 8 skipped, 16 warnings`
+
+The previous full suite was 880 passing tests, so this sprint added 94 passing regression
+cases while keeping every previous passing test green.
+
+## Locked interpretation
+
+Do not turn this fix into permissive identity matching. Region/dependency carriers are
+event-execution evidence only. They must not promote ambiguous geometry into semantic
+identity, weaken strict binder thresholds, add package-specific IDs, or introduce Recovery,
+Pass3, or Layer3.
