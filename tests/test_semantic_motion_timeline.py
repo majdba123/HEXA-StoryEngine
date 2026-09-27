@@ -37,7 +37,8 @@ from app.motion.timing import (
     projected_motion_activity_px,
     semantic_readability_floor_px,
 )
-from app.qa import MotionInteractionQA, RenderedMotionQA
+from app.motion.interaction_contract import MotionInteractionContract as MotionInteractionQA
+from app.render.verification import EncodedMotionVerifier as RenderedMotionQA
 from app.shared.errors import StageFailedError
 from app.story.planner import StoryPlanner
 from app.story.windows import StoryAssetActivation

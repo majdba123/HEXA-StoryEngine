@@ -4,7 +4,7 @@ import pytest
 
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion import MotionPlanner
-from app.story.sync_qa import StorySyncQA
+from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
 from app.story.windows import StoryAssetActivation, schedule_windows
 
 

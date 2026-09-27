@@ -16,6 +16,10 @@ from app.motion.collision import fit_relation_collisions
 from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
+from app.motion.interaction_contract import MotionInteractionContract
+from app.motion.lifetime_contract import MotionLifetimeContract
+from app.motion.rhythm_contract import MotionRhythmContract
+from app.motion.story_sync_contract import StoryMotionContract
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
 from app.motion.rhythm import (
@@ -60,6 +64,10 @@ class MotionPlanner:
         self.event_flow = MotionEventFlowResolver()
         self.rhythm = ReferenceRhythmPolicy()
         self.continuity_contract = ContinuityContract()
+        self.interaction_contract = MotionInteractionContract()
+        self.rhythm_contract = MotionRhythmContract()
+        self.lifetime_contract = MotionLifetimeContract()
+        self.story_contract = StoryMotionContract()
 
     def plan(
         self,
@@ -637,6 +645,56 @@ class MotionPlanner:
                         beat=beat,
                     )
             previous_layout = layout
+        # Preserve Story's authored attention instant after later Motion enrichment
+        # replaces or density-normalizes the entry program payload.
+        normalized_cues: list[MotionCue] = []
+        for cue in cues:
+            params = dict(cue.params)
+            program_payload = params.get("program")
+            peak_time = params.get("semantic_peak_time")
+            if isinstance(program_payload, dict) and peak_time is not None and cue.end > cue.start:
+                try:
+                    peak_progress = (float(peak_time) - cue.start) / (cue.end - cue.start)
+                except (TypeError, ValueError, OverflowError):
+                    peak_progress = None
+                if peak_progress is not None:
+                    program_payload = dict(program_payload)
+                    program_payload["semantic_peak_progress"] = max(0.0, min(1.0, peak_progress))
+                    params["program"] = program_payload
+                    cue = cue.model_copy(update={"params": params})
+            normalized_cues.append(cue)
+        cues = normalized_cues
+
+        # Legacy/unit callers may omit materialized Pass2 assets. Production always
+        # supplies them; strict owner-boundary rejection applies to that complete path.
+        enforce_owned_boundary = bool(assets) and all(
+            asset.image_path.is_file() for asset in assets
+        )
+        interaction = self.interaction_contract.inspect(
+            story=beats,
+            motion=cues,
+            composition=composition,
+            choreography=choreography,
+        )
+        if enforce_owned_boundary:
+            self.interaction_contract.require(interaction)
+        rhythm = self.rhythm_contract.inspect(
+            story=beats,
+            motion=cues,
+            choreography=choreography,
+        )
+        if enforce_owned_boundary:
+            self.rhythm_contract.require(rhythm)
+        lifetime = self.lifetime_contract.inspect(
+            story=beats,
+            motion=cues,
+            choreography=choreography,
+        )
+        if enforce_owned_boundary:
+            self.lifetime_contract.require(lifetime)
+        sync = self.story_contract.inspect(story=beats, motion=cues)
+        if enforce_owned_boundary:
+            self.story_contract.require(sync)
         return cues
 
     @staticmethod

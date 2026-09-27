@@ -14,7 +14,7 @@ from app.models import (
 )
 from app.motion import MotionPlanner
 from app.motion.order import MotionOrderResolver
-from app.story.sync_qa import StorySyncQA
+from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
 from app.story.windows import schedule_windows
 
 

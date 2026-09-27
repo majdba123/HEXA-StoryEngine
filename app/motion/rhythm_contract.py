@@ -11,7 +11,7 @@ from app.motion.rhythm import (
     ReferenceRhythmPolicy,
     focus_progression_key,
 )
-from app.qa.failure_identity import violation_failure_details
+from app.shared.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -33,7 +33,7 @@ class ChoreographyRhythmReport:
         return not self.violations
 
 
-class ChoreographyRhythmQA:
+class MotionRhythmContract:
     """Validate global pacing/focus continuity before spending time on rendering.
 
     This validator intentionally consumes Motion's recorded rhythm contract rather than

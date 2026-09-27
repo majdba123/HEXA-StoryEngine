@@ -22,7 +22,7 @@ from app.models import (
     VisualAsset,
 )
 from app.motion import ReferenceMotionEnforcer
-from app.qa import AuthoringVisualQA
+from tests.legacy_quality.authoring_oracle import AuthoringVisualQA
 from app.shared.errors import StageFailedError
 
 

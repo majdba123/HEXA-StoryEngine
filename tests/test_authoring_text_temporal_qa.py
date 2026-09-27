@@ -9,7 +9,7 @@ from app.models import (
     TextPlan,
     Transcript,
 )
-from app.qa.authoring import AuthoringVisualQA
+from tests.legacy_quality.authoring_oracle import AuthoringVisualQA
 
 
 def _beat() -> StoryBeat:

@@ -16,7 +16,7 @@ from app.models import (
     StoryBeat,
     VisualAsset,
 )
-from app.qa import RenderedVisualQA
+from app.render.evidence import RenderedVisualEvidence as RenderedVisualQA
 from app.final import FinalMediaVerifier
 from app.render.renderer import FFmpegRenderer
 

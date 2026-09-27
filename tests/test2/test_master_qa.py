@@ -99,7 +99,7 @@ def test_master_qa_completion_gate_is_strict() -> None:
         for path, source in production_sources.items()
         if any(token in source for token in forbidden)
     }
-    assert violations == []
+    assert violations == {}
 
     # Encoded facts remain proof after FFmpeg; they are not pre-render QA.
     encoded_rules = [rule for rule in QUALITY_RULES if rule.kind == RuleKind.ENCODED_PROOF]

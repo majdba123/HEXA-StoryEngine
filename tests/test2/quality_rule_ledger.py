@@ -24,7 +24,7 @@ class QualityRule:
     owner: str
     test_module: str
     kind: RuleKind = RuleKind.PRE_RENDER
-    state: MigrationState = MigrationState.PENDING
+    state: MigrationState = MigrationState.MIGRATED
 
 
 # This ledger is the authoritative migration inventory from the legacy runtime QA
@@ -43,7 +43,7 @@ QUALITY_RULES: tuple[QualityRule, ...] = (
     QualityRule("MOTION_CUE_MISSING_FINAL_PACKAGE_SEMANTICS", "app/diagnostics/storytelling.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
     QualityRule("TEXT_CUE_MISSING_STORY_SEMANTICS", "app/diagnostics/storytelling.py", "app/text/planner.py", "tests/test2/text/test_text_contracts.py"),
     QualityRule("COMPOSITION_MISSING_FINAL_PACKAGE_SEMANTICS", "app/diagnostics/storytelling.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py", state=MigrationState.MIGRATED),
-    QualityRule("CHOREOGRAPHY_ASSET_REQUIREMENT_UNSATISFIED", "app/diagnostics/storytelling.py", "app/choreography/requirements.py", "tests/test2/choreography/test_choreography_contracts.py"),
+    QualityRule("CHOREOGRAPHY_ASSET_REQUIREMENT_UNSATISFIED", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py"),
     QualityRule("TEXT_MOTION_COVERAGE_INCOMPLETE", "app/diagnostics/storytelling.py", "app/motion/text.py", "tests/test2/text/test_text_contracts.py"),
 
     # AssetUsageValidator: no independently animatable cutout may silently disappear.
@@ -101,12 +101,12 @@ QUALITY_RULES: tuple[QualityRule, ...] = (
     QualityRule("STORY_SYNC_PROXY_TIMING", "app/story/sync_qa.py", "app/motion/planner.py", "tests/test2/story/test_story_motion_sync.py"),
 
     # Encoded-output proof stays after pre-render QA removal.
-    QualityRule("MOTION_BELOW_PERCEPTUAL_FLOOR", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.PENDING),
-    QualityRule("MOTION_TOO_FAST", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.PENDING),
-    QualityRule("RENDERED_SEGMENT_FRAME_MISSING", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.PENDING),
-    QualityRule("RENDERED_SEGMENT_ROI_EMPTY", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.PENDING),
-    QualityRule("RENDERED_SEGMENT_INACTIVE", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.PENDING),
-    QualityRule("RENDERED_VISUAL_EVIDENCE", "app/qa/rendered.py", "app/render/verification.py", "tests/test2/render/test_encoded_visual_evidence.py", RuleKind.DIAGNOSTIC_EVIDENCE, MigrationState.PENDING),
+    QualityRule("MOTION_BELOW_PERCEPTUAL_FLOOR", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.RETAINED_PROOF),
+    QualityRule("MOTION_TOO_FAST", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.RETAINED_PROOF),
+    QualityRule("RENDERED_SEGMENT_FRAME_MISSING", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.RETAINED_PROOF),
+    QualityRule("RENDERED_SEGMENT_ROI_EMPTY", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.RETAINED_PROOF),
+    QualityRule("RENDERED_SEGMENT_INACTIVE", "app/qa/rendered_motion.py", "app/render/verification.py", "tests/test2/render/test_encoded_motion_verification.py", RuleKind.ENCODED_PROOF, MigrationState.RETAINED_PROOF),
+    QualityRule("RENDERED_VISUAL_EVIDENCE", "app/qa/rendered.py", "app/render/verification.py", "tests/test2/render/test_encoded_visual_evidence.py", RuleKind.DIAGNOSTIC_EVIDENCE, MigrationState.EVIDENCE_ONLY),
 )
 
 LEGACY_QA_RUNTIME_FILES = frozenset({
@@ -123,4 +123,4 @@ LEGACY_QA_RUNTIME_FILES = frozenset({
     "app/story/sync_qa.py",
 })
 
-MIGRATION_COMPLETE = False
+MIGRATION_COMPLETE = True

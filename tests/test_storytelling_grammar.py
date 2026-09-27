@@ -1,5 +1,5 @@
 from app.choreography import ChoreographySequence, HookKind, VisualGrammarStage
-from app.diagnostics.storytelling import StorytellingValidator
+from tests.legacy_quality.storytelling_oracle import StorytellingValidator
 
 
 def _sequence(*stages: VisualGrammarStage, beat_count: int) -> ChoreographySequence:

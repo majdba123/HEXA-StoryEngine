@@ -7,7 +7,7 @@ from pathlib import Path
 from app.motion.continuity import ContinuityContract
 from app.models import CompositionBeat, MotionCue, StoryBeat
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
-from app.qa.failure_identity import violation_failure_details
+from app.shared.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -31,7 +31,7 @@ class SceneContinuityReport:
         return not self.violations
 
 
-class SceneContinuityQA:
+class RenderTransitionContract:
     """Validate scene-to-scene handoff contracts before FFmpeg rendering."""
 
     def __init__(self) -> None:

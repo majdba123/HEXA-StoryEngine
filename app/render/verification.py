@@ -18,7 +18,7 @@ from app.motion.timing import (
     semantic_readability_floor,
     semantic_readability_floor_px,
 )
-from app.qa.failure_identity import violation_failure_details
+from app.shared.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -63,7 +63,7 @@ class _RenderedEvidenceWork:
     best_ratio: float = 0.0
 
 
-class RenderedMotionQA:
+class EncodedMotionVerifier:
     """Verify that semantic Motion segments actually survive FFmpeg encoding.
 
     Structural QA proves the timeline is correct. This pass samples the encoded MP4 in
@@ -721,8 +721,8 @@ class RenderedMotionQA:
         expected_px: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         return (
-            RenderedMotionQA._crop(before, item=item, expected_px=expected_px),
-            RenderedMotionQA._crop(peak, item=item, expected_px=expected_px),
+            EncodedMotionVerifier._crop(before, item=item, expected_px=expected_px),
+            EncodedMotionVerifier._crop(peak, item=item, expected_px=expected_px),
         )
 
     @staticmethod

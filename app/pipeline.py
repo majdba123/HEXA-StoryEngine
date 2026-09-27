@@ -9,18 +9,8 @@ from app.choreography import ChoreographyDirector
 from app.assets import AssetManager
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
-from app.qa import (
-    AuthoringVisualQA,
-    ChoreographyRhythmQA,
-    MotionInteractionQA,
-    RenderedMotionQA,
-    RenderedVisualQA,
-    SceneContinuityQA,
-    SemanticLifetimeQA,
-)
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
-from app.diagnostics import AssetUsageValidator, StorytellingValidator
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter, FinalMediaVerifier
 from app.canonical import CanonicalNormalizer, CanonicalPackage
@@ -30,12 +20,14 @@ from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.render import RenderPlanner
+from app.render.evidence import RenderedVisualEvidence
+from app.render.verification import EncodedMotionVerifier
 from app.render.renderer import FFmpegRenderer
 from app.shared.errors import (
     GenerationCancelledError,
     StageFailedError,
 )
-from app.story import StoryPlanner, StorySyncQA
+from app.story import StoryPlanner
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
@@ -84,7 +76,6 @@ class StoryEnginePipeline:
             semantic_model_name=self.settings.semantic_text_model,
             semantic_model_required=self.settings.require_semantic_model,
         )
-        self.story_sync_qa = StorySyncQA()
         self.reference = ReferenceAnalyzer().analyze()
         self.asset_manager = AssetManager()
         self.director = VisualDirector(semantic_vlm)
@@ -95,13 +86,8 @@ class StoryEnginePipeline:
         self.motion = MotionPlanner()
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.text_motion = TextMotionPlanner()
-        self.authoring_qa = AuthoringVisualQA(self.reference.profile)
-        self.motion_interaction_qa = MotionInteractionQA()
-        self.choreography_rhythm_qa = ChoreographyRhythmQA()
-        self.scene_continuity_qa = SceneContinuityQA()
-        self.semantic_lifetime_qa = SemanticLifetimeQA()
-        self.rendered_motion_qa = RenderedMotionQA()
-        self.rendered_visual_qa = RenderedVisualQA(self.settings.ffmpeg_bin)
+        self.encoded_motion_verifier = EncodedMotionVerifier()
+        self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
         self.final = FinalExporter(self.settings.ffmpeg_bin)
@@ -239,85 +225,12 @@ class StoryEnginePipeline:
             f"Placed {len(text.cues)} text cues against final visual lifetimes",
         )
 
-        motion_interaction_report = self.motion_interaction_qa.inspect(
-            story=story,
-            motion=motion,
-            composition=composition,
-            choreography=choreography,
-        )
-        self.motion_interaction_qa.write(
-            motion_interaction_report,
-            workspace / "diagnostics" / "motion-interaction-qa.json",
-        )
-        self.motion_interaction_qa.require(motion_interaction_report)
-
-        rhythm_report = self.choreography_rhythm_qa.inspect(
-            story=story,
-            motion=motion,
-            choreography=choreography,
-        )
-        self.choreography_rhythm_qa.write(
-            rhythm_report,
-            workspace / "diagnostics" / "choreography-rhythm-qa.json",
-        )
-        self.choreography_rhythm_qa.require(rhythm_report)
-
-        lifetime_report = self.semantic_lifetime_qa.inspect(
-            story=story,
-            motion=motion,
-            choreography=choreography,
-        )
-        self.semantic_lifetime_qa.write(
-            lifetime_report,
-            workspace / "diagnostics" / "semantic-lifetime-qa.json",
-        )
-        self.semantic_lifetime_qa.require(lifetime_report)
-
-        sync_report = self.story_sync_qa.inspect(story=story, motion=motion)
-        self.story_sync_qa.write(
-            sync_report,
-            workspace / "diagnostics" / "story-sync-qa.json",
-        )
-        self.story_sync_qa.require(sync_report)
-
-        authoring_report = StorytellingValidator.validate(
-            package=package,
-            story=story,
-            choreography=choreography,
-            composition=composition,
-            motion=motion,
-            text=text,
-            text_motion=text_motion,
-        )
-        StorytellingValidator.write(
-            authoring_report,
-            workspace / "diagnostics" / "storytelling-authoring.json",
-        )
-        visual_report = self.authoring_qa.inspect(
-            transcript=transcript,
-            composition=composition,
-            motion=motion,
-            story=story,
-            text=text,
-            text_composition=text_composition,
-            assets=assets,
-        )
-        self.authoring_qa.write(
-            visual_report,
-            workspace / "diagnostics" / "authoring-visual-qa.json",
-        )
-        self.authoring_qa.require(visual_report, require_text=self.settings.require_text_layer)
         self._progress(
             progress,
             Stage.motion,
             0.67,
             (
-                "Authoring QA passed: "
-                f"{sync_report.anchored_assets} semantic sync anchors, "
-                f"{sync_report.fallback_assets} conservative fallbacks; "
-                f"{motion_interaction_report.checked_relations} relation timelines; "
-                f"{rhythm_report.checked_entry_cohorts} focus cohorts; "
-                "0 rhythm, visual layout, text layout, or short-motion violations"
+                "Owner contracts passed for Story, Composition, Motion, and Text"
             ),
         )
 
@@ -335,34 +248,22 @@ class StoryEnginePipeline:
             text_motion=text_motion,
         )
 
-        AssetUsageValidator.validate(plan)
-        continuity_report = self.scene_continuity_qa.inspect(
-            story=plan.story,
-            composition=plan.composition,
-            motion=plan.motion,
-        )
-        self.scene_continuity_qa.write(
-            continuity_report,
-            workspace / "diagnostics" / "scene-continuity-qa.json",
-        )
-        self.scene_continuity_qa.require(continuity_report)
-
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.76, "Rendering story")
         video_only = self.renderer.render(plan, workspace / "render" / "video-only.mp4")
-        rendered_motion_report = self.rendered_motion_qa.inspect(video=video_only, plan=plan)
-        self.rendered_motion_qa.write(
+        rendered_motion_report = self.encoded_motion_verifier.inspect(video=video_only, plan=plan)
+        self.encoded_motion_verifier.write(
             rendered_motion_report,
             workspace / "diagnostics" / "rendered-motion-qa.json",
         )
-        self.rendered_motion_qa.require(rendered_motion_report)
+        self.encoded_motion_verifier.require(rendered_motion_report)
 
         self._check_cancel(cancelled)
         output_file = self._output_path(package.package_id, output_name)
         self._progress(progress, Stage.final, 0.90, "Building final video")
         final_path = self.final.mux(video_only, audio_path, output_file)
         self.final_media.require(final_path, audio_path)
-        self.rendered_visual_qa.inspect(final_path, workspace / "diagnostics")
+        self.rendered_visual_evidence.inspect(final_path, workspace / "diagnostics")
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path

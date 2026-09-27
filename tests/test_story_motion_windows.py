@@ -10,7 +10,7 @@ from app.models import AssetActivation, CompositionBeat, LayoutItem, StoryBeat
 from app.motion import MotionPlanner
 from app.motion.timing import MotionTimingPolicy
 from app.render.motion import FFmpegMotionAdapter
-from app.story.sync_qa import StorySyncQA
+from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
 from app.story.windows import StoryAssetActivation
 
 

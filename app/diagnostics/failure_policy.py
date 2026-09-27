@@ -33,6 +33,14 @@ def _policy(
 
 
 FAILURE_POLICIES: dict[str, FailurePolicy] = {
+    "ASSET_REACHES_COMPOSITION": _policy(
+        "ASSET_REACHES_COMPOSITION", "composition", FailureDisposition.FAIL_FAST,
+        "Composition must preserve every independently animatable scene asset",
+    ),
+    "ASSET_ACCOUNTABILITY_INCOMPLETE": _policy(
+        "ASSET_ACCOUNTABILITY_INCOMPLETE", "render", FailureDisposition.FAIL_FAST,
+        "RenderPlan cannot accept an asset lost across Story, Composition, or Motion",
+    ),
     "HEXA_ERROR": _policy(
         "HEXA_ERROR", "pipeline", FailureDisposition.FAIL_FAST,
         "Generic HEXA failure is terminal and requires diagnosis",

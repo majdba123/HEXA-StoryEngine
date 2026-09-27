@@ -159,7 +159,7 @@ def test_director_uses_actual_alpha_footprint_for_negative_space(tmp_path) -> No
 def test_authoring_qa_checks_text_against_locked_visual_geometry(tmp_path) -> None:
     from PIL import Image, ImageDraw
     from app.models import TextCompositionBeat, TextLayoutItem, TextPlan, Transcript, VisualAsset
-    from app.qa import AuthoringVisualQA
+    from tests.legacy_quality.authoring_oracle import AuthoringVisualQA
 
     path = tmp_path / "opaque.png"
     image = Image.new("RGBA", (200, 200), (255, 255, 255, 0))
@@ -307,7 +307,7 @@ def test_director_ignores_later_semantic_visual_until_text_disappears(tmp_path) 
 
 
 def test_text_director_and_authoring_qa_share_hard_overlap_contract() -> None:
-    from app.qa import AuthoringVisualQA
+    from tests.legacy_quality.authoring_oracle import AuthoringVisualQA
 
     contract = TextLayoutContract()
     director = TextPlacementDirector()
@@ -315,8 +315,14 @@ def test_text_director_and_authoring_qa_share_hard_overlap_contract() -> None:
 
     assert director.contract == contract
     assert qa.text_layout_contract == contract
-    assert contract.accepts(visual_overlap=0.012, text_overlap=0.04)
-    assert not contract.accepts(visual_overlap=0.0121, text_overlap=0.04)
+    assert contract.accepts(
+        visual_overlap=contract.max_visual_overlap,
+        text_overlap=contract.max_text_overlap,
+    )
+    assert not contract.accepts(
+        visual_overlap=contract.max_visual_overlap + 0.0001,
+        text_overlap=contract.max_text_overlap,
+    )
     assert not contract.accepts(visual_overlap=0.012, text_overlap=0.0401)
 
 

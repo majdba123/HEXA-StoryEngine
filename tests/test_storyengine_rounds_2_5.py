@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
-from app.diagnostics import StorytellingValidator
+from tests.legacy_quality.storytelling_oracle import StorytellingValidator
 from app.models import (
     PackageModel,
     SceneSource,

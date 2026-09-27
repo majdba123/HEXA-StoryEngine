@@ -23,7 +23,7 @@ from app.models import (
     VisualAsset,
 )
 from app.motion.timing import GOLDEN_MINOR
-from app.qa import SceneContinuityQA
+from app.render.transition_contract import RenderTransitionContract as SceneContinuityQA
 from app.final import FinalMediaVerifier
 from app.shared.errors import StageFailedError
 from app.render.renderer import FFmpegRenderer

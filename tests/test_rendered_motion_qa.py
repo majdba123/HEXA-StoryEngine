@@ -24,7 +24,7 @@ from app.motion.timing import (
     semantic_readability_floor,
     semantic_readability_floor_px,
 )
-from app.qa import RenderedMotionQA
+from app.render.verification import EncodedMotionVerifier as RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
 
 

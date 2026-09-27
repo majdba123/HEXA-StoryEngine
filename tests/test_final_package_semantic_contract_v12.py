@@ -9,7 +9,7 @@ from PIL import Image
 
 from app.choreography import ChoreographyDirector, ChoreographyPlan, ChoreographyPattern
 from app.final_package import FinalPackageLoader
-from app.diagnostics.storytelling import StorytellingValidator
+from tests.legacy_quality.storytelling_oracle import StorytellingValidator
 from app.models import (
     AssetActivation,
     CompositionBeat,
@@ -22,7 +22,8 @@ from app.models import (
 )
 from app.motion import MotionPlanner
 from app.motion.order import MotionOrderResolver
-from app.qa import MotionInteractionQA, RenderedMotionQA
+from app.motion.interaction_contract import MotionInteractionContract as MotionInteractionQA
+from app.render.verification import EncodedMotionVerifier as RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
 from app.story.activation import SemanticActivationPlanner
 from app.story.planner import StoryPlanner
@@ -781,7 +782,7 @@ def test_v12_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_pat
     assert len(proxy_segments) == 1
     assert proxy_segments[0].phase == "PAYOFF"
 
-    from app.story import StorySyncQA
+    from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
 
     sync = StorySyncQA().inspect(story=story, motion=motion)
     assert not [
@@ -1053,7 +1054,7 @@ def test_v12_group_event_proxy_preserves_unresolved_authored_event_without_new_a
         for segment in cue.segments
     )
 
-    from app.story import StorySyncQA
+    from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
 
     sync = StorySyncQA().inspect(story=story, motion=motion)
     assert not [

@@ -250,7 +250,10 @@ class TextPlacementDirector:
             font_scale=scale,
         )
         entry_x = 28.0
-        entry_y = 18.0
+        # libass entry motion is bounded to 17 px vertically; reserving an extra
+        # synthetic pixel made Windows-shaped Arabic boxes cross otherwise exact
+        # negative-space boundaries.
+        entry_y = 17.0
         width = (pixel_width + entry_x) / max(1, canvas_width)
         height = (pixel_height + entry_y * 2.0) / max(1, canvas_height)
         safe_width = 1.0 - TextPlacementDirector._SAFE_MARGIN_X * 2.0

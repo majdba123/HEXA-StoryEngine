@@ -124,6 +124,14 @@ class MotionCompiler:
             payload["keyframes"] = frames
             payload["settle_progress"] = settle_progress
             if window.semantic_peak is not None:
+                authored_peak_progress = (
+                    (float(window.semantic_peak) - float(window.start))
+                    / max(1e-9, float(window.end) - float(window.start))
+                )
+                payload["semantic_peak_progress"] = max(
+                    0.0,
+                    min(float(settle_progress), authored_peak_progress),
+                )
                 params["semantic_peak_time"] = window.semantic_peak
         return MotionCue(
             beat_id=beat.id,

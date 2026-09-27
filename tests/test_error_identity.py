@@ -1,8 +1,8 @@
 import pytest
 
-from app.qa.failure_identity import violation_failure_details
-from app.qa.motion_semantics import (
-    MotionInteractionQA,
+from app.shared.failure_identity import violation_failure_details
+from app.motion.interaction_contract import (
+    MotionInteractionContract as MotionInteractionQA,
     MotionInteractionReport,
     MotionInteractionViolation,
 )

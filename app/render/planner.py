@@ -15,6 +15,7 @@ from app.models import (
     VisualAsset,
 )
 from app.shared.errors import StageFailedError
+from app.render.transition_contract import RenderTransitionContract
 
 
 class RenderPlanner:
@@ -42,6 +43,12 @@ class RenderPlanner:
             text_motion=text_motion or [],
         )
         self._require_executable(plan)
+        transition = RenderTransitionContract().inspect(
+            story=plan.story,
+            composition=plan.composition,
+            motion=plan.motion,
+        )
+        RenderTransitionContract.require(transition)
         path = workspace / "render-plan.json"
         path.write_text(
             json.dumps(plan.model_dump(mode="json"), ensure_ascii=False, indent=2),
@@ -97,3 +104,21 @@ class RenderPlanner:
                         "asset_id": cue.asset_id,
                     },
                 )
+        eligible = {asset.id for asset in plan.assets if asset.can_animate_independently}
+        story_ids = {
+            asset_id
+            for beat in plan.story
+            for asset_id in (*beat.primary_asset_ids, *beat.support_asset_ids)
+        }
+        composition_ids = {item.asset_id for beat in plan.composition for item in beat.items}
+        motion_ids = {cue.asset_id for cue in plan.motion}
+        missing = {
+            "story": sorted(eligible - story_ids),
+            "composition": sorted(eligible - composition_ids),
+            "motion": sorted(eligible - motion_ids),
+        }
+        if any(missing.values()):
+            raise StageFailedError(
+                "Independently animatable assets were dropped before RenderPlan",
+                details={"code": "ASSET_ACCOUNTABILITY_INCOMPLETE", **missing},
+            )

@@ -7,7 +7,10 @@ from dataclasses import dataclass
 class TextLayoutContract:
     """Composition-owned hard acceptance limits for authored text placement."""
 
-    max_visual_overlap: float = 0.012
+    # Keep glyph boxes effectively clear of occupied artwork across platform font
+    # metrics. A one-per-mille allowance absorbs raster rounding without permitting
+    # readable text to sit on the authored visual.
+    max_visual_overlap: float = 0.001
     max_text_overlap: float = 0.04
 
     def accepts(self, *, visual_overlap: float, text_overlap: float) -> bool:

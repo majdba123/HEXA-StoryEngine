@@ -16,7 +16,7 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, St
 from app.motion import MotionPlanner
 from app.motion.event_flow import MotionEventFlowResolver
 from app.motion.lifetime import SemanticVisualLifetimeIndex
-from app.qa.semantic_lifetime import SemanticLifetimeQA
+from app.motion.lifetime_contract import MotionLifetimeContract as SemanticLifetimeQA
 from app.story.windows import StoryAssetActivation
 
 

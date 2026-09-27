@@ -13,7 +13,7 @@ def violation_failure_details(
     *,
     aggregate_code: str,
 ) -> dict[str, object]:
-    """Return deterministic top-level identity for strict QA failures.
+    """Return deterministic top-level identity for strict owner-contract failures.
 
     A single failure class is surfaced unchanged so diagnostics and API callers can
     route it directly. Mixed failure classes keep their individual identities while
@@ -27,7 +27,7 @@ def violation_failure_details(
             if str(getattr(row, "code", "")).strip()
         }
     )
-    normalized_aggregate = str(aggregate_code).strip() or "QA_CONTRACT_VIOLATIONS"
+    normalized_aggregate = str(aggregate_code).strip() or "OWNER_CONTRACT_VIOLATIONS"
     effective_code = codes[0] if len(codes) == 1 else normalized_aggregate
     return {
         "code": effective_code,

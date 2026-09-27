@@ -12,7 +12,7 @@ from app.choreography.relation_contract import (
 )
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion.collision import authored_overlap_ratio, max_relation_overlap
-from app.qa.failure_identity import violation_failure_details
+from app.shared.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -36,7 +36,7 @@ class MotionInteractionReport:
         return not self.violations
 
 
-class MotionInteractionQA:
+class MotionInteractionContract:
     """Validate the semantic behavior Motion must express, not just metadata presence."""
 
     def inspect(

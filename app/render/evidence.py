@@ -13,7 +13,7 @@ class RenderedVisualReport:
     sampled: bool
 
 
-class RenderedVisualQA:
+class RenderedVisualEvidence:
     """Generate lightweight post-render visual evidence without re-encoding the final."""
 
     def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:

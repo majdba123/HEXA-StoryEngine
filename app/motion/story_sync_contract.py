@@ -49,7 +49,7 @@ class StorySyncReport:
         return not self.violations
 
 
-class StorySyncQA:
+class StoryMotionContract:
     """Verify that Story semantic anchors survive the Motion planning boundary."""
 
     _SYNC_TOLERANCE_SECONDS = 0.050
@@ -651,7 +651,8 @@ class StorySyncQA:
         """Return the real visual-attention peak nearest Story's authored peak.
 
         A cue can legitimately contain an arrival plus one or more explicit semantic
-        phases. StorySync validates the *visible* focus moment, while MotionInteractionQA
+        phases. The Story/Motion contract validates the *visible* focus moment, while the
+        interaction contract
         separately validates semantic ownership. Considering both ENTRY and semantic
         segments prevents two opposite mistakes: treating a clean ENTRY as the action
         when INTERACT/REACT/PAYOFF is closer, or forcing a later relation pulse to own
@@ -707,19 +708,24 @@ class StorySyncQA:
             )
             candidates.append((abs(peak - expected_peak), ownership_rank, peak))
 
+        authored_program = cue.params.get("program")
         base_peak = cls._program_peak_time(
-            program_payload={
-                "semantic_peak_progress": None,
-                "keyframes": [
-                    {
-                        "progress": row.progress,
-                        "dx": row.dx,
-                        "dy": row.dy,
-                        "scale": row.scale,
-                    }
-                    for row in fallback_program.keyframes
-                ],
-            },
+            program_payload=(
+                authored_program
+                if isinstance(authored_program, dict)
+                else {
+                    "semantic_peak_progress": None,
+                    "keyframes": [
+                        {
+                            "progress": row.progress,
+                            "dx": row.dx,
+                            "dy": row.dy,
+                            "scale": row.scale,
+                        }
+                        for row in fallback_program.keyframes
+                    ],
+                }
+            ),
             start=float(cue.start),
             end=float(cue.end),
         )

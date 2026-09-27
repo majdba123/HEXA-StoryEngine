@@ -8,7 +8,7 @@ from app.choreography import ChoreographyPlan
 from app.models import MotionCue, StoryBeat
 from app.motion.event_flow import MotionEventFlowResolver
 from app.motion.lifetime import SemanticVisualLifetimeIndex
-from app.qa.failure_identity import violation_failure_details
+from app.shared.failure_identity import violation_failure_details
 from app.shared.errors import StageFailedError
 
 
@@ -33,7 +33,7 @@ class SemanticLifetimeReport:
         return not self.violations
 
 
-class SemanticLifetimeQA:
+class MotionLifetimeContract:
     """Reject terminal releases that precede proven future semantic use."""
 
     def __init__(self) -> None:
