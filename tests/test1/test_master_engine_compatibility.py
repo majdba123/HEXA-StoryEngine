@@ -3,13 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from app.canonical import CanonicalNormalizer
-from app.choreography import ChoreographyDirector
-from app.composition import CompositionPlanner
-from app.motion import MotionPlanner
-from app.render import RenderPlanner
-from app.story import StoryPlanner
-from app.text import TextPlanner
 from tests.test1.canonical import test_authority as authority_tests
 from tests.test1.canonical import test_normalizer as normalizer_tests
 from tests.test1.certification import test_canonical_correctness as correctness_tests
