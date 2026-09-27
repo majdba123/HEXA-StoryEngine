@@ -1,6 +1,5 @@
-from app.motion.interaction_contract import MotionInteractionContract
-from app.motion.planner import MotionPlanner
+from app.motion import MotionPlanner
 
 
-def test_motion_owner_exposes_contract_before_output_leaves_layer() -> None:
-    assert isinstance(MotionPlanner().interaction_contract, MotionInteractionContract)
+def test_motion_interaction_has_no_post_build_runtime_validator() -> None:
+    assert not hasattr(MotionPlanner(), "interaction_contract")

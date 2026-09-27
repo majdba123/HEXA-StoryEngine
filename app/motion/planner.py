@@ -16,8 +16,6 @@ from app.motion.collision import fit_relation_collisions
 from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
-from app.motion.interaction_contract import MotionInteractionContract
-from app.motion.story_sync_contract import StoryMotionContract
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
 from app.motion.rhythm import (
@@ -62,8 +60,6 @@ class MotionPlanner:
         self.event_flow = MotionEventFlowResolver()
         self.rhythm = ReferenceRhythmPolicy()
         self.continuity_contract = ContinuityContract()
-        self.interaction_contract = MotionInteractionContract()
-        self.story_contract = StoryMotionContract()
 
     def plan(
         self,
@@ -661,22 +657,6 @@ class MotionPlanner:
             normalized_cues.append(cue)
         cues = normalized_cues
 
-        # Legacy/unit callers may omit materialized Pass2 assets. Production always
-        # supplies them; strict owner-boundary rejection applies to that complete path.
-        enforce_owned_boundary = bool(assets) and all(
-            asset.image_path.is_file() for asset in assets
-        )
-        interaction = self.interaction_contract.inspect(
-            story=beats,
-            motion=cues,
-            composition=composition,
-            choreography=choreography,
-        )
-        if enforce_owned_boundary:
-            self.interaction_contract.require(interaction)
-        sync = self.story_contract.inspect(story=beats, motion=cues)
-        if enforce_owned_boundary:
-            self.story_contract.require(sync)
         return cues
 
     @staticmethod

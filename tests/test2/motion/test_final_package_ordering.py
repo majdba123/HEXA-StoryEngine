@@ -15,7 +15,7 @@ from app.models import (
 )
 from app.motion import MotionPlanner
 from app.motion.order import MotionOrderResolver
-from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
+from tests.test2.support.story_sync_oracle import StoryMotionContract as StorySyncQA
 from app.story.windows import schedule_windows
 
 

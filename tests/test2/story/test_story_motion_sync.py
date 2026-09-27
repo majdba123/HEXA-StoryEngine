@@ -1,6 +1,5 @@
-from app.motion.planner import MotionPlanner
-from app.motion.story_sync_contract import StoryMotionContract
+from app.motion import MotionPlanner
 
 
-def test_story_motion_sync_is_an_owned_motion_boundary() -> None:
-    assert isinstance(MotionPlanner().story_contract, StoryMotionContract)
+def test_story_motion_sync_has_no_post_build_runtime_validator() -> None:
+    assert not hasattr(MotionPlanner(), "story_contract")

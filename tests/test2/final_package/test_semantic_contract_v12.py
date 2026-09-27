@@ -23,7 +23,7 @@ from app.models import (
 )
 from app.motion import MotionPlanner
 from app.motion.order import MotionOrderResolver
-from app.motion.interaction_contract import MotionInteractionContract as MotionInteractionQA
+from tests.test2.support.interaction_oracle import MotionInteractionContract as MotionInteractionQA
 from app.render.verification import EncodedMotionVerifier as RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
 from app.story.activation import SemanticActivationPlanner
@@ -783,7 +783,7 @@ def test_v12_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_pat
     assert len(proxy_segments) == 1
     assert proxy_segments[0].phase == "PAYOFF"
 
-    from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
+    from tests.test2.support.story_sync_oracle import StoryMotionContract as StorySyncQA
 
     sync = StorySyncQA().inspect(story=story, motion=motion)
     assert not [
@@ -1055,7 +1055,7 @@ def test_v12_group_event_proxy_preserves_unresolved_authored_event_without_new_a
         for segment in cue.segments
     )
 
-    from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
+    from tests.test2.support.story_sync_oracle import StoryMotionContract as StorySyncQA
 
     sync = StorySyncQA().inspect(story=story, motion=motion)
     assert not [

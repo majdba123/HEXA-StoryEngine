@@ -12,7 +12,7 @@ from app.models import AssetActivation, CompositionBeat, LayoutItem, StoryBeat
 from app.motion import MotionPlanner
 from app.motion.timing import MotionTimingPolicy
 from app.render.motion import FFmpegMotionAdapter
-from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
+from tests.test2.support.story_sync_oracle import StoryMotionContract as StorySyncQA
 from app.story.windows import StoryAssetActivation
 
 

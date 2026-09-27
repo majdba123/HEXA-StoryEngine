@@ -14,7 +14,7 @@ from app.choreography import (
 from app.choreography.event_flow import SemanticEventFlowPlanner
 from app.models import CompositionBeat, LayoutItem, SemanticEventProxy, StoryBeat
 from app.motion import MotionPlanner
-from app.motion.story_sync_contract import StoryMotionContract as StorySyncQA
+from tests.test2.support.story_sync_oracle import StoryMotionContract as StorySyncQA
 from app.story.windows import StoryAssetActivation
 
 

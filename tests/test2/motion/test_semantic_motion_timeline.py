@@ -38,7 +38,7 @@ from app.motion.timing import (
     projected_motion_activity_px,
     semantic_readability_floor_px,
 )
-from app.motion.interaction_contract import MotionInteractionContract as MotionInteractionQA
+from tests.test2.support.interaction_oracle import MotionInteractionContract as MotionInteractionQA
 from app.render.verification import EncodedMotionVerifier as RenderedMotionQA
 from app.shared.errors import StageFailedError
 from app.story.planner import StoryPlanner

@@ -2,7 +2,7 @@ import pytest
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from app.shared.failure_identity import violation_failure_details
-from app.motion.interaction_contract import (
+from tests.test2.support.interaction_oracle import (
     MotionInteractionContract as MotionInteractionQA,
     MotionInteractionReport,
     MotionInteractionViolation,
