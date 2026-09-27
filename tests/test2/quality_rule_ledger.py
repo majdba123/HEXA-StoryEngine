@@ -42,18 +42,18 @@ QUALITY_RULES: tuple[QualityRule, ...] = (
     QualityRule("MOTION_ONLY_HOOK_PRESENT", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py"),
     QualityRule("MOTION_CUE_MISSING_FINAL_PACKAGE_SEMANTICS", "app/diagnostics/storytelling.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
     QualityRule("TEXT_CUE_MISSING_STORY_SEMANTICS", "app/diagnostics/storytelling.py", "app/text/planner.py", "tests/test2/text/test_text_contracts.py"),
-    QualityRule("COMPOSITION_MISSING_FINAL_PACKAGE_SEMANTICS", "app/diagnostics/storytelling.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py"),
+    QualityRule("COMPOSITION_MISSING_FINAL_PACKAGE_SEMANTICS", "app/diagnostics/storytelling.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("CHOREOGRAPHY_ASSET_REQUIREMENT_UNSATISFIED", "app/diagnostics/storytelling.py", "app/choreography/requirements.py", "tests/test2/choreography/test_choreography_contracts.py"),
     QualityRule("TEXT_MOTION_COVERAGE_INCOMPLETE", "app/diagnostics/storytelling.py", "app/motion/text.py", "tests/test2/text/test_text_contracts.py"),
 
     # AssetUsageValidator: no independently animatable cutout may silently disappear.
     QualityRule("ASSET_REACHES_STORY", "app/diagnostics/asset_usage.py", "app/story/planner.py", "tests/test2/story/test_story_contracts.py", state=MigrationState.MIGRATED),
-    QualityRule("ASSET_REACHES_COMPOSITION", "app/diagnostics/asset_usage.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py"),
+    QualityRule("ASSET_REACHES_COMPOSITION", "app/diagnostics/asset_usage.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("ASSET_REACHES_MOTION", "app/diagnostics/asset_usage.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
 
     # AuthoringVisualQA.
     QualityRule("TEXT_LAYER_MISSING", "app/qa/authoring.py", "app/text/planner.py", "tests/test2/text/test_text_contracts.py"),
-    QualityRule("LAYOUT_REFERENCE_VIOLATION", "app/qa/authoring.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py"),
+    QualityRule("LAYOUT_REFERENCE_VIOLATION", "app/qa/authoring.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("TEXT_LAYOUT_REFERENCE_VIOLATION", "app/qa/authoring.py", "app/composition/text.py", "tests/test2/text/test_text_contracts.py"),
     QualityRule("MOTION_REFERENCE_VIOLATION", "app/qa/authoring.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
 

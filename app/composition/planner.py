@@ -6,6 +6,7 @@ from app.choreography import ChoreographyPlan
 from app.director import SceneDirection
 from app.layout import ConstraintLayoutSolver
 from app.models import CompositionBeat, LayoutItem, StoryBeat, VisualAsset
+from app.shared.errors import StageFailedError
 
 from .geometry import AuthoredGeometryMapper
 from .states import CompositionStateDirector
@@ -55,7 +56,48 @@ class CompositionPlanner:
         # changing x/y/width/height. The solver likewise treats authored geometry as a
         # lock and only repairs legacy/fallback items lacking source geometry.
         directed = self.states.apply(beats, output, choreography)
-        return [self.solver.solve(layout, all_assets) for layout in directed]
+        solved = [self.solver.solve(layout, all_assets) for layout in directed]
+        self._require_owned_contracts(beats=beats, layouts=solved, assets=all_assets)
+        return solved
+
+    def _require_owned_contracts(
+        self,
+        *,
+        beats: list[StoryBeat],
+        layouts: list[CompositionBeat],
+        assets: list[VisualAsset],
+    ) -> None:
+        """Refuse a Composition result that loses assets or violates source geometry."""
+        assets_by_scene: dict[str, set[str]] = defaultdict(set)
+        by_id = {asset.id: asset for asset in assets}
+        for asset in assets:
+            if asset.can_animate_independently:
+                assets_by_scene[asset.scene_id].add(asset.id)
+
+        layout_by_beat = {layout.beat_id: layout for layout in layouts}
+        for beat in beats:
+            layout = layout_by_beat.get(beat.id)
+            actual = {item.asset_id for item in layout.items} if layout else set()
+            missing = sorted(assets_by_scene.get(beat.scene_id, set()) - actual)
+            if missing:
+                raise StageFailedError(
+                    "Composition dropped independently animatable assets",
+                    details={
+                        "code": "ASSET_REACHES_COMPOSITION",
+                        "beat_id": beat.id,
+                        "asset_ids": missing,
+                    },
+                )
+            violations = self.solver.inspect(layout.items if layout else [], by_id)
+            if violations:
+                raise StageFailedError(
+                    "Composition produced geometry outside the authored layout contract",
+                    details={
+                        "code": "LAYOUT_REFERENCE_VIOLATION",
+                        "beat_id": beat.id,
+                        "violations": violations[:20],
+                    },
+                )
 
     def _scene_layout(self, assets: list[VisualAsset]) -> list[LayoutItem]:
         if not assets:
