@@ -11594,3 +11594,196 @@ external Black/White/Gray/Script Kiddie source roots are not present in this che
 Old `.hexa/work` outputs are not treated as original corpus inputs, so no fresh
 real-corpus PASS is claimed.
 
+
+
+# INDEPENDENT QA/RECOVERY CLOSURE AUDIT + MONTAGE QUALITY HANDOFF — 2026-09-27
+
+## Independent audit source
+
+Branch: `montage`
+
+Audited behavior/test HEAD:
+
+- `fd58d6846b1ab2b296e349f129dae2360a528963`
+- message: `[continuity] Close owner internalization sprint`
+
+This section records an independent post-closure review of the production architecture,
+the rule ledger, the Test1/Test2 structure, and exact-head CI before beginning the next
+phase: perceptual montage-quality tuning against the saved reference videos.
+
+## Architecture closure confirmed
+
+Production source at the audited HEAD has:
+
+- no `app/recovery/`;
+- no `app/qa/`;
+- no `Stage.recovery`, `_recover_*`, Recovery manager/detector/evaluator/history,
+  recovered-output path, or strict recovery render mode;
+- no runtime imports of the removed QA classes;
+- no StorySyncQA, StorytellingValidator, AssetUsageValidator, AuthoringVisualQA,
+  MotionInteractionQA, ChoreographyRhythmQA, SemanticLifetimeQA, SceneContinuityQA,
+  RenderedMotionQA, or RenderedVisualQA in `app/`.
+
+The production pipeline is now owner-construction first:
+
+Final Package -> Canonical -> Transcription -> Vision -> Pass1 -> Pass2 -> Story ->
+Choreography -> Text -> Composition -> Motion -> RenderPlan -> FFmpeg Render -> Final.
+
+There is no generic post-build semantic QA or Recovery loop in that path.
+
+Encoded facts that only exist after FFmpeg remain intentionally outside the pre-render
+owner model:
+
+- encoded motion evidence -> `app/render/verification.py`;
+- rendered visual evidence -> `app/render/evidence.py`;
+- final media decode/probe, stream presence, A/V timing and final-media integrity ->
+  `app/final/verification.py`.
+
+These are proof of the produced media, not a resurrected QA or repair layer.
+
+## Quality-rule ledger confirmed
+
+`tests/test2/quality_rule_ledger.py` is complete at the audited HEAD:
+
+- total historical rules: 61
+- migrated pre-render owner rules: 55
+- retained encoded proof rules: 5
+- diagnostic evidence rules: 1
+- pending: 0
+- `MIGRATION_COMPLETE = True`
+
+The strict Master gate passes and asserts that the old runtime QA surfaces are physically
+absent, production no longer imports the removed validators, and encoded-only rules still
+belong to Render verification.
+
+Important interpretation: the Master gate is the migration/accountability guard. Semantic
+confidence is supplied by the owner-scoped Test2 suites plus Test1 generated/system
+coverage; the Master file by itself is not a substitute for those behavioral tests.
+
+## Test architecture confirmed
+
+`tests/` is organized around Test1 + Test2 only.
+
+Test2 is owner-scoped across Final Package, Vision, Pass1, Pass2, Story, Choreography,
+Composition, Motion, Text, Render, Final, integration, and pipeline boundaries. Historical
+invalid-output oracles remain test-only under `tests/test2/support/`; production never
+executes them.
+
+Test1 remains system/architecture certification. The current continuity record documents
+a deterministic 100-seed generated package matrix and representative topology coverage
+including minimal, dense-20, branch/reuse, simultaneous groups, Arabic/compound,
+numeric/persistent, transform, and ambiguous/support/parent-binding cases through
+RenderPlan. Cross-package state-isolation coverage remains present.
+
+Known generated regressions discovered during migration were converted into permanent
+owner regressions rather than seed-specific production branches. In particular, Motion's
+proxy-visible target-reaction timing and later semantic-peak preservation failures were
+fixed in owner construction.
+
+## Exact-head verification
+
+GitHub V2 CI on the audited HEAD:
+
+- run: `36321220905`
+- conclusion: SUCCESS
+- compile: PASS
+- Ruff/Lint: PASS — `All checks passed!`
+- Test1: `385 passed, 8 skipped, 4 warnings`
+- full pytest: `880 passed, 8 skipped, 16 warnings`
+- tested-source artifact upload: PASS
+
+Independent source-artifact inspection also confirmed:
+
+- `app/qa/`: absent
+- `app/recovery/`: absent
+- forbidden legacy QA/Recovery production references: zero
+- root legacy `tests/test_*.py`: zero
+- Master QA completion test: PASS
+- ledger count: 61 = 55 migrated + 5 retained proof + 1 evidence-only; pending zero
+
+The CI source artifact omits the repository's frozen V7 checkpoint directory, so a
+standalone artifact-only Test2 replay cannot execute the two checkpoint identity tests;
+the exact repository CI above includes the repository checkpoint and is the authoritative
+full-suite result.
+
+## Real-environment corpus status
+
+The repository continuity run itself could not claim fresh Black/White/Gray/Script Kiddie
+corpus execution because those external package roots are not committed in the checkout.
+
+After that closure, the user reports running the four accepted Final Packages in the real
+production environment with strong tests and successful renders. Treat that as real-user
+environment evidence, but do not rewrite it as independently reproduced repository
+evidence unless the corresponding packages/logs/videos are supplied to the reviewing
+conversation.
+
+Accepted real corpus names remain:
+
+- Black Hat
+- White Hat
+- Gray Hat
+- Script Kiddie
+
+## Locked architecture for the next phase
+
+Correctness architecture is considered closed unless new evidence demonstrates a real
+contract regression.
+
+Do not reintroduce:
+
+- Recovery
+- runtime pre-render QA
+- Pass3 / Layer3
+- package-name branches
+- seed-specific production fixes
+- threshold weakening merely to pass tests
+
+Keep:
+
+- Pass1 + Pass2 only
+- Final Package semantic authority
+- owner-layer construction contracts
+- Test1 generated/system certification
+- Test2 owner regressions + Master migration gate
+- post-FFmpeg encoded/final media proof
+
+## Next phase: perceptual montage-quality tuning
+
+The next workstream is no longer architecture cleanup. It is visual/montage quality.
+
+Use the videos produced by the engine and compare them directly against the saved reference
+videos. Review actual frames and timing rather than inferring quality from planning
+metadata alone.
+
+Primary review dimensions:
+
+- semantic reveal order and focus hierarchy
+- one-idea-at-a-time visual attention
+- entry/hold/react/settle/exit timing
+- motion amplitude, easing and perceptual readability
+- relation cause -> reaction -> payoff clarity
+- density handling and simultaneous-motion suppression
+- scene-to-scene rhythm and handoff continuity
+- composition balance and negative space
+- text timing, placement, scale and interference with visuals
+- cutout reassembly quality and sub-object usefulness
+- transition quality and absence of visual flashes
+- encoded motion survival after FFmpeg
+
+Any montage-quality improvement must preserve all owner contracts and keep Test1/Test2
+green. Aesthetic tuning must not be implemented by weakening semantic/timing/collision
+contracts.
+
+Current certified render path is CFR 30 fps. If the next phase intends to move the product
+to 24 fps, treat that as a deliberate product/render-contract change: first measure the
+reference videos and define the 24 fps requirement, then update timing/frame-based
+thresholds, renderer/export contracts, post-render proof and regression coverage together.
+Do not silently change only FFmpeg `-r` or output metadata.
+
+## Next reviewer mission
+
+Start from this checkpoint and review generated videos against the reference videos.
+Do not spend the next sprint rebuilding QA/Recovery. First produce timestamped,
+evidence-based differences, then map each visual-quality gap to its true owner
+(Story/Choreography/Composition/Motion/Text/Render), implement generic improvements,
+and prove every change against Test1/Test2 plus fresh real renders.
