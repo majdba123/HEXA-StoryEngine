@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "status": "GOLDEN_WORKING_CANDIDATES_PENDING_HANDOFF_REVIEW",
+  "recorded_on": "2026-09-28",
+  "baseline_branch": "montage",
+  "baseline_head_before_reference_commit": "fbcabc294b4d3ae8e94263890c91255d7e9ad51c",
+  "packages": [
+    {
+      "topic": "BLACK_HAT",
+      "filename": "HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
+      "size_bytes": 39071446,
+      "zip_entries": 46,
+      "scene_pngs": 40,
+      "zip_integrity": "PASS",
+      "sha256": "c2339d883b2a377ae32fd8c397408d0b33d03c5ff492fdd8f98d37b5c8e8dc15"
+    },
+    {
+      "topic": "GRAY_HAT",
+      "filename": "HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
+      "size_bytes": 40603724,
+      "zip_entries": 41,
+      "scene_pngs": 35,
+      "zip_integrity": "PASS",
+      "sha256": "a34e3578e780b7bef7101ad588dedce5a2a58b658a62348dd179bccb4879f2a0"
+    },
+    {
+      "topic": "WHITE_HAT",
+      "filename": "HEXA_WHITE_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED(3).zip",
+      "size_bytes": 41905483,
+      "zip_entries": 41,
+      "scene_pngs": 35,
+      "zip_integrity": "PASS",
+      "sha256": "37304adf5cd8d9dfa35575ce5ec5eda9814485ef96983ed210e48e576f96dccf"
+    },
+    {
+      "topic": "SCRIPT_KIDDIE",
+      "filename": "HEXA_SCRIPT_KIDDIE_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED(2).zip",
+      "size_bytes": 51293390,
+      "zip_entries": 41,
+      "scene_pngs": 35,
+      "zip_integrity": "PASS",
+      "sha256": "ce50388a77c195de9769d274783f844d2493516a2f882dd12e621650c253bee4"
+    }
+  ]
+}
