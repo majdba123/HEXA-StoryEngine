@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -23,12 +22,11 @@ from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.diagnostics import AssetUsageValidator, StorytellingValidator
 from app.cutout import CutoutService, Pass2CutoutService
-from app.final import FinalExporter
+from app.final import FinalExporter, FinalMediaVerifier
 from app.canonical import CanonicalNormalizer, CanonicalPackage
 from app.final_package import FinalPackageLoader
-from app.models import RenderPlan, Stage
+from app.models import Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
-from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.recovery.manager import RecoveryManager
@@ -36,7 +34,6 @@ from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
 from app.shared.errors import (
     GenerationCancelledError,
-    HexaError,
     StageFailedError,
 )
 from app.story import StoryPlanner, StorySyncQA
@@ -109,7 +106,10 @@ class StoryEnginePipeline:
         self.render_planner = RenderPlanner()
         self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
         self.final = FinalExporter(self.settings.ffmpeg_bin)
-        self.detector = RecoveryDetector(self.settings.ffprobe_bin, self.settings.ffmpeg_bin)
+        self.final_media = FinalMediaVerifier(
+            self.settings.ffprobe_bin,
+            self.settings.ffmpeg_bin,
+        )
         self.recovery = RecoveryManager(Path.home() / ".hexa-storyengine" / "recovery")
 
     def generate(
@@ -363,17 +363,7 @@ class StoryEnginePipeline:
         output_file = self._output_path(package.package_id, output_name)
         self._progress(progress, Stage.final, 0.90, "Building final video")
         final_path = self.final.mux(video_only, audio_path, output_file)
-        final_path = self._recover_final(
-            final_path=final_path,
-            video_only=video_only,
-            audio_path=audio_path,
-            plan=plan,
-            package_id=package.package_id,
-            job_id=job_id,
-            workspace=workspace,
-            progress=progress,
-            cancelled=cancelled,
-        )
+        self.final_media.require(final_path, audio_path)
         self.rendered_visual_qa.inspect(final_path, workspace / "diagnostics")
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")
@@ -725,68 +715,6 @@ class StoryEnginePipeline:
             )
         return self.refinement.refine(assets, workspace)
 
-    def _recover_final(
-        self,
-        *,
-        final_path: Path,
-        video_only: Path,
-        audio_path: Path,
-        plan: RenderPlan,
-        package_id: str,
-        job_id: str,
-        workspace: Path,
-        progress: ProgressCallback | None,
-        cancelled: CancellationCallback | None,
-    ) -> Path:
-        attempts: dict[str, int] = {}
-        while True:
-            self._check_cancel(cancelled)
-            issues = self.detector.inspect_final(final_path, audio_path)
-            if not issues:
-                return final_path
-            issue = issues[0]
-            attempt = attempts.get(issue.code, 0) + 1
-            attempts[issue.code] = attempt
-            result = self.recovery.handle(code=issue.code, context=issue.context, attempt=attempt)
-            if result is None or not result.success:
-                raise self._unresolved(issue)
-
-            self._progress(progress, Stage.recovery, 0.94, f"Recovering {issue.code}")
-            candidate_final = workspace / "render" / f"recovered-final-{issue.code}-{attempt}.mp4"
-            candidate_video = video_only
-            if result.invalidate_from_stage == "render":
-                candidate_video = self.renderer.render(
-                    plan,
-                    workspace / "render" / f"recovered-video-{issue.code}-{attempt}.mp4",
-                    strict_boundary_coverage=(issue.code == "VISUAL_WHITE_FLASH"),
-                )
-                candidate_final = self.final.mux(candidate_video, audio_path, candidate_final)
-            elif result.invalidate_from_stage == "final":
-                candidate_final = self.final.mux(video_only, audio_path, candidate_final)
-            else:
-                raise self._unresolved(issue)
-
-            remaining = self.detector.inspect_final(candidate_final, audio_path)
-            assessment = self.recovery_candidates.evaluate(
-                target=issue,
-                before_issues=issues,
-                after_issues=remaining,
-            )
-            self.recovery.record_outcome(
-                code=issue.code,
-                job_id=job_id,
-                package_id=package_id,
-                attempt=attempt,
-                handler_result=result,
-                success=assessment.accepted,
-                details=assessment.to_details(),
-            )
-            if assessment.accepted:
-                final_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(candidate_final, final_path)
-                if result.invalidate_from_stage == "render":
-                    video_only = candidate_video
-
     @staticmethod
     def _assert_writable_directory(path: Path, *, code: str) -> None:
         probe = path / f".hexa-write-probe-{uuid.uuid4().hex}"
@@ -823,9 +751,3 @@ class StoryEnginePipeline:
         if callback and callback():
             raise GenerationCancelledError("generation cancelled by user")
 
-    @staticmethod
-    def _unresolved(issue: DetectedIssue) -> HexaError:
-        return StageFailedError(
-            f"unresolved recovery issue: {issue.code}",
-            details={"code": issue.code, "message": issue.message, **issue.context},
-        )
