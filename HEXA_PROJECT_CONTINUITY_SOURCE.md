@@ -11102,3 +11102,318 @@ The next sprint is QA-rule ownership migration:
 
 Do not combine this next sprint with Recovery restoration or a new retry architecture.
 
+# QA-TO-OWNER MIGRATION HANDOFF — 2026-09-27
+
+## Current authoritative branch state
+
+Branch: `montage`
+
+Current implementation HEAD before this handoff:
+
+- `c0c0c392253dfcdf49d7d385b7ab782170a2a49f`
+- message: `[motion] Honor proxy-visible relation reaction windows`
+
+Exact-head CI for that commit:
+
+- push run #636: SUCCESS
+- pull-request run #637: SUCCESS
+- Compile: PASS
+- Lint: PASS
+- Test1: PASS
+- Full pytest: PASS
+
+## Locked architecture decisions
+
+1. Recovery removal is complete and must not be reintroduced.
+2. Pass1 + Pass2 only. No Pass3, Layer3, or new extraction baseline.
+3. `tests/test1/` remains active as system/architecture certification.
+4. Build `tests/test2/` from the current quality contracts, not by copying historical test files.
+5. Every pre-render QA rule must move into exactly one owning production layer.
+6. Owner layers must construct valid output or fail explicitly at ownership; do not add a renamed QA stage.
+7. Keep legacy runtime QA temporarily only as an oracle while a rule is being migrated.
+8. Delete each legacy QA surface only after owner construction + Test2 prove the same rule.
+9. Encoded facts that cannot be known before FFmpeg remain post-render verification, but must move out of `app/qa/` into Render/Final verification.
+10. Do not weaken existing contracts, restore Mapping compatibility to Canonical, or add package-specific / ID-specific hacks.
+
+## Test2 + Master QA already created
+
+Existing files:
+
+- `tests/test2/quality_rule_ledger.py`
+- `tests/test2/test_master_qa.py`
+- `tests/test2/story/test_story_contracts.py`
+- `tests/test2/choreography/test_choreography_contracts.py`
+- `tests/test2/motion/test_relation_contracts.py`
+
+The Master QA gate intentionally remains:
+
+`MIGRATION_COMPLETE = False`
+
+until the entire migration is complete.
+
+The rule ledger currently contains 61 consolidated quality rules. At the current HEAD:
+
+- 6 rules are marked migrated.
+- 55 remain pending.
+- no retained encoded-proof rules have yet been moved to their final Render verification owner.
+
+Do not mark a rule migrated unless:
+- the production owner enforces it during primary construction or owner boundary validation;
+- the declared Test2 module exists;
+- positive + negative/adversarial behavior is covered;
+- Test1 remains green.
+
+## Rules already migrated
+
+The following rules are already owned by primary layers:
+
+- `FINAL_PACKAGE_METADATA_COVERAGE` -> Story
+- `ASSET_REACHES_STORY` -> Story
+- `FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE` -> Story + Choreography accountability
+- `FINAL_PACKAGE_RELATIONSHIP_COVERAGE` -> Choreography
+- `REFERENCE_VISUAL_GRAMMAR` -> Choreography
+- `MISSING_TARGET_REACTION` -> Motion
+
+## Semantic-event regression already fixed
+
+Story now preserves authored events that reuse an existing visual carrier.
+
+A later semantic event may use a `SemanticEventProxy` on the same proven runtime visual
+when the Final Package explicitly references that semantic unit. Exact authored/runtime
+identity can also preserve a compound/ambiguous semantic event without inventing a new
+cutout. This exists specifically to prevent the historical Script Kiddie failure where
+authored semantic events silently disappeared downstream.
+
+Do not remove this behavior and do not reintroduce one-event-per-cutout assumptions.
+
+## Motion proxy-visible timing regression already fixed
+
+Generated Test1 seeds 4106 and 4190 exposed a Motion ownership bug after semantic
+accountability became strict:
+
+- a target visual could already be visible because of an earlier semantic proxy;
+- Motion incorrectly treated the later owner cue start as the first legal REACT time;
+- the legal Story-owned REACT window was therefore cut away.
+
+Motion now allows the earliest proven proxy-visible carrier time to establish the lower
+execution bound for cross-event semantic relation phases while preserving the normal cue
+entry floor for non-proxy cases.
+
+Regression coverage exists under:
+`tests/test2/motion/test_relation_contracts.py`
+
+The generated real Pass1/Pass2 fixture was also corrected so its synthetic image respects
+the authored locator geometry instead of testing a locator mismatch accidentally.
+
+## Legacy QA surfaces still present and must be eliminated
+
+At current HEAD these still exist:
+
+- `app/diagnostics/asset_usage.py`
+- `app/diagnostics/storytelling.py`
+- `app/qa/authoring.py`
+- `app/qa/choreography_rhythm.py`
+- `app/qa/failure_identity.py`
+- `app/qa/motion_semantics.py`
+- `app/qa/rendered.py`
+- `app/qa/rendered_motion.py`
+- `app/qa/scene_continuity.py`
+- `app/qa/semantic_lifetime.py`
+- `app/story/sync_qa.py`
+
+The production pipeline still invokes those QA surfaces. Removing those runtime calls is
+the main remaining architecture work.
+
+## Required remaining migration order
+
+### A. Composition / Text
+
+Move these rules to their owning primary authoring paths:
+
+- `ASSET_REACHES_COMPOSITION`
+- `LAYOUT_REFERENCE_VIOLATION`
+- `TEXT_LAYER_MISSING`
+- `TEXT_LAYOUT_REFERENCE_VIOLATION`
+- `TEXT_CUE_MISSING_STORY_SEMANTICS`
+- `TEXT_MOTION_COVERAGE_INCOMPLETE`
+- `COMPOSITION_MISSING_FINAL_PACKAGE_SEMANTICS`
+
+Use existing production contracts where already present:
+- `ConstraintLayoutSolver`
+- `TextLayoutContract`
+- final-Motion-aware primary text placement
+- required/optional text policy
+
+Do not create a new validator layer around them.
+
+### B. Motion / Rhythm / Lifetime
+
+Move all pre-render rules currently in:
+- `MotionInteractionQA`
+- `ChoreographyRhythmQA`
+- `SemanticLifetimeQA`
+- the Motion-owned parts of `StorySyncQA`
+
+Required rule families include:
+
+- authored relation timeline
+- target reaction
+- relation overlap
+- result payoff
+- payoff cannot precede cause
+- collision creation
+- segment past handoff
+- missing executable program
+- exit readability
+- geometry drift
+- one pace tier per beat
+- no unjustified pace whiplash
+- no duplicate explicit semantic entry accent
+- no competing full-strength focus
+- no premature semantic exit
+- proxy / reveal / settle / semantic peak preservation
+- semantic order / visual-unit stagger
+
+Prefer owner contracts inside `app/motion/` using shared Motion policy/math already present.
+Do not copy thresholds into Test2.
+
+### C. Continuity / RenderPlan
+
+Move scene-boundary ownership so:
+- Motion owns persistent-asset lifecycle and incoming timing.
+- Render transition owns bridge/blur/handoff construction.
+- RenderPlan rejects any impossible transition before FFmpeg.
+
+Rules include:
+- terminal exit on persistent asset
+- missing/empty/too-short/overrun scene bridge
+- authored blur only
+- blur bridge actually uses blur
+- no unauthored blur
+- incoming visual cannot begin before Story authority
+
+### D. Cross-layer accountability
+
+Replace `AssetUsageValidator` and catch-all downstream metadata checks with explicit
+handoff/accountability contracts:
+
+- Pass2 -> Story
+- Story -> Composition
+- Composition -> Motion
+- Story/Choreography semantics -> Composition/Motion/Text
+
+No independently animatable asset or required semantic identity may disappear silently.
+If intentional omission is supported, it must have an explicit modeled reason.
+
+### E. StorytellingValidator decomposition
+
+Delete the catch-all validator after all of its rules have real owners.
+
+Rules that were only warnings historically must not be silently upgraded to hard failures
+unless the product contract is intentionally changed and Test1/real corpus prove that
+change. Preserve their prior severity as owner diagnostics/advisories if they are not
+true invalid-state contracts.
+
+Specifically review:
+- `NO_MEANINGFUL_VISUAL_STATE_CHANGE`
+- `MOTION_ONLY_HOOK_PRESENT`
+- `CHOREOGRAPHY_ASSET_REQUIREMENT_UNSATISFIED`
+- `TEXT_MOTION_COVERAGE_INCOMPLETE`
+
+Do not break backward-compatible valid packages merely to eliminate a warning.
+
+### F. Post-render proof relocation
+
+Do not delete encoded verification behavior.
+
+Move:
+- `RenderedMotionQA` -> `app/render/verification.py` (or an equally clear Render-owned module)
+- `RenderedVisualQA` contact-sheet/evidence behavior -> Render diagnostics/evidence
+- keep `app/final/verification.py` for final media integrity
+
+Encoded proof must remain proof-only:
+- no rerender
+- no remux recovery
+- no motion repair
+- no self-healing
+
+Keep coverage for:
+- encoded motion activity
+- perceptual motion floor
+- maximum speed
+- missing evidence frames
+- empty ROI
+- final decode/probe
+- A/V sync
+- white/near-white flash
+
+## Test2 quality requirements
+
+For every owner/rule family, Test2 must include meaningful coverage across:
+
+- normal
+- boundary
+- extreme
+- invalid
+- ambiguous
+- adversarial
+- historical regression
+- generated combinations where useful
+
+Tests must verify invariants, not merely that the function does not crash.
+
+Do not claim literal exhaustive coverage of an infinite package space. The required product
+standard is rule-complete + adversarial + generated combinatorial + historical regression
++ real-corpus coverage.
+
+## Final cleanup target
+
+When all rules are migrated:
+
+1. change `MIGRATION_COMPLETE = True`;
+2. `tests/test2/test_master_qa.py` must pass its strict completion branch;
+3. remove `app/qa/` completely;
+4. remove `app/story/sync_qa.py`;
+5. remove `app/diagnostics/storytelling.py`;
+6. remove `app/diagnostics/asset_usage.py`;
+7. remove all imports/instances/calls of those classes from `app/pipeline.py`;
+8. retain only owner construction contracts and Render/Final encoded verification;
+9. keep a permanent architecture guard preventing runtime QA layer reintroduction.
+
+## Required final test/certification proof
+
+Before declaring closure, run and record:
+
+- Compile
+- Ruff/Lint
+- `pytest -q tests/test1`
+- `pytest -q tests/test2`
+- `pytest -q`
+- strict real-package corpus when available:
+  - Black
+  - White
+  - Gray
+  - Script Kiddie
+- real FFmpeg release/render smoke
+- encoded motion verification
+- independent final decode/probe
+
+Historical Windows font-metric TextPlacement baseline differences must not be hidden by
+weakening tests; treat separately if still environment-specific.
+
+## Final reporting requirement
+
+Update this continuity file with:
+- final HEAD
+- every commit made
+- exact Test1/Test2/full-test counts
+- any skips/warnings
+- real-corpus results
+- real-render proof
+- final list of removed QA files
+- confirmation that the Master QA ledger has zero pending rules
+- confirmation that runtime `app/qa/` is absent
+
+Do not stop after partial migration. Do not leave `MIGRATION_COMPLETE=False` and call the
+sprint complete.
+
