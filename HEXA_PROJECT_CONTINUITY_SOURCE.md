@@ -12624,3 +12624,49 @@ fault injection, boundary-depth coverage, and cross-package state-isolation cert
 This sprint proves contract consistency and package isolation. It does not by itself certify subjective
 visual quality against reference videos; visual-quality acceptance remains a separate render/QA concern.
 
+
+
+## CROSS-LAYER RELIABILITY COMPATIBILITY CLEANUP — 2026-09-27
+
+Development branch: `montage`.
+
+The cross-layer reliability implementation remains:
+- `2f5c212fec2dbd167b7140cc781aac93e244e702`
+- `[contracts] Enforce cross-layer handoff reliability`
+
+The detailed continuity checkpoint remains:
+- `b325c8aca2a2b1eaa0718e07ebedb093b141f5db`
+- `[continuity] Record cross-layer reliability checkpoint`
+- push CI #680 / ID `36340285475`: SUCCESS
+- PR CI #681 / ID `36340289211`: SUCCESS
+
+Compatibility cleanup:
+- `2d9dad9fbf96193a1ca20940eb601a75dbc5da12`
+- `[compat] Remove deprecated Pillow mode override`
+
+Reason:
+The expanded handoff matrices exercised `VisualOccupancyMap` heavily and amplified an existing Pillow deprecation warning from `Image.fromarray(alpha, mode="L")`. The alpha array is already deterministic `uint8`, so Pillow infers `L` without the deprecated explicit `mode` argument. This is behavior-preserving and avoids a Pillow 13 compatibility issue.
+
+No Story, Choreography, Composition geometry, Motion timing, Text semantics, Pass1/Pass2 behavior, thresholds, or ownership rules changed.
+
+Targeted local proof:
+- handoff depth matrix: PASS
+- layer handoff text contracts: PASS
+- text placement director: PASS
+
+Official CI for compatibility commit:
+- push CI #682 / ID `36340848158`: SUCCESS
+- PR CI #683 / ID `36340851170`: SUCCESS
+- Compile: SUCCESS
+- Ruff/Lint: SUCCESS
+- Test1: `565 passed, 8 skipped, 4 warnings`
+- Full suite: `1239 passed, 8 skipped, 13 warnings`
+
+Warning reduction versus the cross-layer implementation CI:
+- Test1 warnings: `434 -> 4`
+- Full-suite warnings: `462 -> 13`
+
+The remaining warnings are unrelated pre-existing / third-party warnings and are not handoff-contract failures.
+
+Current code checkpoint before this documentation-only append:
+`2d9dad9fbf96193a1ca20940eb601a75dbc5da12`.
