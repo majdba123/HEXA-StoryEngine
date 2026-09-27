@@ -15,7 +15,6 @@ from app.models import (
     VisualAsset,
 )
 from app.shared.errors import StageFailedError
-from app.render.transition_contract import RenderTransitionContract
 
 
 class RenderPlanner:
@@ -43,12 +42,6 @@ class RenderPlanner:
             text_motion=text_motion or [],
         )
         self._require_executable(plan)
-        transition = RenderTransitionContract().inspect(
-            story=plan.story,
-            composition=plan.composition,
-            motion=plan.motion,
-        )
-        RenderTransitionContract.require(transition)
         path = workspace / "render-plan.json"
         path.write_text(
             json.dumps(plan.model_dump(mode="json"), ensure_ascii=False, indent=2),

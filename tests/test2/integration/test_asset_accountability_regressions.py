@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.legacy_quality.asset_usage_oracle import AssetUsageValidator
+from tests.test2.support.asset_usage_oracle import AssetUsageValidator
 from app.models import (
     CompositionBeat,
     LayoutItem,

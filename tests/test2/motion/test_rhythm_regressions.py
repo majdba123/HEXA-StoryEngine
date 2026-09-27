@@ -18,7 +18,7 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, St
 from app.motion import MotionPlanner
 from app.motion.rhythm import MIN_FOCUS_OVERLAP_SECONDS, ReferenceRhythmPolicy
 from app.motion.timing import MotionTimingPolicy
-from app.motion.rhythm_contract import MotionRhythmContract as ChoreographyRhythmQA
+from tests.test2.support.rhythm_oracle import MotionRhythmContract as ChoreographyRhythmQA
 from app.story.windows import StoryAssetActivation
 
 

@@ -11,7 +11,7 @@ from app.models import (
     TextPlan,
     Transcript,
 )
-from tests.legacy_quality.authoring_oracle import AuthoringVisualQA
+from tests.test2.support.authoring_oracle import AuthoringVisualQA
 
 
 def _beat() -> StoryBeat:

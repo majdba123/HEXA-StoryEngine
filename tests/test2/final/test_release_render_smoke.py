@@ -1,11 +1,13 @@
 from __future__ import annotations
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import numpy as np
 from PIL import Image
 
 from app.final import FinalExporter
@@ -55,6 +57,21 @@ def _make_audio(path: Path, duration: float) -> None:
         ],
         check=True,
     )
+
+
+def _decoded_rgb_frame(video: Path, timestamp: float) -> np.ndarray:
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{timestamp:.3f}",
+            "-i", str(video), "-frames:v", "1", "-vf", "scale=160:90",
+            "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    frame = np.frombuffer(result.stdout, dtype=np.uint8)
+    assert frame.size == 160 * 90 * 3
+    return frame.reshape((90, 160, 3))
 
 
 def test_release_render_smoke_produces_qa_clean_muxed_mp4(tmp_path: Path) -> None:
@@ -198,15 +215,33 @@ def test_release_render_smoke_produces_qa_clean_muxed_mp4(tmp_path: Path) -> Non
             "ffprobe",
             "-v",
             "error",
-            "-show_entries",
-            "stream=codec_type",
+            "-count_frames",
+            "-show_streams",
+            "-show_format",
             "-of",
-            "csv=p=0",
+            "json",
             str(final),
         ],
         check=True,
         capture_output=True,
         text=True,
     )
-    stream_types = set(probe.stdout.split())
+    payload = json.loads(probe.stdout)
+    streams = payload["streams"]
+    stream_types = {stream["codec_type"] for stream in streams}
     assert {"video", "audio"}.issubset(stream_types)
+    video_stream = next(stream for stream in streams if stream["codec_type"] == "video")
+    audio_stream = next(stream for stream in streams if stream["codec_type"] == "audio")
+    assert video_stream["r_frame_rate"] == "30/1"
+    assert video_stream["avg_frame_rate"] == "30/1"
+    assert 59 <= int(video_stream["nb_read_frames"]) <= 61
+    video_duration = float(video_stream.get("duration") or payload["format"]["duration"])
+    audio_duration = float(audio_stream.get("duration") or payload["format"]["duration"])
+    assert abs(video_duration - plan.duration) <= 1.0 / plan.fps
+    assert abs(video_duration - audio_duration) <= 0.10
+
+    # Decode the encoded result rather than trusting Motion metadata. The reveal must
+    # survive H.264 as measurable pixel activity in the authored object region.
+    entry = _decoded_rgb_frame(final, 0.01)
+    settled = _decoded_rgb_frame(final, 0.24)
+    assert float(np.abs(entry.astype(np.int16) - settled.astype(np.int16)).mean()) > 1.0

@@ -1,6 +1,7 @@
 from app.motion.planner import MotionPlanner
-from app.motion.rhythm_contract import MotionRhythmContract
+from app.motion.rhythm import ReferenceRhythmPolicy
 
 
 def test_rhythm_is_owned_by_motion_planner() -> None:
-    assert isinstance(MotionPlanner().rhythm_contract, MotionRhythmContract)
+    assert not hasattr(MotionPlanner(), "rhythm_contract")
+    assert ReferenceRhythmPolicy.__module__ == "app.motion.rhythm"

@@ -1,6 +1,6 @@
 from app.choreography import ChoreographySequence, HookKind, VisualGrammarStage
 # Historical grammar regressions now owned by Choreography.
-from tests.legacy_quality.storytelling_oracle import StorytellingValidator
+from tests.test2.support.storytelling_oracle import StorytellingValidator
 
 
 def _sequence(*stages: VisualGrammarStage, beat_count: int) -> ChoreographySequence:

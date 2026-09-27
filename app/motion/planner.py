@@ -17,8 +17,6 @@ from app.motion.compiler import MotionCompiler
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
 from app.motion.interaction_contract import MotionInteractionContract
-from app.motion.lifetime_contract import MotionLifetimeContract
-from app.motion.rhythm_contract import MotionRhythmContract
 from app.motion.story_sync_contract import StoryMotionContract
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
@@ -65,8 +63,6 @@ class MotionPlanner:
         self.rhythm = ReferenceRhythmPolicy()
         self.continuity_contract = ContinuityContract()
         self.interaction_contract = MotionInteractionContract()
-        self.rhythm_contract = MotionRhythmContract()
-        self.lifetime_contract = MotionLifetimeContract()
         self.story_contract = StoryMotionContract()
 
     def plan(
@@ -678,20 +674,6 @@ class MotionPlanner:
         )
         if enforce_owned_boundary:
             self.interaction_contract.require(interaction)
-        rhythm = self.rhythm_contract.inspect(
-            story=beats,
-            motion=cues,
-            choreography=choreography,
-        )
-        if enforce_owned_boundary:
-            self.rhythm_contract.require(rhythm)
-        lifetime = self.lifetime_contract.inspect(
-            story=beats,
-            motion=cues,
-            choreography=choreography,
-        )
-        if enforce_owned_boundary:
-            self.lifetime_contract.require(lifetime)
         sync = self.story_contract.inspect(story=beats, motion=cues)
         if enforce_owned_boundary:
             self.story_contract.require(sync)

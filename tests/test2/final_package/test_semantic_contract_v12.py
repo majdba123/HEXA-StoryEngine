@@ -10,7 +10,7 @@ from PIL import Image
 
 from app.choreography import ChoreographyDirector, ChoreographyPlan, ChoreographyPattern
 from app.final_package import FinalPackageLoader
-from tests.legacy_quality.storytelling_oracle import StorytellingValidator
+from tests.test2.support.storytelling_oracle import StorytellingValidator
 from app.models import (
     AssetActivation,
     CompositionBeat,
