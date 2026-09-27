@@ -32,30 +32,11 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
     workspace.mkdir(parents=True)
     (workspace / "render-plan.json").write_text("{}", encoding="utf-8")
 
-    recovery_root = tmp_path / "recovery"
-    recovery_root.mkdir()
-    recovery_event = {
-        "issue_code": "LOW_SCREEN_OCCUPANCY",
-        "job_id": job_id,
-        "package_id": "pkg",
-        "handler": "reflow_composition",
-        "handler_version": 1,
-        "attempt": 1,
-        "success": False,
-        "details": {"remaining_issue_count": 1},
-        "occurred_at": "2026-09-15T00:00:00+00:00",
-    }
-    (recovery_root / "recovery-history.jsonl").write_text(
-        json.dumps(recovery_event) + "\n",
-        encoding="utf-8",
-    )
-
     report = BuildReportSession(
         job_id=job_id,
         settings=settings,
         package_path=package,
         audio_path=audio,
-        recovery_root=recovery_root,
     )
     report.on_progress(Stage.input, 0.04, "Reading Final Package")
     report.on_progress(Stage.story, 0.43, "Building visual story")
@@ -71,11 +52,9 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
         assert set(archive.namelist()) == {
             "report.json",
             "report.md",
-            "recovery-events.json",
             "workspace-manifest.json",
         }
         payload = json.loads(archive.read("report.json"))
-        recovery = json.loads(archive.read("recovery-events.json"))
         workspace_payload = json.loads(archive.read("workspace-manifest.json"))
 
     assert payload["status"] == "failed"
@@ -83,7 +62,7 @@ def test_diagnostic_report_captures_pipeline_failure(tmp_path: Path) -> None:
     assert payload["error"]["code"] == "STORY_CONTRACT_VIOLATION"
     assert payload["error"]["category"] == "STAGE_FAILED"
     assert payload["error"]["details"]["reason"] == "test"
-    assert recovery[0]["issue_code"] == "LOW_SCREEN_OCCUPANCY"
+    assert payload["schema_version"] == 2
     assert {row["path"] for row in workspace_payload["files"]} >= {"render-plan.json", "generation.log"}
 
 

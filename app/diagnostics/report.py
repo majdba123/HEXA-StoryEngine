@@ -25,7 +25,7 @@ from app.shared.process import run_hidden
 class BuildReportSession:
     """Collects one generation run and exports a portable diagnostic bundle."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self,
@@ -35,14 +35,12 @@ class BuildReportSession:
         package_path: Path,
         audio_path: Path,
         script_path: Path | None = None,
-        recovery_root: Path | None = None,
     ) -> None:
         self.job_id = job_id
         self.settings = settings
         self.package_path = package_path.expanduser().resolve()
         self.audio_path = audio_path.expanduser().resolve()
         self.script_path = script_path.expanduser().resolve() if script_path else None
-        self.recovery_root = recovery_root or (Path.home() / ".hexa-storyengine" / "recovery")
         self.started_at = datetime.now(timezone.utc)
         self._started_monotonic = monotonic()
         self.finished_at: datetime | None = None
@@ -123,17 +121,12 @@ class BuildReportSession:
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         payload = self._payload()
-        recovery_events = self._recovery_events()
         workspace_manifest = self._workspace_manifest()
-        markdown = self._markdown(payload, recovery_events, workspace_manifest)
+        markdown = self._markdown(payload, workspace_manifest)
 
         with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("report.json", json.dumps(payload, ensure_ascii=False, indent=2))
             archive.writestr("report.md", markdown)
-            archive.writestr(
-                "recovery-events.json",
-                json.dumps(recovery_events, ensure_ascii=False, indent=2),
-            )
             archive.writestr(
                 "workspace-manifest.json",
                 json.dumps(workspace_manifest, ensure_ascii=False, indent=2),
@@ -197,27 +190,6 @@ class BuildReportSession:
             },
             "cpu_count": os.cpu_count(),
         }
-
-    def _recovery_events(self) -> list[dict[str, Any]]:
-        history_path = self.recovery_root / "recovery-history.jsonl"
-        if not history_path.is_file():
-            return []
-        events: list[dict[str, Any]] = []
-        try:
-            with history_path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if payload.get("job_id") == self.job_id:
-                        events.append(self._sanitize(payload))
-        except OSError:
-            return []
-        return events
 
     def _workspace_manifest(self) -> dict[str, Any]:
         root = (self.settings.work_root / self.job_id).resolve()
@@ -332,7 +304,6 @@ class BuildReportSession:
     @staticmethod
     def _markdown(
         payload: dict[str, Any],
-        recovery_events: list[dict[str, Any]],
         workspace_manifest: dict[str, Any],
     ) -> str:
         build = payload["build"]
@@ -390,10 +361,6 @@ class BuildReportSession:
                 "```",
             ])
         lines.extend([
-            "",
-            "## Recovery",
-            "",
-            f"Recovery events for this job: **{len(recovery_events)}**",
             "",
             "## Workspace",
             "",
