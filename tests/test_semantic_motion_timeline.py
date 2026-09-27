@@ -988,7 +988,9 @@ def test_relation_overlap_finalizer_repairs_pass2_style_activation_gap() -> None
     )
     assert repaired_target.start == pytest.approx(target.start)
     assert repaired_target.end > target.end
-    assert repaired_target.program["semantic_active_duration"] > target.program[
+    # The overlap finalizer extends only the hold tail. Semantic gesture duration is
+    # already readability-authoritative and must not be inflated after planning.
+    assert repaired_target.program["semantic_active_duration"] == target.program[
         "semantic_active_duration"
     ]
 

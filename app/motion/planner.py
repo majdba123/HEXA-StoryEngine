@@ -641,15 +641,11 @@ class MotionPlanner:
 
     @staticmethod
     def _retime_segment_end(segment: MotionSegment, new_end: float) -> MotionSegment:
-        old_duration = max(1e-9, float(segment.end) - float(segment.start))
-        new_duration = max(1e-9, float(new_end) - float(segment.start))
-        program = dict(segment.program)
-        active = program.get("semantic_active_duration")
-        if isinstance(active, (int, float)) and not isinstance(active, bool):
-            program["semantic_active_duration"] = max(
-                0.0, float(active) * (new_duration / old_duration)
-            )
-        return segment.model_copy(update={"end": float(new_end), "program": program})
+        # Relation overlap may extend a segment's hold tail, but it does not create
+        # additional semantic gesture time. Preserve the authored active duration so
+        # the shared readability floor cannot increase after Motion has already
+        # enforced it.
+        return segment.model_copy(update={"end": float(new_end)})
 
     @classmethod
     def _enforce_relation_temporal_overlap(
