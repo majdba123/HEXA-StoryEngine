@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Historical text temporal-layout regressions now owned by Text.
+
 from app.models import (
     CompositionBeat,
     StoryBeat,

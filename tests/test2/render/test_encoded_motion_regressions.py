@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Historical encoded-motion regressions now owned by Render verification.
+
 import shutil
 from pathlib import Path
 

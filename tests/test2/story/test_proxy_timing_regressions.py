@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Proxy-visible timing regressions owned by Story/Motion.
+
 import pytest
 
 from app.choreography import (

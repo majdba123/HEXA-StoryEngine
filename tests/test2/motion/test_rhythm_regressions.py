@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Historical rhythm regressions now owned by Motion.
+
 import pytest
 
 from app.choreography import (

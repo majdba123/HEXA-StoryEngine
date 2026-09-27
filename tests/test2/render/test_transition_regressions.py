@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Historical transition regressions now owned by Render.
+
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, StorySemanticContext
 from app.render.transition_contract import RenderTransitionContract as SceneContinuityQA
 
