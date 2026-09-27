@@ -72,6 +72,8 @@ class RenderTransitionContract:
                     for item in previous_layout.items
                     if motion_by_key.get((previous.id, item.asset_id)) is not None
                 },
+                previous_beat=previous,
+                current_beat=current,
             )
             for asset_id in sorted(lifecycle.invalid_terminal_persistence):
                 violations.append(SceneContinuityViolation(

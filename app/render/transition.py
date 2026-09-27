@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.models import CompositionBeat, StoryBeat
+from app.motion.continuity import ContinuityContract
 
 
 class SceneTransitionMode(StrEnum):
@@ -121,10 +122,12 @@ class VisualTransitionPolicy:
         previous_ids = {
             item.asset_id for item in previous_layout.items
         } if previous_layout is not None else set()
-        current_ids = {
-            item.asset_id for item in current_layout.items
-        } if current_layout is not None else set()
-        persistent = frozenset(previous_ids & current_ids)
+        persistent = ContinuityContract.persistent_asset_ids(
+            previous_beat,
+            current_beat,
+            previous_layout,
+            current_layout,
+        )
 
         if (
             previous_beat is None

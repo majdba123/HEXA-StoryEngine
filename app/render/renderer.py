@@ -206,6 +206,8 @@ class FFmpegRenderer:
             previous_layout=previous_layout,
             current_layout=layout,
             previous_motion_by_asset=previous_motion_by_asset,
+            previous_beat=previous_beat,
+            current_beat=beat,
         )
         if lifecycle.invalid_terminal_persistence:
             raise StageFailedError(

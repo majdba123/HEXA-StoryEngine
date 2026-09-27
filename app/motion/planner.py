@@ -194,6 +194,13 @@ class MotionPlanner:
                 preferred_asset_id=preferred_interaction_id,
             )
             previous_items = {item.asset_id: item for item in previous_layout.items} if previous_layout else {}
+            previous_beat = beats[beat_index - 1] if beat_index > 0 else None
+            persistent_from_previous = self.continuity_contract.persistent_asset_ids(
+                previous_beat,
+                beat,
+                previous_layout,
+                layout,
+            )
             participant_roles = {
                 slot.item.asset_id: (
                     directive.participant_role(slot.item.asset_id).value
@@ -278,7 +285,11 @@ class MotionPlanner:
                     item.asset_id,
                     (1.0, "independent"),
                 )
-                continuity_source = previous_items.get(item.asset_id)
+                continuity_source = (
+                    previous_items.get(item.asset_id)
+                    if item.asset_id in persistent_from_previous
+                    else None
+                )
                 # Continuity is allowed only for the exact same visual asset. A semantic
                 # handoff between unrelated illustrations must not start the new artwork
                 # from the previous artwork's screen position; that was the source of
@@ -602,6 +613,14 @@ class MotionPlanner:
                         ),
                     )
                 )
+                cue_params = dict(cues[-1].params)
+                cue_params["semantic_continuity"] = {
+                    "mode": "PERSIST" if continuity_source is not None else "ENTER",
+                    "semantic_unit_id": (
+                        activation.semantic_unit_id if activation is not None else None
+                    ),
+                }
+                cues[-1] = cues[-1].model_copy(update={"params": cue_params})
                 if explicit_event_timeline and assignment is not None:
                     cues[-1] = self._attach_event_timeline(
                         cue=cues[-1],
@@ -617,8 +636,12 @@ class MotionPlanner:
                         cohort_gain=cohort_gain,
                         directive=directive,
                         lifetime_decision=lifetime_index.for_asset(item.asset_id),
-                        continues_next_beat=self.continuity_contract.continues_into_layout(
-                            item.asset_id, next_layout
+                        continues_next_beat=self.continuity_contract.continues_between_beats(
+                            item.asset_id,
+                            beat,
+                            beats[beat_index + 1] if beat_index + 1 < len(beats) else None,
+                            layout,
+                            next_layout,
                         ),
                     )
             if len(cues) > beat_cue_start:
