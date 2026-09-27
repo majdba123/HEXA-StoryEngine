@@ -12416,3 +12416,211 @@ SEMANTICALLY CORRECT
 + DOWNSTREAM-COMPATIBLE
 
 No external recovery layer is used.
+
+## CROSS-LAYER RELIABILITY CONTRACT CHECKPOINT — 2026-09-27
+
+Development branch: `montage`.
+
+### Source / implementation checkpoint
+
+- Start point:
+  - `98f12da87527b8cff59a5d38856d221181e42bc5`
+  - `[continuity] Record executable cross-layer timing fix`
+- Cross-layer reliability implementation:
+  - `2f5c212fec2dbd167b7140cc781aac93e244e702`
+  - `[contracts] Enforce cross-layer handoff reliability`
+- The implementation commit is one fast-forward commit from the accepted start point.
+- Exact remote integrity was verified after publication: all 17 changed files on GitHub matched the locally tested snapshot byte-for-byte at the text-content level.
+
+### Architectural purpose
+
+The product now validates producer -> consumer handoffs explicitly instead of relying only on layer-local correctness.
+
+Protected boundaries:
+1. Pass1/Pass2 assets -> Story.
+2. Story -> Choreography.
+3. Choreography -> Composition.
+4. Story/Text -> Text Composition.
+5. Composition -> Motion.
+6. Story + Choreography + Composition -> Motion downstream contract.
+7. Text + Text Composition + Text Motion -> Render.
+
+The validator is deliberately non-authoritative:
+- it does not re-plan Story semantics;
+- it does not change Choreography;
+- it does not redesign Composition;
+- it does not repair Motion;
+- it does not synthesize missing Text;
+- it only rejects contradictory handoffs at the earliest owning boundary.
+
+Pass1 + Pass2 remains the only accepted extraction architecture. No Pass3, Layer3, new baseline, recovery layer, hidden suppression, or threshold weakening was introduced.
+
+### Production implementation
+
+A stable facade `LayerHandoffValidator` is wired directly into the production pipeline after each producer completes.
+
+Boundary-specific implementation is split for maintainability:
+- `app/shared/handoff_story.py`
+- `app/shared/handoff_choreography.py`
+- `app/shared/handoff_motion.py`
+- `app/shared/handoff_text.py`
+- shared deterministic primitives in `app/shared/handoff_core.py`
+- stable public facade in `app/shared/handoff.py`
+
+New fail-fast diagnostic families:
+- `ASSET_HANDOFF_CONTRACT_VIOLATIONS`
+- `STORY_HANDOFF_CONTRACT_VIOLATIONS`
+- `CHOREOGRAPHY_HANDOFF_CONTRACT_VIOLATIONS`
+- `COMPOSITION_HANDOFF_CONTRACT_VIOLATIONS`
+- `MOTION_HANDOFF_CONTRACT_VIOLATIONS`
+- `TEXT_HANDOFF_CONTRACT_VIOLATIONS`
+
+These are classified as prevention failures so contradictions stop near their owner instead of surfacing later as render corruption.
+
+### Contract classes enforced
+
+The handoff layer now checks, where applicable:
+- unique IDs and no duplicate ownership rows;
+- scene-local references and no cross-scene asset leakage;
+- legal Story beat / narration timing;
+- activation and semantic-event ownership;
+- semantic proxy timing and event validity;
+- Choreography sequence coverage and directive order;
+- dependency and handoff targets resolving inside the owning event flow;
+- Composition beat order and finite positive geometry;
+- all independently animatable scene assets reaching Composition;
+- Motion cue uniqueness, beat/asset ownership, Composition participation, and legal timing;
+- semantic Motion segments belonging to Choreography;
+- segment participants resolving into the owning Composition;
+- Motion program keyframe monotonicity and terminal Composition identity;
+- static / non-independently-animatable assets are not incorrectly required to have Motion;
+- Text style IDs, cue ownership, token character spans, token timing, emphasis timing, and anchor ownership;
+- Text Composition / Text Motion complete coverage of the accepted Text cue set;
+- no foreign or duplicate text layout/motion references;
+- finite legal text geometry and text-motion timing.
+
+### Expanded certification matrix
+
+The full-layer generated matrix was expanded from 100 random seeds to 250 deterministic seeds:
+- seed range: `4101..4350`;
+- every case runs through canonical package -> Story -> Choreography -> Composition -> Motion -> Text -> RenderPlan;
+- the new handoff contracts execute at the same boundaries as production.
+
+Fixed topology coverage also includes:
+- 1 item;
+- dense 20-item scene;
+- branching dependencies with reused carrier;
+- no progression;
+- simultaneous visual groups;
+- Arabic + compound semantics;
+- numbers-heavy narration + persistent continuity;
+- transform continuity;
+- EXPLICIT / SUPPORT / SEMANTIC / AMBIGUOUS / PARENT binding mixes.
+
+Direct handoff reliability coverage totals 316 collected tests:
+- 262 full-layer generated/fixed-topology cases;
+- 28 handoff depth / duration / topology cases;
+- 3 cross-package state-isolation cases;
+- 23 explicit fault-injection contract cases.
+
+### Cross-package contamination proof
+
+The certification suite reuses the same planner/director instances across materially different packages and verifies:
+- Package A does not leak IDs or semantic state into Package B;
+- varied package shapes do not contaminate following runs;
+- running a disruptive package between two identical target packages does not change the target planning signature;
+- namespaces, assets, events, beats, Composition, Motion, Text, and RenderPlan remain owned by the active package only.
+
+This specifically addresses the product risk where one Final Package could work while a later package fails because of retained mutable state.
+
+### Boundary / failure injection proof
+
+Tests intentionally corrupt handoffs and require deterministic early rejection, including:
+- foreign scene assets;
+- duplicate asset IDs;
+- unknown or cross-scene Story references;
+- invalid Story event/proxy timing;
+- broken Choreography sequence/event/dependency ownership;
+- missing independently animatable Composition assets;
+- Motion referencing assets outside Composition;
+- Motion semantic event not owned by Choreography;
+- Motion program that fails to restore Composition identity;
+- missing/unknown Text styles;
+- Text emphasis outside its cue;
+- token character spans outside the cue;
+- invalid Text layout / Text Motion coverage.
+
+The consumer is therefore not expected to silently compensate for an invalid producer contract.
+
+### Dense-case performance proof
+
+A local synthetic stress case was executed with:
+- 8 scenes;
+- 20 assets per scene;
+- 160 visual assets total;
+- branching dependencies;
+- partial Visual Locator coverage;
+- reused assets;
+- Arabic script style.
+
+The exact production handoff sequence passed with:
+- 8 Story beats;
+- 160 Motion cues;
+- 24 accepted Text cues.
+
+Measured handoff-validator cost on that case:
+- total validator time: approximately 4.6 ms;
+- total planner time in the same measurement: approximately 9.49 s;
+- validator overhead relative to planner time: approximately 0.05%.
+
+The guards are therefore not a meaningful CPU bottleneck. The same benchmark exposed TextComposition itself as the dominant synthetic planning hotspot (~9.2 s on this 160-asset case); that is a separate performance topic and was intentionally not mixed into this reliability sprint.
+
+### Official CI proof
+
+Implementation commit `2f5c212fec2dbd167b7140cc781aac93e244e702`:
+
+Push workflow:
+- run number: `678`
+- run ID: `36340024873`
+- result: `SUCCESS`
+
+Pull-request workflow:
+- run number: `679`
+- run ID: `36340027391`
+- result: `SUCCESS`
+
+Push job proof:
+- Install FFmpeg: SUCCESS
+- Install StoryEngine: SUCCESS
+- Compile: SUCCESS
+- Ruff/Lint: SUCCESS (`All checks passed!`)
+- Test1 canonical compatibility: SUCCESS
+- Full Test: SUCCESS
+- Tested source artifact upload: SUCCESS
+
+Authoritative pytest results from GitHub Actions:
+- Test1: `565 passed, 8 skipped`
+- Full suite: `1239 passed, 8 skipped`
+
+Local collection after expansion:
+- Test1: 573 collected;
+- Test2: 674 collected;
+- total: 1247 collected.
+The difference between collected and passed counts is the same 8 intentional skips.
+
+### Local artifact limitation resolved by CI
+
+The downloadable tested-source artifact used during local development does not contain
+`checkpoints/v7_audio_sync/manifest.json`, so the two local checkpoint byte-freeze tests cannot execute from that stripped artifact.
+
+This is not treated as a product pass locally. Official GitHub Actions, which checks out the full repository, executed the complete suite successfully; the authoritative full-suite proof is therefore the CI result above.
+
+### Current architectural conclusion
+
+The system no longer depends on "each layer looks valid by itself" as sufficient proof.
+Every production handoff now has explicit consumer-compatibility checks, expanded generated coverage,
+fault injection, boundary-depth coverage, and cross-package state-isolation certification.
+
+This sprint proves contract consistency and package isolation. It does not by itself certify subjective
+visual quality against reference videos; visual-quality acceptance remains a separate render/QA concern.
+
