@@ -28,7 +28,6 @@ from app.canonical import CanonicalNormalizer, CanonicalPackage
 from app.final_package import FinalPackageLoader
 from app.models import RenderPlan, Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
-from app.recovery import RecoveryCandidateEvaluator
 from app.recovery.detector import DetectedIssue, RecoveryDetector
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
@@ -113,7 +112,6 @@ class StoryEnginePipeline:
         self.final = FinalExporter(self.settings.ffmpeg_bin)
         self.detector = RecoveryDetector(self.settings.ffprobe_bin, self.settings.ffmpeg_bin)
         self.recovery = RecoveryManager(Path.home() / ".hexa-storyengine" / "recovery")
-        self.recovery_candidates = RecoveryCandidateEvaluator()
 
     def generate(
         self,
@@ -370,16 +368,6 @@ class StoryEnginePipeline:
             text_motion=text_motion,
         )
 
-        plan = self._recover_plan(
-            plan=plan,
-            package=package,
-            transcript=transcript,
-            detections=detections,
-            workspace=workspace,
-            job_id=job_id,
-            progress=progress,
-            cancelled=cancelled,
-        )
         AssetUsageValidator.validate(plan)
         continuity_report = self.scene_continuity_qa.inspect(
             story=plan.story,
@@ -769,125 +757,6 @@ class StoryEnginePipeline:
                 scene_unit_types=unit_types,
             )
         return self.refinement.refine(assets, workspace)
-
-    def _recover_plan(
-        self,
-        *,
-        plan: RenderPlan,
-        package,
-        transcript,
-        detections,
-        workspace: Path,
-        job_id: str,
-        progress: ProgressCallback | None,
-        cancelled: CancellationCallback | None,
-    ) -> RenderPlan:
-        attempts: dict[str, int] = {}
-        while True:
-            self._check_cancel(cancelled)
-            issues = self.detector.inspect_plan(plan)
-            if not issues:
-                return plan
-            issue = issues[0]
-            attempt = attempts.get(issue.code, 0) + 1
-            attempts[issue.code] = attempt
-            result = self.recovery.handle(code=issue.code, context=issue.context, attempt=attempt)
-            if result is None or not result.success or not result.invalidate_from_stage:
-                raise self._unresolved(issue)
-
-            self._progress(progress, Stage.recovery, 0.70, f"Recovering {issue.code}")
-            candidate = self._rebuild_plan(
-                invalidate_from=result.invalidate_from_stage,
-                current=plan,
-                package=package,
-                transcript=transcript,
-                detections=detections,
-                workspace=workspace,
-            )
-            remaining = self.detector.inspect_plan(candidate)
-            assessment = self.recovery_candidates.evaluate(
-                target=issue,
-                before_issues=issues,
-                after_issues=remaining,
-                before_plan=plan,
-                candidate_plan=candidate,
-            )
-            self.recovery.record_outcome(
-                code=issue.code,
-                job_id=job_id,
-                package_id=package.package_id,
-                attempt=attempt,
-                handler_result=result,
-                success=assessment.accepted,
-                details=assessment.to_details(),
-            )
-            if assessment.accepted:
-                plan = candidate
-
-    def _rebuild_plan(
-        self,
-        *,
-        invalidate_from: str,
-        current: RenderPlan,
-        package,
-        transcript,
-        detections,
-        workspace: Path,
-    ) -> RenderPlan:
-        assets = current.assets
-        story = current.story
-        text = current.text
-        composition = current.composition
-        text_composition = current.text_composition
-        motion = current.motion
-        text_motion = current.text_motion
-        order = ["cutout", "refinement", "story", "text", "composition", "motion", "render"]
-        try:
-            start = order.index(invalidate_from)
-        except ValueError:
-            start = len(order) - 1
-
-        if start <= 0:
-            assets = self.cutout.extract(package, detections, workspace)
-        if start <= 1:
-            assets = self._apply_refinement(package, assets, workspace)
-        assets = self.asset_manager.normalize(list(assets))
-        if start <= 2:
-            story = self.story.plan(package, transcript, assets)
-        directions = self.director.plan(package, story, assets)
-        choreography = self.choreography.plan(package, story, assets)
-        if start <= 3:
-            text = self.text.plan(
-                transcript=transcript,
-                story=story,
-                assets=assets,
-                package=package,
-                choreography=choreography,
-            )
-        if start <= 4:
-            composition = self.composition.plan(story, assets, choreography, directions)
-            text_composition = self.text_composition.plan(story, composition, text.cues, assets)
-        if start <= 5:
-            motion = self.motion_reference.enforce(self.motion.plan(story, composition, choreography, assets=assets))
-            text_motion = self.text_motion.plan(
-                story,
-                text.cues,
-                text_composition,
-                choreography,
-                visual_motion=motion,
-            )
-        plan, _ = self.render_planner.compile(
-            transcript,
-            assets,
-            story,
-            composition,
-            motion,
-            workspace,
-            text=text,
-            text_composition=text_composition,
-            text_motion=text_motion,
-        )
-        return plan
 
     def _recover_rendered_motion(
         self,

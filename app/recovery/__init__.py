@@ -1,4 +1,3 @@
-from app.recovery.evaluator import RecoveryCandidateAssessment, RecoveryCandidateEvaluator
 from app.recovery.manager import RecoveryManager
 from app.diagnostics.failure_policy import (
     FAILURE_POLICIES,
@@ -8,8 +7,6 @@ from app.diagnostics.failure_policy import (
 )
 
 __all__ = [
-    "RecoveryCandidateAssessment",
-    "RecoveryCandidateEvaluator",
     "RecoveryManager",
     "FailureDisposition",
     "FailurePolicy",
