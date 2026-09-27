@@ -10997,3 +10997,108 @@ Observed production result:
 The historical `'CanonicalAsset' object has no attribute 'get'` failure did not recur.
 This Canonical consumer regression family is closed. Validation Gateway remains
 separate and has not begun.
+
+# RECOVERY-FREE ARCHITECTURE CLOSURE — 2026-09-27
+
+## Scope
+
+This checkpoint closes the Recovery subsystem removal only. Runtime QA migration is a
+separate next sprint and has not begun. Post-render encoded-output proof remains
+intentionally separate because it validates the actual FFmpeg/H.264/AAC product.
+
+## Final recovery-free architecture
+
+Recovery orchestration has been removed from production architecture:
+
+- removed the complete `app/recovery/` subsystem;
+- removed `Stage.recovery`;
+- removed generic plan inspection/rebuild loops and candidate evaluation;
+- removed text-layout retry orchestration;
+- removed post-render motion amplitude repair;
+- removed final rerender/remux fallback paths;
+- removed recovery registry, history, known-issue state, handlers, detector, evaluator,
+  and recovery outcome recording;
+- removed recovery-only renderer modes and recovered-output naming;
+- diagnostics now report owner stage + disposition + reason only;
+- the obsolete `semantic_authority_change_allowed` diagnostic field was removed;
+- diagnostic schema is now version 3;
+- failure-policy wording no longer advertises retry/rebuild/repair behavior that no
+  longer exists.
+
+Owner behavior now fails closed or produces a valid primary result:
+
+- RenderPlan validates executable references before render.
+- Text placement consumes final visual Motion once and excludes unsafe optional cues
+  during primary authoring; required text fails at Text ownership.
+- Motion readability/semantic constraints remain owned by Motion construction.
+- Final media verification proves encoded output integrity without mutating the output.
+- Post-render motion/media checks are proof-only, not self-healing paths.
+
+## Permanent architecture guard
+
+`tests/test1/certification/test_architecture_surfaces.py` permanently rejects
+reintroduction of the removed architecture, including:
+
+- `app/recovery`
+- `Stage.recovery`
+- Recovery manager/detector/evaluator/registry/history/status/issue types
+- recovery history / known-issue persistence
+- `_recover_*` pipeline methods
+- retry/rebuild/repair handler identifiers
+- recovered-video/recovered-final outputs
+- the obsolete semantic-authority-change permission field
+- any production `app/` source containing recovery terminology
+
+Repository audit on closure HEAD found zero tracked paths containing `recovery`.
+
+## Verification
+
+Recovery-free behavior work before the final boundary cleanup recorded:
+
+- `tests/test1`: 384 passed, 8 skipped.
+- strict real corpus: Black / White / Gray / Script Kiddie all passed structural
+  certification through the real Vision -> Pass1 -> Pass2 -> downstream planning path.
+- real FFmpeg release smoke: PASS.
+- local Windows full-suite variance remained limited to the documented font-metrics
+  TextPlacement baseline family; no historical expectation was weakened.
+- the first Black recovery-free production replay matched the expected 40 scenes,
+  Pass1 157, Pass2 179, Story 40, then exposed a primary Text placement ownership bug.
+- that bug was fixed generically by making final-Motion visibility authoritative for the
+  one primary Text placement pass, with deterministic regression coverage.
+- the corrected Black replay restarted from a fresh workspace and again reached the
+  repaired Text-authoring boundary before the external Codex usage limit interrupted
+  the run. Therefore no final encoded Black output is claimed by this checkpoint.
+
+Final recovery-boundary cleanup commit:
+
+- `12b54f2219ff2a1f180fbaab93de069ba56041b0`
+- message: `[architecture] Close recovery-free boundary`
+
+Exact-head GitHub CI for that commit:
+
+- V2 CI push run `36292955778` (#624): SUCCESS
+- V2 CI pull-request run `36292957819` (#625): SUCCESS
+- Compile: PASS
+- Ruff/Lint: PASS
+- Test1 canonical compatibility: PASS
+- Full Test: PASS
+- tested-source snapshot upload: PASS
+
+## Locked decision for the next sprint
+
+Recovery architecture is closed and must not be reintroduced.
+
+The next sprint is QA-rule ownership migration:
+
+1. inventory every pre-render QA rule;
+2. assign each rule to exactly one owner layer;
+3. make the owner construct valid output by that rule;
+4. add strong normal/extreme/invalid/ambiguous/regression tests per layer;
+5. keep the old runtime QA temporarily as an oracle while migration is proven;
+6. remove each runtime QA only after owner-level construction and tests prove the same
+   contract across generated and real-package coverage;
+7. retain encoded/post-render proof for properties that cannot be known before actual
+   FFmpeg encoding.
+
+Do not combine this next sprint with Recovery restoration or a new retry architecture.
+
