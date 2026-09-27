@@ -7,7 +7,9 @@ import pytest
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.motion import MotionPlanner
+from app.render import RenderPlanner
 from app.story import StoryPlanner
+from app.text import TextPlanner
 from tests.test2.integration.test_event_carrier_pipeline_regressions import (
     _build_reused_carrier_case,
 )
@@ -49,7 +51,11 @@ def test_short_dependency_proxy_contract_is_executable_through_motion(
     )
 
     choreography = ChoreographyDirector().plan(package, story, assets)
+    flows = {row.event_id: row for row in choreography.directives[0].event_flows}
+    assert flows["E2"].dependency_ids == ("E1",)
+
     composition = CompositionPlanner().plan(story, assets, choreography)
+    assert {item.asset_id for item in composition[0].items} == {"runtime-a"}
     motion = MotionPlanner().plan(story, composition, choreography, assets)
 
     segment = next(
@@ -60,3 +66,25 @@ def test_short_dependency_proxy_contract_is_executable_through_motion(
     )
     assert segment.end - segment.start == pytest.approx(expected_duration, abs=1e-9)
     assert segment.program["semantic_peak_progress"] == pytest.approx(0.5, abs=1e-9)
+
+    text = TextPlanner().plan(
+        transcript=transcript,
+        story=story,
+        assets=assets,
+        package=package,
+        choreography=choreography,
+    )
+    render_workspace = tmp_path / "render"
+    render_workspace.mkdir()
+    render_plan, render_path = RenderPlanner().compile(
+        transcript=transcript,
+        assets=assets,
+        story=story,
+        composition=composition,
+        motion=motion,
+        workspace=render_workspace,
+        text=text,
+    )
+    assert render_path.is_file()
+    assert render_plan.story == story
+    assert render_plan.motion == motion
