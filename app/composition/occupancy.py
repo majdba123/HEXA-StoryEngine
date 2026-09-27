@@ -98,7 +98,7 @@ class VisualOccupancyMap:
         scale = min(target_w / max(1, source_w), target_h / max(1, source_h))
         fit_w = max(1, min(target_w, round(source_w * scale)))
         fit_h = max(1, min(target_h, round(source_h * scale)))
-        resized = Image.fromarray(alpha, mode="L").resize((fit_w, fit_h), Image.Resampling.BILINEAR)
+        resized = Image.fromarray(alpha).resize((fit_w, fit_h), Image.Resampling.BILINEAR)
         visible = np.asarray(resized, dtype=np.uint8) >= self._MIN_ALPHA
 
         base_x = round(left * self.width) + (target_w - fit_w) // 2
