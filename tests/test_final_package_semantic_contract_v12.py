@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 from app.choreography import ChoreographyDirector, ChoreographyPlan, ChoreographyPattern
-from app.input.loader import FinalPackageLoader
+from app.final_package import FinalPackageLoader
 from app.diagnostics.storytelling import StorytellingValidator
 from app.models import (
     AssetActivation,

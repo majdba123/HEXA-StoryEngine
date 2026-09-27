@@ -4,9 +4,9 @@ from collections import defaultdict
 
 from app.canonical import CanonicalPackage, ensure_canonical_package
 from app.models import StoryBeat, VisualAsset
+from app.story.binding import AssetBinding, SemanticAssetBinder
 
 from .actions import ActionDecision, SemanticActionResolver
-from .binding import AssetBinding, SemanticAssetBinder
 from .continuity import ContinuityResolver
 from .event_flow import SemanticEventFlowPlanner
 from .grammar import ReferenceGrammarPlanner

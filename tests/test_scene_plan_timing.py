@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.input.loader import FinalPackageLoader
+from app.final_package import FinalPackageLoader
 from app.models import Transcript, TranscriptWord, VisualAsset
 from app.story.planner import StoryPlanner
 

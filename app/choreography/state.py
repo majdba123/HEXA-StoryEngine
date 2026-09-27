@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.models import StoryBeat
 
-from .binding import AssetBinding
+from app.story.binding import AssetBinding
 from .models import InteractionIntent, VisualStateTransition
 
 

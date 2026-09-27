@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 _RAW_FIELDS = {"manifest", "scene_plan", "semantic_bindings"}
-_ALLOWED_RAW_OWNERS = {"final_package", "canonical", "input"}
+_ALLOWED_RAW_OWNERS = {"final_package", "canonical"}
 
 
 def _app_root() -> Path:

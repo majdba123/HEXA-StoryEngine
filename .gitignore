@@ -9,5 +9,7 @@ work/
 outputs/
 temp/
 node_modules/
+build/
 dist/
+*.egg-info/
 .DS_Store

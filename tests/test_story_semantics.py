@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from app.input.loader import FinalPackageLoader
+from app.final_package import FinalPackageLoader
 from app.models import Transcript, TranscriptWord, VisualAsset
 from app.story import StoryPlanner
 

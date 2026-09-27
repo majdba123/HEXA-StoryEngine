@@ -30,11 +30,6 @@ def test_final_package_boundary_returns_raw_typed_model(tmp_path: Path) -> None:
     assert len(raw.scenes) == 1
 
 
-def test_legacy_input_loader_is_only_compatibility_alias() -> None:
-    from app.input.loader import FinalPackageLoader as LegacyLoader
-    assert LegacyLoader is FinalPackageLoader
-
-
 def test_zip_traversal_is_rejected_at_boundary(tmp_path: Path) -> None:
     archive = tmp_path / "evil.zip"
     with zipfile.ZipFile(archive, "w") as zf:

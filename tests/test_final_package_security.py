@@ -3,7 +3,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from app.input.loader import FinalPackageLoader
+from app.final_package import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
 
 

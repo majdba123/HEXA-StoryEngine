@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.composition.footprint import AlphaFootprintResolver
+from app.layout.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.composition.text_constraints import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset

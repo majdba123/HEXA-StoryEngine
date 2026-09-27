@@ -12,7 +12,7 @@ from app.canonical import (
     CanonicalScriptSpan,
     CanonicalVisualProgression,
 )
-from app.input.loader import FinalPackageLoader
+from app.final_package import FinalPackageLoader
 from app.models import (
     PackageModel,
     SceneSource,

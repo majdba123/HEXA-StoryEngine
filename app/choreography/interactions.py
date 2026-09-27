@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from app.models import StoryBeat
 
 from .actions import ActionDecision
-from .binding import AssetBinding
+from app.story.binding import AssetBinding
 from .models import InteractionIntent
 
 
