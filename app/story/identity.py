@@ -74,6 +74,14 @@ class VisualIdentityBinder:
     _MIN_SCORE = 0.60
     _MIN_MARGIN = 0.065
     _MIN_ALPHA = 10
+    # Event-carrier fallback is deliberately weaker than semantic identity matching.
+    # It never claims that a runtime cutout *is* the authored semantic asset.  Story
+    # may only use it as a renderable carrier for an authored event when one runtime
+    # visual clearly covers the authored locator region better than every alternative.
+    # This keeps identity fail-closed while allowing real Final Packages whose locator
+    # geometry is approximate rather than pixel-tight to retain semantic timing.
+    _PROXY_MIN_LOCATOR_COVERAGE = 0.12
+    _PROXY_MIN_COVERAGE_MARGIN = 0.05
 
     # A locator may intentionally describe one visual unit made of several detached
     # cutouts. This is only accepted after one-to-one matching abstains, and only when
@@ -247,6 +255,67 @@ class VisualIdentityBinder:
             multi_matches=multi_matches,
             locator_semantic_ids=locator_ids,
             unresolved_locator_ids=frozenset(locator_ids - resolved_locator_ids),
+        )
+
+    def region_carrier(
+        self,
+        *,
+        semantic_asset: CanonicalAsset,
+        assets: list[VisualAsset],
+    ) -> VisualIdentityMatch | None:
+        """Return a conservative render carrier for an unresolved authored locator.
+
+        This is intentionally *not* semantic identity resolution.  The returned source
+        is ``visual_locator_region_proxy`` and may only be consumed as a semantic-event
+        proxy carrier.  A unique runtime visual must cover enough of the authored
+        locator and beat the runner-up by a meaningful coverage margin.  Near-ties
+        abstain so the engine never turns ambiguous geometry into fabricated identity.
+        """
+        locator = self._locator_box(semantic_asset.visual_locator)
+        if locator is None:
+            return None
+        locator_area = self._area(locator)
+        if locator_area <= 0.0:
+            return None
+
+        ranked: list[tuple[str, float, float]] = []
+        for asset in assets:
+            if (
+                not asset.can_animate_independently
+                or (asset.role or "").casefold() in {"background", "decorative"}
+            ):
+                continue
+            real_box = self._asset_box(asset)
+            if real_box is None:
+                continue
+            coverage = self._intersection(locator, real_box) / locator_area
+            if coverage <= 0.0:
+                continue
+            ranked.append((
+                asset.id,
+                coverage,
+                self._geometry_score(locator, real_box),
+            ))
+
+        if not ranked:
+            return None
+        ranked.sort(key=lambda row: (-row[1], -row[2], row[0]))
+        top_id, top_coverage, _top_geometry = ranked[0]
+        runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
+        margin = top_coverage - runner_up
+        if (
+            top_coverage < self._PROXY_MIN_LOCATOR_COVERAGE
+            or margin < self._PROXY_MIN_COVERAGE_MARGIN
+        ):
+            return None
+        return VisualIdentityMatch(
+            semantic_asset_id=str(semantic_asset.asset_id),
+            real_asset_id=top_id,
+            score=min(1.0, top_coverage),
+            runner_up_score=(runner_up if len(ranked) > 1 else None),
+            margin=margin,
+            source="visual_locator_region_proxy",
+            locator=locator,
         )
 
     def _multi_candidate_proposal(

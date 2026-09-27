@@ -864,13 +864,15 @@ class SemanticActivationPlanner:
         windows: list[Any],
         existing_proxies: list[SemanticEventProxy],
     ) -> list[SemanticEventProxy]:
-        """Represent unclaimed authored events on an explicitly proven visual carrier.
+        """Represent unclaimed authored events on a proven renderable carrier.
 
         AssetActivation is one-to-one with a rendered asset, while a Final Package may
         intentionally reuse one visual across several events or keep a compound visual
-        as one indivisible renderable unit.  This path never guesses from geometry:
-        carriers are either already-trusted Story windows or an exact authored
-        semantic-asset id that exists as a real runtime asset.
+        as one indivisible renderable unit.  Semantic identity remains fail-closed.  If
+        strict identity abstains, Story may still preserve an authored event on a
+        uniquely proven locator *region* carrier, or on the single carrier of an
+        explicit dependency event.  Those paths are proxies only: they never claim that
+        the runtime cutout is the authored semantic asset.
         """
         binding = package.scene_by_id.get(scene.id)
         if binding is None or not binding.semantic_events:
@@ -885,6 +887,28 @@ class SemanticActivationPlanner:
             and getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
         }
         represented_events.update(proxy.semantic_event_id for proxy in existing_proxies)
+
+        event_carriers: dict[str, list[tuple[str, float, str]]] = {}
+        for row in windows:
+            if (
+                getattr(row, "activation_policy", None) == "SAFE_ABSTENTION"
+                or row.asset_id not in runtime_by_id
+                or not getattr(row, "semantic_event_id", None)
+            ):
+                continue
+            event_carriers.setdefault(str(row.semantic_event_id), []).append((
+                row.asset_id,
+                float(row.confidence),
+                "trusted_story_window",
+            ))
+        for proxy in existing_proxies:
+            if proxy.asset_id not in runtime_by_id:
+                continue
+            event_carriers.setdefault(proxy.semantic_event_id, []).append((
+                proxy.asset_id,
+                float(proxy.confidence),
+                proxy.authority,
+            ))
 
         # unit -> [(real asset id, confidence, proof source)]
         carriers_by_unit: dict[str, list[tuple[str, float, str]]] = {}
@@ -916,6 +940,38 @@ class SemanticActivationPlanner:
                     runtime.id,
                     min(float(metadata.confidence), float(runtime.confidence)),
                     "explicit_real_asset_id",
+                ))
+
+        # A locator can be too approximate to prove semantic identity while still
+        # identifying one renderable scene region unambiguously.  Preserve that
+        # distinction: the strict binder remains unchanged, and the weaker evidence is
+        # exposed only as an event-proxy carrier.
+        identity = self.identity_binder.bind(
+            scene=scene,
+            semantic_assets=list(binding.assets),
+            assets=assets,
+        )
+        for semantic_id in sorted(identity.unresolved_locator_ids):
+            metadata = asset_metadata.get(semantic_id)
+            if metadata is None:
+                continue
+            region = self.identity_binder.region_carrier(
+                semantic_asset=metadata,
+                assets=assets,
+            )
+            if region is None:
+                continue
+            rows = carriers_by_unit.setdefault(semantic_id, [])
+            if not any(asset_id == region.real_asset_id for asset_id, _confidence, _source in rows):
+                runtime = runtime_by_id[region.real_asset_id]
+                rows.append((
+                    region.real_asset_id,
+                    min(
+                        float(metadata.confidence),
+                        float(runtime.confidence),
+                        float(region.score),
+                    ),
+                    "visual_locator_region_proxy",
                 ))
 
         if not carriers_by_unit:
@@ -953,12 +1009,40 @@ class SemanticActivationPlanner:
                 )
                 if unit_id
             ))
+            target_unit_id = referenced_units[0] if referenced_units else None
             carrier_unit_id = next(
                 (unit_id for unit_id in referenced_units if carriers_by_unit.get(unit_id)),
                 None,
             )
+            carrier_rows: list[tuple[str, float, str]] = (
+                list(carriers_by_unit[carrier_unit_id])
+                if carrier_unit_id is not None
+                else []
+            )
+            dependency_proxy = False
             if carrier_unit_id is None:
-                continue
+                # A later authored event may intentionally reuse the visual established
+                # by its explicit dependency.  Reuse is safe only when every available
+                # dependency proof resolves to one runtime carrier; multiple different
+                # carriers remain ambiguous and therefore abstain.
+                dependencies = [
+                    str(value) for value in event.depends_on_event_ids if value
+                ]
+                dependency_rows = [
+                    row
+                    for dependency_id in dependencies
+                    for row in event_carriers.get(dependency_id, [])
+                ]
+                unique_dependency_rows: dict[str, tuple[str, float, str]] = {}
+                for row in dependency_rows:
+                    previous = unique_dependency_rows.get(row[0])
+                    if previous is None or row[1] > previous[1]:
+                        unique_dependency_rows[row[0]] = row
+                if target_unit_id is None or len(unique_dependency_rows) != 1:
+                    continue
+                carrier_unit_id = target_unit_id
+                carrier_rows = [next(iter(unique_dependency_rows.values()))]
+                dependency_proxy = True
 
             phrase = str(event.script_text or "").strip()
             if not phrase and event.script_span is not None and package.script:
@@ -1009,42 +1093,63 @@ class SemanticActivationPlanner:
             reveal_start = max(spoken_start, float(dependency_floor))
             if reveal_start >= float(beat.end) - 0.06:
                 continue
-            preferred = min(0.42, max(0.14, spoken_end - spoken_start))
+            proxy_needs_comfort_window = dependency_proxy or any(
+                source == "visual_locator_region_proxy"
+                for _asset_id, _confidence, source in carrier_rows
+            )
+            preferred = min(
+                0.42,
+                max(
+                    0.30 if proxy_needs_comfort_window else 0.14,
+                    spoken_end - spoken_start,
+                ),
+            )
             settle_at = min(float(beat.end), max(spoken_end, reveal_start + preferred))
             if settle_at - reveal_start < 0.06:
                 continue
             semantic_peak = reveal_start + (settle_at - reveal_start) * 0.61803398875
 
             roles: list[str] = []
-            if event.visual_leader_asset_id == carrier_unit_id:
+            role_unit_id = target_unit_id or carrier_unit_id
+            if event.visual_leader_asset_id == role_unit_id:
                 roles.append("LEADER")
-            if carrier_unit_id in event.participant_asset_ids:
+            if role_unit_id in event.participant_asset_ids:
                 roles.append("PARTICIPANT")
-            if carrier_unit_id in event.context_asset_ids:
+            if role_unit_id in event.context_asset_ids:
                 roles.append("CONTEXT")
-            if carrier_unit_id in event.result_asset_ids:
+            if role_unit_id in event.result_asset_ids:
                 roles.append("RESULT")
-            if event.text_anchor_asset_id == carrier_unit_id:
+            if event.text_anchor_asset_id == role_unit_id:
                 roles.append("TEXT_ANCHOR")
             if not roles:
                 roles.append("PARTICIPANT")
 
-            metadata = asset_metadata.get(carrier_unit_id)
+            metadata = asset_metadata.get(role_unit_id)
             created: list[SemanticEventProxy] = []
-            for carrier_id, carrier_confidence, carrier_source in carriers_by_unit[carrier_unit_id]:
+            for carrier_id, carrier_confidence, carrier_source in carrier_rows:
+                if carrier_source == "visual_locator_region_proxy":
+                    authority = "FINAL_PACKAGE_REGION_CARRIER_PROXY"
+                elif dependency_proxy:
+                    authority = "FINAL_PACKAGE_DEPENDENCY_CARRIER_PROXY"
+                else:
+                    authority = "FINAL_PACKAGE_REUSED_CARRIER_PROXY"
                 evidence = [
                     "final_package_reused_carrier_event_proxy",
                     f"proxy_event={event_id}",
-                    f"proxy_carrier_unit={carrier_unit_id}",
+                    f"proxy_target_unit={role_unit_id}",
+                    f"proxy_carrier_asset={carrier_id}",
                     f"carrier_proof={carrier_source}",
-                    "explicit_event_references_existing_semantic_unit",
                     "no_new_cutout",
                 ]
+                if dependency_proxy:
+                    evidence.append("explicit_dependency_reuses_single_proven_carrier")
+                else:
+                    evidence.append("explicit_event_references_existing_semantic_unit")
                 if dependency_floor > spoken_start + 1e-6:
                     evidence.append("dependency_order_delays_visual_refocus")
                 created.append(SemanticEventProxy(
                     asset_id=carrier_id,
-                    semantic_unit_id=carrier_unit_id,
+                    semantic_unit_id=role_unit_id,
                     semantic_parent_id=(
                         str(metadata.parent_asset_id)
                         if metadata is not None and metadata.parent_asset_id
@@ -1068,7 +1173,7 @@ class SemanticActivationPlanner:
                     semantic_peak=semantic_peak,
                     settle_at=settle_at,
                     confidence=min(float(event.confidence), carrier_confidence),
-                    authority="FINAL_PACKAGE_REUSED_CARRIER_PROXY",
+                    authority=authority,
                     visual_focus=(
                         str(metadata.visual_focus).upper()
                         if metadata is not None and metadata.visual_focus is not None
@@ -1079,6 +1184,10 @@ class SemanticActivationPlanner:
             output.extend(created)
             if created:
                 represented_events.add(event_id)
+                event_carriers[event_id] = [
+                    (row.asset_id, float(row.confidence), row.authority)
+                    for row in created
+                ]
                 event_peak[event_id] = min(
                     event_peak.get(event_id, semantic_peak),
                     semantic_peak,
