@@ -26,7 +26,6 @@ class Stage(StrEnum):
     motion = "motion"
     render = "render"
     final = "final"
-    recovery = "recovery"
 
 
 class SceneSource(BaseModel):
