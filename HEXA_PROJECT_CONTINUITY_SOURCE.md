@@ -12165,3 +12165,254 @@ encoded proof is a regression.
 
 The target is not merely "no exception". The target is a pipeline in which every layer
 hands the next layer a semantically correct, spatially valid, temporally executable contract.
+
+
+================================================================================
+PRODUCER → CONSUMER TEMPORAL FEASIBILITY FIX — 2026-09-27
+================================================================================
+
+SOURCE / START POINT
+--------------------
+Started from:
+cdb4a134970c9942900cad348326f6e44b634dcc
+[continuity] Record cross-layer feasibility failure
+
+The exact production failure class was reproduced from production code without
+inventing replacement audio/package data:
+
+phase: ESTABLISH
+segment duration: 0.24919060675000537 sec
+readability floor: 15.36 px
+translation ceiling: 13.363600831... px
+scale ceiling: 13.363600831... px
+
+A generic square Composition fixture reproduces the same
+MOTION_INFEASIBLE_BEFORE_RENDER arithmetic.
+
+FIRST BAD OWNER
+---------------
+First bad owner: Story semantic-event proxy timing construction.
+
+The Story proxy builders (compound/group/reused/dependency/region carrier paths)
+could clamp a preferred proxy window against beat.end down to any duration >= 60 ms,
+then placed semantic_peak at 0.61803398875 of that already-short window.
+
+Therefore Story could emit a contract that was:
+- semantically valid,
+- ordered,
+- dependency-correct,
+- render-carrier-valid,
+but not temporally executable by Motion under the existing readability + comfort
+constraints.
+
+The 0.24919060675 sec failure is one member of that generic class, not a
+SCENE_035-specific exception.
+
+SECONDARY CONSUMER BUG
+----------------------
+Motion also had a latent consumer-side mismatch:
+
+ESTABLISH/ADD accepted an exact Story semantic peak, but then built a second
+Golden-ratio active sub-window around it and computed comfort capacity from a
+hard-coded GOLDEN_MINOR leg.
+
+That meant Motion's feasibility arithmetic did not always correspond to the actual
+Story-owned peak/window that it was consuming.
+
+ARCHITECTURE FIX
+----------------
+Production commit:
+d507de5eea38e31679fdea2c43ff7b81be198509
+[timing] Make semantic proxy motion executable by construction
+
+Test extension commit:
+d40e1b8cc9738a24f24f83a23cee85d4b6456d82
+[test2] Extend feasibility certification through RenderPlan
+
+Changes:
+
+1. Story proxy timing
+   - semantic-event proxy refocus peaks are centered at 0.5 of their executable
+     reveal→settle window.
+   - This applies generically to compound, group, reused/dependency and locator-region
+     proxy construction.
+   - No semantic event is dropped.
+   - Dependency and sequence order remain unchanged.
+
+2. Motion ESTABLISH/ADD
+   - Uses the full Story-owned semantic window for proxy/refocus phases.
+   - Uses the actual Story peak to calculate the shortest comfort leg.
+   - Does not force a private Golden-ratio sub-window on top of Story timing.
+
+3. Relation phases
+   - INTERACT / REACT / PAYOFF retain their existing relation-pulse behavior.
+   - Existing semantic relation timing remains unchanged.
+
+NOT CHANGED
+-----------
+- No Recovery.
+- No new runtime QA layer.
+- No Pass3 / Layer3.
+- No package-specific, scene-specific or seed-specific branch.
+- No readability threshold weakening.
+- No comfort ceiling inflation.
+- No exception catch-and-skip.
+- No semantic event suppression.
+- No Composition geometry redesign.
+- Pass1 + Pass2 architecture remains locked.
+
+NEW TEST2 COVERAGE
+------------------
+62 new regression cases were added.
+
+A) Cross-layer generated certification: 4 cases
+   Durations:
+   - 0.200 sec
+   - 0.24919060675 sec (production failure class)
+   - 0.250 sec
+   - 0.300 sec
+
+   Path exercised:
+   Canonical-like package
+   → Story
+   → Choreography
+   → Composition
+   → Motion
+   → Text
+   → RenderPlan
+
+   Asserts include:
+   - authored event identity preserved,
+   - dependency E2 → E1 preserved,
+   - reused carrier preserved,
+   - Composition carrier exists,
+   - exact short proxy duration preserved,
+   - semantic peak centered and executable,
+   - ESTABLISH motion exists,
+   - RenderPlan compiles successfully.
+
+B) Motion feasibility generated matrix: 55 cases
+   Durations:
+   - 0.20
+   - 0.24919060675
+   - 0.25
+   - 0.30
+   - 0.33
+   - 0.50
+   - 0.75
+   - 1.0
+   - 1.5
+   - 3.0
+   - 8.0 sec
+
+   Geometry:
+   - tiny
+   - small portrait
+   - square
+   - wide
+   - tall
+
+   Each case proves:
+   READABILITY AND COMFORT can coexist for the centered ESTABLISH representation,
+   with identity restored at segment end.
+
+C) Exact readability/comfort boundary: 3 cases
+   - readability floor BELOW comfort ceiling → executable
+   - readability floor EQUAL comfort ceiling → executable
+   - readability floor ABOVE comfort ceiling → fail-closed with
+     MOTION_INFEASIBLE_BEFORE_RENDER
+
+The impossible third case is still rejected; thresholds were not weakened.
+
+WHY PREVIOUS TESTS MISSED IT
+----------------------------
+Existing reused-carrier integration regressions used broader event spacing
+(0.40 / 0.65 / 0.95 sec) and therefore did not produce a beat-clamped proxy around
+0.249 sec.
+
+The previous suite proved semantic preservation and carrier continuity, but did not
+certify the producer timing envelope against the consumer's readability + comfort
+envelope at the short-window boundary.
+
+LOCAL PROOF
+-----------
+Compile:
+PASS
+
+Targeted Story/Choreography/Composition/Motion/Integration regressions:
+PASS
+
+Test1:
+385 passed
+8 skipped
+0 failed
+
+Local full source-artifact runnable set:
+1034 passed
+8 skipped
+0 failed
+
+Note:
+The downloadable CI source snapshot intentionally omits
+checkpoints/v7_audio_sync/manifest.json, so the two checkpoint-byte-freeze tests
+cannot run from that stripped artifact. They are present in the real repository CI.
+
+OFFICIAL CI PROOF
+-----------------
+Production fix HEAD d507de5eea38e31679fdea2c43ff7b81be198509:
+- push run 672 / ID 36336037342: SUCCESS
+- PR run 673 / ID 36336041307: SUCCESS
+
+Latest test-complete HEAD d40e1b8cc9738a24f24f83a23cee85d4b6456d82:
+- push run 674 / ID 36336123769: SUCCESS
+- PR run 675 / ID 36336126635: SUCCESS
+
+For latest push run 674:
+- Install FFmpeg: PASS
+- Install StoryEngine: PASS
+- Compile: PASS
+- Lint / Ruff: PASS
+- Test1 canonical compatibility: PASS
+- Full Test: PASS
+- Upload tested source snapshot: PASS
+
+REAL-ASSET LIMITATION IN THIS SESSION
+-------------------------------------
+The following authoritative files were searched for in current Project/Library and
+were not available as materializable inputs in this session:
+
+- HEXA-diagnostic-7d584f9e.zip
+- HEXA_SCRIPT_KIDDIE_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip
+- the documented ElevenLabs narration MP3
+- the four authoritative Final Package ZIPs
+
+Therefore this session DID NOT claim:
+- real-audio reproduction,
+- four-package rerun,
+- actual Script Kiddie MP4 rerender,
+- ffprobe/final A/V verification,
+- visual comparison of a newly encoded production MP4.
+
+Those proofs remain mandatory as soon as the original package/audio corpus is
+available to the executing session. Do not substitute internet assets.
+
+CURRENT ARCHITECTURAL CONCLUSION
+--------------------------------
+The failure class is no longer treated as:
+"Motion threw, therefore Motion is wrong."
+
+The correct ownership chain is:
+
+Story proxy timing was the FIRST BAD OWNER
+→ Motion exposed the contradiction correctly
+→ Motion also had a secondary private-timing assumption that had to be removed
+→ producer and consumer now share an executable peak/window interpretation.
+
+Required invariant remains:
+
+SEMANTICALLY CORRECT
++ SPATIALLY VALID
++ TEMPORALLY EXECUTABLE
++ DOWNSTREAM-COMPATIBLE
+
+No external recovery layer is used.
