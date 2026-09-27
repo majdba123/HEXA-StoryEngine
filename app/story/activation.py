@@ -864,18 +864,20 @@ class SemanticActivationPlanner:
         windows: list[Any],
         existing_proxies: list[SemanticEventProxy],
     ) -> list[SemanticEventProxy]:
-        """Represent later authored events on an already-proven visual carrier.
+        """Represent unclaimed authored events on an explicitly proven visual carrier.
 
-        AssetActivation is one-to-one with a rendered asset, while the Final Package may
-        intentionally reuse that visual in several semantic events. Reuse is permitted
-        only when the later event explicitly references the same semantic unit already
-        bound to a real renderable asset. No pixel inference or new cutout is introduced.
+        AssetActivation is one-to-one with a rendered asset, while a Final Package may
+        intentionally reuse one visual across several events or keep a compound visual
+        as one indivisible renderable unit.  This path never guesses from geometry:
+        carriers are either already-trusted Story windows or an exact authored
+        semantic-asset id that exists as a real runtime asset.
         """
         binding = package.scene_by_id.get(scene.id)
         if binding is None or not binding.semantic_events:
             return []
 
-        renderable_ids = {asset.id for asset in assets if asset.can_animate_independently}
+        runtime_by_id = {asset.id: asset for asset in assets}
+        renderable_ids = set(runtime_by_id)
         represented_events = {
             str(row.semantic_event_id)
             for row in windows
@@ -884,19 +886,41 @@ class SemanticActivationPlanner:
         }
         represented_events.update(proxy.semantic_event_id for proxy in existing_proxies)
 
-        carriers_by_unit: dict[str, list[Any]] = {}
+        # unit -> [(real asset id, confidence, proof source)]
+        carriers_by_unit: dict[str, list[tuple[str, float, str]]] = {}
         for row in windows:
             if (
                 getattr(row, "activation_policy", None) == "SAFE_ABSTENTION"
-                or row.asset_id not in renderable_ids
+                or row.asset_id not in runtime_by_id
                 or not row.semantic_unit_id
             ):
                 continue
-            carriers_by_unit.setdefault(str(row.semantic_unit_id), []).append(row)
+            carriers_by_unit.setdefault(str(row.semantic_unit_id), []).append((
+                row.asset_id,
+                float(row.confidence),
+                "trusted_story_window",
+            ))
+
+        # Exact authored/runtime identity is already the strongest identity authority in
+        # VisualIdentityBinder.  It is safe even when semantic binding confidence is
+        # AMBIGUOUS or the asset is COMPOUND_REQUIRED: the proxy preserves the authored
+        # event on the existing whole visual without inventing an independent child.
+        asset_metadata = {row.asset_id: row for row in binding.assets}
+        for semantic_id, metadata in asset_metadata.items():
+            runtime = runtime_by_id.get(semantic_id)
+            if runtime is None or (runtime.role or "").casefold() in {"background", "decorative"}:
+                continue
+            rows = carriers_by_unit.setdefault(semantic_id, [])
+            if not any(asset_id == runtime.id for asset_id, _confidence, _source in rows):
+                rows.append((
+                    runtime.id,
+                    min(float(metadata.confidence), float(runtime.confidence)),
+                    "explicit_real_asset_id",
+                ))
+
         if not carriers_by_unit:
             return []
 
-        asset_metadata = {row.asset_id: row for row in binding.assets}
         event_peak = self._canonical_event_anchor_peaks(
             windows,
             existing_proxies,
@@ -938,14 +962,14 @@ class SemanticActivationPlanner:
 
             phrase = str(event.script_text or "").strip()
             if not phrase and event.script_span is not None and package.script:
-                start = event.script_span.global_char_start
-                end = event.script_span.global_char_end
+                phrase_start = event.script_span.global_char_start
+                phrase_end = event.script_span.global_char_end
                 if (
-                    isinstance(start, int)
-                    and isinstance(end, int)
-                    and 0 <= start < end <= len(package.script)
+                    isinstance(phrase_start, int)
+                    and isinstance(phrase_end, int)
+                    and 0 <= phrase_start < phrase_end <= len(package.script)
                 ):
-                    phrase = package.script[start:end]
+                    phrase = package.script[phrase_start:phrase_end]
             if not phrase:
                 continue
 
@@ -1007,18 +1031,19 @@ class SemanticActivationPlanner:
 
             metadata = asset_metadata.get(carrier_unit_id)
             created: list[SemanticEventProxy] = []
-            for carrier in carriers_by_unit[carrier_unit_id]:
+            for carrier_id, carrier_confidence, carrier_source in carriers_by_unit[carrier_unit_id]:
                 evidence = [
                     "final_package_reused_carrier_event_proxy",
                     f"proxy_event={event_id}",
                     f"proxy_carrier_unit={carrier_unit_id}",
+                    f"carrier_proof={carrier_source}",
                     "explicit_event_references_existing_semantic_unit",
                     "no_new_cutout",
                 ]
                 if dependency_floor > spoken_start + 1e-6:
                     evidence.append("dependency_order_delays_visual_refocus")
                 created.append(SemanticEventProxy(
-                    asset_id=carrier.asset_id,
+                    asset_id=carrier_id,
                     semantic_unit_id=carrier_unit_id,
                     semantic_parent_id=(
                         str(metadata.parent_asset_id)
@@ -1042,7 +1067,7 @@ class SemanticActivationPlanner:
                     reveal_start=reveal_start,
                     semantic_peak=semantic_peak,
                     settle_at=settle_at,
-                    confidence=min(float(event.confidence), float(carrier.confidence)),
+                    confidence=min(float(event.confidence), carrier_confidence),
                     authority="FINAL_PACKAGE_REUSED_CARRIER_PROXY",
                     visual_focus=(
                         str(metadata.visual_focus).upper()

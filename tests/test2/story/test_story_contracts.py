@@ -194,3 +194,64 @@ def test_story_contract_rejects_dropped_independent_asset() -> None:
         StoryPlanner._require_quality_contract(package=package, assets=[visual], beats=[beat])
 
     assert exc.value.effective_code == "ASSET_REACHES_STORY"
+
+
+def test_story_uses_exact_visual_identity_as_proxy_without_promoting_ambiguous_binding() -> None:
+    event = _event("E1", 1, 0, 5)
+    package = _package(events=(event,))
+    scene = package.scenes[0]
+    # No trusted semantic window: the visual identity itself is exact, but semantic
+    # activation remains conservative.  The event is represented through a proxy.
+    abstention = StoryAssetActivation(
+        asset_id="A",
+        semantic_unit_id="A",
+        confidence=0.0,
+        source="semantic_abstention",
+        policy="FALLBACK",
+        evidence=["SAFE_ABSTENTION"],
+        activation_policy="SAFE_ABSTENTION",
+    )
+    transcript = Transcript(
+        duration=1.0,
+        segments=[],
+        words=[
+            TranscriptWord(start=0.10, end=0.35, text="alpha", char_start=0, char_end=5),
+        ],
+        timing_source="forced_alignment",
+    )
+    visual = VisualAsset(
+        id="A",
+        scene_id=scene.id,
+        role="primary",
+        image_path=Path("compound.png"),
+        extraction_method="test2",
+        can_animate_independently=False,
+        compound=True,
+    )
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id=scene.id,
+        start=0.0,
+        end=0.9,
+        audio_start=0.0,
+        audio_end=0.9,
+        narration="alpha",
+        primary_asset_ids=["A"],
+        action="INTRODUCE",
+    )
+
+    proxies = SemanticActivationPlanner()._reused_semantic_event_proxies(
+        package=package,
+        transcript=transcript,
+        scene=scene,
+        beat=beat,
+        assets=[visual],
+        windows=[abstention],
+        existing_proxies=[],
+    )
+
+    assert len(proxies) == 1
+    assert proxies[0].asset_id == "A"
+    assert proxies[0].semantic_event_id == "E1"
+    assert "carrier_proof=explicit_real_asset_id" in proxies[0].evidence
+
