@@ -11417,3 +11417,106 @@ Update this continuity file with:
 Do not stop after partial migration. Do not leave `MIGRATION_COMPLETE=False` and call the
 sprint complete.
 
+# QA-TO-OWNER MIGRATION CLOSURE — 2026-09-27
+
+## Final behavior and test state
+
+Branch: `montage`
+
+Final behavior/test HEAD before this continuity-only record:
+
+- `57c89e6ca22ba3eb79a2109cca3fad441c851cd8`
+- message: `[test2] Consolidate owner regression suites`
+
+Commits in this migration closure:
+
+- `51f57bec675c2eff3605220778fc4cd24c9b7d4d` — `[composition] Enforce owner layout accountability`
+- `1a96730bd6e93cdbdf91ab4bdbacff8f0add4aa4` — `[architecture] Remove legacy runtime QA`
+- `57c89e6ca22ba3eb79a2109cca3fad441c851cd8` — `[test2] Consolidate owner regression suites`
+
+The first composition commit exposed a missing FailurePolicy registration for the new
+`ASSET_REACHES_COMPOSITION` failure identity in full CI. The architecture commit added
+the owner policy and the superseding exact-head CI passed. No test was weakened to hide
+the failure.
+
+## Owner migration result
+
+- Composition now refuses loss of independently animatable assets and invalid authored
+  geometry before returning a layout.
+- Text placement uses one primary, final-Motion-aware pass; unsafe optional text is
+  excluded and required text remains a Text-owner failure. The shared hard artwork
+  overlap limit is `0.001`, with the Windows/libass entry excursion corrected to its
+  actual 17 px bound.
+- Motion owns interaction timelines, rhythm/focus competition, semantic lifetime,
+  Story timing/peak/order/stagger/proxy preservation, and lifecycle continuity at its
+  output boundary.
+- A generated Test1 regression showed that `semantic_peak_time` could survive as
+  metadata while later Motion enrichment dropped the executable program peak. Motion
+  now preserves the authored peak in the final program payload; the failing generated
+  seeds 4144, 4146, and 4195 pass without widening timing tolerance.
+- RenderPlan owns cross-layer asset accountability and transition/bridge/blur/handoff
+  rejection before FFmpeg.
+- Render owns encoded-motion verification and rendered visual evidence. Final media
+  decode/probe, streams, A/V sync, and flash proof remain in `app/final/verification.py`.
+- Historical rule regressions were moved into owner-scoped `tests/test2/` suites rather
+  than discarded.
+
+## Removed runtime QA surfaces
+
+The following production files are absent:
+
+- `app/qa/` (entire package)
+- `app/story/sync_qa.py`
+- `app/diagnostics/storytelling.py`
+- `app/diagnostics/asset_usage.py`
+
+`app/pipeline.py` has no runtime QA stage, import, instance, or call. Test-only historical
+oracles remain under `tests/legacy_quality/` solely to preserve old non-runtime assertions
+while owner-scoped Test2 coverage is authoritative.
+
+## Rule ledger and Master QA
+
+- total rules: 61
+- migrated pre-render owner rules: 55
+- retained encoded proof rules: 5
+- retained diagnostic evidence rules: 1
+- pending rules: 0
+- `MIGRATION_COMPLETE = True`
+- strict `tests/test2/test_master_qa.py` completion branch: PASS
+- production imports of removed QA classes: 0
+- runtime `app/qa/`: absent
+
+## Final local verification
+
+- Compile: PASS (`python -m compileall -q app tests`)
+- Ruff/Lint: PASS (`All checks passed!`)
+- Test1: `385 passed, 8 skipped, 4 warnings in 24.88s`
+- Test2: `132 passed in 4.62s`
+- Full pytest: `880 passed, 8 skipped, 21 warnings in 95.57s`
+- FFmpeg release/render smoke: `1 passed in 2.44s`
+- strict real-package corpus probes: `8 skipped`; the external Black/White/Gray/Script
+  Kiddie package roots are not present in this checkout, so no fresh real-corpus claim is
+  made
+- no fresh production-package render was possible for the same missing-input reason;
+  the available FFmpeg release smoke, encoded-motion proof, and final decode/probe passed
+
+Warnings are non-failing and consist of the existing Starlette/httpx deprecations,
+Pillow `mode` deprecations, and the existing invalid-escape warning in final media
+verification. The historical Windows text-placement failures are closed by owner geometry,
+not skipped or tolerated.
+
+## Exact-head CI
+
+For `57c89e6ca22ba3eb79a2109cca3fad441c851cd8`:
+
+- V2 CI push run `36319148903` (#644): SUCCESS
+- V2 CI pull-request run `36319151853` (#645): SUCCESS
+- Compile: PASS
+- Lint: PASS
+- Test1 canonical compatibility: PASS
+- Full Test: PASS
+- tested-source snapshot upload: PASS
+
+The QA-to-owner migration is closed. Recovery remains removed, and the architecture is
+still Pass1 + Pass2 only with no Pass3 or Layer3.
+
