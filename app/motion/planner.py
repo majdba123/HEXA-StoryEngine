@@ -1793,16 +1793,31 @@ class MotionPlanner:
         )
         before = peak_progress * duration
         after = (1.0 - peak_progress) * duration
-        active_duration = min(
-            motion_comfort(phase.stage.value).target_seconds,
-            before / GOLDEN_MAJOR,
-            after / GOLDEN_MINOR,
-        )
-        if active_duration < 0.06:
+        story_shaped_phase = phase.stage in {EventFlowStage.ESTABLISH, EventFlowStage.ADD}
+        if story_shaped_phase:
+            # Story owns the exact semantic peak for proxy/refocus phases.  These
+            # phases are not relation pulses, so use the full Story window rather
+            # than forcing a second Golden-ratio sub-window around the peak.
             active_duration = duration
-            peak_progress = GOLDEN_MAJOR
-        active_start = max(0.0, peak_progress - (active_duration * GOLDEN_MAJOR) / duration)
-        active_end = min(1.0, peak_progress + (active_duration * GOLDEN_MINOR) / duration)
+            active_start = 0.0
+            active_end = 1.0
+            comfort_peak_progress = peak_progress
+        else:
+            active_duration = min(
+                motion_comfort(phase.stage.value).target_seconds,
+                before / GOLDEN_MAJOR,
+                after / GOLDEN_MINOR,
+            )
+            if active_duration < 0.06:
+                active_duration = duration
+                peak_progress = GOLDEN_MAJOR
+            active_start = max(
+                0.0, peak_progress - (active_duration * GOLDEN_MAJOR) / duration
+            )
+            active_end = min(
+                1.0, peak_progress + (active_duration * GOLDEN_MINOR) / duration
+            )
+            comfort_peak_progress = GOLDEN_MAJOR
 
         dx, dy, scale = cls._phase_transform(
             phase=phase, vector=vector, focus_strength=max(0.0, min(1.0, focus_strength))
@@ -1823,6 +1838,7 @@ class MotionPlanner:
                 segment_duration=duration,
                 active_duration=active_duration,
             ),
+            peak_progress=comfort_peak_progress,
         )
 
         frames: list[MotionKeyframe] = [
@@ -1869,6 +1885,7 @@ class MotionPlanner:
         scale: float,
         duration: float,
         readability_duration: float | None = None,
+        peak_progress: float = GOLDEN_MAJOR,
         frame_width: int = 1920,
         frame_height: int = 1080,
     ) -> tuple[float, float, float]:
@@ -1881,7 +1898,10 @@ class MotionPlanner:
         phase_name = phase.stage.value
         temporal_gain = comfort_gain(phase_name, movement_duration)
 
-        comfort_leg_duration = movement_duration * GOLDEN_MINOR
+        bounded_peak = max(1e-4, min(1.0 - 1e-4, float(peak_progress)))
+        comfort_leg_duration = movement_duration * min(
+            bounded_peak, 1.0 - bounded_peak
+        )
         max_displacement = max_comfort_displacement(phase_name, comfort_leg_duration)
         asset_extent = max(1e-6, min(item.width, item.height))
         scale_cap = min(

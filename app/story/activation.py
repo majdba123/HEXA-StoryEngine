@@ -551,7 +551,7 @@ class SemanticActivationPlanner:
             )
             if settle_at - reveal_start < 0.06:
                 continue
-            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.61803398875
+            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.5
             roles: list[str] = []
             if event.visual_leader_asset_id == semantic_id:
                 roles.append("LEADER")
@@ -747,7 +747,7 @@ class SemanticActivationPlanner:
             )
             if settle_at - reveal_start < 0.06:
                 continue
-            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.61803398875
+            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.5
 
             target_sequence = row.sequence_order if row.sequence_order is not None else 10_000
             carrier_rows = group_windows.get(group_id, [])
@@ -1107,7 +1107,7 @@ class SemanticActivationPlanner:
             settle_at = min(float(beat.end), max(spoken_end, reveal_start + preferred))
             if settle_at - reveal_start < 0.06:
                 continue
-            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.61803398875
+            semantic_peak = reveal_start + (settle_at - reveal_start) * 0.5
 
             roles: list[str] = []
             role_unit_id = target_unit_id or carrier_unit_id
