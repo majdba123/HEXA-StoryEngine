@@ -9,6 +9,7 @@ from app.canonical import (
     ensure_canonical_package,
 )
 from app.models import StoryBeat, StorySemanticContext, Transcript, VisualAsset
+from app.shared.errors import StageFailedError
 
 from .activation import SemanticActivationPlanner
 from .graph import StoryGraph, StoryGraphBuilder
@@ -137,8 +138,96 @@ class StoryPlanner:
             transcript.duration,
             preserve_spoken_completion=package.has_semantic_bindings,
         )
-        return self.activation.enrich(package, transcript, assets, beats)
+        planned = self.activation.enrich(package, transcript, assets, beats)
+        self._require_quality_contract(package=package, assets=assets, beats=planned)
+        return planned
 
+    @staticmethod
+    def _require_quality_contract(
+        *,
+        package: CanonicalPackage,
+        assets: list[VisualAsset],
+        beats: list[StoryBeat],
+    ) -> None:
+        """Fail at Story ownership instead of emitting incomplete semantic output."""
+        beats_by_scene: dict[str, list[StoryBeat]] = defaultdict(list)
+        for beat in beats:
+            beats_by_scene[beat.scene_id].append(beat)
+
+        rich_scene_ids = {
+            scene.id
+            for scene in package.scenes
+            if (
+                scene.units
+                or scene.visual_progression
+                or scene.semantic_events
+                or scene.relations
+                or scene.relation_to_previous
+            )
+        }
+        missing_metadata = [
+            beat.id
+            for beat in beats
+            if beat.scene_id in rich_scene_ids and beat.semantic_context is None
+        ]
+        missing_rich_scenes = sorted(
+            scene_id for scene_id in rich_scene_ids if not beats_by_scene.get(scene_id)
+        )
+        if missing_metadata or missing_rich_scenes:
+            raise StageFailedError(
+                "Story could not preserve Final Package semantic metadata",
+                details={
+                    "code": "FINAL_PACKAGE_METADATA_COVERAGE",
+                    "beats": missing_metadata,
+                    "scenes": missing_rich_scenes,
+                },
+            )
+
+        eligible_assets = {
+            asset.id for asset in assets if asset.can_animate_independently
+        }
+        represented_assets = {
+            asset_id
+            for beat in beats
+            for asset_id in (*beat.primary_asset_ids, *beat.support_asset_ids)
+        }
+        missing_assets = sorted(eligible_assets - represented_assets)
+        if missing_assets:
+            raise StageFailedError(
+                "Story dropped independently animatable visual assets",
+                details={"code": "ASSET_REACHES_STORY", "asset_ids": missing_assets},
+            )
+
+        authored_events = {
+            (scene.id, event.semantic_event_id)
+            for scene in package.scenes
+            for event in scene.semantic_events
+            if event.semantic_event_id
+        }
+        represented_events = {
+            (beat.scene_id, event_id)
+            for beat in beats
+            for event_id in (
+                *(
+                    activation.semantic_event_id
+                    for activation in beat.asset_activations
+                    if activation.semantic_event_id
+                    and getattr(activation, "activation_policy", None) != "SAFE_ABSTENTION"
+                ),
+                *(proxy.semantic_event_id for proxy in beat.semantic_event_proxies),
+            )
+        }
+        missing_events = sorted(authored_events - represented_events)
+        if missing_events:
+            raise StageFailedError(
+                "Story could not assign every authored semantic event to a proven visual carrier",
+                details={
+                    "code": "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE",
+                    "missing_events": [
+                        f"{scene_id}:{event_id}" for scene_id, event_id in missing_events
+                    ],
+                },
+            )
 
     @classmethod
     def _resolve_relation_timing(

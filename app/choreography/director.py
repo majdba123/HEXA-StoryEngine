@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from app.canonical import CanonicalPackage, ensure_canonical_package
 from app.models import StoryBeat, VisualAsset
+from app.shared.errors import StageFailedError
 from app.story.binding import AssetBinding, SemanticAssetBinder
 
 from .actions import ActionDecision, SemanticActionResolver
@@ -275,7 +276,107 @@ class ChoreographyDirector:
 
         plan = ChoreographyPlan(sequences=tuple(sequences), directives=tuple(directives))
         plan.validate(beat.id for beat in beats)
+        self._require_quality_contract(package=package, beats=beats, plan=plan)
         return plan
+
+    @classmethod
+    def _require_quality_contract(
+        cls,
+        *,
+        package: CanonicalPackage,
+        beats: list[StoryBeat],
+        plan: ChoreographyPlan,
+    ) -> None:
+        """Guarantee semantic accountability before Choreography returns a plan."""
+        beat_scene = {beat.id: beat.scene_id for beat in beats}
+        authored_events = {
+            (scene.id, event.semantic_event_id)
+            for scene in package.scenes
+            for event in scene.semantic_events
+            if event.semantic_event_id
+        }
+        represented_events = {
+            (beat_scene[directive.beat_id], flow.event_id)
+            for directive in plan.directives
+            if directive.beat_id in beat_scene
+            for flow in directive.event_flows
+            if flow.event_id
+        }
+        missing_events = sorted(authored_events - represented_events)
+        if missing_events:
+            raise StageFailedError(
+                "Choreography dropped authored semantic events",
+                details={
+                    "code": "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE",
+                    "missing_events": [
+                        f"{scene_id}:{event_id}" for scene_id, event_id in missing_events
+                    ],
+                },
+            )
+
+        explicit_authorities = {
+            "FINAL_PACKAGE_INTERACTION_TARGET",
+            "FINAL_PACKAGE_ASSET_RELATION",
+        }
+        expected_by_beat = {
+            beat.id: sum(
+                1
+                for relation in (
+                    beat.semantic_context.relations
+                    if beat.semantic_context is not None
+                    else ()
+                )
+                if relation.authority in explicit_authorities
+            )
+            for beat in beats
+        }
+        represented_by_beat = {
+            directive.beat_id: sum(
+                1
+                for interaction in (
+                    directive.interactions
+                    or ((directive.interaction,) if directive.interaction is not None else ())
+                )
+                if interaction.authority in explicit_authorities
+            )
+            for directive in plan.directives
+        }
+        missing_relation_beats = sorted(
+            beat_id
+            for beat_id, count in expected_by_beat.items()
+            if represented_by_beat.get(beat_id, 0) < count
+        )
+        if missing_relation_beats:
+            raise StageFailedError(
+                "Choreography dropped authored Final Package relationships",
+                details={
+                    "code": "FINAL_PACKAGE_RELATIONSHIP_COVERAGE",
+                    "beat_ids": missing_relation_beats,
+                },
+            )
+
+        incomplete_sequences = [
+            sequence.id
+            for sequence in plan.sequences
+            if not cls._grammar_sequence_is_complete(sequence)
+        ]
+        if incomplete_sequences:
+            raise StageFailedError(
+                "Choreography produced an incomplete visual grammar sequence",
+                details={
+                    "code": "REFERENCE_VISUAL_GRAMMAR",
+                    "sequence_ids": incomplete_sequences,
+                },
+            )
+
+    @staticmethod
+    def _grammar_sequence_is_complete(sequence: ChoreographySequence) -> bool:
+        stages = {stage.value for stage in sequence.grammar_stages}
+        if not {"ENTER", "READ", "RELEASE"}.issubset(stages):
+            return False
+        if len(sequence.beat_ids) == 1:
+            return True
+        return bool(stages & {"ADD", "RELATE", "RESULT"})
 
     def _schedule_hooks(
         self,

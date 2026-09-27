@@ -32,12 +32,12 @@ class QualityRule:
 # under tests/: production code must not depend on the migration bookkeeping.
 QUALITY_RULES: tuple[QualityRule, ...] = (
     # StorytellingValidator: Story / Choreography / downstream semantic ownership.
-    QualityRule("FINAL_PACKAGE_METADATA_COVERAGE", "app/diagnostics/storytelling.py", "app/story/planner.py", "tests/test2/story/test_story_contracts.py"),
-    QualityRule("FINAL_PACKAGE_RELATIONSHIP_COVERAGE", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py"),
-    QualityRule("FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py"),
+    QualityRule("FINAL_PACKAGE_METADATA_COVERAGE", "app/diagnostics/storytelling.py", "app/story/planner.py", "tests/test2/story/test_story_contracts.py", state=MigrationState.MIGRATED),
+    QualityRule("FINAL_PACKAGE_RELATIONSHIP_COVERAGE", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py", state=MigrationState.MIGRATED),
+    QualityRule("FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("FINAL_PACKAGE_DOWNSTREAM_METADATA_COVERAGE", "app/diagnostics/storytelling.py", "cross_layer", "tests/test2/integration/test_semantic_preservation.py"),
     QualityRule("FORBIDDEN_JITTER_MOTION", "app/diagnostics/storytelling.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
-    QualityRule("REFERENCE_VISUAL_GRAMMAR", "app/diagnostics/storytelling.py", "app/choreography/grammar.py", "tests/test2/choreography/test_choreography_contracts.py"),
+    QualityRule("REFERENCE_VISUAL_GRAMMAR", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("NO_MEANINGFUL_VISUAL_STATE_CHANGE", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py"),
     QualityRule("MOTION_ONLY_HOOK_PRESENT", "app/diagnostics/storytelling.py", "app/choreography/director.py", "tests/test2/choreography/test_choreography_contracts.py"),
     QualityRule("MOTION_CUE_MISSING_FINAL_PACKAGE_SEMANTICS", "app/diagnostics/storytelling.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
@@ -47,7 +47,7 @@ QUALITY_RULES: tuple[QualityRule, ...] = (
     QualityRule("TEXT_MOTION_COVERAGE_INCOMPLETE", "app/diagnostics/storytelling.py", "app/motion/text.py", "tests/test2/text/test_text_contracts.py"),
 
     # AssetUsageValidator: no independently animatable cutout may silently disappear.
-    QualityRule("ASSET_REACHES_STORY", "app/diagnostics/asset_usage.py", "app/story/planner.py", "tests/test2/story/test_story_contracts.py"),
+    QualityRule("ASSET_REACHES_STORY", "app/diagnostics/asset_usage.py", "app/story/planner.py", "tests/test2/story/test_story_contracts.py", state=MigrationState.MIGRATED),
     QualityRule("ASSET_REACHES_COMPOSITION", "app/diagnostics/asset_usage.py", "app/composition/planner.py", "tests/test2/composition/test_composition_contracts.py"),
     QualityRule("ASSET_REACHES_MOTION", "app/diagnostics/asset_usage.py", "app/motion/planner.py", "tests/test2/motion/test_motion_contracts.py"),
 

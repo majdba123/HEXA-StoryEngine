@@ -141,6 +141,26 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "STORY_SYNC_INVALID", "story", FailureDisposition.PREVENT,
         "Story must respect narration timing authority before downstream planning",
     ),
+    "FINAL_PACKAGE_METADATA_COVERAGE": _policy(
+        "FINAL_PACKAGE_METADATA_COVERAGE", "story", FailureDisposition.PREVENT,
+        "Story must preserve authored Final Package semantic metadata",
+    ),
+    "ASSET_REACHES_STORY": _policy(
+        "ASSET_REACHES_STORY", "story", FailureDisposition.PREVENT,
+        "Every independently animatable cutout must remain represented by Story",
+    ),
+    "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE": _policy(
+        "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "choreography", FailureDisposition.PREVENT,
+        "Every authored semantic event must own a proven visual carrier and event flow",
+    ),
+    "FINAL_PACKAGE_RELATIONSHIP_COVERAGE": _policy(
+        "FINAL_PACKAGE_RELATIONSHIP_COVERAGE", "choreography", FailureDisposition.PREVENT,
+        "Every authored Final Package relationship must survive into Choreography",
+    ),
+    "REFERENCE_VISUAL_GRAMMAR": _policy(
+        "REFERENCE_VISUAL_GRAMMAR", "choreography", FailureDisposition.PREVENT,
+        "Choreography must emit complete progressive visual grammar",
+    ),
     "COMPETING_ENTRY_FOCUS": _policy(
         "COMPETING_ENTRY_FOCUS", "choreography", FailureDisposition.PREVENT,
         "Focus allocation must prevent simultaneous competing hero entries",
