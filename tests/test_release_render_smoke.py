@@ -17,7 +17,7 @@ from app.models import (
     VisualAsset,
 )
 from app.qa import RenderedVisualQA
-from app.recovery.detector import RecoveryDetector
+from app.final import FinalMediaVerifier
 from app.render.renderer import FFmpegRenderer
 
 
@@ -61,7 +61,7 @@ def test_release_render_smoke_produces_qa_clean_muxed_mp4(tmp_path: Path) -> Non
 
     This intentionally crosses the boundaries that unit tests cannot prove together:
     RenderPlan -> FFmpegRenderer -> encoded H.264 -> FinalExporter audio mux ->
-    RecoveryDetector final-media QA -> RenderedVisualQA sampling.
+    FinalMediaVerifier technical proof -> RenderedVisualQA sampling.
     """
     first_path = tmp_path / "first.png"
     second_path = tmp_path / "second.png"
@@ -181,7 +181,7 @@ def test_release_render_smoke_produces_qa_clean_muxed_mp4(tmp_path: Path) -> Non
     assert final.is_file()
     assert final.stat().st_size > 0
 
-    issues = RecoveryDetector("ffprobe", "ffmpeg").inspect_final(final, audio)
+    issues = FinalMediaVerifier("ffprobe", "ffmpeg").inspect(final, audio)
     assert issues == [], [(issue.code, issue.context) for issue in issues]
 
     visual_report = RenderedVisualQA("ffmpeg").inspect(

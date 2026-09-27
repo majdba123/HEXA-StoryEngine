@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from app.recovery.policy import failure_policy
+from app.diagnostics.failure_policy import failure_policy
 
 
 def _emitted_codes() -> set[str]:

@@ -4,7 +4,7 @@ from pathlib import Path
 from app.recovery.builtins import BUILTIN_ISSUES
 from app.recovery.manager import RecoveryManager
 from app.recovery.models import KnownIssue, RecoveryStatus
-from app.recovery.policy import FailureDisposition, failure_policy
+from app.diagnostics.failure_policy import FailureDisposition, failure_policy
 
 
 def test_recovery_records_only_after_post_fix_validation(tmp_path: Path) -> None:

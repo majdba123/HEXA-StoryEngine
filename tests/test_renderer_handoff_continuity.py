@@ -24,7 +24,7 @@ from app.models import (
 )
 from app.motion.timing import GOLDEN_MINOR
 from app.qa import SceneContinuityQA
-from app.recovery.detector import RecoveryDetector
+from app.final import FinalMediaVerifier
 from app.shared.errors import StageFailedError
 from app.render.renderer import FFmpegRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
@@ -155,7 +155,7 @@ def test_renderer_transition_has_no_outgoing_ghost_or_internal_white_flash(tmp_p
         assert int(center[2]) > int(center[0]) + 45, (frame_index, center.tolist())
         assert _mean_white_distance(frames[frame_index]) > 8.0, frame_index
 
-    detector = RecoveryDetector("ffprobe", "ffmpeg")
+    detector = FinalMediaVerifier("ffprobe", "ffmpeg")
     assert detector._white_flash_frames(output, duration=2.0) == []
 
 
@@ -192,7 +192,7 @@ def test_white_flash_detector_rejects_real_internal_blank_frame(tmp_path: Path) 
         check=True,
     )
 
-    flashes = RecoveryDetector("ffprobe", "ffmpeg")._white_flash_frames(output, duration=1.0)
+    flashes = FinalMediaVerifier("ffprobe", "ffmpeg")._white_flash_frames(output, duration=1.0)
     assert any(entry["frame"] == 15 for entry in flashes), flashes
 
 
@@ -365,7 +365,7 @@ def test_scene_bridge_preserves_previous_scene_until_first_spoken_reveal(
     first_settled = settled[180, 224]
     assert int(first_settled[2]) > int(first_settled[0]) + 50
 
-    detector = RecoveryDetector("ffprobe", "ffmpeg")
+    detector = FinalMediaVerifier("ffprobe", "ffmpeg")
     assert detector._white_flash_frames(output, duration=1.8) == []
 
 
@@ -618,7 +618,7 @@ def test_white_flash_detector_accepts_sparse_semantic_foreground(tmp_path: Path)
         check=True,
     )
 
-    detector = RecoveryDetector("ffprobe", "ffmpeg")
+    detector = FinalMediaVerifier("ffprobe", "ffmpeg")
     flashes = detector._white_flash_frames(output, duration=1.0)
 
     assert not any(entry["frame"] == 15 for entry in flashes), flashes

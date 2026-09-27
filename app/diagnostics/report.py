@@ -17,7 +17,7 @@ from typing import Any
 from app import __version__
 from app.config import Settings
 from app.models import Stage
-from app.recovery.policy import failure_policy
+from app.diagnostics.failure_policy import failure_policy
 from app.shared.errors import HexaError
 from app.shared.process import run_hidden
 

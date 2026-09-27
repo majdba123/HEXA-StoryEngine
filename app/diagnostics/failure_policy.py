@@ -6,7 +6,6 @@ from enum import StrEnum
 
 class FailureDisposition(StrEnum):
     PREVENT = "prevent"
-    RECOVER = "recover"
     FAIL_FAST = "fail_fast"
     POST_RENDER_PROOF = "post_render_proof"
 
@@ -34,7 +33,7 @@ def _policy(
     )
 
 
-HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
+FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "HEXA_ERROR": _policy(
         "HEXA_ERROR", "pipeline", FailureDisposition.FAIL_FAST,
         "Generic HEXA failure is terminal and requires diagnosis rather than blind recovery",
@@ -234,7 +233,7 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "ASSET_BAD_CUTOUT": _policy(
         "ASSET_BAD_CUTOUT",
         "cutout",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Bounded re-extraction is proven and must preserve Final Package semantics",
     ),
     "ASSET_WHITE_HALO": _policy(
@@ -246,31 +245,31 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "ELEMENT_APPEARS_TOO_EARLY": _policy(
         "ELEMENT_APPEARS_TOO_EARLY",
         "story",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Story timing owns reveal authority and may be rebuilt within narration bounds",
     ),
     "ELEMENT_APPEARS_TOO_LATE": _policy(
         "ELEMENT_APPEARS_TOO_LATE",
         "motion",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Motion timing may be rebuilt within the Story-owned activation window",
     ),
     "BAD_HANDOFF": _policy(
         "BAD_HANDOFF",
         "story",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Story timing may rebuild an invalid attention handoff without changing meaning",
     ),
     "LOW_SCREEN_OCCUPANCY": _policy(
         "LOW_SCREEN_OCCUPANCY",
         "composition",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Composition may be rebuilt while preserving semantic authority",
     ),
     "MULTI_ELEMENT_POP": _policy(
         "MULTI_ELEMENT_POP",
         "motion",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Motion may rebuild reveal spacing while preserving semantic order",
     ),
     "INVALID_PACKAGE": _policy(
@@ -360,7 +359,7 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "MOTION_BELOW_PERCEPTUAL_FLOOR": _policy(
         "MOTION_BELOW_PERCEPTUAL_FLOOR",
         "motion",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "A bounded segment-only amplitude repair may restore the shared readability floor",
     ),
     "TERMINAL_EXIT_ON_PERSISTENT_ASSET": _policy(
@@ -402,47 +401,47 @@ HISTORICAL_FAILURE_POLICIES: dict[str, FailurePolicy] = {
     "TEXT_LAYOUT_REFERENCE_VIOLATION": _policy(
         "TEXT_LAYOUT_REFERENCE_VIOLATION",
         "composition",
-        FailureDisposition.RECOVER,
+        FailureDisposition.PREVENT,
         "Text may use bounded reflow/scale and optional-cue degradation after primary placement",
     ),
     "VISUAL_WHITE_FLASH": _policy(
         "VISUAL_WHITE_FLASH",
         "render",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "A bounded strict-handoff rerender can repair an encoded blank boundary",
     ),
     "AUDIO_VIDEO_DRIFT": _policy(
         "AUDIO_VIDEO_DRIFT",
         "final",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "Final mux can be rebuilt without changing semantic authority",
     ),
     "FINAL_MISSING_AUDIO": _policy(
         "FINAL_MISSING_AUDIO",
         "final",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "Final mux can restore the authored narration stream",
     ),
     "FINAL_MISSING_OUTPUT": _policy(
         "FINAL_MISSING_OUTPUT",
         "render",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "Verified plan may be rendered again when the output file is absent",
     ),
     "FINAL_UNREADABLE_MEDIA": _policy(
         "FINAL_UNREADABLE_MEDIA",
         "render",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "Verified plan may be rendered again when output media is structurally unreadable",
     ),
     "FINAL_MISSING_VIDEO": _policy(
         "FINAL_MISSING_VIDEO",
         "render",
-        FailureDisposition.RECOVER,
+        FailureDisposition.POST_RENDER_PROOF,
         "Verified plan may be rendered again when the video stream is missing",
     ),
 }
 
 
 def failure_policy(code: str) -> FailurePolicy | None:
-    return HISTORICAL_FAILURE_POLICIES.get(str(code).strip())
+    return FAILURE_POLICIES.get(str(code).strip())

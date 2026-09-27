@@ -19,7 +19,7 @@ from app.motion.timing import GOLDEN_MAJOR, semantic_readability_floor
 from app.qa import RenderedMotionQA
 from app.recovery.manager import RecoveryManager
 from app.recovery.motion_readability import repair_motion_readability
-from app.recovery.policy import FailureDisposition, failure_policy
+from app.diagnostics.failure_policy import FailureDisposition, failure_policy
 from app.render.renderer import FFmpegRenderer
 
 
