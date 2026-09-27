@@ -73,7 +73,10 @@ def test_generated_package_reaches_render_plan_with_resolved_references(tmp_path
     assert {beat.id for beat in plan.story} == beat_ids
 
 
-@pytest.mark.parametrize("seed", range(4101, 4125))
+FULL_LAYER_SEEDS = tuple(range(4101, 4201))
+
+
+@pytest.mark.parametrize("seed", FULL_LAYER_SEEDS)
 def test_seeded_valid_packages_reach_render_plan_without_foreign_references(
     tmp_path, seed: int
 ) -> None:
