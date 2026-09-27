@@ -18,6 +18,7 @@ def test_story_choreography_text_accept_canonical_package(tmp_path: Path) -> Non
     )
     canonical = CanonicalNormalizer().normalize(legacy)
     scene = canonical.scenes[0]
+    scene.image_path.write_bytes(b"test-image")
     script = canonical.script or ""
     word = script.split()[0]
     transcript = Transcript(

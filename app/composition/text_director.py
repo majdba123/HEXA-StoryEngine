@@ -126,7 +126,11 @@ class TextPlacementDirector:
         ]
         if not acceptable:
             return None
-        pool = acceptable
+        # Preserve established typography/layout whenever the production scale ladder
+        # already has a legal placement. The 0.52/0.50 floor is a bounded fallback for
+        # otherwise unplaceable cues, not a competing visual style.
+        established = [row for row in acceptable if row[5] >= 0.56]
+        pool = established or acceptable
         best = min(
             pool,
             key=lambda row: (
