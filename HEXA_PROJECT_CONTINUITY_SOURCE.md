@@ -11520,3 +11520,77 @@ For `57c89e6ca22ba3eb79a2109cca3fad441c851cd8`:
 The QA-to-owner migration is closed. Recovery remains removed, and the architecture is
 still Pass1 + Pass2 only with no Pass3 or Layer3.
 
+# OWNER INTERNALIZATION + TEST SUITE RESTRUCTURE CLOSURE — 2026-09-27
+
+## Exact source and commits
+
+Branch: `montage`
+
+Final behavior/test HEAD before this continuity-only record:
+
+- `54f6fe98652bd0117ba7793ed271dfbdf9cca3b0`
+
+Commits in this sprint:
+
+- `2e0f3a27a4f9715259547ba4652d493cc8458d07` — `[test2] Make quality ledger fail closed`
+- `43e50d8020d2e55bf8b7ac41d1346701dcb3267c` — `[test2] Organize legacy regressions by owner`
+- `7847519` — `[owners] Internalize runtime quality boundaries`
+- `54f6fe9` — `[motion] Remove post-build QA contracts`
+
+## Owner-internalization result
+
+- `QualityRule.state` now defaults to `PENDING`; every one of the 61 rules writes its
+  state explicitly.
+- The five large post-build runtime validators for Motion interaction, rhythm,
+  lifetime, Story synchronization, and Render transitions no longer exist under
+  `app/`. Their historical invalid-output probes live only in `tests/test2/support/`;
+  production neither imports nor executes them.
+- Owner construction remains in Motion timing/order/collision/lifetime/continuity,
+  Story windows, Composition/Text placement, and Render transition policy. Encoded
+  proof remains in Render/Final because it can only be established after encoding.
+- The production contracts that remain are bounded owner helpers rather than renamed
+  QA passes: `app/motion/continuity.py` is 77 lines and
+  `app/choreography/relation_contract.py` is 118 lines.
+- All 44 former root `tests/test_*.py` files were moved, one by one, into their owning
+  Test2 layer. Root legacy test files are now zero. No historical test was deleted.
+- The old `tests/legacy_quality/` path is absent; test-only historical oracles are
+  isolated under `tests/test2/support/`.
+
+## Final test layout
+
+`tests/` now contains only `test1/` and `test2/` (apart from ignored bytecode caches).
+Test2 contains:
+
+- `final_package`, `canonical`, `vision`
+- `cutout/pass1`, `cutout/pass2`
+- `story`, `choreography`, `composition`, `motion`, `text`, `render`, `final`
+- `integration`, `pipeline`, and test-only `support`
+- `test_master_qa.py` and `quality_rule_ledger.py`
+
+Test1 remains the system/architecture certification suite. Its deterministic 100-seed
+generated packages and representative topology matrix still cover minimal, dense-20,
+branch/reuse, simultaneous groups, Arabic/compound, numeric/persistent, transform, and
+ambiguous/support/parent binding cases through RenderPlan.
+
+## Final local gates
+
+- Compile: PASS (`python -m compileall -q app`)
+- Ruff: PASS (`ruff check app tests` → `All checks passed!`)
+- Test1: PASS — 393 collected, `385 passed, 8 skipped`
+- Test2: PASS — `495 passed`
+- Full pytest: PASS — 888 collected, `880 passed, 8 skipped`
+- FFmpeg certification: PASS — actual H.264 render and audio mux; final decode/probe;
+  video+audio streams; CFR `30/1`; 60-frame duration sanity; A/V drift within 100 ms;
+  no internal white flash; decoded pixel activity proves entry motion survived encode
+- Master ledger: 61 total = 55 migrated + 5 retained encoded proof + 1 evidence only;
+  pending 0; `MIGRATION_COMPLETE=True`
+- `app/qa/`: absent; legacy runtime QA imports: zero
+
+Non-failing warnings remain the existing Starlette/httpx and anyio deprecations, Pillow
+`mode` deprecations, and the known invalid-escape deprecation in final verification.
+
+The strict corpus certification collected eight tests but skipped them because the
+external Black/White/Gray/Script Kiddie source roots are not present in this checkout.
+Old `.hexa/work` outputs are not treated as original corpus inputs, so no fresh
+real-corpus PASS is claimed.
+
