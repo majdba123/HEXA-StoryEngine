@@ -12,6 +12,7 @@ import pytest
 from app.canonical import (
     CanonicalAsset,
     CanonicalPackage,
+    CanonicalRelation,
     CanonicalScene,
     CanonicalScriptSpan,
     CanonicalSemanticEvent,
@@ -52,6 +53,9 @@ def _pipeline(
     planners=None,
     extra_asset_ids: list[str] | None = None,
     pass2_children: list[tuple[str, str]] | None = None,
+    relations: tuple[CanonicalRelation, ...] = (),
+    asset_boxes: dict[str, tuple[int, int, int, int]] | None = None,
+    asset_images: dict[str, Path] | None = None,
 ):
     """Final-Package semantics + forced alignment; production computes all windows."""
     root.mkdir(parents=True, exist_ok=True)
@@ -153,6 +157,7 @@ def _pipeline(
                 script_char_end=len(script),
                 units=units,
                 semantic_events=events,
+                relations=relations,
                 semantic_groups=tuple(
                     CanonicalSemanticGroup(
                         semantic_group_id=group,
@@ -191,9 +196,9 @@ def _pipeline(
             id=asset_id,
             scene_id="scene",
             role=by_id[asset_id].role.lower(),
-            image_path=image,
+            image_path=(asset_images or {}).get(asset_id, image),
             extraction_method="test3-semantic-certification",
-            source_bbox=(70 - i * 3, 8 + i * 3, 18, 18),
+            source_bbox=(asset_boxes or {}).get(asset_id, (70 - i * 3, 8 + i * 3, 18, 18)),
             source_canvas_width=96,
             source_canvas_height=96,
             source_area_ratio=0.30 - i * 0.007,
@@ -257,6 +262,22 @@ def _pipeline(
     render_root.mkdir()
     render, _ = RenderPlanner().compile(transcript, assets, story, composition, motion, render_root)
     return story, choreography, composition, motion, render
+
+
+def test_relation_result_has_one_consequence_gesture(tmp_path: Path):
+    """A target that is the authored result must not acknowledge and pay off twice."""
+    _, choreography, _, motion, _ = _pipeline(
+        tmp_path,
+        [Spec("source", "cause", 0.3), Spec("result", "effect", 1.2, role="RESULT")],
+        3.0,
+        relations=(CanonicalRelation(
+            subject_asset_id="source", object_asset_id="result", relation_type="PROGRESSES_TO",
+        ),),
+    )
+    assert choreography.directives[0].interactions
+    result = next(cue for cue in motion if cue.asset_id == "result")
+    consequences = [s for s in result.segments if s.phase in {"INTERACT", "REACT", "PAYOFF"}]
+    assert [s.phase for s in consequences] == ["PAYOFF"]
 
 
 def _windows(story):

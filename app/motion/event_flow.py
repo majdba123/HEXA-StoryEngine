@@ -397,7 +397,10 @@ class MotionEventFlowResolver:
             if step.source_asset_id == asset_id:
                 return "SOURCE"
             if step.target_asset_id == asset_id:
-                return "TARGET"
+                # Membership in a relation is not ownership of its source action.
+                # Choreography explicitly supplies REACT when the target must move;
+                # otherwise its own introduction/PAYOFF carries the consequence.
+                return None
             if step.focus_asset_id == asset_id:
                 return "FOCUS"
             return None

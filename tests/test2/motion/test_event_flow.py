@@ -713,3 +713,17 @@ def test_proxy_only_cross_event_carrier_keeps_all_group_proxy_phases() -> None:
         and phase.involvement == "PARTICIPANT"
         for phase in sibling.phase_chain
     )
+
+
+def test_relation_target_membership_does_not_grant_source_action():
+    """The resolver must consume phase ownership, not the participant list."""
+    _, _, choreography = _fixture()
+    directive = choreography.directives[0]
+    resolver = MotionEventFlowResolver()
+    source = resolver.resolve(directive, "a", semantic_event_id="E1")
+    target = resolver.resolve(directive, "b", semantic_event_id="E1")
+    assert source is not None and target is not None
+    assert sum(p.stage == EventFlowStage.INTERACT for p in source.phase_chain) == 1
+    assert sum(p.stage == EventFlowStage.REACT for p in target.phase_chain) == 1
+    assert not any(p.stage == EventFlowStage.INTERACT for p in target.phase_chain)
+
