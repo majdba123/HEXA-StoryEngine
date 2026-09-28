@@ -2817,7 +2817,19 @@ class MotionPlanner:
             # semantic instant. Distinct event/sequence orders are an intentional
             # progressive reveal: their windows may overlap, but each later peak still
             # deserves its own Hero moment.
-            if overlap >= threshold - 1e-9 and current_key == anchor_key:
+            same_authored_event = bool(
+                row[1].semantic_event_id
+                and row[1].semantic_event_id == anchor_activation.semantic_event_id
+                and abs(
+                    float(row[2].reveal_start)
+                    - float(cohorts[-1][0][2].reveal_start)
+                )
+                <= 1e-9
+            )
+            if (
+                current_key == anchor_key
+                and (overlap >= threshold - 1e-9 or same_authored_event)
+            ):
                 cohorts[-1].append(row)
                 cohort_end = max(cohort_end, end)
             else:
