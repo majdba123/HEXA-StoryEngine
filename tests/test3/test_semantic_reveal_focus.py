@@ -51,6 +51,7 @@ def _pipeline(
     order=None,
     planners=None,
     extra_asset_ids: list[str] | None = None,
+    pass2_children: list[tuple[str, str]] | None = None,
 ):
     """Final-Package semantics + forced alignment; production computes all windows."""
     root.mkdir(parents=True, exist_ok=True)
@@ -213,6 +214,35 @@ def _pipeline(
             source_area_ratio=max(0.01, 0.08 - i * 0.006),
             can_animate_independently=True,
         ))
+    if pass2_children:
+        parent_ids = {parent_id for parent_id, _child_id in pass2_children}
+        assets = [
+            asset.model_copy(update={
+                "asset_family_id": asset.id,
+                "render_as_family_canvas": True,
+                "extraction_method": f"{asset.extraction_method}+pass2_main",
+            })
+            if asset.id in parent_ids else asset
+            for asset in assets
+        ]
+        runtime_by_id = {asset.id: asset for asset in assets}
+        for parent_id, child_id in pass2_children:
+            parent = runtime_by_id[parent_id]
+            child = parent.model_copy(update={
+                "id": child_id,
+                "role": "secondary_object",
+                "confidence": min(parent.confidence, 0.95),
+                "extraction_method": f"{parent.extraction_method}+pass2_secondary",
+                "independent": True,
+                "compound": False,
+                "component_count": 1,
+                "can_animate_independently": True,
+                "parent_asset_id": parent_id,
+                "asset_family_id": parent_id,
+                "render_as_family_canvas": True,
+            })
+            assets.append(child)
+            runtime_by_id[child_id] = child
     sp, cp, xp, mp = planners or (
         StoryPlanner(),
         ChoreographyDirector(),
@@ -833,6 +863,108 @@ def test_legacy_package_keeps_deterministic_fallback(tmp_path: Path):
         StoryPlanner().plan(package, transcript, [asset]),
     )
     assert first == second and first[0].active_visual_semantic_state is None
+
+def test_pass2_child_provenance_cannot_preempt_single_group_semantics(
+    tmp_path: Path,
+):
+    """A detached Pass2 child is not semantically equivalent to its source parent."""
+    specs = [
+        Spec("actor", "broad-event", 0.40, "CHARACTER", True, sequence=1, group="g"),
+        Spec("vulnerability", "broad-event", 2.90, "OBJECT", False, sequence=2, group="g"),
+        Spec("negation", "broad-event", 1.05, "RESULT", False, sequence=3, group="g"),
+    ]
+    child_id = "negation:secondary-01"
+    story, _choreography, _composition, _motion, _render = _pipeline(
+        tmp_path / "pass2-child-single-group",
+        specs,
+        4.2,
+        pass2_children=[("negation", child_id)],
+    )
+    windows = _windows(story)
+    child = next(
+        row for row in story[0].asset_activations if row.asset_id == child_id
+    )
+
+    assert child.source == "final_package_scene_context_tail"
+    assert child.visual_focus == "CONTEXT"
+    assert child.semantic_event_id is None
+    assert windows[child_id].reveal_start > windows["negation"].reveal_start
+    assert windows[child_id].reveal_start >= windows["vulnerability"].reveal_start
+    assert "inherits_parent_semantic_time" not in child.evidence
+    assert "inherits_latest_authored_spoken_anchor" in child.evidence
+
+
+def test_pass2_child_in_multi_group_scene_abstains_instead_of_inheriting_parent(
+    tmp_path: Path,
+):
+    specs = [
+        Spec("left", "E1", 0.40, group="g1", sequence=1),
+        Spec("right", "E2", 1.80, group="g2", sequence=1),
+    ]
+    child_id = "left:secondary-01"
+    story, *_ = _pipeline(
+        tmp_path / "pass2-child-multi-group",
+        specs,
+        3.0,
+        pass2_children=[("left", child_id)],
+    )
+    activation = next(
+        row for row in story[0].asset_activations if row.asset_id == child_id
+    )
+    has_v2, window = story_activation_window(activation, story[0])
+
+    assert has_v2 is True and window is None
+    assert activation.source == "semantic_abstention"
+    assert "independent_runtime_cutout_requires_semantic_identity" in activation.evidence
+    assert "inherits_parent_semantic_time" not in activation.evidence
+    assert child_id not in (story[0].active_visual_semantic_state or {})
+
+
+def test_96_generated_pass2_children_never_preempt_authored_semantics(
+    tmp_path: Path,
+):
+    checked = 0
+    for case in range(96):
+        count = 2 + case % 7
+        duration = max(2.0, 0.9 + count * 0.58)
+        specs = [
+            Spec(
+                f"asset-{index}",
+                "broad-event",
+                0.25 + index * 0.48,
+                "RESULT" if index == count - 1 else "OBJECT",
+                index == 0,
+                sequence=index + 1,
+                group="single-group",
+            )
+            for index in range(count)
+        ]
+        parent_id = specs[(case * 3) % count].asset
+        children = [
+            (parent_id, f"{parent_id}:secondary-{index + 1:02d}")
+            for index in range(1 + case % 3)
+        ]
+        story, _choreography, _composition, _motion, _render = _pipeline(
+            tmp_path / f"pass2-provenance-{case}",
+            specs,
+            duration,
+            pass2_children=children,
+        )
+        windows = _windows(story)
+        latest_authored = max(windows[row.asset].reveal_start for row in specs)
+        for _parent, child_id in children:
+            activation = next(
+                row for row in story[0].asset_activations if row.asset_id == child_id
+            )
+            assert activation.source == "final_package_scene_context_tail"
+            assert activation.visual_focus == "CONTEXT"
+            assert activation.semantic_event_id is None
+            assert windows[child_id].reveal_start >= latest_authored
+            assert "inherits_parent_semantic_time" not in activation.evidence
+            checked += 1
+
+    assert checked == 192
+
 
 def test_unbound_single_group_cutout_waits_for_latest_authored_anchor(tmp_path: Path):
     """Unknown detached visuals cannot pre-empt known narration in a one-group Scene."""

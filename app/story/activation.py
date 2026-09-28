@@ -1350,6 +1350,18 @@ class SemanticActivationPlanner:
             self._repair_early_completion(activations, options, beat)
 
         by_asset = {row.asset_id: row for row in activations}
+
+        def requires_proven_semantic_identity(asset: VisualAsset) -> bool:
+            """Treat Pass2 ancestry as provenance, never as semantic equivalence."""
+            return bool(
+                asset_level_bindings
+                and asset.can_animate_independently
+                and (
+                    bool(asset.parent_asset_id)
+                    or bool(asset.asset_family_id and asset.render_as_family_canvas)
+                )
+            )
+
         pending = sorted(assets, key=lambda asset: asset.id)
         for _ in range(len(assets)):
             changed = False
@@ -1371,6 +1383,13 @@ class SemanticActivationPlanner:
                     if len(family) == 1:
                         parent = family[0]
                 if parent is None:
+                    continue
+                if requires_proven_semantic_identity(asset):
+                    # Pass2 parent/family metadata proves where pixels came from, not
+                    # which narration meaning the detached child owns. If identity
+                    # binding had proven that meaning, the child would already be in
+                    # by_asset. Leave it unresolved for conservative scene-context
+                    # scheduling or SAFE_ABSTENTION below.
                     continue
                 inherited = parent.model_copy(update={
                     "asset_id": asset.id,
@@ -1407,13 +1426,18 @@ class SemanticActivationPlanner:
                         None,
                     )
                 )
+                evidence = ["no_confident_final_package_binding", "SAFE_ABSTENTION"]
+                if requires_proven_semantic_identity(asset):
+                    evidence.insert(
+                        0, "independent_runtime_cutout_requires_semantic_identity"
+                    )
                 activations.append(AssetActivation(
                     asset_id=asset.id,
                     semantic_unit_id=unit_id,
                     confidence=0.0,
                     source="semantic_abstention",
                     policy="FALLBACK",
-                    evidence=["no_confident_final_package_binding", "SAFE_ABSTENTION"],
+                    evidence=evidence,
                 ))
 
         return sorted(
