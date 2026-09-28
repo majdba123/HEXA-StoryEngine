@@ -42,13 +42,17 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
     image = root / "scene.png"
     Image.new("RGBA", (96, 96), "white").save(image)
     event_ids = list(dict.fromkeys(row.event for row in specs))
-    tokens = {event: f"concept{i}" for i, event in enumerate(event_ids)}
+    # One authored phrase per distinct reveal instant. Assets at the same event/anchor
+    # intentionally share a script span and are a legal cohort; different anchors in
+    # the same event retain different asset-level spans.
+    reveal_keys = list(dict.fromkeys((row.event, row.anchor) for row in specs))
+    tokens = {key: f"concept{i}" for i, key in enumerate(reveal_keys)}
     script = " ".join(tokens.values())
     spans = {}
     cursor = 0
-    for event in event_ids:
-        spans[event] = (cursor, cursor + len(tokens[event]))
-        cursor += len(tokens[event]) + 1
+    for key in reveal_keys:
+        spans[key] = (cursor, cursor + len(tokens[key]))
+        cursor += len(tokens[key]) + 1
     units = tuple(
         CanonicalAsset(
             unit_id=row.asset,
@@ -56,12 +60,12 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
             scene_id="scene",
             role=row.role,
             semantic_role=row.role,
-            sequence_order=event_ids.index(row.event) + 1,
-            script_text=tokens[row.event],
+            sequence_order=reveal_keys.index((row.event, row.anchor)) + 1,
+            script_text=tokens[(row.event, row.anchor)],
             script_span=CanonicalScriptSpan(
-                text=tokens[row.event],
-                global_char_start=spans[row.event][0],
-                global_char_end=spans[row.event][1],
+                text=tokens[(row.event, row.anchor)],
+                global_char_start=spans[(row.event, row.anchor)][0],
+                global_char_end=spans[(row.event, row.anchor)][1],
             ),
             binding_type="EXPLICIT",
             semantic_event_id=row.event,
@@ -73,11 +77,13 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
         CanonicalSemanticEvent(
             semantic_event_id=event,
             scene_id="scene",
-            script_text=tokens[event],
+            script_text=" ".join(
+                tokens[key] for key in reveal_keys if key[0] == event
+            ),
             script_span=CanonicalScriptSpan(
-                text=tokens[event],
-                global_char_start=spans[event][0],
-                global_char_end=spans[event][1],
+                text=" ".join(tokens[key] for key in reveal_keys if key[0] == event),
+                global_char_start=min(spans[key][0] for key in reveal_keys if key[0] == event),
+                global_char_end=max(spans[key][1] for key in reveal_keys if key[0] == event),
             ),
             sequence_order=i + 1,
             visual_leader_asset_id=next(
@@ -109,20 +115,19 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
             ),
         ),
     )
-    anchors = {event: min(row.anchor for row in specs if row.event == event) for event in event_ids}
     transcript = Transcript(
         duration=duration,
         segments=[],
         timing_source="forced_alignment",
         words=[
             TranscriptWord(
-                start=anchors[event],
-                end=min(duration, anchors[event] + 0.08),
-                text=tokens[event],
-                char_start=spans[event][0],
-                char_end=spans[event][1],
+                start=key[1],
+                end=min(duration, key[1] + 0.08),
+                text=tokens[key],
+                char_start=spans[key][0],
+                char_end=spans[key][1],
             )
-            for event in event_ids
+            for key in reveal_keys
         ],
     )
     by_id = {row.asset: row for row in specs}
@@ -234,6 +239,52 @@ def test_same_event_cohort_and_late_event(tmp_path: Path):
     assert _focus(motion)["A"]["cohort_gain"] > _focus(motion)["B"]["cohort_gain"]
 
 
+def test_same_event_three_asset_level_anchors_reveal_progressively(tmp_path: Path):
+    specs = [
+        Spec("character", "E1", 0.45, "CHARACTER"),
+        Spec("support", "E1", 1.35, "SUPPORT", False),
+        Spec("object", "E1", 3.80, "RESULT", False),
+    ]
+    story, motion, windows = _certify(tmp_path / "same-event-progressive", specs, 5.5)
+    assert [windows[row.asset].reveal_start for row in specs] == pytest.approx(
+        [0.45, 1.35, 3.80]
+    )
+    assert all(_focus(motion)[row.asset]["cohort_role"] == "independent" for row in specs)
+    assert set(story[0].active_visual_semantic_state or {}) == {
+        "character", "support", "object"
+    }
+
+
+def test_same_event_true_cohort_then_later_asset(tmp_path: Path):
+    specs = [
+        Spec("A", "E1", 0.70, "PRIMARY"),
+        Spec("B", "E1", 0.70, "SUPPORT", False),
+        Spec("C", "E1", 2.65, "RESULT", False),
+    ]
+    _story, motion, windows = _certify(tmp_path / "same-event-mixed", specs, 4.0)
+    assert windows["A"].reveal_start == windows["B"].reveal_start
+    assert windows["C"].reveal_start == pytest.approx(2.65)
+    assert _focus(motion)["A"]["cohort_role"] == "leader"
+    assert _focus(motion)["B"]["cohort_role"] != "independent"
+    assert _focus(motion)["C"]["cohort_role"] == "independent"
+
+
+def test_same_event_black_hat_shape_transfers_focus_by_asset_anchor(tmp_path: Path):
+    specs = [
+        Spec("actor", "broad-event", 0.40, "CHARACTER"),
+        Spec("negation", "broad-event", 1.05, "SUPPORT", False),
+        Spec("target", "broad-event", 2.90, "OBJECT", False),
+    ]
+    story, motion, windows = _certify(tmp_path / "same-event-black-shape", specs, 4.5)
+    assert [windows[row.asset].reveal_start for row in specs] == pytest.approx(
+        [0.40, 1.05, 2.90]
+    )
+    assert all(_focus(motion)[row.asset]["cohort_gain"] == pytest.approx(1.0) for row in specs)
+    assert set(story[0].active_visual_semantic_state or {}) == {
+        "actor", "negation", "target"
+    }
+
+
 def test_black_hat_like_multi_event_focus_transfer(tmp_path: Path):
     specs = [
         Spec("character", "search", 0.48, "CHARACTER", False),
@@ -279,6 +330,47 @@ def test_authored_order_beats_input_id_and_geometry(tmp_path: Path):
     ]
 
 
+@pytest.mark.parametrize(
+    "name,duration,anchors",
+    [
+        ("small-medium-large", 3.0, (0.45, 0.78, 1.11)),
+        ("calendar-progression", 3.0, (0.70, 0.91, 1.14)),
+        ("very-fast", 0.8, (0.10, 0.28, 0.47)),
+        ("slow", 8.0, (0.70, 3.20, 6.50)),
+    ],
+)
+def test_sequential_motion_preserves_authored_anchors_and_settle_identity(
+    tmp_path: Path, name: str, duration: float, anchors: tuple[float, float, float]
+):
+    specs = [
+        Spec("z-tiny", "E1", anchors[0], "OBJECT"),
+        Spec("a-huge", "E2", anchors[1], "ACTION"),
+        Spec("m-medium", "E3", anchors[2], "RESULT"),
+    ]
+    _story, motion, windows = _certify(
+        tmp_path / name,
+        specs,
+        duration,
+        order=["m-medium", "z-tiny", "a-huge"],
+    )
+    assert [windows[row.asset].reveal_start for row in specs] == pytest.approx(anchors)
+    by_id = {cue.asset_id: cue for cue in motion}
+    assert [by_id[row.asset].start for row in specs] == pytest.approx(anchors)
+    assert all(cue.end > cue.start for cue in motion)
+    assert all(
+        all(segment.end > segment.start for segment in cue.segments)
+        for cue in motion
+    )
+    for cue in motion:
+        frames = cue.params["program"]["keyframes"]
+        assert [frame["progress"] for frame in frames] == sorted(
+            frame["progress"] for frame in frames
+        )
+        assert frames[-1]["dx"] == pytest.approx(0.0)
+        assert frames[-1]["dy"] == pytest.approx(0.0)
+        assert frames[-1]["scale"] == pytest.approx(1.0)
+
+
 def test_comparison_group_has_coordinated_focus(tmp_path: Path):
     specs = [
         Spec("left", "compare", 1.0),
@@ -316,10 +408,10 @@ def test_safe_abstention_has_no_reveal_or_focus():
     assert cue.params["semantic_focus"]["cohort_role"] == "abstention"
 
 
-def test_500_generated_cases_use_story_owned_windows(tmp_path: Path):
+def test_750_generated_cases_use_story_owned_windows(tmp_path: Path):
     rng = random.Random(0x5EAA17C)
     errors, lifecycles = [], 0
-    for case in range(500):
+    for case in range(750):
         duration, count = rng.uniform(0.5, 12.0), rng.randint(1, 20)
         if case % 4 == 0 and count >= 3:
             anchors = [0.10 * duration, 0.16 * duration] + [
@@ -342,11 +434,16 @@ def test_500_generated_cases_use_story_owned_windows(tmp_path: Path):
                 if min(event_count - 1, j * event_count // count) == event_index
             )
             event = f"E{event_index}"
+            # Deliberately cover true cohorts and 2/3/5 distinct asset anchors inside
+            # one event. The independent oracle remains the asset span + word timing.
+            distinct = (1, 2, 3, 5)[case % 4]
+            anchor_index = first + ((i - first) % distinct)
+            anchor_index = min(anchor_index, count - 1)
             specs.append(
                 Spec(
                     f"asset-{i}",
                     event,
-                    anchors[first],
+                    anchors[anchor_index],
                     "RESULT" if event_index == event_count - 1 else "OBJECT",
                     not any(row.event == event for row in specs),
                 )
@@ -354,7 +451,7 @@ def test_500_generated_cases_use_story_owned_windows(tmp_path: Path):
         story, _motion, windows = _certify(tmp_path / f"generated-{case}", specs, duration)
         errors.extend(abs(windows[row.asset].reveal_start - row.anchor) for row in specs)
         lifecycles += len(story[0].active_visual_semantic_state or {})
-    assert lifecycles >= 500
+    assert lifecycles >= 750
     assert max(errors) <= 0.05
     assert statistics.median(errors) <= 0.05
     assert statistics.quantiles(errors, n=100, method="inclusive")[94] <= 0.05
@@ -363,7 +460,7 @@ def test_500_generated_cases_use_story_owned_windows(tmp_path: Path):
 @pytest.mark.parametrize("scene_count", [35, 40, 35, 40])
 def test_package_shaped_multi_asset_stress(tmp_path: Path, scene_count: int, request):
     """Four deterministic package-scale populations, with dense semantic scenes."""
-    distribution = (1, 2, 3, 5, 8, 10, 14, 20)
+    distribution = (1, 2, 3, 5, 8, 10, 15, 20)
     total_assets = 0
     for scene_index in range(scene_count):
         count = distribution[scene_index % len(distribution)]
@@ -373,7 +470,19 @@ def test_package_shaped_multi_asset_stress(tmp_path: Path, scene_count: int, req
         for asset_index in range(count):
             event_index = min(event_count - 1, asset_index * event_count // count)
             event = f"E{event_index}"
-            anchor = min(duration * 0.92, 0.08 + event_index * duration * 0.82 / event_count)
+            family = request.node.callspec.indices["scene_count"]
+            first_in_event = next(
+                index
+                for index in range(count)
+                if min(event_count - 1, index * event_count // count) == event_index
+            )
+            within_event = asset_index - first_in_event
+            anchor_step = (0.0, 0.01, 0.02, 0.03)[family]
+            anchor = min(
+                duration * 0.92,
+                0.08 + event_index * duration * 0.72 / event_count
+                + (within_event % (family + 2)) * anchor_step * duration,
+            )
             specs.append(
                 Spec(
                     f"asset-{asset_index}",

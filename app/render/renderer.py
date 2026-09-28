@@ -259,6 +259,10 @@ class FFmpegRenderer:
                 incoming_start=incoming_start,
                 segment_duration=duration,
                 preferred_duration=float(transition.bridge_duration),
+                allow_focus_overlap=(
+                    transition.mode
+                    in {SceneTransitionMode.OBJECT_HANDOFF, SceneTransitionMode.BLUR_BRIDGE}
+                ),
             )
         bridge_duration = max(0.0, bridge_end - bridge_start)
         visual_carrier_id = (
@@ -543,6 +547,7 @@ class FFmpegRenderer:
         incoming_start: float,
         segment_duration: float,
         preferred_duration: float,
+        allow_focus_overlap: bool = True,
     ) -> tuple[float, float]:
         """Place a bounded bridge around the first Story-owned incoming reveal.
 
@@ -558,8 +563,14 @@ class FFmpegRenderer:
         lead = min(0.16, max(0.10, bridge * GOLDEN_MINOR))
         start = max(0.0, incoming - lead)
         end = min(duration, start + bridge)
+        if not allow_focus_overlap:
+            # An unrelated outgoing scene may cover a narration gap, but it must be
+            # gone when the incoming scene acquires its first semantic owner.
+            start = max(0.0, incoming - bridge)
+            end = incoming
         if incoming < duration and end <= incoming:
-            end = min(duration, incoming + min(0.12, duration - incoming))
+            if allow_focus_overlap:
+                end = min(duration, incoming + min(0.12, duration - incoming))
         return start, max(start, end)
 
     @classmethod
