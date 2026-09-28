@@ -38,6 +38,11 @@ CASES = {
         Spec("target", "effect", 1.25, role="RESULT"),
     ],
     "authored-cohort": [Spec("left", "event", 0.10), Spec("right", "event", 0.10)],
+    "subframe-distinct-reveals": [
+        Spec("first", "event", 0.101, group="tight", sequence=1),
+        Spec("second", "event", 0.109, leader=False, group="tight", sequence=2),
+        Spec("third", "event", 0.117, leader=False, group="tight", sequence=3),
+    ],
 }
 
 

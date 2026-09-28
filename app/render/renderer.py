@@ -371,6 +371,31 @@ class FFmpegRenderer:
                 )
             composite_label = "bridgebase"
 
+        frame_safe_reveal_starts = self._frame_safe_group_reveal_starts(
+            rows=[
+                (
+                    item.asset_id,
+                    self._cue_window(
+                        beat=beat,
+                        cue=motion.get((beat.id, item.asset_id)),
+                        segment_start=segment_start,
+                        duration=duration,
+                    )[0],
+                    (
+                        motion[(beat.id, item.asset_id)].params.get("motion_order", {})
+                        if (beat.id, item.asset_id) in motion
+                        and isinstance(motion[(beat.id, item.asset_id)].params, dict)
+                        else {}
+                    ),
+                )
+                for item in ordered_items
+                if item.asset_id not in persistent_ids
+                and item.asset_id != visual_carrier_id
+            ],
+            fps=plan.fps,
+            duration=duration,
+        )
+
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
@@ -465,7 +490,7 @@ class FFmpegRenderer:
                 cue=cue,
                 segment_start=segment_start,
                 duration=duration,
-                reveal_start=start,
+                reveal_start=frame_safe_reveal_starts.get(item.asset_id, start),
                 persistent=(persistent or visual_carrier),
             )
             filters.append(
@@ -753,6 +778,84 @@ class FFmpegRenderer:
         reveal_duration = max(0.05, end - start)
         fade_duration = min(0.18, max(0.10, reveal_duration * 0.42))
         return start, end, fade_duration
+
+    @staticmethod
+    def _frame_safe_group_reveal_starts(
+        *,
+        rows: list[tuple[str, float, dict]],
+        fps: int,
+        duration: float,
+    ) -> dict[str, float]:
+        """Quantize already-distinct Story reveals without collapsing their order.
+
+        Story owns continuous semantic time and Render owns conversion to encoded frames.
+        Within one authored semantic group, two distinct Story reveal times must remain
+        distinct first-visible frames. Equal Story timestamps stay equal so simultaneous
+        cohorts are never invented into a sequence.
+
+        Quantization only delays to a legal encoded frame; it never reveals early. If
+        the segment has too few frames to preserve the authored distinction, fail before
+        FFmpeg rather than silently producing a perceptual burst.
+        """
+        if fps <= 0 or duration <= 0.0:
+            return {}
+        frame_count = max(1, round(float(duration) * int(fps)))
+        max_frame = frame_count - 1
+        grouped: dict[str, list[tuple[str, float, int]]] = {}
+        for asset_id, start, order in rows:
+            if not isinstance(order, dict):
+                continue
+            group_id = order.get("semantic_group_id")
+            source = str(order.get("source") or "")
+            if not group_id or "final_package_sequence_order" not in source:
+                continue
+            try:
+                sequence_order = int(order.get("sequence_order"))
+                raw_start = max(0.0, float(start))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            grouped.setdefault(str(group_id), []).append(
+                (asset_id, raw_start, sequence_order)
+            )
+
+        output: dict[str, float] = {}
+        for group_id, group_rows in grouped.items():
+            ordered = sorted(group_rows, key=lambda row: (row[1], row[2], row[0]))
+            clusters: list[list[tuple[str, float, int]]] = []
+            for row in ordered:
+                if clusters and abs(row[1] - clusters[-1][0][1]) <= 1e-9:
+                    clusters[-1].append(row)
+                else:
+                    clusters.append([row])
+
+            previous_frame: int | None = None
+            for cluster in clusters:
+                raw_start = cluster[0][1]
+                natural_frame = max(0, math.ceil(raw_start * fps - 1e-9))
+                assigned_frame = (
+                    natural_frame
+                    if previous_frame is None
+                    else max(natural_frame, previous_frame + 1)
+                )
+                if assigned_frame > max_frame:
+                    raise StageFailedError(
+                        "encoded frame budget cannot preserve authored reveal order",
+                        details={
+                            "code": "ENCODED_REVEAL_ORDER_INFEASIBLE",
+                            "semantic_group_id": group_id,
+                            "raw_reveal_start": raw_start,
+                            "required_frame": assigned_frame,
+                            "last_frame": max_frame,
+                            "fps": fps,
+                            "duration": duration,
+                            "asset_ids": [row[0] for row in cluster],
+                        },
+                    )
+                quantized = assigned_frame / float(fps)
+                for asset_id, _start, _sequence in cluster:
+                    output[asset_id] = quantized
+                previous_frame = assigned_frame
+        return output
 
     @staticmethod
     def asset_visibility_window(

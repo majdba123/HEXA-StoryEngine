@@ -675,6 +675,10 @@ class MotionPlanner:
                     cues[beat_cue_start:],
                     beat=beat,
                 )
+                cues[beat_cue_start:] = self._enforce_sequential_relation_focus_handoff(
+                    cues[beat_cue_start:],
+                    beat=beat,
+                )
                 cues[beat_cue_start:] = fit_relation_collisions(
                     cues[beat_cue_start:],
                     layout,
@@ -823,6 +827,132 @@ class MotionPlanner:
                         source_rows[source_index] = cls._retime_segment_end(
                             source, new_end
                         )
+
+        return [
+            cue.model_copy(update={"segments": updated[cue.asset_id]})
+            for cue in cues
+        ]
+
+    @staticmethod
+    def _segment_semantic_peak_time(segment: MotionSegment) -> float:
+        """Return the renderer-facing semantic attention peak for one segment."""
+        duration = max(0.0, float(segment.end) - float(segment.start))
+        try:
+            progress = float(segment.program.get("semantic_peak_progress", GOLDEN_MAJOR))
+        except (TypeError, ValueError, OverflowError):
+            progress = GOLDEN_MAJOR
+        progress = max(0.0, min(1.0, progress))
+        return float(segment.start) + duration * progress
+
+    @classmethod
+    def _enforce_sequential_relation_focus_handoff(
+        cls,
+        cues: list[MotionCue],
+        *,
+        beat: StoryBeat,
+    ) -> list[MotionCue]:
+        """Serialize attention for authored cross-event relations without moving Story.
+
+        SEQUENTIAL_ALLOWED means source and target belong to an authored progression,
+        not one simultaneous interaction beat. Visibility remains exactly Story-owned.
+        Motion may only move the target REACT gesture later inside the existing beat
+        so it cannot begin before the source reaches its semantic attention peak.
+
+        The gesture duration/program is preserved verbatim. If there is not enough legal
+        room before the target handoff deadline, fail closed instead of compressing the
+        gesture into an unreadable burst or allowing two competing Hero actions.
+        """
+        by_asset = {cue.asset_id: cue for cue in cues}
+        activation_by_asset = {
+            activation.asset_id: activation for activation in beat.asset_activations
+        }
+        updated: dict[str, list[MotionSegment]] = {
+            cue.asset_id: list(cue.segments) for cue in cues
+        }
+
+        for source_cue in cues:
+            for source in tuple(updated[source_cue.asset_id]):
+                if (
+                    source.phase != "INTERACT"
+                    or source.involvement != "SOURCE"
+                    or not source.target_asset_id
+                ):
+                    continue
+                target_cue = by_asset.get(source.target_asset_id)
+                if target_cue is None:
+                    continue
+                target_rows = updated[target_cue.asset_id]
+                target_index = next(
+                    (
+                        index
+                        for index, row in enumerate(target_rows)
+                        if (
+                            row.phase == "REACT"
+                            and row.semantic_event_id == source.semantic_event_id
+                            and row.source_asset_id == source.source_asset_id
+                            and row.target_asset_id == source.target_asset_id
+                            and row.relationship == source.relationship
+                        )
+                    ),
+                    None,
+                )
+                if target_index is None:
+                    continue
+                target = target_rows[target_index]
+                timing_mode = relation_timing_mode(
+                    source_activation=activation_by_asset.get(
+                        source.source_asset_id or ""
+                    ),
+                    target_activation=activation_by_asset.get(
+                        source.target_asset_id or ""
+                    ),
+                )
+                if timing_mode != RelationTimingMode.SEQUENTIAL_ALLOWED:
+                    continue
+
+                source_peak = cls._segment_semantic_peak_time(source)
+                if float(target.start) >= source_peak - 1e-9:
+                    continue
+
+                duration = float(target.end) - float(target.start)
+                if duration <= 1e-9:
+                    continue
+                deadline = min(
+                    float(beat.end),
+                    float(target.handoff_deadline)
+                    if target.handoff_deadline is not None
+                    else float(beat.end),
+                )
+                later_segment_start = min(
+                    (
+                        float(row.start)
+                        for index, row in enumerate(target_rows)
+                        if index != target_index
+                        and float(row.start) > float(target.start) + 1e-9
+                    ),
+                    default=deadline,
+                )
+                deadline = min(deadline, later_segment_start)
+                new_start = source_peak
+                new_end = new_start + duration
+                if new_end > deadline + 1e-9:
+                    raise StageFailedError(
+                        "sequential relation cannot preserve one-owner focus inside Story authority",
+                        details={
+                            "code": "SEQUENTIAL_RELATION_FOCUS_INFEASIBLE",
+                            "beat_id": beat.id,
+                            "source_asset_id": source.source_asset_id,
+                            "target_asset_id": source.target_asset_id,
+                            "relationship": source.relationship,
+                            "source_peak": source_peak,
+                            "target_window": [target.start, target.end],
+                            "deadline": deadline,
+                            "required_duration": duration,
+                        },
+                    )
+                target_rows[target_index] = target.model_copy(
+                    update={"start": new_start, "end": new_end}
+                )
 
         return [
             cue.model_copy(update={"segments": updated[cue.asset_id]})
