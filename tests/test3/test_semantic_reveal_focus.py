@@ -15,6 +15,7 @@ from app.canonical import (
     CanonicalScene,
     CanonicalScriptSpan,
     CanonicalSemanticEvent,
+    CanonicalSemanticGroup,
 )
 from app.choreography import ChoreographyDirector
 from app.choreography.models import ChoreographyPlan
@@ -35,6 +36,11 @@ class Spec:
     anchor: float
     role: str = "OBJECT"
     leader: bool = True
+    phrase: str | None = None
+    phrase_end: float | None = None
+    sequence: int | None = None
+    group: str | None = None
+    group_policy: str = "SEQUENTIAL_WITHIN_PHRASE"
 
 
 def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, planners=None):
@@ -46,7 +52,27 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
     # One authored phrase per distinct reveal instant. Assets at the same event/anchor
     # intentionally share a script span and are a legal cohort; different anchors in
     # the same event retain different asset-level spans.
-    reveal_keys = list(dict.fromkeys((row.event, row.anchor) for row in specs))
+    phrase_anchors = {
+        phrase: min(row.anchor for row in specs if row.phrase == phrase)
+        for phrase in dict.fromkeys(row.phrase for row in specs if row.phrase)
+    }
+
+    def reveal_key(row: Spec) -> tuple[str, float]:
+        if row.phrase is not None:
+            return row.phrase, phrase_anchors[row.phrase]
+        return f"{row.event}@{row.anchor}", row.anchor
+
+    reveal_keys = list(dict.fromkeys(reveal_key(row) for row in specs))
+    event_reveal_keys = {
+        event: list(
+            dict.fromkeys(
+                reveal_key(row)
+                for row in specs
+                if row.event == event
+            )
+        )
+        for event in event_ids
+    }
     tokens = {key: f"concept{i}" for i, key in enumerate(reveal_keys)}
     script = " ".join(tokens.values())
     spans = {}
@@ -61,12 +87,17 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
             scene_id="scene",
             role=row.role,
             semantic_role=row.role,
-            sequence_order=reveal_keys.index((row.event, row.anchor)) + 1,
-            script_text=tokens[(row.event, row.anchor)],
+            sequence_order=(
+                row.sequence
+                if row.sequence is not None
+                else reveal_keys.index(reveal_key(row)) + 1
+            ),
+            semantic_group_id=row.group,
+            script_text=tokens[reveal_key(row)],
             script_span=CanonicalScriptSpan(
-                text=tokens[(row.event, row.anchor)],
-                global_char_start=spans[(row.event, row.anchor)][0],
-                global_char_end=spans[(row.event, row.anchor)][1],
+                text=tokens[reveal_key(row)],
+                global_char_start=spans[reveal_key(row)][0],
+                global_char_end=spans[reveal_key(row)][1],
             ),
             binding_type="EXPLICIT",
             semantic_event_id=row.event,
@@ -79,12 +110,12 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
             semantic_event_id=event,
             scene_id="scene",
             script_text=" ".join(
-                tokens[key] for key in reveal_keys if key[0] == event
+                tokens[key] for key in event_reveal_keys[event]
             ),
             script_span=CanonicalScriptSpan(
-                text=" ".join(tokens[key] for key in reveal_keys if key[0] == event),
-                global_char_start=min(spans[key][0] for key in reveal_keys if key[0] == event),
-                global_char_end=max(spans[key][1] for key in reveal_keys if key[0] == event),
+                text=" ".join(tokens[key] for key in event_reveal_keys[event]),
+                global_char_start=min(spans[key][0] for key in event_reveal_keys[event]),
+                global_char_end=max(spans[key][1] for key in event_reveal_keys[event]),
             ),
             sequence_order=i + 1,
             visual_leader_asset_id=next(
@@ -113,6 +144,14 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
                 script_char_end=len(script),
                 units=units,
                 semantic_events=events,
+                semantic_groups=tuple(
+                    CanonicalSemanticGroup(
+                        semantic_group_id=group,
+                        animation_policy=next(row.group_policy for row in specs if row.group == group),
+                        asset_ids=tuple(row.asset for row in specs if row.group == group),
+                    )
+                    for group in dict.fromkeys(row.group for row in specs if row.group)
+                ),
             ),
         ),
     )
@@ -123,7 +162,13 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
         words=[
             TranscriptWord(
                 start=key[1],
-                end=min(duration, key[1] + 0.08),
+                end=min(
+                    duration,
+                    max(
+                        key[1] + 0.08,
+                        *(row.phrase_end or 0.0 for row in specs if reveal_key(row) == key),
+                    ),
+                ),
                 text=tokens[key],
                 char_start=spans[key][0],
                 char_end=spans[key][1],
@@ -375,6 +420,91 @@ def test_authored_order_beats_input_id_and_geometry(tmp_path: Path):
     ]
 
 
+def test_distinct_phrases_override_misleading_sequence_order(tmp_path: Path):
+    specs = [
+        Spec("A", "shared", 0.4, sequence=3, group="progression"),
+        Spec("B", "shared", 1.3, sequence=1, group="progression", leader=False),
+        Spec("C", "shared", 3.0, sequence=2, group="progression", leader=False),
+    ]
+    story, *_ = _pipeline(tmp_path / "distinct-span-conflict", specs, 4.0)
+    windows = _windows(story)
+    assert [windows[key].reveal_start for key in ("A", "B", "C")] == pytest.approx(
+        [0.4, 1.3, 3.0]
+    )
+
+
+@pytest.mark.parametrize(
+    "name,duration,count,phrase_end",
+    [
+        ("short", 0.60, 6, 0.58),
+        ("long", 3.00, 8, 2.80),
+    ],
+)
+def test_same_phrase_sequence_uses_available_phrase_window(
+    tmp_path: Path, name: str, duration: float, count: int, phrase_end: float
+):
+    specs = [
+        Spec(
+            f"asset-{index}",
+            "timeline",
+            0.05,
+            phrase="one-authored-phrase",
+            phrase_end=phrase_end,
+            sequence=index + 1,
+            leader=index == 0,
+        )
+        for index in range(count)
+    ]
+    scrambled = [row.asset for row in specs[2::3] + specs[0::3] + specs[1::3]]
+    story, _choreography, composition, motion, _render = _pipeline(
+        tmp_path / f"same-phrase-{name}", specs, duration, order=scrambled
+    )
+    windows = _windows(story)
+    starts = [windows[row.asset].reveal_start for row in specs]
+    assert starts == sorted(starts)
+    assert len(set(starts)) == count
+    assert starts[0] == pytest.approx(0.05)
+    assert starts[-1] < phrase_end
+    assert all(
+        0.05 <= windows[row.asset].reveal_start < windows[row.asset].settle_at <= phrase_end
+        for row in specs
+    )
+    assert all(cue.end > cue.start for cue in motion)
+    assert all(layout.beat_id == story[0].id for layout in composition)
+
+
+def test_same_phrase_explicit_cohort_then_later_rank(tmp_path: Path):
+    specs = [
+        Spec("A", "E1", 0.2, phrase="shared", phrase_end=1.2, sequence=1, group="g"),
+        Spec(
+            "B", "E1", 0.2, leader=False, phrase="shared", phrase_end=1.2,
+            sequence=1, group="g",
+        ),
+        Spec(
+            "C", "E1", 0.2, leader=False, phrase="shared", phrase_end=1.2,
+            sequence=2, group="g",
+        ),
+    ]
+    story, *_ = _pipeline(tmp_path / "cohort-then-progress", specs, 1.5)
+    windows = _windows(story)
+    assert windows["A"].reveal_start == pytest.approx(windows["B"].reveal_start)
+    assert windows["C"].reveal_start > windows["A"].reveal_start
+    assert windows["C"].settle_at <= 1.2
+
+
+def test_explicit_simultaneous_group_ignores_sequence_rank(tmp_path: Path):
+    specs = [
+        Spec(
+            asset, "E1", 0.2, leader=index == 0, phrase="shared", phrase_end=1.2,
+            sequence=index + 1, group="unit", group_policy="SIMULTANEOUS_VISUAL_UNIT",
+        )
+        for index, asset in enumerate(("A", "B", "C"))
+    ]
+    story, *_ = _pipeline(tmp_path / "explicit-simultaneous", specs, 1.5)
+    starts = [_windows(story)[asset].reveal_start for asset in ("A", "B", "C")]
+    assert starts == pytest.approx([0.2, 0.2, 0.2])
+
+
 @pytest.mark.parametrize(
     "name,duration,anchors",
     [
@@ -502,11 +632,68 @@ def test_1000_generated_cases_use_story_owned_windows(tmp_path: Path):
     assert statistics.quantiles(errors, n=100, method="inclusive")[94] <= 0.05
 
 
-@pytest.mark.parametrize("family,scene_count", [(index, 34) for index in range(6)])
+def test_1000_generated_same_phrase_sequences_are_ordered(tmp_path: Path):
+    rng = random.Random(0x5E0A0DE)
+    lifecycles = 0
+    for case in range(1000):
+        duration = rng.uniform(0.5, 3.0)
+        count = rng.randint(3, min(8, 1 + int(duration / 0.025)))
+        phrase_start = rng.uniform(0.02, duration * 0.15)
+        phrase_end = rng.uniform(max(phrase_start + 0.25, duration * 0.55), duration * 0.98)
+        specs = [
+            Spec(
+                f"asset-{index}",
+                "progression",
+                phrase_start,
+                phrase="generated-shared-phrase",
+                phrase_end=phrase_end,
+                sequence=index + 1,
+                leader=index == 0,
+            )
+            for index in range(count)
+        ]
+        shuffled = [row.asset for row in sorted(specs, key=lambda _row: rng.random())]
+        story, _choreography, _composition, motion, _render = _pipeline(
+            tmp_path / f"generated-sequence-{case}",
+            specs,
+            duration,
+            order=shuffled,
+        )
+        windows = _windows(story)
+        starts = [windows[row.asset].reveal_start for row in specs]
+        assert starts == sorted(starts)
+        assert len(set(starts)) == count
+        assert all(
+            phrase_start <= windows[row.asset].reveal_start
+            < windows[row.asset].settle_at <= phrase_end
+            for row in specs
+        )
+        assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
+        lifecycles += count
+    assert lifecycles >= 3000
+
+
+@pytest.mark.parametrize(
+    "family,scene_count",
+    [
+        ("presenter-icons", 40),
+        ("icons-only", 40),
+        ("timeline", 40),
+        ("dense-network", 40),
+        ("comparison", 40),
+        ("relation", 40),
+        ("result-payoff", 40),
+        ("mixed-duration", 40),
+    ],
+)
 def test_package_shaped_multi_asset_stress(
-    tmp_path: Path, family: int, scene_count: int
+    tmp_path: Path, family: str, scene_count: int
 ):
-    """Six package families: 204 scenes and more than 1,500 asset lifecycles."""
+    """Eight package families: 320 scenes and 2,560 asset lifecycles."""
+    family_index = (
+        "presenter-icons", "icons-only", "timeline", "dense-network",
+        "comparison", "relation", "result-payoff", "mixed-duration",
+    ).index(family)
     distribution = (1, 2, 3, 5, 8, 10, 15, 20)
     total_assets = 0
     for scene_index in range(scene_count):
@@ -523,11 +710,13 @@ def test_package_shaped_multi_asset_stress(
                 if min(event_count - 1, index * event_count // count) == event_index
             )
             within_event = asset_index - first_in_event
-            anchor_step = (0.0, 0.008, 0.012, 0.018, 0.024, 0.03)[family]
+            anchor_step = (0.0, 0.008, 0.012, 0.018, 0.024, 0.03, 0.036, 0.042)[
+                family_index
+            ]
             anchor = min(
                 duration * 0.92,
                 0.08 + event_index * duration * 0.72 / event_count
-                + (within_event % (family + 2)) * anchor_step * duration,
+                + (within_event % (family_index + 2)) * anchor_step * duration,
             )
             specs.append(
                 Spec(
@@ -536,13 +725,37 @@ def test_package_shaped_multi_asset_stress(
                     anchor,
                     "RESULT" if event_index == event_count - 1 else "OBJECT",
                     not any(row.event == event for row in specs),
+                    phrase=(
+                        "package-shared-phrase"
+                        if family in {"timeline", "mixed-duration"} and scene_index % 2
+                        else None
+                    ),
+                    phrase_end=(
+                        duration * 0.95
+                        if family in {"timeline", "mixed-duration"} and scene_index % 2
+                        else None
+                    ),
+                    sequence=(
+                        asset_index + 1
+                        if family in {"timeline", "mixed-duration"} and scene_index % 2
+                        else None
+                    ),
                 )
             )
-        _certify(
-            tmp_path / f"package-{family}-{scene_index}",
-            specs,
-            duration,
-        )
+        if family in {"timeline", "mixed-duration"} and scene_index % 2:
+            story, _choreography, _composition, motion, _render = _pipeline(
+                tmp_path / f"package-{family}-{scene_index}", specs, duration
+            )
+            starts = [_windows(story)[row.asset].reveal_start for row in specs]
+            assert starts == sorted(starts)
+            assert len(set(starts)) == count
+            assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
+        else:
+            _certify(
+                tmp_path / f"package-{family}-{scene_index}",
+                specs,
+                duration,
+            )
         total_assets += count
     assert total_assets > scene_count
 

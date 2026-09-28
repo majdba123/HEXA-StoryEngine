@@ -121,14 +121,17 @@ def _semantic_sequence_windows(
     for row in activations:
         if (
             row.policy == "FALLBACK"
-            or row.group_animation_policy != "SEQUENTIAL_WITHIN_PHRASE"
-            or not row.semantic_group_id
+            or row.group_animation_policy == "SIMULTANEOUS_VISUAL_UNIT"
             or row.sequence_order is None
             or row.spoken_start is None
             or row.spoken_end is None
         ):
             continue
-        semantic_groups.setdefault(row.semantic_group_id, []).append(row)
+        # An explicit group constrains which assets progress together.  When Final
+        # Package authors asset-level sequence_order without a group, the exact
+        # script span itself is the phrase-local sequencing authority.
+        group_key = row.semantic_group_id or "__exact_span_sequence__"
+        semantic_groups.setdefault(group_key, []).append(row)
 
     windows: dict[str, tuple[float, float]] = {}
     for group_rows in semantic_groups.values():
@@ -449,9 +452,12 @@ def schedule_windows(
             semantic_peak = reveal_start + (settle_at - reveal_start) * 0.5
             sequence_evidence = row.evidence + [
                 "semantic_group_sequential_window",
+                "phrase_local_sequence_order",
                 f"group_phrase_start={start:.6f}",
                 f"group_phrase_end={end:.6f}",
                 f"assigned_sequence_order={row.sequence_order}",
+                f"phrase_local_reveal_start={reveal_start:.6f}",
+                f"phrase_local_settle_at={settle_at:.6f}",
                 *(
                     [f"assigned_semantic_event_order={row.semantic_event_order}"]
                     if row.semantic_event_order is not None
