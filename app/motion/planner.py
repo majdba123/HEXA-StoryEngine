@@ -2915,13 +2915,11 @@ class MotionPlanner:
                     gain = 0.18
                 output[asset_id] = (gain, cohort_role)
 
-        # SAFE_ABSTENTION assets have no Story-owned semantic instant, so they must
-        # never default to full-strength independent focus merely because they were
-        # excluded from the trusted-window cohort calculation above. When a trusted
-        # semantic focus exists, unresolved visuals remain supporting context. When
-        # the whole beat is unresolved, preserve exactly one deterministic fallback
-        # leader and quiet the remaining assets. This changes attention energy only;
-        # it does not invent semantic timing or alter Composition geometry.
+        # SAFE_ABSTENTION assets have no Story-owned semantic instant. They therefore
+        # cannot receive reveal/focus authority, including when every activation in a
+        # beat abstains. Render visibility is already governed by Story's active visual
+        # state; zeroing their attention budget also prevents the otherwise executable
+        # compatibility cue from inventing a semantic leader.
         abstentions: list[str] = []
         for asset_id, activation in activation_by_asset.items():
             has_v2, window = story_activation_window(activation, beat)
@@ -2932,29 +2930,10 @@ class MotionPlanner:
             ):
                 abstentions.append(asset_id)
         if abstentions:
-            trusted_ids = {asset_id for asset_id, _activation, _window in timed}
-            fallback_leader_id: str | None = None
-            if not trusted_ids:
-                candidates = [
-                    preferred_primary_id,
-                    *beat.primary_asset_ids,
-                    preferred_interaction_id,
-                ]
-                fallback_leader_id = next(
-                    (asset_id for asset_id in candidates if asset_id in abstentions),
-                    min(abstentions),
-                )
             for asset_id in abstentions:
                 if asset_id in output:
                     continue
-                if asset_id == fallback_leader_id:
-                    output[asset_id] = (1.0, "fallback_leader")
-                    continue
-                participant = str(participant_roles.get(asset_id, "SUPPORT")).upper()
-                if participant in {"SUBJECT", "OBJECT", "RESULT"} or asset_id == preferred_interaction_id:
-                    output[asset_id] = (0.58, "participant")
-                else:
-                    output[asset_id] = (0.24, "quiet")
+                output[asset_id] = (0.0, "abstention")
         return output
 
     @staticmethod

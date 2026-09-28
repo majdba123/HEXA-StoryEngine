@@ -522,11 +522,11 @@ def test_safe_abstention_assets_do_not_compete_with_trusted_focus() -> None:
 
     assert focus["hero"]["cohort_gain"] == pytest.approx(1.0)
     assert all(
-        focus[f"extra-{index}"]["cohort_gain"] < 0.72
+        focus[f"extra-{index}"]["cohort_gain"] == pytest.approx(0.0)
         for index in range(5)
     )
     assert all(
-        focus[f"extra-{index}"]["cohort_role"] in {"quiet", "participant", "secondary"}
+        focus[f"extra-{index}"]["cohort_role"] == "abstention"
         for index in range(5)
     )
 
