@@ -271,6 +271,7 @@ class StoryBeat(BaseModel):
     semantic_context: StorySemanticContext | None = None
     asset_activations: list[AssetActivation] = Field(default_factory=list)
     semantic_event_proxies: list[SemanticEventProxy] = Field(default_factory=list)
+    active_visual_semantic_state: dict[str, str] | None = None
 
 
 class LayoutItem(BaseModel):

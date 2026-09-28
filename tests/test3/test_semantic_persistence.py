@@ -6,21 +6,35 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from app.canonical import (
+    CanonicalAsset,
+    CanonicalPackage,
+    CanonicalScene,
+    CanonicalScriptSpan,
+    CanonicalSemanticEvent,
+    CanonicalVisualProgression,
+)
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.models import (
     AssetActivation,
+    CompositionBeat,
+    LayoutItem,
     PackageModel,
     SceneSource,
     StoryBeat,
     Transcript,
     TranscriptSegment,
+    TranscriptWord,
     VisualAsset,
 )
 from app.motion import MotionPlanner
 from app.motion.continuity import ContinuityContract
 from app.render import RenderPlanner
+from app.render.renderer import FFmpegRenderer
 from app.render.transition import VisualTransitionPolicy
+from app.story import StoryPlanner
+from app.story.windows import StoryAssetActivation
 
 
 @dataclass(frozen=True)
@@ -127,6 +141,216 @@ def _identities(beat: StoryBeat) -> dict[str, str]:
         row.asset_id: str(row.semantic_unit_id or row.asset_id)
         for row in beat.asset_activations
     }
+
+
+def _real_story_pipeline(tmp_path: Path):
+    script = "alpha beta gamma delta"
+    image_path = tmp_path / "semantic-state.png"
+    Image.new("RGBA", (64, 64), (255, 255, 255, 255)).save(image_path)
+    spans = {
+        "A": (0, 5, "alpha", "E1", ()),
+        "B": (6, 10, "beta", "E1", ()),
+        "C": (11, 16, "gamma", "E2", ("E1",)),
+        "D": (17, 22, "delta", "E3", ("E2",)),
+    }
+    units = tuple(
+        CanonicalAsset(
+            unit_id=asset_id,
+            asset_id=asset_id,
+            scene_id="scene",
+            script_text=text,
+            script_span=CanonicalScriptSpan(
+                text=text, global_char_start=start, global_char_end=end
+            ),
+            binding_type="EXPLICIT",
+            semantic_event_id=event_id,
+        )
+        for asset_id, (start, end, text, event_id, _dependencies) in spans.items()
+    )
+    events = tuple(
+        CanonicalSemanticEvent(
+            semantic_event_id=event_id,
+            scene_id="scene",
+            script_text=text,
+            script_span=CanonicalScriptSpan(
+                text=text, global_char_start=start, global_char_end=end
+            ),
+            sequence_order=index,
+            visual_leader_asset_id=asset_id,
+            participant_asset_ids=("B",) if event_id == "E1" else (),
+            depends_on_event_ids=dependencies,
+        )
+        for index, (asset_id, (start, end, text, event_id, dependencies))
+        in enumerate((row for row in spans.items() if row[0] != "B"), start=1)
+    )
+    progression_rows = (
+        ("A", 0, 10, "alpha beta"),
+        ("C", 11, 16, "gamma"),
+        ("D", 17, 22, "delta"),
+    )
+    progressions = tuple(
+        CanonicalVisualProgression(
+            action="EXPLAIN",
+            targets=(asset_id,),
+            trigger=CanonicalScriptSpan(
+                text=text, global_char_start=start, global_char_end=end
+            ),
+        )
+        for asset_id, start, end, text in progression_rows
+    )
+    package = CanonicalPackage(
+        root=tmp_path,
+        package_id="semantic-state",
+        script=script,
+        semantic_binding_schema_name="HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantic_bindings_present=True,
+        scenes=(CanonicalScene(
+            id="scene",
+            image_path=image_path,
+            order=0,
+            script_char_start=0,
+            script_char_end=len(script),
+            units=units,
+            visual_progression=progressions,
+            semantic_events=events,
+        ),),
+    )
+    transcript = Transcript(
+        duration=3.0,
+        segments=[],
+        timing_source="forced_alignment",
+        words=[
+            TranscriptWord(start=0.10, end=0.35, text="alpha", char_start=0, char_end=5),
+            TranscriptWord(start=0.40, end=0.65, text="beta", char_start=6, char_end=10),
+            TranscriptWord(start=1.10, end=1.35, text="gamma", char_start=11, char_end=16),
+            TranscriptWord(start=2.10, end=2.35, text="delta", char_start=17, char_end=22),
+        ],
+    )
+    assets = [
+        VisualAsset(
+            id=asset_id,
+            scene_id="scene",
+            role="object",
+            image_path=image_path,
+            extraction_method="test3-real-story-fixture",
+            source_area_ratio=0.20 - index * 0.01,
+        )
+        for index, asset_id in enumerate(spans)
+    ]
+    story = StoryPlanner().plan(package, transcript, assets)
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    composition = CompositionPlanner().plan(story, assets, choreography)
+    motion = MotionPlanner().plan(story, composition, choreography, assets)
+    render_dir = tmp_path / "real-render-plan"
+    render_dir.mkdir()
+    render_plan, _ = RenderPlanner().compile(
+        transcript, assets, story, composition, motion, render_dir
+    )
+    return story, choreography, composition, motion, render_plan
+
+
+def test_story_planner_builds_dependency_closed_active_visual_state(tmp_path: Path) -> None:
+    story, choreography, composition, motion, render_plan = _real_story_pipeline(tmp_path)
+
+    assert [beat.active_visual_semantic_state for beat in story] == [
+        {"A": "A", "B": "B"},
+        {"A": "A", "B": "B", "C": "C"},
+        {"A": "A", "B": "B", "C": "C", "D": "D"},
+    ]
+    assert len(choreography.directives) == 3
+    assert render_plan.story == story
+    assert render_plan.composition == composition
+    assert render_plan.motion == motion
+
+    cues = {(cue.beat_id, cue.asset_id): cue for cue in motion}
+    for beat_id, asset_ids in (("beat-002", {"A", "B"}), ("beat-003", {"A", "B", "C"})):
+        for asset_id in asset_ids:
+            cue = cues[(beat_id, asset_id)]
+            assert cue.params["semantic_continuity"]["mode"] == "PERSIST"
+            assert not ContinuityContract.has_terminal_exit(cue)
+
+
+def test_renderer_visibility_has_no_gap_for_dependency_persistence(tmp_path: Path) -> None:
+    story, _choreography, _composition, motion, _render_plan = _real_story_pipeline(tmp_path)
+    cue = next(row for row in motion if row.beat_id == "beat-002" and row.asset_id == "A")
+    beat = story[1]
+    duration = beat.end - beat.start
+    reveal_start, _end, _fade = FFmpegRenderer._cue_window(
+        beat=beat, cue=cue, segment_start=beat.start, duration=duration
+    )
+    assert FFmpegRenderer.asset_visibility_window(
+        cue=cue,
+        segment_start=beat.start,
+        duration=duration,
+        reveal_start=reveal_start,
+        persistent=True,
+    ) == pytest.approx((0.0, duration))
+
+
+def test_safe_abstention_never_enters_active_visual_state() -> None:
+    abstention = StoryAssetActivation(
+        asset_id="A",
+        semantic_unit_id="A",
+        semantic_event_id="E1",
+        activation_policy="SAFE_ABSTENTION",
+    )
+    dependent = StoryAssetActivation(
+        asset_id="B",
+        semantic_unit_id="B",
+        semantic_event_id="E2",
+        semantic_event_dependency_ids=["E1"],
+        phrase_start=1.0,
+        phrase_end=1.5,
+        reveal_start=1.0,
+        semantic_peak=1.2,
+        settle_at=1.4,
+        activation_policy="OWN_WINDOW",
+    )
+    beats = StoryPlanner._resolve_active_visual_semantic_state([
+        StoryBeat(id="one", scene_id="scene", start=0, end=1, narration="one", action="EXPLAIN", asset_activations=[abstention]),
+        StoryBeat(id="two", scene_id="scene", start=1, end=2, narration="two", action="EXPLAIN", asset_activations=[dependent]),
+    ])
+    assert beats[0].active_visual_semantic_state == {}
+    assert beats[1].active_visual_semantic_state == {"B": "B"}
+
+
+def test_active_state_retires_assets_and_resets_at_scene_boundary() -> None:
+    first = StoryBeat(
+        id="one",
+        scene_id="scene-one",
+        start=0,
+        end=1,
+        narration="one",
+        action="EXPLAIN",
+        active_visual_semantic_state={"A": "A", "B": "B", "C": "C"},
+    )
+    retired = first.model_copy(update={
+        "id": "two",
+        "start": 1,
+        "end": 2,
+        "active_visual_semantic_state": {"B": "B", "C": "C"},
+    })
+    next_scene = retired.model_copy(update={
+        "id": "three",
+        "scene_id": "scene-two",
+        "start": 2,
+        "end": 3,
+    })
+    layouts = [
+        CompositionBeat(
+            beat_id=beat.id,
+            items=[
+                LayoutItem(
+                    asset_id=asset_id, x=0.5, y=0.5, width=0.2, height=0.2
+                )
+                for asset_id in ("A", "B", "C")
+            ],
+        )
+        for beat in (first, retired, next_scene)
+    ]
+    contract = ContinuityContract()
+    assert contract.persistent_asset_ids(first, retired, layouts[0], layouts[1]) == {"B", "C"}
+    assert contract.persistent_asset_ids(retired, next_scene, layouts[1], layouts[2]) == set()
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda row: row.name)

@@ -447,16 +447,13 @@ class FFmpegRenderer:
             # deliberately selected boundary carrier, used solely to avoid a blank
             # frame between beats. Story's legacy area-ranked primary must never make
             # a future semantic result visible early.
-            enable_start = 0.0 if (persistent or visual_carrier) else start
-            exit_segments = (
-                [segment for segment in cue.segments if segment.phase == "EXIT"]
-                if cue is not None
-                else []
+            enable_start, enable_end = self.asset_visibility_window(
+                cue=cue,
+                segment_start=segment_start,
+                duration=duration,
+                reveal_start=start,
+                persistent=(persistent or visual_carrier),
             )
-            enable_end = duration
-            if exit_segments:
-                exit_end = min(float(segment.end) for segment in exit_segments) - segment_start
-                enable_end = max(enable_start, min(duration, exit_end))
             filters.append(
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
                 f"enable='between(t,{enable_start:.6f},{enable_end:.6f})':eof_action=pass:shortest=0"
@@ -716,6 +713,28 @@ class FFmpegRenderer:
         reveal_duration = max(0.05, end - start)
         fade_duration = min(0.18, max(0.10, reveal_duration * 0.42))
         return start, end, fade_duration
+
+    @staticmethod
+    def asset_visibility_window(
+        *,
+        cue: MotionCue | None,
+        segment_start: float,
+        duration: float,
+        reveal_start: float,
+        persistent: bool,
+    ) -> tuple[float, float]:
+        """Return the renderer-facing overlay window for one resolved lifecycle."""
+        enable_start = 0.0 if persistent else reveal_start
+        exit_segments = (
+            [segment for segment in cue.segments if segment.phase == "EXIT"]
+            if cue is not None
+            else []
+        )
+        enable_end = duration
+        if exit_segments:
+            exit_end = min(float(segment.end) for segment in exit_segments) - segment_start
+            enable_end = max(enable_start, min(duration, exit_end))
+        return enable_start, enable_end
 
     @staticmethod
     def _geometry(plan: RenderPlan, item) -> tuple[int, int, int, int]:

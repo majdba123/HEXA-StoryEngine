@@ -69,10 +69,13 @@ class StoryPlanner:
             for event_index, event in enumerate(events):
                 char_start = scene.script_char_start
                 char_end = scene.script_char_end
-                if char_start is None:
-                    char_start = scene.script_char_start
-                if char_end is None:
-                    char_end = scene.script_char_end
+                if authored_progression and event.trigger is not None:
+                    if event.trigger.global_char_start is not None:
+                        char_start = event.trigger.global_char_start
+                    if event.trigger.global_char_end is not None:
+                        # Canonical spans are half-open; the legacy timing helper takes
+                        # an inclusive upper bound.
+                        char_end = event.trigger.global_char_end - 1
                 fallback_segment = None
                 if transcript.segments:
                     fallback_segment = transcript.segments[min(scene.order, len(transcript.segments) - 1)]
@@ -139,8 +142,68 @@ class StoryPlanner:
             preserve_spoken_completion=package.has_semantic_bindings,
         )
         planned = self.activation.enrich(package, transcript, assets, beats)
+        planned = self._resolve_active_visual_semantic_state(planned)
         self._require_quality_contract(package=package, assets=assets, beats=planned)
         return planned
+
+    @staticmethod
+    def _resolve_active_visual_semantic_state(
+        beats: list[StoryBeat],
+    ) -> list[StoryBeat]:
+        """Materialize Story-owned semantic lifetime across dependent events."""
+        output: list[StoryBeat] = []
+        active_state: dict[str, str] = {}
+        active_event_ids: set[str] = set()
+        previous_scene_id: str | None = None
+
+        for beat in beats:
+            current_state = {
+                row.asset_id: str(row.semantic_unit_id or row.asset_id)
+                for row in beat.asset_activations
+                if getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
+            }
+            current_event_ids = {
+                str(event_id)
+                for event_id in (
+                    *(
+                        row.semantic_event_id
+                        for row in beat.asset_activations
+                        if getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
+                    ),
+                    *(row.semantic_event_id for row in beat.semantic_event_proxies),
+                )
+                if event_id
+            }
+            dependencies = {
+                str(event_id)
+                for row in beat.asset_activations
+                if getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
+                for event_id in row.semantic_event_dependency_ids
+                if event_id
+            }
+            dependencies.update(
+                str(event_id)
+                for row in beat.semantic_event_proxies
+                for event_id in row.semantic_event_dependency_ids
+                if event_id
+            )
+
+            continues_state = (
+                previous_scene_id == beat.scene_id
+                and bool(dependencies & active_event_ids)
+            )
+            if continues_state:
+                active_state = {**active_state, **current_state}
+                active_event_ids.update(current_event_ids)
+            else:
+                active_state = current_state
+                active_event_ids = set(current_event_ids)
+
+            output.append(beat.model_copy(update={
+                "active_visual_semantic_state": dict(active_state),
+            }))
+            previous_scene_id = beat.scene_id
+        return output
 
     @staticmethod
     def _require_quality_contract(

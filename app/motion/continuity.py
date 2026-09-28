@@ -62,6 +62,20 @@ class ContinuityContract:
         shared_layout_ids = previous_ids & current_ids
         if previous_beat is None or current_beat is None:
             return frozenset(shared_layout_ids)
+        if (
+            previous_beat.active_visual_semantic_state is not None
+            and current_beat.active_visual_semantic_state is not None
+        ):
+            if previous_beat.scene_id != current_beat.scene_id:
+                return frozenset()
+            previous_semantics = previous_beat.active_visual_semantic_state
+            current_semantics = current_beat.active_visual_semantic_state
+            return frozenset(
+                asset_id
+                for asset_id in shared_layout_ids
+                if asset_id in previous_semantics
+                and current_semantics.get(asset_id) == previous_semantics[asset_id]
+            )
         if not previous_beat.asset_activations or not current_beat.asset_activations:
             return frozenset(shared_layout_ids)
 
