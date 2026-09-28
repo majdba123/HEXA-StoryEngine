@@ -806,8 +806,7 @@ class FFmpegRenderer:
             if not isinstance(order, dict):
                 continue
             group_id = order.get("semantic_group_id")
-            source = str(order.get("source") or "")
-            if not group_id or "final_package_sequence_order" not in source:
+            if not group_id or order.get("sequence_order") is None:
                 continue
             try:
                 sequence_order = int(order.get("sequence_order"))

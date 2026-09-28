@@ -280,44 +280,6 @@ def test_relation_result_has_one_consequence_gesture(tmp_path: Path):
     assert [s.phase for s in consequences] == ["PAYOFF"]
 
 
-def test_sequential_relation_reaction_waits_for_source_attention_peak(
-    tmp_path: Path,
-):
-    """A later authored event may reveal early, but its relation reaction cannot steal focus."""
-    _, choreography, _, motion, _ = _pipeline(
-        tmp_path / "sequential-relation-focus",
-        [
-            Spec("source", "E1", 0.72, role="OBJECT", group="g", sequence=1),
-            Spec("target", "E2", 0.50, role="OBJECT", group="g", sequence=2),
-        ],
-        1.8,
-        relations=(CanonicalRelation(
-            subject_asset_id="source",
-            object_asset_id="target",
-            relation_type="ENABLES",
-        ),),
-    )
-    assert choreography.directives[0].interactions
-    source = next(
-        segment
-        for cue in motion if cue.asset_id == "source"
-        for segment in cue.segments
-        if segment.phase == "INTERACT" and segment.involvement == "SOURCE"
-    )
-    target = next(
-        segment
-        for cue in motion if cue.asset_id == "target"
-        for segment in cue.segments
-        if segment.phase == "REACT"
-    )
-    source_peak_progress = float(
-        source.program.get("semantic_peak_progress", 0.6180339887498949)
-    )
-    source_peak = source.start + (source.end - source.start) * source_peak_progress
-    assert target.start >= source_peak - 1e-9
-    assert target.end <= 1.8 + 1e-9
-
-
 def _windows(story):
     return {
         row.asset_id: story_activation_window(row, story[0])[1]

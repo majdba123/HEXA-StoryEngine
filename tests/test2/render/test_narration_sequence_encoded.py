@@ -46,6 +46,20 @@ CASES = {
 }
 
 
+def test_frame_safe_group_reveal_starts_preserve_distinct_subframe_order() -> None:
+    starts = FFmpegRenderer._frame_safe_group_reveal_starts(
+        rows=[
+            ("first", 0.101, {"semantic_group_id": "tight", "sequence_order": 1}),
+            ("second", 0.109, {"semantic_group_id": "tight", "sequence_order": 2}),
+            ("third", 0.117, {"semantic_group_id": "tight", "sequence_order": 3}),
+        ],
+        fps=30,
+        duration=2.6,
+    )
+    frames = [round(starts[asset] * 30) for asset in ("first", "second", "third")]
+    assert frames == [4, 5, 6]
+
+
 @pytest.mark.parametrize("case", CASES)
 def test_narration_sequence_survives_encode(tmp_path: Path, case: str):
     specs = CASES[case]
@@ -104,7 +118,7 @@ def test_narration_sequence_survives_encode(tmp_path: Path, case: str):
     if case == "authored-cohort":
         assert len(set(first_frames)) == 1
     else:
-        assert all(a < b for a, b in zip(first_frames, first_frames[1:]))
+        assert all(a < b for a, b in zip(first_frames, first_frames[1:])), first_frames
     if relations:
         target = next(c for c in motion if c.asset_id == specs[-1].asset)
         assert [s.phase for s in target.segments if s.phase != "ENTRY"] == ["PAYOFF"]
