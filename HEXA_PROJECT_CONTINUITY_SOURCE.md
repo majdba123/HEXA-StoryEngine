@@ -12670,3 +12670,439 @@ The remaining warnings are unrelated pre-existing / third-party warnings and are
 
 Current code checkpoint before this documentation-only append:
 `2d9dad9fbf96193a1ca20940eb601a75dbc5da12`.
+
+
+================================================================================
+SPRINT 1 + SPRINT 2 AUTHORITATIVE TAKEOVER CHECKPOINT — 2026-09-28
+================================================================================
+
+PURPOSE
+-------
+This section supersedes older provisional Sprint 1 / Sprint 2 notes when they conflict
+with the state below. It exists so the next engineering owner can continue without
+reopening accepted work, repeating failed hypotheses, or confusing green synthetic tests
+with production visual acceptance.
+
+LIVE DEVELOPMENT BRANCH
+-----------------------
+Branch: `montage`
+
+Live code HEAD before this documentation append:
+`3b7acd946dae64350b1b13428b6ae079523f29eb`
+`[Sprint2] Separate encoded renderability from motion readability`
+
+Latest exact-head CI:
+- V2 CI run number: 713
+- run ID: `36478468339`
+- result: SUCCESS
+- Test1: `565 passed, 8 skipped, 4 warnings`
+- Full suite: `1356 passed, 8 skipped, 13 warnings`
+- Compile: SUCCESS
+- Ruff/Lint: SUCCESS
+- dedicated `encoded-render-windows` job: SUCCESS
+- full-HD encoded render contract gate: SUCCESS
+
+IMPORTANT:
+This is ENGINEERING GREEN only.
+Sprint 2 is NOT visually closed until a new real production render from this exact lineage
+is reviewed by the user and accepted.
+
+LOCKED ARCHITECTURE
+-------------------
+Do not change these unless the user explicitly reopens them:
+
+- Cutout architecture is Pass1 + Pass2 only.
+- Pass3 / Layer3 is prohibited.
+- No external Recovery layer.
+- Final Package -> Story -> Choreography -> Composition -> Motion -> Text -> Render.
+- Final Package owns semantic/visual source truth.
+- Story owns WHEN.
+- Choreography owns semantic interaction/focus meaning.
+- Composition owns final/resting geometry.
+- Motion owns HOW attention and movement are expressed.
+- Renderer executes already-resolved contracts.
+- Pass1/Pass2 extraction must not be modified to solve downstream timing/focus problems.
+
+AUTHORITATIVE SCENE LIFECYCLE
+-----------------------------
+Each Scene is an independent visual world.
+
+Within one Scene:
+`NOT_VISIBLE -> ENTER max once -> VISIBLE/PERSIST -> EXIT max once at Scene end/handoff`
+
+Once an authored Scene asset enters, it remains visible for the rest of that Scene.
+Focus transfer never means visibility removal.
+
+Correct:
+`A -> A+B -> A+B+C`
+
+Forbidden:
+`A -> B -> A+B`
+or any disappear/reappear cycle inside one Scene.
+
+Scene boundary resets state.
+
+SAFE_ABSTENTION never gains active semantic authority.
+
+SPRINT 1 — CLOSED
+-----------------
+User visually accepted Sprint 1 and explicitly closed it after the disappear/reappear
+behavior stopped.
+
+Accepted implementation:
+`baf23873721fe80d2d82f9bd96dbf0f41036c510`
+`[Sprint1] Enforce intra-scene visual lifetime`
+
+Key rule:
+event handoff != asset lifecycle exit.
+
+Scene-active assets remain visible through Scene end. Intra-Scene focus/event transitions
+cannot release them.
+
+Do not reopen Sprint 1 unless a new real render proves a regression.
+
+SPRINT 2 — GOAL
+---------------
+Sprint 2 is responsible for:
+- asset-level semantic reveal timing;
+- reveal order;
+- same-event/different-anchor behavior;
+- legitimate same-anchor cohorts;
+- visual focus ownership;
+- focus transfer;
+- sequential readability;
+- renderer transition safety;
+- runtime cutout semantic timing safety;
+- encoded motion surviving the actual FFmpeg/render path.
+
+User acceptance target:
+the eye must follow the narration:
+spoken concept -> relevant visual enters/focuses -> previous visuals remain calm context ->
+next spoken concept -> next visual owns attention.
+
+A technically valid timeline that does not produce this perceptual behavior is not enough.
+
+SPRINT 2 IMPLEMENTATION HISTORY
+-------------------------------
+Key commits in chronological order:
+
+1. `308faf9e76796fdd604b894377cbac3a23b96e6d`
+   `[Sprint2] Align semantic reveal timing and focus`
+   - prevented SAFE_ABSTENTION from gaining fallback focus authority.
+
+2. `0310780efd443dac4e99880039b8b26499ce6122`
+   `[Sprint2] Certify semantic reveal timing and focus`
+   - real production pipeline Test3 fixtures;
+   - same-event exact-anchor cohort handling;
+   - irregular asset-level anchors;
+   - generated semantic reveal/focus certification.
+   CI `36421218438`: SUCCESS.
+
+3. `a118df7641b37acdd76b9bad1f4b1a1afa948aeb`
+   `[Sprint2] Preserve asset-level reveal inside semantic events`
+   - proved same semantic event != same reveal instant;
+   - renderer unrelated-scene bridge was prevented from competing past incoming first
+     semantic focus;
+   - explicit OBJECT_HANDOFF / BLUR_BRIDGE retained bounded overlap.
+   CI `36427394923`: SUCCESS.
+
+4. `fa7f8c9555a19422e5455efd56a55c9f9476c982`
+   `[Sprint2] Make scene bridges frame-safe`
+   - fixed real encoded near-white handoff frames caused by continuous-time cutoff at a
+     sub-frame incoming reveal;
+   - bridge end uses FPS-derived frame-safe ownership, not arbitrary epsilon;
+   - encoded FFmpeg micro-regressions and FinalMediaVerifier proof added.
+   CI `36431588314`: SUCCESS.
+
+5. `81d5e2321602360ce6c17d253741c998b691eb81`
+   `[Sprint2] Enforce perceptual focus hierarchy`
+   - root cause: `_apply_event_flow_motion` rebuilt transforms after attention arbitration,
+     allowing support assets to regain near-Hero motion;
+   - resolved attention/cohort budget is re-applied after event-flow compilation;
+   - supports are bounded relative to leader energy;
+   - focus becomes current-owner dominant + previous-context calm.
+   CI `36456049881`: SUCCESS.
+
+6. `59a9d2c304b8abf46b0734b8a9ba9759528b2495`
+   `[Sprint2] Enforce phrase-local semantic reveal order`
+   - Story no longer requires `semantic_group_id` before applying same-span sequence
+     progression;
+   - distinct spoken spans remain authoritative;
+   - same-span ordered assets can receive phrase-local progressive reveal windows;
+   - explicit cohorts may remain simultaneous.
+   CI `36464601619`: SUCCESS.
+
+Important visual finding after this commit:
+the user reported essentially no perceptual improvement in the Black Hat render. Direct
+comparison showed the new/old renders under review were byte-identical. This proved that
+the change did not affect the failing runtime path in that package and prevented us from
+mistaking a green contract test for a production fix.
+
+7. `b436a583236c3f416105cccce8edb47774f9285e`
+   `[Sprint2] Keep unbound cutouts behind authored semantics`
+   - unbound cutouts in one unambiguous sequential semantic group are scheduled only as
+     late low-authority CONTEXT after trusted authored semantics;
+   - multi-group ambiguity remains fail-closed.
+
+8. `aca2c1e50ce07ada55dea19bceb35c1e7b51146a`
+   `[Sprint2] Separate Pass2 provenance from semantic timing`
+   - critical ownership correction:
+     `parent_asset_id` / `asset_family_id` from Pass2 are extraction provenance, NOT proof
+     of semantic equivalence;
+   - independently animatable Pass2 children cannot inherit the parent's narration timing
+     merely because they were cut from that parent;
+   - if locator/identity binding proves semantic identity, the child receives that semantic
+     timing;
+   - otherwise one unambiguous group may place it as late CONTEXT;
+   - ambiguous multi-group child becomes SAFE_ABSTENTION.
+
+9. `f3a36b79d71a287599e05eca8ce0f74c48bee217`
+   `[Sprint2] Certify unbound cutout timing policy`
+   - aligned Test2/Test3 with the new context-tail contract;
+   - production-shaped Pass2 child tests include `parent_asset_id`, `asset_family_id`,
+     `render_as_family_canvas`, independent children and generated family shapes.
+   CI `36471429466`: SUCCESS.
+   Full suite at that checkpoint: `1343 passed, 8 skipped`.
+
+PASS2 / FINAL PACKAGE SEMANTIC COVERAGE FINDING
+-----------------------------------------------
+A major reason earlier Sprint 2 changes did not affect the visible failure was discovered
+from the real Black Hat package/runtime structure.
+
+Black Hat runtime in the relevant run:
+- Pass1: 157 assets / 40 scenes
+- Pass2: 179 assets / +22 children/secondaries
+- Story: 40 beats
+- densest scene: 12 assets
+
+Final Package semantic assets are semantic intents; segmentation cardinality is allowed to
+be ZERO_OR_ONE_OR_MANY. Pass2 may therefore create multiple independently animatable
+runtime cutouts from one authored semantic intent.
+
+Example structural problem:
+an authored scene image can contain character + negation + exploit/vulnerability visuals,
+while Pass2 can split additional independent pieces. If an extra child has no proven
+semantic identity, inheriting the parent timestamp makes it appear too early and breaks
+narration-led reveal.
+
+New invariant:
+EXTRACTION PROVENANCE != SEMANTIC IDENTITY.
+
+No independently animatable runtime child is allowed to gain semantic timing authority
+from `parent_asset_id` alone.
+
+LATEST REAL PRODUCTION DIAGNOSTIC — b0d6...
+-------------------------------------------
+User supplied:
+`HEXA-diagnostic-b0d6ba73(1).zip`
+
+Job:
+`b0d6ba73840e4a0d8d37609213538c58`
+
+Run commit:
+`f3a36b79d71a287599e05eca8ce0f74c48bee217`
+
+Input:
+`HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip`
+
+Pipeline reached real rendering after:
+- Pass1 157 assets;
+- Pass2 179 assets;
+- Story 40 beats;
+- Composition locked;
+- Motion/Text owner contracts passed;
+- RenderPlan compiled.
+
+Post-render QA failed with:
+`RENDERED_SEGMENT_INACTIVE`
+
+Two exact violations:
+1. beat `beat-011`
+   asset `SCENE_011:asset-09`
+   phase `ENTRY`
+   timeline expected ~`1.33 px` semantic motion
+   encoded ROI was effectively static
+   mean_delta `0.0`
+   changed_ratio `0.0`
+
+2. beat `beat-022`
+   asset `SCENE_022:asset-04`
+   phase `ENTRY`
+   timeline expected ~`1.47 px` semantic motion
+   encoded ROI was effectively static
+   mean_delta `0.014563106796116505`
+   changed_ratio `0.0`
+
+This failure was crucial:
+Story/Composition/Motion contracts could all be locally valid while the encoded pixels
+did not realize a tiny transform. Therefore non-rendering contract tests alone are not
+sufficient for FFmpeg/frame/pixel-sensitive behavior.
+
+ENCODED RENDERABILITY FOLLOW-UP
+-------------------------------
+After the b0d6 diagnostic, three commits were added:
+
+- `c751bb93c07fc25cf86e4e8834f6512bc5853ac1`
+  `[Sprint2] Make encoded entry renderability a release contract`
+
+- `a88b4b9299dd033e526b0b6c6c0aa495689f859a`
+  `[Sprint2] Unify ENTRY readability with encoded contract`
+
+- `3b7acd946dae64350b1b13428b6ae079523f29eb`
+  `[Sprint2] Separate encoded renderability from motion readability`
+
+Current design:
+- semantic readability and encoded renderability are separate contracts;
+- encoded renderability floor is currently `3.0 px`;
+- a non-zero base ENTRY below the encoded renderability floor is not allowed to pretend
+  to be meaningful motion;
+- sub-floor base entry is normalized to exact static reveal instead of asking FFmpeg to
+  encode a 1.3–1.5 px semantic motion that disappears after integer-pixel composition;
+- RenderedMotionQA and handoff validation use the encoded-renderability contract for this
+  specific question;
+- semantic readability remains a separate higher-level Motion/Choreography quality
+  responsibility and must not be weakened just to satisfy encoded QA.
+
+New encoded tests cover:
+- real FFmpeg encode above renderability floor;
+- resolution-safe dead-zone normalization;
+- 640x360@24;
+- 1280x720@30;
+- 1920x1080@30;
+- 1920x1080@60;
+- exact historical ~1.33 px / ~1.47 px dead-zone shapes;
+- dedicated CI `encoded-render-windows` gate.
+
+Latest CI `36478468339` is green.
+
+CRITICAL STATUS:
+No new real user production render after `3b7acd...` has yet been visually accepted in
+this handoff. Therefore this fix is NOT final visual proof.
+
+TESTING POLICY — MANDATORY GOING FORWARD
+----------------------------------------
+The user explicitly rejected the pattern:
+"hundreds of tests pass, then production render exposes another basic contradiction."
+
+From now on, every significant behavior must be certified at the correct abstraction
+levels. Large synthetic counts do not compensate for testing the wrong layer.
+
+Required test ladder:
+
+LEVEL 1 — Owner invariant
+- test the layer that owns the decision;
+- use direct contract tests;
+- prove failure on the old behavior before accepting a fix.
+
+LEVEL 2 — Producer -> consumer handoff
+- prove the next layer consumes the exact same contract;
+- no manually populated downstream truth that bypasses production planners.
+
+LEVEL 3 — Diverse generated/package-shaped matrix
+- varied scene duration, asset count, event count, roles, anchors, dense/sparse layouts,
+  no-character, presenter, icons, timelines, comparisons, relations, result/payoff,
+  short/long narration and state-isolation;
+- no package/scene/phrase-specific production logic.
+
+LEVEL 4 — Real encoded micro-test when relevant
+Mandatory for behavior affected by:
+- frame quantization;
+- FFmpeg enable windows;
+- compositing;
+- sub-pixel/integer-pixel transforms;
+- alpha;
+- encoded visibility;
+- handoff flashes;
+- encoded motion survival.
+
+Use real FFmpeg; decode the result; test the encoded pixels/ROI.
+Mocks/non-rendering tests do not close this class of bug.
+
+LEVEL 5 — Real Final Package production run
+- use the actual production pipeline;
+- inspect diagnostics;
+- do not substitute synthetic package success for real package success.
+
+LEVEL 6 — User visual acceptance
+- subjective visual quality/focus/storytelling is not closed by CI;
+- Sprint closure requires user approval of a real render when the sprint is visual.
+
+A test that only re-asserts a manually assigned expected value is not meaningful proof.
+Do not weaken QA thresholds, skip failures, xfail them, or add package-specific exceptions.
+
+SPRINT 2 TEST OWNERSHIP
+-----------------------
+Keep responsibilities separate:
+
+Sprint 1 persistence/lifecycle:
+`tests/test3/test_semantic_persistence.py`
+
+Sprint 2 reveal/focus/order:
+`tests/test3/test_semantic_reveal_focus.py`
+
+Scene transition/focus bridge:
+`tests/test3/test_scene_transition_focus.py`
+
+Encoded motion/renderability:
+existing Test2 render/encoded-motion suites, including
+`tests/test2/render/test_encoded_motion_regressions.py`
+
+Do not move every new regression into one giant file. Test the actual owner.
+
+WHAT MUST NOT BE DONE
+---------------------
+- Do not modify Pass1/Pass2 to hide Story/Motion/Renderer defects.
+- Do not add Pass3.
+- Do not add Recovery.
+- Do not make Black-Hat-specific conditions.
+- Do not infer semantic order from bbox/x/y/size/filesystem/cutout order.
+- Do not shift Story semantic anchors to solve Motion styling.
+- Do not weaken FinalMediaVerifier / RenderedMotionQA simply to get green.
+- Do not claim Sprint closure from CI only.
+- Do not assume same semantic event means same reveal instant.
+- Do not assume parent cutout means same semantic identity.
+- Do not force one StoryBeat per Scene.
+- Do not reopen Sprint 1 without real regression evidence.
+
+NEXT OWNER — IMMEDIATE STARTING POINT
+-------------------------------------
+1. Read this entire continuity file, especially this checkpoint and the preceding
+   cross-layer reliability sections.
+2. Verify live `montage` HEAD and exact-head CI before editing. Do not assume the SHA in
+   this document if the branch has advanced.
+3. Inspect the three encoded-renderability commits ending at `3b7acd...`.
+4. If the user has a new production render/diagnostic from `3b7acd...` or later, inspect
+   that evidence first.
+5. If no newer render exists, the next required evidence is a real Black Hat production
+   render from current HEAD.
+6. Do not close Sprint 2 unless:
+   - no lifecycle regression;
+   - narration-driven asset reveal order is visually correct;
+   - Pass2 children do not pre-empt authored semantics;
+   - focus clearly transfers to the current spoken concept;
+   - previous assets remain calm context;
+   - no near-white handoff frames;
+   - encoded semantic motion either survives rendering or is deliberately represented as
+     static reveal under the explicit renderability contract;
+   - user visually accepts the result.
+7. If a new real render still feels unchanged, compare outputs byte/frame-wise and trace
+   the exact runtime asset activation/motion/render path. Do not add another synthetic
+   fix until the failing production path is proven.
+8. After Sprint 2 is visually closed, continue the planned roadmap:
+   - Sprint 3: Composition hierarchy & continuity.
+   - Sprint 4: Motion quality/pacing/style after semantic lifecycle/reveal/focus are stable.
+   - Sprint 5: Text + final montage polish.
+9. Each later sprint must use the same test ladder above and must finish with real render
+   review, not CI-only acceptance.
+
+CURRENT ROADMAP STATUS
+----------------------
+Sprint 1 — CLOSED / user accepted.
+Sprint 2 — ENGINEERING GREEN at `3b7acd...`, REAL USER VISUAL ACCEPTANCE PENDING.
+Sprint 3 — NOT STARTED.
+Sprint 4 — NOT STARTED.
+Sprint 5 — NOT STARTED.
+
+The next owner must continue until all sprints are actually closed, preserving all locked
+architecture and accepted behavior above.
+
