@@ -150,54 +150,26 @@ class StoryPlanner:
     def _resolve_active_visual_semantic_state(
         beats: list[StoryBeat],
     ) -> list[StoryBeat]:
-        """Materialize Story-owned semantic lifetime across dependent events."""
+        """Materialize the monotonic visual lifetime owned by each Scene."""
         output: list[StoryBeat] = []
         active_state: dict[str, str] = {}
-        active_event_ids: set[str] = set()
         previous_scene_id: str | None = None
 
         for beat in beats:
+            if previous_scene_id != beat.scene_id:
+                active_state = {}
             current_state = {
                 row.asset_id: str(row.semantic_unit_id or row.asset_id)
                 for row in beat.asset_activations
-                if getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
-            }
-            current_event_ids = {
-                str(event_id)
-                for event_id in (
-                    *(
-                        row.semantic_event_id
-                        for row in beat.asset_activations
-                        if getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
-                    ),
-                    *(row.semantic_event_id for row in beat.semantic_event_proxies),
+                if (
+                    getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
+                    and getattr(row, "policy", None) != "SAFE_ABSTENTION"
                 )
-                if event_id
             }
-            dependencies = {
-                str(event_id)
-                for row in beat.asset_activations
-                if getattr(row, "activation_policy", None) != "SAFE_ABSTENTION"
-                for event_id in row.semantic_event_dependency_ids
-                if event_id
-            }
-            dependencies.update(
-                str(event_id)
-                for row in beat.semantic_event_proxies
-                for event_id in row.semantic_event_dependency_ids
-                if event_id
-            )
-
-            continues_state = (
-                previous_scene_id == beat.scene_id
-                and bool(dependencies & active_event_ids)
-            )
-            if continues_state:
-                active_state = {**active_state, **current_state}
-                active_event_ids.update(current_event_ids)
-            else:
-                active_state = current_state
-                active_event_ids = set(current_event_ids)
+            # The runtime asset is the Scene-local lifecycle identity. Semantic-event,
+            # focus, and role changes may enrich it, but may never retire or re-enter it.
+            for asset_id, semantic_unit_id in current_state.items():
+                active_state.setdefault(asset_id, semantic_unit_id)
 
             output.append(beat.model_copy(update={
                 "active_visual_semantic_state": dict(active_state),

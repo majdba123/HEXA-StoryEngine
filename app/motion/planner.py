@@ -614,8 +614,17 @@ class MotionPlanner:
                     )
                 )
                 cue_params = dict(cues[-1].params)
+                active_visual_state = beat.active_visual_semantic_state
+                is_active = (
+                    active_visual_state is None
+                    or item.asset_id in active_visual_state
+                )
                 cue_params["semantic_continuity"] = {
-                    "mode": "PERSIST" if continuity_source is not None else "ENTER",
+                    "mode": (
+                        "PERSIST"
+                        if continuity_source is not None
+                        else "ENTER" if is_active else "NOT_VISIBLE"
+                    ),
                     "semantic_unit_id": (
                         activation.semantic_unit_id if activation is not None else None
                     ),

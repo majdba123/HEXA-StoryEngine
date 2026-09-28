@@ -186,6 +186,14 @@ class FFmpegRenderer:
             return
 
         ordered_items = sorted(layout.items, key=lambda row: row.z)
+        if beat.active_visual_semantic_state is not None:
+            active_asset_ids = set(beat.active_visual_semantic_state)
+            ordered_items = [
+                item for item in ordered_items if item.asset_id in active_asset_ids
+            ]
+        if not ordered_items:
+            self._render_color_segment(plan, duration, target, frame_count=frame_count)
+            return
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
         transition = self.transition_policy.decide(
             previous_beat,

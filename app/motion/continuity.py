@@ -30,7 +30,10 @@ class ContinuityContract:
 
     @staticmethod
     def _semantic_identity(activation: AssetActivation) -> tuple[str, str] | None:
-        if getattr(activation, "activation_policy", None) == "SAFE_ABSTENTION":
+        if (
+            getattr(activation, "activation_policy", None) == "SAFE_ABSTENTION"
+            or getattr(activation, "policy", None) == "SAFE_ABSTENTION"
+        ):
             return None
         return (
             activation.asset_id,
@@ -74,7 +77,7 @@ class ContinuityContract:
                 asset_id
                 for asset_id in shared_layout_ids
                 if asset_id in previous_semantics
-                and current_semantics.get(asset_id) == previous_semantics[asset_id]
+                and asset_id in current_semantics
             )
         if not previous_beat.asset_activations or not current_beat.asset_activations:
             return frozenset(shared_layout_ids)

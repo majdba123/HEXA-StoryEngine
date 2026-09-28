@@ -122,6 +122,8 @@ class VisualTransitionPolicy:
         previous_ids = {
             item.asset_id for item in previous_layout.items
         } if previous_layout is not None else set()
+        if previous_beat is not None and previous_beat.active_visual_semantic_state is not None:
+            previous_ids &= set(previous_beat.active_visual_semantic_state)
         persistent = ContinuityContract.persistent_asset_ids(
             previous_beat,
             current_beat,

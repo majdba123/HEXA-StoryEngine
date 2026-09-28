@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import random
 
 import pytest
 from PIL import Image
@@ -121,6 +122,7 @@ def _build_pipeline(tmp_path: Path, scenario: Scenario):
         ))
         cursor += duration
 
+    beats = StoryPlanner._resolve_active_visual_semantic_state(beats)
     choreography = ChoreographyDirector().plan(package, beats, assets)
     composition = CompositionPlanner().plan(beats, assets, choreography)
     motion = MotionPlanner().plan(beats, composition, choreography, assets)
@@ -314,7 +316,7 @@ def test_safe_abstention_never_enters_active_visual_state() -> None:
     assert beats[1].active_visual_semantic_state == {"B": "B"}
 
 
-def test_active_state_retires_assets_and_resets_at_scene_boundary() -> None:
+def test_active_state_cannot_retire_assets_and_resets_at_scene_boundary() -> None:
     first = StoryBeat(
         id="one",
         scene_id="scene-one",
@@ -324,13 +326,13 @@ def test_active_state_retires_assets_and_resets_at_scene_boundary() -> None:
         action="EXPLAIN",
         active_visual_semantic_state={"A": "A", "B": "B", "C": "C"},
     )
-    retired = first.model_copy(update={
+    attempted_retirement = first.model_copy(update={
         "id": "two",
         "start": 1,
         "end": 2,
         "active_visual_semantic_state": {"B": "B", "C": "C"},
     })
-    next_scene = retired.model_copy(update={
+    next_scene = attempted_retirement.model_copy(update={
         "id": "three",
         "scene_id": "scene-two",
         "start": 2,
@@ -346,11 +348,15 @@ def test_active_state_retires_assets_and_resets_at_scene_boundary() -> None:
                 for asset_id in ("A", "B", "C")
             ],
         )
-        for beat in (first, retired, next_scene)
+        for beat in (first, attempted_retirement, next_scene)
     ]
     contract = ContinuityContract()
-    assert contract.persistent_asset_ids(first, retired, layouts[0], layouts[1]) == {"B", "C"}
-    assert contract.persistent_asset_ids(retired, next_scene, layouts[1], layouts[2]) == set()
+    assert contract.persistent_asset_ids(
+        first, attempted_retirement, layouts[0], layouts[1]
+    ) == {"B", "C"}
+    assert contract.persistent_asset_ids(
+        attempted_retirement, next_scene, layouts[1], layouts[2]
+    ) == set()
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda row: row.name)
@@ -369,13 +375,7 @@ def test_sprint1_semantic_persistence_across_planning_pipeline(
     contract = ContinuityContract()
 
     for previous, current in zip(story, story[1:]):
-        previous_identity = _identities(previous)
-        current_identity = _identities(current)
-        expected = {
-            asset_id
-            for asset_id, unit_id in previous_identity.items()
-            if current_identity.get(asset_id) == unit_id
-        }
+        expected = set(previous.active_visual_semantic_state or {})
         previous_layout = layouts[previous.id]
         current_layout = layouts[current.id]
         persistent = contract.persistent_asset_ids(
@@ -393,16 +393,141 @@ def test_sprint1_semantic_persistence_across_planning_pipeline(
             previous_cue = cues[(previous.id, asset_id)]
             assert not contract.has_terminal_exit(previous_cue)
             assert cues[(current.id, asset_id)].params["semantic_continuity"]["mode"] == "PERSIST"
-        for asset_id in set(current_identity) - expected:
+        for asset_id in set(current.active_visual_semantic_state or {}) - expected:
             assert cues[(current.id, asset_id)].params["semantic_continuity"]["mode"] == "ENTER"
 
     if scenario.name == "T4_legitimate_reentry":
-        assert cues[("beat-3", "A")].params["semantic_continuity"]["mode"] == "ENTER"
+        assert cues[("beat-3", "A")].params["semantic_continuity"]["mode"] == "PERSIST"
     if scenario.name == "T9_different_semantic_role":
-        assert "A" not in contract.persistent_asset_ids(
+        assert "A" in contract.persistent_asset_ids(
             story[0], story[1], layouts["beat-1"], layouts["beat-2"]
         )
     if scenario.name == "T10_comparison_relation":
         assert {"left", "right"}.issubset({row.asset_id for row in layouts["beat-2"].items})
     if scenario.name == "T12_dense_scene":
         assert len(render_plan.assets) == scenario.asset_count
+
+
+def _assert_monotonic_scene_lifecycle(beats: list[StoryBeat]) -> None:
+    entered_by_scene: dict[str, set[str]] = {}
+    previous_scene: str | None = None
+    previous_visible: set[str] = set()
+    for beat in beats:
+        visible = set(beat.active_visual_semantic_state or {})
+        if beat.scene_id != previous_scene:
+            previous_visible = set()
+        assert previous_visible <= visible
+        entered = entered_by_scene.setdefault(beat.scene_id, set())
+        newly_visible = visible - previous_visible
+        assert not (newly_visible & entered)
+        entered.update(newly_visible)
+        previous_visible = visible
+        previous_scene = beat.scene_id
+
+
+def test_320_deterministic_generated_scene_lifecycles_are_monotonic() -> None:
+    rng = random.Random(0x5CE1E)
+    for case_index in range(320):
+        beats: list[StoryBeat] = []
+        cursor = 0.0
+        scene_count = rng.randint(1, 3)
+        for scene_index in range(scene_count):
+            asset_count = rng.randint(1, 25)
+            beat_count = rng.randint(1, 10)
+            asset_ids = [f"c{case_index}-s{scene_index}-a{i}" for i in range(asset_count)]
+            unrevealed = list(asset_ids)
+            for beat_index in range(beat_count):
+                remaining_beats = beat_count - beat_index
+                reveal_count = (
+                    len(unrevealed)
+                    if remaining_beats == 1
+                    else rng.randint(0, min(len(unrevealed), max(1, len(unrevealed) // remaining_beats + 1)))
+                )
+                reveal = [unrevealed.pop(rng.randrange(len(unrevealed))) for _ in range(reveal_count)]
+                duration = rng.choice((0.08, 0.18, 0.7, 2.0, 12.0))
+                activations = [
+                    AssetActivation(
+                        asset_id=asset_id,
+                        semantic_unit_id=asset_id,
+                        semantic_event_id=f"event-{beat_index}",
+                        semantic_event_roles=[rng.choice(("PRIMARY", "SUPPORT", "RESULT"))],
+                        spoken_start=cursor,
+                        spoken_end=cursor + duration,
+                        confidence=1.0,
+                        source="generated-test3",
+                        policy="EXPLICIT",
+                    )
+                    for asset_id in reveal
+                ]
+                if rng.random() < 0.25:
+                    activations.append(AssetActivation(
+                        asset_id=f"abstain-{case_index}-{scene_index}-{beat_index}",
+                        semantic_unit_id="SAFE",
+                        spoken_start=cursor,
+                        spoken_end=cursor + duration,
+                        confidence=0.0,
+                        source="generated-test3",
+                        policy="SAFE_ABSTENTION",
+                    ))
+                beats.append(StoryBeat(
+                    id=f"case-{case_index}-scene-{scene_index}-beat-{beat_index}",
+                    scene_id=f"scene-{scene_index}",
+                    start=cursor,
+                    end=cursor + duration,
+                    narration="generated lifecycle",
+                    primary_asset_ids=reveal[:1],
+                    support_asset_ids=reveal[1:],
+                    action=rng.choice(("EXPLAIN", "COMPARE", "RESULT")),
+                    asset_activations=activations,
+                ))
+                cursor += duration
+        resolved = StoryPlanner._resolve_active_visual_semantic_state(beats)
+        _assert_monotonic_scene_lifecycle(resolved)
+        for beat in resolved:
+            assert all(not asset_id.startswith("abstain-") for asset_id in (beat.active_visual_semantic_state or {}))
+
+
+def test_transition_never_classifies_same_scene_persistence_as_outgoing(tmp_path: Path) -> None:
+    story, _choreography, composition, _motion, _render_plan = _real_story_pipeline(tmp_path)
+    layouts = {layout.beat_id: layout for layout in composition}
+    policy = VisualTransitionPolicy()
+    for previous, current in zip(story, story[1:]):
+        decision = policy.decide(
+            previous,
+            layouts[previous.id],
+            layouts[current.id],
+            current_beat=current,
+        )
+        assert not (decision.persistent_asset_ids & decision.carry_outgoing_asset_ids)
+        assert not decision.carry_outgoing_asset_ids
+
+
+def test_renderer_visibility_window_is_derived_from_pipeline_continuity(tmp_path: Path) -> None:
+    story, _choreography, composition, motion, _render_plan = _real_story_pipeline(tmp_path)
+    layouts = {layout.beat_id: layout for layout in composition}
+    cues = {(cue.beat_id, cue.asset_id): cue for cue in motion}
+    policy = VisualTransitionPolicy()
+    for previous, current in zip(story, story[1:]):
+        persistent = policy.decide(
+            previous, layouts[previous.id], layouts[current.id], current_beat=current
+        ).persistent_asset_ids
+        for asset_id in persistent:
+            cue = cues[(current.id, asset_id)]
+            duration = current.end - current.start
+            reveal_start, _end, _fade = FFmpegRenderer._cue_window(
+                beat=current,
+                cue=cue,
+                segment_start=current.start,
+                duration=duration,
+            )
+            start, end = FFmpegRenderer.asset_visibility_window(
+                cue=cue,
+                segment_start=current.start,
+                duration=duration,
+                reveal_start=reveal_start,
+                persistent=asset_id in persistent,
+            )
+            assert start == pytest.approx(0.0)
+            assert end == pytest.approx(duration)
+            assert cue.params["semantic_continuity"]["mode"] == "PERSIST"
+            assert not ContinuityContract.has_terminal_exit(cues[(previous.id, asset_id)])
