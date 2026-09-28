@@ -868,10 +868,12 @@ def test_pass2_child_provenance_cannot_preempt_single_group_semantics(
     tmp_path: Path,
 ):
     """A detached Pass2 child is not semantically equivalent to its source parent."""
+    # Script/span order follows narration. sequence_order is deliberately
+    # different for negation/vulnerability so precise speech timing must win.
     specs = [
         Spec("actor", "broad-event", 0.40, "CHARACTER", True, sequence=1, group="g"),
-        Spec("vulnerability", "broad-event", 2.90, "OBJECT", False, sequence=2, group="g"),
         Spec("negation", "broad-event", 1.05, "RESULT", False, sequence=3, group="g"),
+        Spec("vulnerability", "broad-event", 2.90, "OBJECT", False, sequence=2, group="g"),
     ]
     child_id = "negation:secondary-01"
     story, _choreography, _composition, _motion, _render = _pipeline(
@@ -968,10 +970,12 @@ def test_96_generated_pass2_children_never_preempt_authored_semantics(
 
 def test_unbound_single_group_cutout_waits_for_latest_authored_anchor(tmp_path: Path):
     """Unknown detached visuals cannot pre-empt known narration in a one-group Scene."""
+    # Script/span order follows narration. sequence_order is deliberately
+    # different for negation/vulnerability so precise speech timing must win.
     specs = [
         Spec("actor", "broad-event", 0.40, "CHARACTER", True, sequence=1, group="g"),
-        Spec("vulnerability", "broad-event", 2.90, "OBJECT", False, sequence=2, group="g"),
         Spec("negation", "broad-event", 1.05, "RESULT", False, sequence=3, group="g"),
+        Spec("vulnerability", "broad-event", 2.90, "OBJECT", False, sequence=2, group="g"),
     ]
     story, _choreography, _composition, motion, _render = _pipeline(
         tmp_path / "unbound-late-context",

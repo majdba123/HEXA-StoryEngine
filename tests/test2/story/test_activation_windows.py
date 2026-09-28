@@ -661,8 +661,11 @@ def test_single_unambiguous_group_sequences_unmapped_real_cutout_as_support(tmp_
     ordered = sorted(rows, key=lambda row: row.sequence_order or 0)
 
     assert [row.sequence_order for row in ordered] == [1, 2, 3]
-    assert ordered[-1].source == "final_package_scene_support"
+    assert ordered[-1].source == "final_package_scene_context_tail"
     assert ordered[-1].binding_type == "SUPPORT"
+    assert ordered[-1].visual_focus == "CONTEXT"
+    assert ordered[-1].semantic_event_id is None
+    assert "inherits_latest_authored_spoken_anchor" in ordered[-1].evidence
     assert ordered[0].reveal_start < ordered[1].reveal_start < ordered[2].reveal_start
     assert ordered[-1].settle_at == pytest.approx(1.2)
 
