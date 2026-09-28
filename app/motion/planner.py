@@ -1332,7 +1332,11 @@ class MotionPlanner:
         if lifetime_decision is not None:
             params = dict(cue.params)
             params["semantic_lifetime"] = {
-                "mode": "HOLD_THROUGH_FUTURE_USE",
+                "mode": (
+                    "SCENE_ACTIVE_UNTIL_SCENE_END"
+                    if "scene_active_until_scene_end" in lifetime_decision.reasons
+                    else "HOLD_THROUGH_FUTURE_USE"
+                ),
                 "keep_visible_through": lifetime_decision.keep_visible_through,
                 "release_deadline": lifetime_decision.release_deadline,
                 "future_event_ids": list(lifetime_decision.future_event_ids),
@@ -2168,11 +2172,9 @@ class MotionPlanner:
         has_handoff = bool(assignment.handoff_to_event_ids or assignment.handoff_to_event_id)
         if not has_handoff or cue.asset_id in set(assignment.handoff_to_asset_ids):
             return None
-        # A terminal release is illegal while the exact runtime carrier has proven
-        # future semantic use in the same authored event/dependency chain. Keep the
-        # visual motionless at Composition identity; a later beat/scene boundary may
-        # retire it normally. Assets without this evidence keep the historical EXIT
-        # behavior byte-for-behavior below.
+        # A terminal release is illegal while Story says the exact runtime carrier is
+        # Scene-active.  Event handoff changes focus/interaction, never base visibility.
+        # Legacy beats without semantic Scene state retain the historical behavior.
         if lifetime_decision is not None:
             return None
 

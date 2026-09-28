@@ -10,7 +10,7 @@ from app.motion.timing import story_activation_window
 
 @dataclass(frozen=True, slots=True)
 class SemanticLifetimeDecision:
-    """Evidence that one exact runtime visual must remain present past a handoff."""
+    """Scene-local authority keeping one exact runtime visual past event handoffs."""
 
     asset_id: str
     owner_event_id: str
@@ -24,8 +24,9 @@ class SemanticVisualLifetimeIndex:
     """Resolve exact-asset semantic lifetime from Story + Choreography authority.
 
     This index never merges visually similar assets and never infers identity from pixels,
-    names, or scene-specific rules. It only extends lifetime when the exact runtime asset
-    has a proven later use in the same authored event/dependency/handoff chain.
+    names, or scene-specific rules.  When Story supplies semantic Scene state, entry is
+    monotonic for the remainder of that Scene: event dependencies, focus, and reuse may
+    shape motion, but absence of such evidence may not retire an entered visual.
     """
 
     def __init__(self, decisions: dict[str, SemanticLifetimeDecision]) -> None:
@@ -63,6 +64,21 @@ class SemanticVisualLifetimeIndex:
 
         for asset_id, assignment in assignments.items():
             if not assignment.event_id or assignment.event_id not in flows:
+                continue
+            if (
+                beat.active_visual_semantic_state is not None
+                and asset_id in beat.active_visual_semantic_state
+            ):
+                event_ids = [flow.event_id for flow in directive.event_flows]
+                owner_index = event_ids.index(assignment.event_id)
+                decisions[asset_id] = SemanticLifetimeDecision(
+                    asset_id=asset_id,
+                    owner_event_id=assignment.event_id,
+                    keep_visible_through=float(beat.end),
+                    release_deadline=float(beat.end),
+                    future_event_ids=tuple(event_ids[owner_index + 1:]),
+                    reasons=("scene_active_until_scene_end",),
+                )
                 continue
             reachable = cls._reachable_events(assignment.event_id, successors)
             if not reachable:
