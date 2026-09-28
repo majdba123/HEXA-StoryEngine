@@ -240,6 +240,28 @@ class EncodedMotionVerifier:
                         ))
                         continue
 
+                if qa_base_entry and expected_px > 1e-6:
+                    floor_px = self._perceptual_floor_px(
+                        phase="ENTRY",
+                        width=plan.width,
+                        item_width=item.width,
+                        item_height=item.height,
+                        height=plan.height,
+                        duration=readability_duration,
+                    )
+                    if expected_px + 1e-6 < floor_px:
+                        violations.append(RenderedMotionViolation(
+                            code="MOTION_BELOW_PERCEPTUAL_FLOOR",
+                            beat_id=cue.beat_id,
+                            asset_id=cue.asset_id,
+                            phase="ENTRY",
+                            detail=(
+                                f"base ENTRY expects {expected_px:.2f}px motion, inside "
+                                f"the encoded dead zone below {floor_px:.2f}px"
+                            ),
+                        ))
+                        continue
+
                 if expected_px < 0.75:
                     skipped += 1
                     continue

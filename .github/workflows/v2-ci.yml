@@ -43,3 +43,25 @@ jobs:
             HEXA.bat
           if-no-files-found: error
           retention-days: 7
+
+
+  encoded-render-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          ffmpeg -version
+      - name: Install StoryEngine
+        run: python -m pip install -e ".[dev]"
+      - name: Full-HD encoded render contract gate
+        run: >
+          pytest -q
+          tests/test2/render/test_encoded_motion_regressions.py
+          tests/test2/integration/test_layer_handoff_motion_contracts.py

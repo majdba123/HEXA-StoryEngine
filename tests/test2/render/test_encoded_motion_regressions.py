@@ -17,6 +17,8 @@ from app.models import (
     StoryBeat,
     VisualAsset,
 )
+from app.motion import MotionPlanner
+from app.motion.models import MotionProgram
 from app.motion.timing import (
     GOLDEN_MAJOR,
     GOLDEN_MINOR,
@@ -459,6 +461,59 @@ def test_vertical_react_at_shared_floor_survives_encoded_qa(tmp_path: Path) -> N
 
     assert report.ok, report.violations
     assert report.checked_segments == 1
+
+
+@pytest.mark.parametrize("expected_px", [1.33, 1.47])
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_full_hd_base_entry_dead_zone_is_rejected_as_metadata_contract(
+    tmp_path: Path,
+    expected_px: float,
+) -> None:
+    asset = tmp_path / f"dead-zone-{expected_px:.2f}.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=False).model_copy(update={
+        "width": 1920,
+        "height": 1080,
+    })
+    cue = plan.motion[0]
+    dead_zone_program = _program(dx=expected_px / 1920.0)
+    plan = plan.model_copy(update={
+        "motion": [cue.model_copy(update={
+            "end": 0.70,
+            "params": {**cue.params, "program": dead_zone_program},
+        })],
+    })
+    video = tmp_path / f"dead-zone-{expected_px:.2f}.mp4"
+
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+
+    assert not report.ok
+    violation = next(
+        row for row in report.violations
+        if row.code == "MOTION_BELOW_PERCEPTUAL_FLOOR"
+    )
+    assert violation.phase == "ENTRY"
+
+
+def test_motion_planner_collapses_subfloor_base_entry_to_exact_static_reveal() -> None:
+    item = LayoutItem(
+        asset_id="asset",
+        x=0.5,
+        y=0.5,
+        width=0.18,
+        height=0.24,
+    )
+    source = MotionProgram.model_validate(_program(dx=1.47 / 1920.0))
+    normalized = MotionPlanner._normalize_base_entry_renderability(
+        source,
+        duration=0.42,
+        item=item,
+    )
+
+    assert normalized.name.startswith("static_reveal_")
+    assert all(frame.dx == 0.0 and frame.dy == 0.0 for frame in normalized.keyframes)
+    assert all(frame.scale == 1.0 for frame in normalized.keyframes)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")

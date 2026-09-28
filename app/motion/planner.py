@@ -466,6 +466,11 @@ class MotionPlanner:
                         duration=window.duration,
                         item=item,
                     )
+                    program = self._normalize_base_entry_renderability(
+                        program,
+                        duration=window.duration,
+                        item=item,
+                    )
                 cues.append(
                     self.compiler.compile(
                         beat=beat,
@@ -1542,6 +1547,67 @@ class MotionPlanner:
         return MotionProgram(
             name=program.name,
             keyframes=frames,
+            settle_progress=program.settle_progress,
+        )
+
+    @staticmethod
+    def _normalize_base_entry_renderability(
+        program: MotionProgram,
+        *,
+        duration: float,
+        item: LayoutItem | None,
+        frame_width: int = 1920,
+        frame_height: int = 1080,
+    ) -> MotionProgram:
+        """Remove the encoded-motion dead zone from stylistic base ENTRY.
+
+        Base ENTRY is optional style, not semantic truth. After attention, cohort, and
+        density attenuation it may become non-zero metadata that is still too small to
+        survive integer-pixel FFmpeg composition. Such micro-motion is worse than a
+        deliberate static/alpha reveal: it can neither guide attention nor satisfy
+        encoded QA. Keep readable motion unchanged; collapse sub-floor motion to exact
+        Composition identity so Render and QA agree on the contract.
+        """
+        if item is None or not program.keyframes:
+            return program
+        floor_px = semantic_readability_floor_px(
+            "ENTRY",
+            item_width=item.width,
+            item_height=item.height,
+            duration=max(1e-6, float(duration)),
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+        activity_px = max(
+            (
+                projected_motion_activity_px(
+                    dx=frame.dx,
+                    dy=frame.dy,
+                    scale=frame.scale,
+                    item_width=item.width,
+                    item_height=item.height,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                )
+                for frame in program.keyframes
+            ),
+            default=0.0,
+        )
+        if activity_px <= 1e-6 or activity_px + 1e-6 >= floor_px:
+            return program
+
+        return MotionProgram(
+            name=f"static_reveal_{program.name}",
+            keyframes=tuple(
+                MotionKeyframe(
+                    progress=frame.progress,
+                    dx=0.0,
+                    dy=0.0,
+                    scale=1.0,
+                    easing=frame.easing,
+                )
+                for frame in program.keyframes
+            ),
             settle_progress=program.settle_progress,
         )
 

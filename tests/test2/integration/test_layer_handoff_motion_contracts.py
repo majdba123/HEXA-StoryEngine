@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from app.shared.handoff import LayerHandoffValidator
 from tests.test2.integration.handoff_contract_support import (
     build_handoff_case,
@@ -278,6 +280,56 @@ def test_motion_handoff_rejects_segment_participant_missing_from_composition(tmp
         and row["asset_id"] == synthetic.id
         for row in error.details["violations"]
     )
+
+def test_motion_handoff_rejects_nonzero_entry_below_encoded_floor(tmp_path: Path) -> None:
+    (
+        _package,
+        _transcript,
+        assets,
+        story,
+        choreography,
+        composition,
+        motion,
+        _text,
+    ) = build_handoff_case(tmp_path)
+    cue_index = next(
+        index for index, cue in enumerate(motion)
+        if not cue.params.get("render_constraints", {}).get("geometry_lock")
+    )
+    cue = motion[cue_index]
+    params = dict(cue.params)
+    program = dict(params["program"])
+    keyframes = [dict(frame) for frame in program["keyframes"]]
+    # Reproduce the production diagnostic class: metadata claims ~1.33 px ENTRY
+    # on the canonical 1920-wide render, which is too small to survive encoding.
+    tiny_dx = 1.33 / 1920.0
+    for index, frame in enumerate(keyframes):
+        if index == len(keyframes) - 1:
+            frame.update(dx=0.0, dy=0.0, scale=1.0)
+        else:
+            frame.update(dx=tiny_dx, dy=0.0, scale=1.0)
+    program["keyframes"] = keyframes
+    params["program"] = program
+    broken = list(motion)
+    broken[cue_index] = cue.model_copy(update={"params": params})
+
+    error = expect_handoff_failure(
+        "MOTION_HANDOFF_CONTRACT_VIOLATIONS",
+        lambda: LayerHandoffValidator.require_motion_for_text_and_render(
+            story=story,
+            assets=assets,
+            composition=composition,
+            choreography=choreography,
+            motion=broken,
+        ),
+    )
+    row = next(
+        row for row in error.details["violations"]
+        if row["kind"] == "motion_cue_entry_render_dead_zone"
+    )
+    assert row["expected_px"] == pytest.approx(1.33, abs=0.03)
+    assert row["readability_floor_px"] > row["expected_px"]
+
 
 def test_motion_handoff_rejects_main_program_geometry_drift(tmp_path: Path) -> None:
     (
