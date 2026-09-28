@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import hypot
 from pathlib import Path
 import random
 import statistics
@@ -174,6 +175,33 @@ def _focus(motion):
     return {cue.asset_id: cue.params["semantic_focus"] for cue in motion}
 
 
+def _gesture_energy(cue) -> float:
+    """Measure the renderer-facing transform authored before Composition settle."""
+    frames = cue.params["program"]["keyframes"]
+    return sum(
+        hypot(right["dx"] - left["dx"], right["dy"] - left["dy"])
+        + abs(right["scale"] - left["scale"]) * 0.20
+        for left, right in zip(frames, frames[1:])
+        if left["progress"] < cue.params["program"]["settle_progress"] + 1e-9
+    )
+
+
+def _assert_focus_hierarchy(
+    motion, *, leaders: set[str], supports: set[str] | None = None
+):
+    """Certify that semantic authority is expressed by the actual Motion program."""
+    by_id = {cue.asset_id: cue for cue in motion}
+    leader_floor = min(_gesture_energy(by_id[asset_id]) for asset_id in leaders)
+    if supports:
+        support_ceiling = max(_gesture_energy(by_id[asset_id]) for asset_id in supports)
+        assert support_ceiling <= leader_floor * 0.72
+    for cue in by_id.values():
+        frames = cue.params["program"]["keyframes"]
+        assert frames[-1]["dx"] == pytest.approx(0.0)
+        assert frames[-1]["dy"] == pytest.approx(0.0)
+        assert frames[-1]["scale"] == pytest.approx(1.0)
+
+
 def _certify(root: Path, specs: list[Spec], duration: float, **kwargs):
     story, choreography, composition, motion, render = _pipeline(root, specs, duration, **kwargs)
     assert render.story == story and render.composition == composition and render.motion == motion
@@ -237,6 +265,23 @@ def test_same_event_cohort_and_late_event(tmp_path: Path):
     assert windows["A"].reveal_start == windows["B"].reveal_start
     assert windows["C"].reveal_start == pytest.approx(4.2)
     assert _focus(motion)["A"]["cohort_gain"] > _focus(motion)["B"]["cohort_gain"]
+    _assert_focus_hierarchy(motion, leaders={"A"}, supports={"B"})
+
+
+def test_true_same_anchor_cohort_has_one_perceptual_leader(tmp_path: Path):
+    specs = [
+        Spec("leader", "E1", 0.8, "PRIMARY"),
+        Spec("support-a", "E1", 0.8, "SUPPORT", False),
+        Spec("support-b", "E1", 0.8, "OBJECT", False),
+    ]
+    _story, motion, _windows_by_asset = _certify(
+        tmp_path / "perceptual-cohort", specs, 2.5
+    )
+    _assert_focus_hierarchy(
+        motion,
+        leaders={"leader"},
+        supports={"support-a", "support-b"},
+    )
 
 
 def test_same_event_three_asset_level_anchors_reveal_progressively(tmp_path: Path):
@@ -408,10 +453,10 @@ def test_safe_abstention_has_no_reveal_or_focus():
     assert cue.params["semantic_focus"]["cohort_role"] == "abstention"
 
 
-def test_750_generated_cases_use_story_owned_windows(tmp_path: Path):
+def test_1000_generated_cases_use_story_owned_windows(tmp_path: Path):
     rng = random.Random(0x5EAA17C)
     errors, lifecycles = [], 0
-    for case in range(750):
+    for case in range(1000):
         duration, count = rng.uniform(0.5, 12.0), rng.randint(1, 20)
         if case % 4 == 0 and count >= 3:
             anchors = [0.10 * duration, 0.16 * duration] + [
@@ -451,15 +496,17 @@ def test_750_generated_cases_use_story_owned_windows(tmp_path: Path):
         story, _motion, windows = _certify(tmp_path / f"generated-{case}", specs, duration)
         errors.extend(abs(windows[row.asset].reveal_start - row.anchor) for row in specs)
         lifecycles += len(story[0].active_visual_semantic_state or {})
-    assert lifecycles >= 750
+    assert lifecycles >= 1000
     assert max(errors) <= 0.05
     assert statistics.median(errors) <= 0.05
     assert statistics.quantiles(errors, n=100, method="inclusive")[94] <= 0.05
 
 
-@pytest.mark.parametrize("scene_count", [35, 40, 35, 40])
-def test_package_shaped_multi_asset_stress(tmp_path: Path, scene_count: int, request):
-    """Four deterministic package-scale populations, with dense semantic scenes."""
+@pytest.mark.parametrize("family,scene_count", [(index, 34) for index in range(6)])
+def test_package_shaped_multi_asset_stress(
+    tmp_path: Path, family: int, scene_count: int
+):
+    """Six package families: 204 scenes and more than 1,500 asset lifecycles."""
     distribution = (1, 2, 3, 5, 8, 10, 15, 20)
     total_assets = 0
     for scene_index in range(scene_count):
@@ -470,14 +517,13 @@ def test_package_shaped_multi_asset_stress(tmp_path: Path, scene_count: int, req
         for asset_index in range(count):
             event_index = min(event_count - 1, asset_index * event_count // count)
             event = f"E{event_index}"
-            family = request.node.callspec.indices["scene_count"]
             first_in_event = next(
                 index
                 for index in range(count)
                 if min(event_count - 1, index * event_count // count) == event_index
             )
             within_event = asset_index - first_in_event
-            anchor_step = (0.0, 0.01, 0.02, 0.03)[family]
+            anchor_step = (0.0, 0.008, 0.012, 0.018, 0.024, 0.03)[family]
             anchor = min(
                 duration * 0.92,
                 0.08 + event_index * duration * 0.72 / event_count
@@ -493,7 +539,7 @@ def test_package_shaped_multi_asset_stress(tmp_path: Path, scene_count: int, req
                 )
             )
         _certify(
-            tmp_path / f"package-{request.node.callspec.indices['scene_count']}-{scene_index}",
+            tmp_path / f"package-{family}-{scene_index}",
             specs,
             duration,
         )

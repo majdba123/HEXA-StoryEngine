@@ -396,6 +396,17 @@ class MotionPlanner:
                             energy=intensity,
                             cohort_gain=cohort_gain,
                         )
+                        # Event-flow compilation rebuilds the entry trajectory. Reapply
+                        # the already-resolved attention budget so a same-anchor support
+                        # cannot regain Hero-scale energy after cohort arbitration.
+                        program = self._apply_attention_budget(
+                            program,
+                            focus_strength=focus_strength,
+                            focus_role=focus_role,
+                            momentary_focus=momentary_focus,
+                            primary=(item is primary_item),
+                            cohort_gain=cohort_gain,
+                        )
                     elif assignment is None:
                         program = self._apply_choreography_pattern(
                             program,
