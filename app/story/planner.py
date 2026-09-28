@@ -142,7 +142,8 @@ class StoryPlanner:
             preserve_spoken_completion=package.has_semantic_bindings,
         )
         planned = self.activation.enrich(package, transcript, assets, beats)
-        planned = self._resolve_active_visual_semantic_state(planned)
+        if package.has_semantic_bindings:
+            planned = self._resolve_active_visual_semantic_state(planned)
         self._require_quality_contract(package=package, assets=assets, beats=planned)
         return planned
 
