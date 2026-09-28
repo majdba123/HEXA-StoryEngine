@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from app.models import AssetActivation, CompositionBeat, LayoutItem, StoryBeat
@@ -106,3 +108,35 @@ def test_install_action_shape_has_one_initial_semantic_owner(tmp_path) -> None:
         for asset_id, row in focus.items()
         if windows[asset_id].reveal_start == windows["program"].reveal_start
     ) == 1
+
+
+def test_225_frame_quantized_transition_windows_have_no_ownership_gap() -> None:
+    cases = 0
+    for fps, mode, frame, fraction in itertools.product(
+        (24, 25, 30, 50, 60),
+        (SceneTransitionMode.MOTION_HANDOFF,
+         SceneTransitionMode.OBJECT_HANDOFF,
+         SceneTransitionMode.BLUR_BRIDGE),
+        (1, 3, 9),
+        (0.01, 0.50, 0.99, 1.0, 1.01),
+    ):
+        incoming = (frame + fraction) / fps
+        allow_overlap = mode != SceneTransitionMode.MOTION_HANDOFF
+        start, end = FFmpegRenderer._scene_bridge_window(
+            incoming_start=incoming,
+            segment_duration=1.0,
+            preferred_duration=0.28,
+            fps=fps,
+            allow_focus_overlap=allow_overlap,
+        )
+        assert 0.0 <= start <= end <= 1.0
+        if not allow_overlap:
+            first_incoming_frame = FFmpegRenderer._frame_safe_bridge_end(
+                incoming_start=incoming, segment_duration=1.0, fps=fps
+            )
+            assert end == pytest.approx(first_incoming_frame)
+            assert 0.0 <= end - incoming <= 1.0 / fps + 1e-9
+            previous_frame = max(0, int(first_incoming_frame * fps) - 1) / fps
+            assert start <= previous_frame <= end
+        cases += 1
+    assert cases == 225

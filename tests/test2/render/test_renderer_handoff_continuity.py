@@ -59,6 +59,150 @@ def _read_frames(path: Path) -> list[np.ndarray]:
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg required",
 )
+@pytest.mark.parametrize(
+    "fps,fraction,mode",
+    [
+        *((fps, fraction, "motion") for fps in (24, 25, 30, 60)
+          for fraction in (0.01, 0.50, 0.99)),
+        (30, 0.50, "object"),
+        (30, 0.50, "blur"),
+        (60, 0.50, "motion-short"),
+    ],
+)
+def test_unrelated_bridge_is_frame_safe_for_subframe_incoming_reveal(
+    tmp_path: Path, fps: int, fraction: float, mode: str
+) -> None:
+    short = mode == "motion-short"
+    boundary = 3.0 / fps if short else 0.5
+    duration = 8.0 / fps if short else 1.2
+    reveal = boundary + ((1.0 if short else 5.0) + fraction) / fps
+    old_path = tmp_path / "old.png"
+    new_path = tmp_path / "new.png"
+    _write_rgba_asset(old_path, (25, 65, 190, 255))
+    _write_rgba_asset(new_path, (225, 55, 45, 255))
+    assets = [
+        VisualAsset(id="old", scene_id="old-scene", role="primary", image_path=old_path,
+                    extraction_method="encoded-frame-safety"),
+        VisualAsset(id="new", scene_id="new-scene", role="primary", image_path=new_path,
+                    extraction_method="encoded-frame-safety"),
+    ]
+    story = [
+        StoryBeat(id="old-beat", scene_id="old-scene", start=0.0, end=boundary,
+                  narration="old", primary_asset_ids=["old"], action="INTRODUCE"),
+        StoryBeat(id="new-beat", scene_id="new-scene", start=boundary, end=1.2,
+                  narration="new", primary_asset_ids=["new"], action="INTRODUCE"),
+    ]
+    if short:
+        story[1] = story[1].model_copy(update={"end": duration})
+    if mode == "object":
+        story[0] = story[0].model_copy(update={
+            "asset_activations": [AssetActivation(
+                asset_id="old", semantic_unit_id="old-unit",
+                continuity={"mode": "TRANSFORM_TO", "target_asset_id": "new-unit"},
+            )]
+        })
+        story[1] = story[1].model_copy(update={
+            "asset_activations": [AssetActivation(
+                asset_id="new", semantic_unit_id="new-unit"
+            )]
+        })
+    elif mode == "blur":
+        story[1] = story[1].model_copy(update={
+            "semantic_context": StorySemanticContext(
+                scene_metadata={"transition_style": "soft_blur_bridge"}
+            )
+        })
+    composition = [
+        CompositionBeat(beat_id="old-beat", items=[
+            LayoutItem(asset_id="old", x=0.5, y=0.5, width=0.22, height=0.38)
+        ]),
+        CompositionBeat(beat_id="new-beat", items=[
+            LayoutItem(asset_id="new", x=0.5, y=0.5, width=0.22, height=0.38)
+        ]),
+    ]
+    motion = [
+        MotionCue(beat_id="old-beat", asset_id="old", kind="reveal_in", start=0.0, end=0.16),
+        MotionCue(beat_id="new-beat", asset_id="new", kind="reveal_in", start=reveal,
+                  end=reveal + 0.18),
+    ]
+    output = tmp_path / f"subframe-boundary-{fps}-{fraction}-{mode}.mp4"
+    FFmpegRenderer("ffmpeg").render(RenderPlan(
+        width=320, height=180, fps=fps, duration=duration, story=story,
+        composition=composition, motion=motion, assets=assets,
+    ), output)
+
+    flashes = FinalMediaVerifier("ffprobe", "ffmpeg")._white_flash_frames(output, duration)
+    assert flashes == []
+    frames = _read_frames(output)
+    first_incoming_frame = int(np.ceil(reveal * fps - 1e-9))
+    center = frames[first_incoming_frame][90, 160]
+    assert int(center[2]) > int(center[0]) + 45
+    assert int(frames[first_incoming_frame + 1][90, 160][0]) < 120
+    if fps == 30 and fraction == 0.50 and mode == "motion":
+        audio = tmp_path / "micro-audio.wav"
+        muxed = tmp_path / "micro-final.mp4"
+        subprocess.run([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-t", "1.2", str(audio),
+        ], check=True)
+        subprocess.run([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(output), "-i", str(audio), "-c:v", "copy", "-c:a", "aac",
+            "-t", "1.2", str(muxed),
+        ], check=True)
+        issues = FinalMediaVerifier("ffprobe", "ffmpeg").inspect(muxed, audio)
+        assert not any(issue.code == "VISUAL_WHITE_FLASH" for issue in issues), issues
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="ffmpeg required",
+)
+def test_four_scene_mixed_handoffs_have_no_encoded_white_boundary(tmp_path: Path) -> None:
+    fps = 30
+    colors = ((25, 65, 190, 255), (220, 55, 45, 255),
+              (40, 175, 75, 255), (155, 55, 190, 255))
+    assets, story, composition, motion = [], [], [], []
+    for index, color in enumerate(colors):
+        asset_id, beat_id, scene_id = f"asset-{index}", f"beat-{index}", f"scene-{index}"
+        path = tmp_path / f"asset-{index}.png"
+        _write_rgba_asset(path, color)
+        assets.append(VisualAsset(
+            id=asset_id, scene_id=scene_id, role="primary", image_path=path,
+            extraction_method="encoded-multi-boundary",
+        ))
+        start, end = index * 0.4, (index + 1) * 0.4
+        reveal = start if index == 0 else start + (2.0 + (0.5 if index % 2 else 0.0)) / fps
+        activation = AssetActivation(asset_id=asset_id, semantic_unit_id=f"unit-{index}")
+        if index == 1:
+            activation = activation.model_copy(update={
+                "continuity": {"mode": "TRANSFORM_TO", "target_asset_id": "unit-2"}
+            })
+        story.append(StoryBeat(
+            id=beat_id, scene_id=scene_id, start=start, end=end, narration=scene_id,
+            primary_asset_ids=[asset_id], action="INTRODUCE",
+            asset_activations=[activation],
+        ))
+        composition.append(CompositionBeat(beat_id=beat_id, items=[
+            LayoutItem(asset_id=asset_id, x=0.5, y=0.5, width=0.28, height=0.44)
+        ]))
+        motion.append(MotionCue(
+            beat_id=beat_id, asset_id=asset_id, kind="reveal_in",
+            start=reveal, end=min(end, reveal + 0.16),
+        ))
+    output = tmp_path / "four-boundaries.mp4"
+    FFmpegRenderer("ffmpeg").render(RenderPlan(
+        width=320, height=180, fps=fps, duration=1.6, story=story,
+        composition=composition, motion=motion, assets=assets,
+    ), output)
+    assert FinalMediaVerifier("ffprobe", "ffmpeg")._white_flash_frames(output, 1.6) == []
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="ffmpeg required",
+)
 def test_renderer_transition_has_no_outgoing_ghost_or_internal_white_flash(tmp_path: Path) -> None:
     first_asset = tmp_path / "first.png"
     second_asset = tmp_path / "second.png"

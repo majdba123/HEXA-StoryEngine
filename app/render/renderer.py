@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -259,6 +260,7 @@ class FFmpegRenderer:
                 incoming_start=incoming_start,
                 segment_duration=duration,
                 preferred_duration=float(transition.bridge_duration),
+                fps=plan.fps,
                 allow_focus_overlap=(
                     transition.mode
                     in {SceneTransitionMode.OBJECT_HANDOFF, SceneTransitionMode.BLUR_BRIDGE}
@@ -541,12 +543,14 @@ class FFmpegRenderer:
             f"if(gte(t,{end:.6f}),1,{smooth}))"
         )
 
-    @staticmethod
+    @classmethod
     def _scene_bridge_window(
+        cls,
         *,
         incoming_start: float,
         segment_duration: float,
         preferred_duration: float,
+        fps: int | None = None,
         allow_focus_overlap: bool = True,
     ) -> tuple[float, float]:
         """Place a bounded bridge around the first Story-owned incoming reveal.
@@ -565,13 +569,30 @@ class FFmpegRenderer:
         end = min(duration, start + bridge)
         if not allow_focus_overlap:
             # An unrelated outgoing scene may cover a narration gap, but it must be
-            # gone when the incoming scene acquires its first semantic owner.
-            start = max(0.0, incoming - bridge)
-            end = incoming
+            # gone once the first encoded incoming frame owns focus. Continuous time
+            # may land between frame timestamps, so cover through that frame boundary;
+            # incoming artwork is composited above this one-frame safety overlap.
+            safe_end = cls._frame_safe_bridge_end(
+                incoming_start=incoming,
+                segment_duration=duration,
+                fps=fps,
+            )
+            start = max(0.0, safe_end - bridge)
+            end = safe_end
         if incoming < duration and end <= incoming:
             if allow_focus_overlap:
                 end = min(duration, incoming + min(0.12, duration - incoming))
         return start, max(start, end)
+
+    @staticmethod
+    def _frame_safe_bridge_end(
+        *, incoming_start: float, segment_duration: float, fps: int | None
+    ) -> float:
+        incoming = max(0.0, min(float(segment_duration), float(incoming_start)))
+        if fps is None or fps <= 0:
+            return incoming
+        first_incoming_frame = math.ceil(incoming * fps)
+        return min(float(segment_duration), first_incoming_frame / fps)
 
     @classmethod
     def _visual_carrier_asset_id(
