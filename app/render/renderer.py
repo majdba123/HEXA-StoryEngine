@@ -405,6 +405,18 @@ class FFmpegRenderer:
                 segment_start=segment_start,
                 duration=duration,
             )
+            effective_reveal_start = frame_safe_reveal_starts.get(
+                item.asset_id, start
+            )
+            self._require_encoded_entry_window(
+                cue=cue,
+                authored_start=start,
+                authored_end=end,
+                effective_reveal_start=effective_reveal_start,
+                fps=plan.fps,
+                beat_id=beat.id,
+                asset_id=item.asset_id,
+            )
             persistent = item.asset_id in persistent_ids
             visual_carrier = item.asset_id == visual_carrier_id
             render_constraints = (
@@ -490,7 +502,7 @@ class FFmpegRenderer:
                 cue=cue,
                 segment_start=segment_start,
                 duration=duration,
-                reveal_start=frame_safe_reveal_starts.get(item.asset_id, start),
+                reveal_start=effective_reveal_start,
                 persistent=(persistent or visual_carrier),
             )
             filters.append(
@@ -870,6 +882,75 @@ class FFmpegRenderer:
                     output[asset_id] = frame_threshold
                 previous_frame = assigned_frame
         return output
+
+    @staticmethod
+    def _cue_has_nonzero_entry_motion(cue: MotionCue | None) -> bool:
+        if cue is None:
+            return False
+        programs = []
+        if isinstance(cue.params, dict):
+            program = cue.params.get("program")
+            if isinstance(program, dict):
+                programs.append(program)
+        programs.extend(
+            segment.program
+            for segment in cue.segments
+            if segment.phase == "ENTRY" and isinstance(segment.program, dict)
+        )
+        for program in programs:
+            keyframes = program.get("keyframes")
+            if not isinstance(keyframes, list):
+                continue
+            for frame in keyframes:
+                if not isinstance(frame, dict):
+                    continue
+                try:
+                    if (
+                        abs(float(frame.get("dx", 0.0))) > 1e-9
+                        or abs(float(frame.get("dy", 0.0))) > 1e-9
+                        or abs(float(frame.get("scale", 1.0)) - 1.0) > 1e-9
+                    ):
+                        return True
+                except (TypeError, ValueError, OverflowError):
+                    continue
+        return False
+
+    @classmethod
+    def _require_encoded_entry_window(
+        cls,
+        *,
+        cue: MotionCue | None,
+        authored_start: float,
+        authored_end: float,
+        effective_reveal_start: float,
+        fps: int,
+        beat_id: str,
+        asset_id: str,
+    ) -> None:
+        """Fail before FFmpeg when frame ordering would hide all authored ENTRY motion."""
+        if (
+            fps <= 0
+            or effective_reveal_start <= authored_start + 1e-9
+            or not cls._cue_has_nonzero_entry_motion(cue)
+        ):
+            return
+        first_visible_frame = math.ceil(effective_reveal_start * fps - 1e-9)
+        first_visible_time = first_visible_frame / float(fps)
+        if first_visible_time < authored_end - 1e-9:
+            return
+        raise StageFailedError(
+            "encoded reveal ordering leaves no legal frame for authored entry motion",
+            details={
+                "code": "ENCODED_REVEAL_ORDER_INFEASIBLE",
+                "beat_id": beat_id,
+                "asset_id": asset_id,
+                "authored_start": authored_start,
+                "authored_end": authored_end,
+                "effective_reveal_start": effective_reveal_start,
+                "first_visible_frame": first_visible_frame,
+                "fps": fps,
+            },
+        )
 
     @staticmethod
     def asset_visibility_window(

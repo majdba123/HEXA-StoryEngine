@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 import pytest
 
 from app.canonical import CanonicalRelation
+from app.models import MotionCue
 from app.render.renderer import FFmpegRenderer
 from app.render.verification import EncodedMotionVerifier
 from tests.test3.test_semantic_reveal_focus import Spec, _pipeline, _windows
@@ -67,6 +68,38 @@ def test_frame_safe_group_reveal_starts_preserve_distinct_subframe_order() -> No
         starts[asset] > (frame - 1) / 30
         for asset, frame in zip(("first", "second", "third"), frames)
     )
+
+
+def test_frame_safe_visibility_fails_closed_if_nonzero_entry_would_be_fully_hidden() -> None:
+    cue = MotionCue(
+        beat_id="beat",
+        asset_id="asset",
+        kind="program_v3",
+        start=0.10,
+        end=0.20,
+        params={
+            "engine_version": 3,
+            "program": {
+                "name": "moving",
+                "settle_progress": 1.0,
+                "keyframes": [
+                    {"progress": 0.0, "dx": 0.02, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                    {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                ],
+            },
+        },
+    )
+    with pytest.raises(Exception) as caught:
+        FFmpegRenderer._require_encoded_entry_window(
+            cue=cue,
+            authored_start=0.10,
+            authored_end=0.20,
+            effective_reveal_start=0.225,
+            fps=30,
+            beat_id="beat",
+            asset_id="asset",
+        )
+    assert getattr(caught.value, "effective_code", None) == "ENCODED_REVEAL_ORDER_INFEASIBLE"
 
 
 @pytest.mark.parametrize("case", CASES)

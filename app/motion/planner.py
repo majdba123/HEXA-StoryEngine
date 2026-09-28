@@ -39,6 +39,7 @@ from app.motion.timing import (
     semantic_readability_duration,
     semantic_readability_floor,
     encoded_motion_renderability_floor_px,
+    encoded_motion_temporal_floor_seconds,
     semantic_readability_floor_px,
     story_activation_window,
 )
@@ -1215,7 +1216,10 @@ class MotionPlanner:
                 # accent; otherwise the renderer's normal reveal fade carries the
                 # appearance and the semantic gesture starts cleanly.
                 entry_end = float(window[0])
-                if entry_end - float(cue.start) >= 2.0 / 30.0:
+                if (
+                    entry_end - float(cue.start)
+                    >= encoded_motion_temporal_floor_seconds()
+                ):
                     fitted = cls._fit_entry_program(
                         entry_program,
                         original_duration=max(1e-6, float(cue.end) - float(cue.start)),
@@ -1641,7 +1645,13 @@ class MotionPlanner:
             ),
             default=0.0,
         )
-        if activity_px <= 1e-6 or activity_px + 1e-6 >= floor_px:
+        if activity_px <= 1e-6:
+            return program
+        temporal_floor = encoded_motion_temporal_floor_seconds()
+        if (
+            float(duration) + 1e-9 >= temporal_floor
+            and activity_px + 1e-6 >= floor_px
+        ):
             return program
 
         return MotionProgram(

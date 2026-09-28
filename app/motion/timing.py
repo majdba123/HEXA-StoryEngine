@@ -161,6 +161,21 @@ def semantic_readability_floor(
 
 
 
+def encoded_motion_temporal_floor_seconds(
+    *, fps: int = 30, required_frames: int = 2
+) -> float:
+    """Minimum duration needed for non-zero motion to have encoded frame evidence.
+
+    Motion is authored before RenderPlan FPS is materialized, so the production
+    authoring contract uses the current 30fps delivery baseline. Render still
+    validates the actual encoded frame schedule. A shorter stylistic ENTRY is
+    represented as an exact static reveal instead of metadata-only motion.
+    """
+    rate = max(1, int(fps))
+    frames = max(1, int(required_frames))
+    return frames / float(rate)
+
+
 def encoded_motion_renderability_floor_px() -> float:
     """Minimum authored peak expected to survive integer-pixel FFmpeg composition.
 
