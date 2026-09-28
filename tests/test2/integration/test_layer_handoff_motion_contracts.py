@@ -328,7 +328,7 @@ def test_motion_handoff_rejects_nonzero_entry_below_encoded_floor(tmp_path: Path
         if row["kind"] == "motion_cue_entry_render_dead_zone"
     )
     assert row["expected_px"] == pytest.approx(1.33, abs=0.03)
-    assert row["readability_floor_px"] > row["expected_px"]
+    assert row["renderability_floor_px"] > row["expected_px"]
 
 
 def test_motion_handoff_rejects_main_program_geometry_drift(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ import numpy as np
 from app.models import LayoutItem, MotionSegment, RenderPlan
 from app.motion.timing import (
     GOLDEN_MINOR,
+    encoded_motion_renderability_floor_px,
     max_comfort_displacement,
     motion_comfort,
     projected_motion_activity_px,
@@ -241,17 +242,10 @@ class EncodedMotionVerifier:
                         continue
 
                 if qa_base_entry and expected_px > 1e-6:
-                    floor_px = self._perceptual_floor_px(
-                        phase="ENTRY",
-                        width=plan.width,
-                        item_width=item.width,
-                        item_height=item.height,
-                        height=plan.height,
-                        duration=readability_duration,
-                    )
+                    floor_px = encoded_motion_renderability_floor_px()
                     if expected_px + 1e-6 < floor_px:
                         violations.append(RenderedMotionViolation(
-                            code="MOTION_BELOW_PERCEPTUAL_FLOOR",
+                            code="MOTION_BELOW_RENDERABLE_FLOOR",
                             beat_id=cue.beat_id,
                             asset_id=cue.asset_id,
                             phase="ENTRY",

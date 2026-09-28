@@ -22,6 +22,7 @@ from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
     GOLDEN_MAJOR,
     GOLDEN_MINOR,
+    encoded_motion_renderability_floor_px,
     max_comfort_displacement,
     projected_motion_activity_px,
     semantic_readability_duration,
@@ -491,9 +492,87 @@ def test_full_hd_base_entry_dead_zone_is_rejected_as_metadata_contract(
     assert not report.ok
     violation = next(
         row for row in report.violations
-        if row.code == "MOTION_BELOW_PERCEPTUAL_FLOOR"
+        if row.code == "MOTION_BELOW_RENDERABLE_FLOOR"
     )
     assert violation.phase == "ENTRY"
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "fps"),
+    [(640, 360, 24), (1280, 720, 30), (1920, 1080, 30), (1920, 1080, 60)],
+)
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_base_entry_above_renderability_floor_survives_real_encode(
+    tmp_path: Path,
+    width: int,
+    height: int,
+    fps: int,
+) -> None:
+    asset = tmp_path / f"renderable-{width}x{height}-{fps}.png"
+    _asset(asset)
+    plan = _plan(asset, rendered_segment=False).model_copy(update={
+        "width": width,
+        "height": height,
+        "fps": fps,
+    })
+    cue = plan.motion[0]
+    expected_px = encoded_motion_renderability_floor_px() + 1.0
+    moving = _program(dx=expected_px / width)
+    plan = plan.model_copy(update={
+        "motion": [cue.model_copy(update={
+            "end": 0.70,
+            "params": {**cue.params, "program": moving},
+        })],
+    })
+    video = tmp_path / f"renderable-{width}x{height}-{fps}.mp4"
+
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+
+    assert report.ok, report.violations
+    assert report.checked_segments == 1
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "expected_px"),
+    [
+        (640, 360, 1.33),
+        (1280, 720, 1.47),
+        (1920, 1080, 1.33),
+        (1920, 1080, 1.47),
+        (1920, 1080, 2.50),
+    ],
+)
+def test_base_entry_dead_zone_normalization_is_resolution_safe(
+    width: int,
+    height: int,
+    expected_px: float,
+) -> None:
+    item = LayoutItem(
+        asset_id="asset",
+        x=0.5,
+        y=0.5,
+        width=0.18,
+        height=0.24,
+    )
+    payload = _program(dx=expected_px / width)
+    source = MotionProgram(
+        name=payload["name"],
+        settle_progress=float(payload["settle_progress"]),
+        keyframes=tuple(MotionKeyframe(**frame) for frame in payload["keyframes"]),
+    )
+
+    normalized = MotionPlanner._normalize_base_entry_renderability(
+        source,
+        duration=0.42,
+        item=item,
+        frame_width=width,
+        frame_height=height,
+    )
+
+    assert normalized.name.startswith("static_reveal_")
+    assert all(frame.dx == 0.0 and frame.dy == 0.0 for frame in normalized.keyframes)
+    assert all(frame.scale == 1.0 for frame in normalized.keyframes)
 
 
 def test_motion_planner_collapses_subfloor_base_entry_to_exact_static_reveal() -> None:

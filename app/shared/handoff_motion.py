@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.choreography import ChoreographyPlan
 from app.models import CompositionBeat, MotionCue, StoryBeat, VisualAsset
-from app.motion.timing import projected_motion_activity_px, semantic_readability_floor_px
+from app.motion.timing import encoded_motion_renderability_floor_px, projected_motion_activity_px
 
 from .handoff_core import _EPS, _HandoffCore
 
@@ -279,12 +279,7 @@ class MotionHandoffMixin(_HandoffCore):
         keyframes = program.get("keyframes")
         if not isinstance(keyframes, list) or len(keyframes) < 2:
             return
-        floor_px = semantic_readability_floor_px(
-            "ENTRY",
-            item_width=float(item.width),
-            item_height=float(item.height),
-            duration=max(1e-6, float(duration)),
-        )
+        floor_px = encoded_motion_renderability_floor_px()
         activity_px = 0.0
         for frame in keyframes:
             if not isinstance(frame, dict):
@@ -309,7 +304,7 @@ class MotionHandoffMixin(_HandoffCore):
                 beat_id=beat_id,
                 asset_id=asset_id,
                 expected_px=activity_px,
-                readability_floor_px=floor_px,
+                renderability_floor_px=floor_px,
                 duration=duration,
             )
 

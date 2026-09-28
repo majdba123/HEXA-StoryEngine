@@ -161,6 +161,16 @@ def semantic_readability_floor(
 
 
 
+def encoded_motion_renderability_floor_px() -> float:
+    """Minimum authored peak expected to survive integer-pixel FFmpeg composition.
+
+    This is deliberately smaller than the semantic readability floor. Renderability
+    answers only whether non-zero Motion will survive encoding; readability remains a
+    separate Motion/Choreography quality contract.
+    """
+    return 3.0
+
+
 def semantic_readability_floor_px(
     phase: str,
     *,

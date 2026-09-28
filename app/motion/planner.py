@@ -38,6 +38,7 @@ from app.motion.timing import (
     required_translation_for_pixel_floor,
     semantic_readability_duration,
     semantic_readability_floor,
+    encoded_motion_renderability_floor_px,
     semantic_readability_floor_px,
     story_activation_window,
 )
@@ -1624,14 +1625,7 @@ class MotionPlanner:
         """
         if item is None or not program.keyframes:
             return program
-        floor_px = semantic_readability_floor_px(
-            "ENTRY",
-            item_width=item.width,
-            item_height=item.height,
-            duration=max(1e-6, float(duration)),
-            frame_width=frame_width,
-            frame_height=frame_height,
-        )
+        floor_px = encoded_motion_renderability_floor_px()
         activity_px = max(
             (
                 projected_motion_activity_px(
