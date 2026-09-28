@@ -56,8 +56,17 @@ def test_frame_safe_group_reveal_starts_preserve_distinct_subframe_order() -> No
         fps=30,
         duration=2.6,
     )
-    frames = [round(starts[asset] * 30) for asset in ("first", "second", "third")]
+    frames = [
+        math.ceil(starts[asset] * 30 - 1e-9)
+        for asset in ("first", "second", "third")
+    ]
     assert frames == [4, 5, 6]
+    # Thresholds must still be later than the previous frame timestamp, otherwise
+    # the renderer could reveal a semantic asset one encoded frame early.
+    assert all(
+        starts[asset] > (frame - 1) / 30
+        for asset, frame in zip(("first", "second", "third"), frames)
+    )
 
 
 @pytest.mark.parametrize("case", CASES)

@@ -850,9 +850,24 @@ class FFmpegRenderer:
                             "asset_ids": [row[0] for row in cluster],
                         },
                     )
-                quantized = assigned_frame / float(fps)
+                # FFmpeg evaluates overlay enable expressions on floating-point
+                # timestamps. Using the exact frame timestamp (for example 5/30)
+                # can round the expression boundary a hair *after* that frame and
+                # postpone visibility by one encoded frame. Put the continuous-time
+                # threshold safely inside the gap after the previous frame instead.
+                # No earlier encoded frame can pass this threshold, so Story's
+                # first-visible frame authority is preserved exactly.
+                frame_threshold = max(
+                    raw_start,
+                    (assigned_frame - 0.25) / float(fps),
+                )
+                # If the authored start itself lies at the exact target-frame boundary,
+                # nudge only the renderer expression threshold into the preceding
+                # sub-frame interval. This never exposes an earlier encoded frame.
+                if math.ceil(frame_threshold * fps - 1e-9) > assigned_frame:
+                    frame_threshold = (assigned_frame - 0.25) / float(fps)
                 for asset_id, _start, _sequence in cluster:
-                    output[asset_id] = quantized
+                    output[asset_id] = frame_threshold
                 previous_frame = assigned_frame
         return output
 
