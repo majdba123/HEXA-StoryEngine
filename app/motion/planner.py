@@ -1483,8 +1483,23 @@ class MotionPlanner:
             0.08,
             max_peak / asset_extent if max_peak > 0.0 else 0.0,
         )
+        encoded_floor_px = semantic_readability_floor_px(
+            "ENTRY",
+            item_width=item.width if item is not None else 0.18,
+            item_height=item.height if item is not None else 0.18,
+            duration=max(1e-6, float(duration)),
+        )
+        required_scale_delta = required_scale_delta_for_pixel_floor(
+            floor_px=encoded_floor_px,
+            item_width=item.width if item is not None else 0.18,
+            item_height=item.height if item is not None else 0.18,
+        )
+        desired_scale_peak = min(
+            max_scale_delta,
+            max(scale_peak, required_scale_delta),
+        )
         scale_gain = (
-            min(1.0, max_scale_delta / scale_peak)
+            desired_scale_peak / scale_peak
             if scale_peak > 1e-9
             else 1.0
         )
@@ -1499,7 +1514,10 @@ class MotionPlanner:
                     if peak > 1e-6 or scale_peak >= 0.045
                     else 1.0
                     - (
-                        min(0.045 * temporal_gain, max_scale_delta)
+                        min(
+                            max(0.045 * temporal_gain, required_scale_delta),
+                            max_scale_delta,
+                        )
                         if frame.progress < program.settle_progress
                         else 0.0
                     )
@@ -1513,11 +1531,47 @@ class MotionPlanner:
             duration=duration,
             asset_extent=asset_extent,
         )
-        return MotionProgram(
+        candidate = MotionProgram(
             name=f"{program.name}_readable",
             keyframes=frames,
             settle_progress=program.settle_progress,
         )
+        final_activity_px = max(
+            (
+                projected_motion_activity_px(
+                    dx=frame.dx,
+                    dy=frame.dy,
+                    scale=frame.scale,
+                    item_width=item.width if item is not None else 0.18,
+                    item_height=item.height if item is not None else 0.18,
+                )
+                for frame in candidate.keyframes
+            ),
+            default=0.0,
+        )
+        if (
+            final_activity_px > 1e-6
+            and final_activity_px + 1e-6 < encoded_floor_px
+        ):
+            # No legal readable transform survived the per-leg comfort cap. ENTRY is
+            # stylistic execution, not semantic truth: use a deliberate alpha/static
+            # reveal rather than emitting metadata-only micro-motion that FFmpeg can
+            # quantize away.
+            return MotionProgram(
+                name=f"static_reveal_{program.name}",
+                keyframes=tuple(
+                    MotionKeyframe(
+                        progress=frame.progress,
+                        dx=0.0,
+                        dy=0.0,
+                        scale=1.0,
+                        easing=frame.easing,
+                    )
+                    for frame in candidate.keyframes
+                ),
+                settle_progress=candidate.settle_progress,
+            )
+        return candidate
 
     @staticmethod
     def _cap_base_entry_comfort(

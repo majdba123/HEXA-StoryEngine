@@ -210,7 +210,10 @@ def test_short_directional_motion_becomes_non_directional() -> None:
     )
     fixed = ReferenceMotionEnforcer().enforce([cue])[0]
     assert fixed.params["reference_motion_adjusted"] is True
-    assert all(frame["dx"] == 0.0 and frame["dy"] == 0.0 for frame in fixed.params["program"]["keyframes"])
+    assert all(
+        frame["dx"] == 0.0 and frame["dy"] == 0.0 and frame["scale"] == 1.0
+        for frame in fixed.params["program"]["keyframes"]
+    )
 
 
 def test_long_directional_motion_is_preserved() -> None:

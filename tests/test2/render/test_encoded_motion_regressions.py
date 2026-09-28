@@ -18,7 +18,7 @@ from app.models import (
     VisualAsset,
 )
 from app.motion import MotionPlanner
-from app.motion.models import MotionProgram
+from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
     GOLDEN_MAJOR,
     GOLDEN_MINOR,
@@ -504,7 +504,12 @@ def test_motion_planner_collapses_subfloor_base_entry_to_exact_static_reveal() -
         width=0.18,
         height=0.24,
     )
-    source = MotionProgram.model_validate(_program(dx=1.47 / 1920.0))
+    payload = _program(dx=1.47 / 1920.0)
+    source = MotionProgram(
+        name=payload["name"],
+        settle_progress=float(payload["settle_progress"]),
+        keyframes=tuple(MotionKeyframe(**frame) for frame in payload["keyframes"]),
+    )
     normalized = MotionPlanner._normalize_base_entry_renderability(
         source,
         duration=0.42,

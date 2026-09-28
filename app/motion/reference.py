@@ -5,7 +5,7 @@ from app.reference import HexaVisualProfile
 
 
 class ReferenceMotionEnforcer:
-    """Keep short beats readable by removing directional travel that cannot meet the reference minimum."""
+    """Keep short beats readable by collapsing unexecutable directional entry to a static reveal."""
 
     def __init__(self, profile: HexaVisualProfile | None = None, *, fps: int = 30) -> None:
         self.profile = profile or HexaVisualProfile.production()
@@ -28,6 +28,7 @@ class ReferenceMotionEnforcer:
             for frame in frames:
                 frame["dx"] = 0.0
                 frame["dy"] = 0.0
+                frame["scale"] = 1.0
             program["keyframes"] = frames
             program["name"] = f"reference_safe_{program.get('name') or 'hold'}"
             params["program"] = program
