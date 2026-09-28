@@ -43,7 +43,15 @@ class Spec:
     group_policy: str = "SEQUENTIAL_WITHIN_PHRASE"
 
 
-def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, planners=None):
+def _pipeline(
+    root: Path,
+    specs: list[Spec],
+    duration: float,
+    *,
+    order=None,
+    planners=None,
+    extra_asset_ids: list[str] | None = None,
+):
     """Final-Package semantics + forced alignment; production computes all windows."""
     root.mkdir(parents=True, exist_ok=True)
     image = root / "scene.png"
@@ -192,6 +200,19 @@ def _pipeline(root: Path, specs: list[Spec], duration: float, *, order=None, pla
         )
         for i, asset_id in enumerate(order or [row.asset for row in specs])
     ]
+    for i, asset_id in enumerate(extra_asset_ids or []):
+        assets.append(VisualAsset(
+            id=asset_id,
+            scene_id="scene",
+            role="supporting",
+            image_path=image,
+            extraction_method="test3-unbound-cutout",
+            source_bbox=(8 + i * 4, 70 - i * 3, 12, 12),
+            source_canvas_width=96,
+            source_canvas_height=96,
+            source_area_ratio=max(0.01, 0.08 - i * 0.006),
+            can_animate_independently=True,
+        ))
     sp, cp, xp, mp = planners or (
         StoryPlanner(),
         ChoreographyDirector(),
@@ -812,3 +833,106 @@ def test_legacy_package_keeps_deterministic_fallback(tmp_path: Path):
         StoryPlanner().plan(package, transcript, [asset]),
     )
     assert first == second and first[0].active_visual_semantic_state is None
+
+def test_unbound_single_group_cutout_waits_for_latest_authored_anchor(tmp_path: Path):
+    """Unknown detached visuals cannot pre-empt known narration in a one-group Scene."""
+    specs = [
+        Spec("actor", "broad-event", 0.40, "CHARACTER", True, sequence=1, group="g"),
+        Spec("vulnerability", "broad-event", 2.90, "OBJECT", False, sequence=2, group="g"),
+        Spec("negation", "broad-event", 1.05, "RESULT", False, sequence=3, group="g"),
+    ]
+    story, _choreography, _composition, motion, _render = _pipeline(
+        tmp_path / "unbound-late-context",
+        specs,
+        4.2,
+        extra_asset_ids=["unbound-chip"],
+    )
+    windows = _windows(story)
+    assert windows["unbound-chip"].reveal_start > windows["vulnerability"].reveal_start
+    assert windows["unbound-chip"].reveal_start > windows["negation"].reveal_start
+
+    activation = next(
+        row for row in story[0].asset_activations if row.asset_id == "unbound-chip"
+    )
+    assert activation.source == "final_package_scene_context_tail"
+    assert activation.visual_focus == "CONTEXT"
+    assert activation.semantic_event_id is None
+    assert activation.semantic_event_order == 1
+    assert "derived_unbound_cutout_late_context" in activation.evidence
+    assert "inherits_latest_authored_spoken_anchor" in activation.evidence
+    assert "anchor_asset_id=vulnerability" in activation.evidence
+
+    focus = _focus(motion)
+    assert focus["unbound-chip"]["role"] == "CONTEXT"
+    assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
+
+
+def test_unbound_cutout_in_multi_group_scene_remains_safe_abstention(tmp_path: Path):
+    """Do not guess which semantic group owns an extra runtime cutout."""
+    specs = [
+        Spec("left", "E1", 0.40, group="g1", sequence=1),
+        Spec("right", "E2", 1.80, group="g2", sequence=1),
+    ]
+    story, *_ = _pipeline(
+        tmp_path / "unbound-multi-group",
+        specs,
+        3.0,
+        extra_asset_ids=["unknown-extra"],
+    )
+    activation = next(
+        row for row in story[0].asset_activations if row.asset_id == "unknown-extra"
+    )
+    has_v2, window = story_activation_window(activation, story[0])
+    assert has_v2 is True and window is None
+    assert activation.source == "semantic_abstention"
+    assert "SAFE_ABSTENTION" in activation.evidence
+    assert "unknown-extra" not in (story[0].active_visual_semantic_state or {})
+
+
+def test_300_generated_unbound_cutouts_never_preempt_authored_semantics(tmp_path: Path):
+    """Stress ZERO_OR_ONE_OR_MANY runtime cutout cardinality across varied scenes."""
+    rng = random.Random(0xC07E57)
+    checked = 0
+    for case in range(300):
+        duration = rng.uniform(1.2, 9.0)
+        authored_count = rng.randint(2, 8)
+        extra_count = rng.randint(1, 5)
+        anchors = sorted(
+            rng.uniform(0.08, duration * 0.82)
+            for _ in range(authored_count)
+        )
+        specs = [
+            Spec(
+                f"authored-{index}",
+                "broad-event",
+                anchor,
+                "RESULT" if index == authored_count - 1 else "OBJECT",
+                index == 0,
+                sequence=(index * 3) % authored_count + 1,
+                group="single-group",
+            )
+            for index, anchor in enumerate(anchors)
+        ]
+        extra_ids = [f"extra-{index}" for index in range(extra_count)]
+        story, _choreography, _composition, motion, _render = _pipeline(
+            tmp_path / f"unbound-generated-{case}",
+            specs,
+            duration,
+            extra_asset_ids=extra_ids,
+        )
+        windows = _windows(story)
+        latest_authored = max(windows[row.asset].reveal_start for row in specs)
+        extra_starts = [windows[asset_id].reveal_start for asset_id in extra_ids]
+        assert extra_starts == sorted(extra_starts)
+        assert all(start >= latest_authored for start in extra_starts)
+        for asset_id in extra_ids:
+            activation = next(
+                row for row in story[0].asset_activations if row.asset_id == asset_id
+            )
+            assert activation.source == "final_package_scene_context_tail"
+            assert activation.visual_focus == "CONTEXT"
+            assert activation.semantic_event_id is None
+        assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
+        checked += len(extra_ids)
+    assert checked >= 300
+

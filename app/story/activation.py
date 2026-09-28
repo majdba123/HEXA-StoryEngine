@@ -1209,6 +1209,7 @@ class SemanticActivationPlanner:
         entity = next((e for e in entities if e.unit_id == row.semantic_unit_id), None)
         source = (
             "final_package_binding" if row.source == "final_package_semantic_binding" else
+            "derived_context" if row.source == "final_package_scene_context_tail" else
             "inherited" if row.policy == "GROUP" else
             "explicit" if row.policy == "EXPLICIT" else
             "E5" if row.source == "multilingual_semantic_match" else
@@ -1779,14 +1780,14 @@ class SemanticActivationPlanner:
         beat: StoryBeat,
         already_bound: dict[str, AssetActivation],
     ) -> list[AssetActivation]:
-        """Bind extra real cutouts only when their scene-level group is unambiguous.
+        """Schedule extra real cutouts conservatively inside one unambiguous group.
 
         Asset-level metadata describes semantic intents, not segmentation cardinality.
-        A single intent or group may therefore correspond to several real cutouts. When
-        exactly one semantic group exists in the scene, extra independent cutouts can
-        safely inherit that group's spoken phrase without guessing between meanings.
-        They are appended after authored sequence orders in deterministic visual-weight
-        order. Multi-group scenes remain abstentions unless explicitly mapped.
+        A single authored group may therefore leave legitimate detached runtime cutouts
+        without one-to-one semantic identity. Those cutouts must never pre-empt known
+        narration. When exactly one sequential semantic group exists, place remaining
+        independent cutouts as low-authority context after the latest authored spoken
+        anchor. Multi-group or simultaneous scenes remain fail-closed abstentions.
         """
         scene_binding = package.scene_by_id.get(scene.id)
         if scene_binding is None:
@@ -1809,10 +1810,17 @@ class SemanticActivationPlanner:
         ]
         if not anchors:
             return []
-        anchor = min(
+        # Unknown cutouts may be visually useful, but their semantic meaning is
+        # not authored. Never attach them to the earliest phrase: that makes unknown
+        # imagery appear before later, known narration. The latest trusted spoken
+        # anchor is the only conservative place for a scene-level context tail.
+        anchor = max(
             anchors,
             key=lambda row: (
-                row.sequence_order if row.sequence_order is not None else 10_000,
+                float(row.spoken_start),
+                float(row.spoken_end),
+                row.semantic_event_order if row.semantic_event_order is not None else -1,
+                row.sequence_order if row.sequence_order is not None else -1,
                 row.asset_id,
             ),
         )
@@ -1840,23 +1848,30 @@ class SemanticActivationPlanner:
                 trigger_char_end=anchor.trigger_char_end,
                 spoken_start=anchor.spoken_start,
                 spoken_end=anchor.spoken_end,
-                confidence=min(0.55, anchor.confidence),
-                source="final_package_scene_support",
+                confidence=min(0.50, anchor.confidence),
+                source="final_package_scene_context_tail",
                 policy="SEMANTIC",
                 semantic_group_id=group_id,
                 sequence_order=order,
                 binding_type="SUPPORT",
                 group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
+                visual_focus="CONTEXT",
+                # Keep the tail in the same scheduling lane as the latest authored
+                # anchor without claiming semantic-event identity that was never
+                # authored for this cutout.
+                semantic_event_order=anchor.semantic_event_order,
                 evidence=[
                     "single_unambiguous_semantic_group",
-                    "derived_unbound_cutout_support_tail",
+                    "derived_unbound_cutout_late_context",
+                    "inherits_latest_authored_spoken_anchor",
+                    f"anchor_asset_id={anchor.asset_id}",
                     f"semantic_group={group_id}",
                     f"sequence_order={order}",
                 ],
             )
             self._decisions[(beat.id, asset.id)] = {
                 "semantic_text": anchor.trigger_text,
-                "reason": "accepted_single_group_unbound_support",
+                "reason": "accepted_single_group_unbound_late_context",
                 "score": row.confidence,
                 "runner_up_score": None,
                 "margin": None,
@@ -1864,6 +1879,7 @@ class SemanticActivationPlanner:
                 "candidate_phrase": anchor.trigger_text,
                 "semantic_group_id": group_id,
                 "sequence_order": order,
+                "anchor_asset_id": anchor.asset_id,
             }
             output.append(row)
         return output
