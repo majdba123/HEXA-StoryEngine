@@ -13106,3 +13106,190 @@ Sprint 5 — NOT STARTED.
 The next owner must continue until all sprints are actually closed, preserving all locked
 architecture and accepted behavior above.
 
+
+
+================================================================================
+SPRINT 2 VISUAL ACCEPTANCE BLOCKERS + NEXT-CHAT HANDOFF — 2026-09-29
+================================================================================
+
+PURPOSE
+-------
+This section records the user's latest production-render observations and the exact next
+engineering action. These observations are USER VISUAL ACCEPTANCE BLOCKERS. They are not
+overridden by green CI, generated-case counts, contract tests, or synthetic package tests.
+
+LIVE BRANCH / CODE STATE
+------------------------
+Branch: `montage`
+
+Live HEAD before this documentation append:
+`62189f2d89df73528d2fe49ad538bb109cf8ad62`
+`[continuity] Record Sprint1-2 authoritative takeover`
+
+The latest continuity checkpoint already records that code lineage after
+`3b7acd946dae64350b1b13428b6ae079523f29eb` is engineering-green but Sprint 2 remains
+visually open.
+
+LATEST USER VISUAL REVIEW — BLACK HAT PRODUCTION RENDER
+-------------------------------------------------------
+User explicitly reports that the eye still does not reliably follow the narration.
+The following are acceptance blockers and MUST be reproduced/diagnosed from the real
+production path rather than dismissed as subjective style:
+
+1. "أحيانًا يبدأ الموضوع من شيء بسيط"
+   - the visual progression does not read as clean smallest -> next -> next -> largest;
+   - some icons appear in an unexpected order, with the smallest appearing after later
+     icons;
+   - the largest/final element appears to receive two focus-like emphasis actions;
+   - user perceives the sequence as mechanically wrong rather than narration-led.
+
+2. "الهاكر ما يحتاج دائمًا إلى ثغرة خارقة"
+   - the rocket/exploit-like visual appears slightly BEFORE the vulnerability concept;
+   - even a small early reveal is considered wrong if the Final Package/script binding
+     says the vulnerability concept should precede it;
+   - exact Final Package bindings, script spans, runtime cutout identity, Story reveal
+     windows, Motion first-visible time, and encoded first-visible frame must be traced.
+
+3. "إذا وصل إلى حساب موظف"
+   - two elements both behave like focus owners / move toward each other;
+   - the result is dual attention instead of one clear semantic owner with calm context;
+   - determine whether this is an authored relation/comparison or an accidental
+     competing-Hero Motion program. Do not assume.
+
+4. "يثبت برنامج"
+   - user explicitly wants the ACTUAL Final Package authored order for this scene verified;
+   - before changing code, inspect the real Black Hat Final Package scene_plan /
+     semantic_bindings / progression for this scene and document:
+       a) asset semantic roles,
+       b) script spans,
+       c) sequence_order,
+       d) event membership,
+       e) leader / participants / results,
+       f) visual progression if authored.
+   - do not invent the intended order from geometry or prior assistant descriptions.
+
+5. Following scene: "يخليه يرجع للنظام مرة ثانية"
+   - two icons currently appear together;
+   - user expectation: lower door/context visual first, then the return-arrow action with
+     the spoken word "يرجع";
+   - verify whether the Final Package actually authors that semantic order. If yes, engine
+     must preserve it. If not, report package/source-truth mismatch rather than silently
+     inventing engine timing.
+
+6. "بعض الاختراقات تستمر شهور"
+   - progression still feels like a single burst / one snap;
+   - even if internal timestamps are technically ordered, the viewer cannot comfortably
+     perceive the sequence;
+   - semantic order correctness alone is insufficient: Motion/readability must create a
+     smooth, perceivable progression without moving authored semantic anchors.
+
+7. "يقلل أي أثر"
+   - motion does not feel smooth/comfortable enough;
+   - abrupt entry/emphasis is a visual-quality blocker;
+   - must distinguish semantic timing correctness from Motion easing/trajectory/readability.
+
+8. "نجاحه مو بس بالدخول"
+   - two elements appear together when the narration is perceived as sequential;
+   - trace whether they are a legitimate same-anchor cohort or a collapsed distinct-anchor
+     sequence.
+
+9. "الاختراق يبدأ برسالة"
+   - user reports another narration-following problem in this area;
+   - inspect the exact Final Package binding and runtime first-visible order rather than
+     generalizing from nearby scenes.
+
+GLOBAL VISUAL ACCEPTANCE RULE
+-----------------------------
+The target remains:
+
+Visibility:
+A -> A+B -> A+B+C
+
+Attention:
+A -> B -> C
+
+Narration coupling:
+spoken concept -> corresponding visual introduction/focus -> previous visuals stay calm
+context -> next spoken concept -> next visual owns attention.
+
+The following are NOT sufficient:
+- event order is technically correct;
+- reveal_start numbers are different but encoded first-visible frames collapse;
+- Motion metadata says one asset is leader while two assets visibly behave as Heroes;
+- 1,000+ generated cases pass if the real production structure is not represented;
+- non-rendering tests pass while encoded pixels do something else.
+
+TESTING POLICY — STRONGER USER REQUIREMENT
+------------------------------------------
+The user explicitly rejects the cycle:
+"many tests pass -> real render exposes another obvious problem".
+
+From this point, for EACH Sprint 2 defect/fix:
+1. reproduce the exact structural failure on current HEAD BEFORE production change;
+2. prove the failing owner using real production contracts;
+3. add owner-level regression;
+4. add producer->consumer handoff regression;
+5. add diverse generated/package-shaped stress cases;
+6. if visibility/motion/ordering can change at encode time, add real FFmpeg micro-encode
+   and inspect decoded first-visible / motion frames;
+7. include at least one REAL Black Hat package-shaped fixture for the structural class
+   (not hardcoded scene/package logic in production code);
+8. run the full relevant suite;
+9. after green CI, user runs real production render;
+10. Sprint 2 stays OPEN until user visually accepts it.
+
+Tests must validate the actual output contract, not manually pre-fill the expected value.
+No weakening thresholds, skips, xfails, arbitrary tolerances, or package-specific production
+branches.
+
+IMPORTANT ROOT-CAUSE DISCIPLINE
+-------------------------------
+Do not batch-fix the above symptoms with a global stagger or stronger zoom.
+
+For each issue trace:
+Final Package semantic truth
+-> CanonicalPackage
+-> Story activation/reveal window
+-> Choreography focus owner / relation mode
+-> Composition resting geometry
+-> Motion program / attention energy / easing
+-> RenderPlan timing
+-> Renderer frame ownership
+-> encoded first-visible / transform frames.
+
+Identify FIRST BAD OWNER.
+
+Potential classes include:
+- source-truth / Final Package binding mismatch;
+- runtime cutout semantic identity mismatch;
+- Story reveal collapse;
+- Choreography dual-owner relation mistake;
+- Motion event-flow reintroducing competing energy;
+- Motion timing too compressed for perceptual readability;
+- Renderer/frame quantization collapse;
+- encoded/sub-pixel motion disappearing.
+
+Do not assume which class applies before evidence.
+
+NEXT CODEX TASK
+---------------
+A dedicated Codex prompt is being issued immediately after this handoff update.
+
+The NEXT CHAT must NOT start new implementation on its own before the Codex result is
+available. It must:
+1. read this entire handoff first;
+2. verify live `montage` HEAD and CI;
+3. state to the user that it understands the current Sprint 2 blockers;
+4. state that it is WAITING FOR THE CODEX RESULT;
+5. when the user pastes Codex result/commit SHA, review the live diff + tests + CI;
+6. only then decide whether a new production render is justified.
+
+ROADMAP STATUS — UNCHANGED
+--------------------------
+Sprint 1 — CLOSED / user accepted.
+Sprint 2 — OPEN / engineering contracts largely green, visual acceptance NOT achieved.
+Sprint 3 — NOT STARTED.
+Sprint 4 — NOT STARTED.
+Sprint 5 — NOT STARTED.
+
+Do not start Sprint 3 while the above Sprint 2 blockers remain unresolved.
