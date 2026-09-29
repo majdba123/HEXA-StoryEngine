@@ -130,7 +130,7 @@ class FinalMediaVerifier:
             self.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-i", str(video),
             "-frames:v", "1", "-vf",
             (
-                f"select=eq(n\,{max(0, int(frame_index))}),"
+                f"select=eq(n\\,{max(0, int(frame_index))}),"
                 "scale=160:90:flags=fast_bilinear,format=rgb24"
             ),
             "-f", "rawvideo", "pipe:1",
