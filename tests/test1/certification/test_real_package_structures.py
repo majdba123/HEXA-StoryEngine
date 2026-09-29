@@ -70,6 +70,7 @@ def test_real_corrected_package_corpus(
         file_names = [name for name in archive.namelist() if not name.endswith("/")]
         assert "package.json" in file_names
         assert len([name for name in file_names if name.startswith("images/")]) == expected.scenes
+        assert all(name == "package.json" or name.startswith("images/") for name in file_names)
         assert not {Path(name).name for name in file_names} & {
             "manifest.json", "scene_plan.json", "semantic_bindings.json"
         }
