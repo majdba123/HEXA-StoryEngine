@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
+
+import pytest
 
 from app.final_package import FinalPackageLoader
 from app.final_package.models import (
@@ -21,6 +24,7 @@ from app.final_package.models import (
     VisualStatePayload,
 )
 from app.pipeline import StoryEnginePipeline
+from app.shared.errors import InvalidPackageError
 from tests.support.unified_package import write_unified_package
 
 
@@ -46,6 +50,37 @@ def test_payload_models_are_field_for_field_locked_to_unified_final_package_2_0(
     for model, fields in _FIELDS.items():
         assert set(model.model_fields) == set(fields.split()), model.__name__
         assert model.model_config.get("extra") == "forbid", model.__name__
+
+
+def test_unified_contract_identity_is_literal_locked() -> None:
+    schema = UnifiedFinalPackagePayload.model_json_schema()
+    assert schema["properties"]["contract"]["const"] == "HEXA_UNIFIED_FINAL_PACKAGE"
+    assert schema["properties"]["contract_version"]["const"] == "2.0"
+
+
+def test_unknown_nested_object_field_fails_closed_at_loader_boundary(tmp_path: Path) -> None:
+    source = write_unified_package(
+        tmp_path / "source-unknown-field",
+        script="alpha",
+        scenes=[{
+            "scene_id": "SCENE_001",
+            "order": 0,
+            "script_span": {"text": "alpha", "global_char_start": 0, "global_char_end": 5},
+            "assets": [{
+                "unit_id": "A",
+                "asset_id": "A",
+                "script_text": "alpha",
+                "script_span": {"text": "alpha", "global_char_start": 0, "global_char_end": 5},
+            }],
+        }],
+    )
+    package_json = source / "package.json"
+    payload = json.loads(package_json.read_text(encoding="utf-8"))
+    payload["scenes"][0]["objects"][0]["future_contract_field"] = "must-be-explicitly-modeled"
+    package_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(InvalidPackageError, match="future_contract_field"):
+        FinalPackageLoader().load(source, tmp_path / "unknown-field-work")
 
 
 def test_maximal_unified_contract_survives_boundary_without_montage_field_loss(tmp_path: Path) -> None:
