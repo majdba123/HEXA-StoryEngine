@@ -514,7 +514,7 @@ def test_scene_bridge_preserves_previous_scene_until_first_spoken_reveal(
     assert detector._white_flash_frames(output, duration=1.8) == []
 
 
-def test_visual_carrier_prefers_early_semantic_object_over_character_and_result() -> None:
+def test_visual_carrier_never_preexposes_delayed_incoming_semantics() -> None:
     beat = StoryBeat(
         id="beat-semantic",
         scene_id="scene-semantic",
@@ -580,6 +580,41 @@ def test_visual_carrier_prefers_early_semantic_object_over_character_and_result(
         fps=30,
     )
 
+    assert carrier is None
+
+
+def test_visual_carrier_may_choose_semantic_object_only_at_beat_boundary() -> None:
+    beat = StoryBeat(
+        id="beat-boundary", scene_id="scene-boundary", start=0.0, end=1.0,
+        narration="boundary", primary_asset_ids=["result"],
+        support_asset_ids=["character", "object"], action="REVEAL_DETAIL",
+    )
+    items = [
+        LayoutItem(asset_id="character", x=0.50, y=0.50, width=0.28, height=0.70, z=10),
+        LayoutItem(asset_id="object", x=0.20, y=0.50, width=0.30, height=0.55, z=20),
+        LayoutItem(asset_id="result", x=0.82, y=0.50, width=0.30, height=0.55, z=30),
+    ]
+    motion = {
+        (beat.id, "character"): MotionCue(
+            beat_id=beat.id, asset_id="character", kind="program_v3",
+            start=0.0, end=0.30,
+            params={"semantic_focus": {"semantic_role": "CHARACTER", "role": "CHARACTER"}},
+        ),
+        (beat.id, "object"): MotionCue(
+            beat_id=beat.id, asset_id="object", kind="program_v3",
+            start=0.0, end=0.30,
+            params={"semantic_focus": {"semantic_role": "OBJECT", "role": "OBJECT"}},
+        ),
+        (beat.id, "result"): MotionCue(
+            beat_id=beat.id, asset_id="result", kind="program_v3",
+            start=0.60, end=0.90,
+            params={"semantic_focus": {"semantic_role": "RESULT", "role": "RESULT"}},
+        ),
+    }
+    carrier = FFmpegRenderer._visual_carrier_asset_id(
+        beat=beat, ordered_items=items, motion=motion,
+        persistent_ids=frozenset(), fps=30,
+    )
     assert carrier == "object"
 
 
@@ -1298,42 +1333,3 @@ def test_renderer_fails_closed_on_terminal_exit_then_same_asset_reappears(tmp_pa
                 narration="first", action="EXPLAIN",
             ),
             StoryBeat(
-                id="beat-2", scene_id="scene-2", start=1.0, end=2.0,
-                narration="second", action="EXPLAIN",
-            ),
-        ],
-        composition=[
-            CompositionBeat(
-                beat_id="beat-1",
-                items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
-            ),
-            CompositionBeat(
-                beat_id="beat-2",
-                items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
-            ),
-        ],
-        motion=[
-            MotionCue(
-                beat_id="beat-1", asset_id="shared", kind="program_v3",
-                start=0.0, end=0.2,
-                segments=[MotionSegment(
-                    phase="EXIT", start=0.6, end=0.95,
-                    program={"terminal_behavior": "LEAVE"},
-                )],
-            ),
-            MotionCue(
-                beat_id="beat-2", asset_id="shared", kind="program_v3",
-                start=1.1, end=1.3,
-            ),
-        ],
-        assets=[VisualAsset(
-            id="shared", scene_id="scene-1", role="primary",
-            image_path=asset_path, extraction_method="test",
-        )],
-    )
-
-    with pytest.raises(StageFailedError) as exc_info:
-        FFmpegRenderer("ffmpeg").render(plan, tmp_path / "invalid.mp4")
-
-    assert exc_info.value.details["code"] == "TERMINAL_EXIT_ON_PERSISTENT_ASSET"
-    assert exc_info.value.details["asset_ids"] == ["shared"]

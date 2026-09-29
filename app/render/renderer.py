@@ -692,6 +692,12 @@ class FFmpegRenderer:
             return None
 
         earliest = min(float(row["start"]) for row in rows)
+        # A boundary carrier is an execution convenience, never semantic authority.
+        # If Story's earliest incoming reveal is later than the beat boundary, exposing
+        # any current-scene asset from t=0 would be an illegal early reveal. Let the
+        # authored outgoing bridge/background cover that gap instead.
+        if earliest > float(beat.start) + 1e-9:
+            return None
         tolerance = max(0.08, 2.0 / max(1, fps))
         cohort = [
             row for row in rows
