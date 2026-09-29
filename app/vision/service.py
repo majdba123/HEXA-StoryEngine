@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from app.canonical import CanonicalPackage, ensure_canonical_package
 
@@ -88,16 +89,27 @@ class VisionService:
 
     def _declared_boxes(self, package: CanonicalPackage) -> dict[str, list[tuple[str, tuple[int, int, int, int], float]]]:
         by_scene: dict[str, list[tuple[str, tuple[int, int, int, int], float]]] = {}
-        valid_scenes = {scene.id for scene in package.scenes}
-        for item in package.manifest_objects:
-            scene_id = item.scene_id
-            if scene_id not in valid_scenes:
+        for scene in package.scenes:
+            try:
+                with Image.open(scene.image_path) as image:
+                    width, height = image.size
+            except OSError:
                 continue
-            by_scene.setdefault(scene_id, []).append((
-                item.role,
-                item.bbox,
-                item.confidence,
-            ))
+            for asset in scene.assets:
+                locator = asset.visual_locator
+                if locator is None:
+                    continue
+                box_w = max(1, round(locator.width * width))
+                box_h = max(1, round(locator.height * height))
+                x = max(0, round(locator.cx * width - box_w / 2))
+                y = max(0, round(locator.cy * height - box_h / 2))
+                box_w = min(box_w, width - x)
+                box_h = min(box_h, height - y)
+                by_scene.setdefault(scene.id, []).append((
+                    asset.role or asset.semantic_role or "object",
+                    (x, y, box_w, box_h),
+                    asset.confidence,
+                ))
         return by_scene
 
     def _disconnected_objects(self, scene_id: str, image_path: Path) -> list[VisionObject]:

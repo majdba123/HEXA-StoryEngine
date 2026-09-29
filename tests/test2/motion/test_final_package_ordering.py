@@ -37,7 +37,7 @@ def _activation(
         spoken_start=0.20,
         spoken_end=1.40,
         confidence=0.98,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         semantic_group_id="g",
         sequence_order=order,

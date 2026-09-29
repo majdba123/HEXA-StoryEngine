@@ -146,8 +146,8 @@ class TextSemanticSelector:
             # unused text budget with unrelated generic speech merely to increase count.
             candidates.extend(package_candidates)
         else:
-            # Topic-agnostic fallback for legacy packages that carry no usable semantic
-            # bindings. This path does not depend on a specific business domain.
+            # Topic-agnostic fallback when the unified package has no usable semantic
+            # candidate for this beat. This path does not depend on a specific business domain.
             candidates.extend(self._generic_semantic_candidates(words, beat, package))
             candidates.extend(self._semantic_candidates(words, beat))
 
@@ -292,7 +292,7 @@ class TextSemanticSelector:
         so TextTiming can continue to use canonical-script character spans as the
         authority for forced-alignment timestamps.
         """
-        if package is None or not package.script or not package.has_semantic_bindings:
+        if package is None or not package.script or not package.has_authoritative_semantics:
             return []
         binding_scene = package.scene_by_id.get(beat.scene_id)
         if binding_scene is None:

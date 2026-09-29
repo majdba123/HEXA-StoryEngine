@@ -7,27 +7,29 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from app.final_package import FinalPackageLoader, RawFinalPackage
+from app.canonical import CanonicalPackage
+from app.final_package import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
+from tests.test1.factory import DiskPackageShape, write_valid_package
 
 
-def _write_minimal(root: Path) -> Path:
-    root.mkdir(parents=True, exist_ok=True)
+def test_final_package_boundary_returns_canonical_package(tmp_path: Path) -> None:
+    source = write_valid_package(tmp_path / "pkg", DiskPackageShape(scenes=1, assets_per_scene=1, locators="all"))
+    package = FinalPackageLoader().load(source, tmp_path / "work")
+    assert isinstance(package, CanonicalPackage)
+    assert package.contract_name == "HEXA_UNIFIED_FINAL_PACKAGE"
+    assert package.contract_version == "2.0"
+    assert package.has_authoritative_semantics
+    assert len(package.scenes) == 1
+
+
+def test_legacy_package_without_package_json_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "legacy"
+    root.mkdir()
     Image.new("RGB", (64, 64), "white").save(root / "scene.png")
-    (root / "script.txt").write_text("alpha", encoding="utf-8")
-    (root / "manifest.json").write_text(json.dumps({
-        "package_id": "minimal",
-        "script": "script.txt",
-        "scenes": [{"id": "s1", "image": "scene.png"}],
-    }), encoding="utf-8")
-    return root
-
-
-def test_final_package_boundary_returns_raw_typed_model(tmp_path: Path) -> None:
-    raw = FinalPackageLoader().load(_write_minimal(tmp_path / "pkg"), tmp_path / "work")
-    assert isinstance(raw, RawFinalPackage)
-    assert raw.package_id
-    assert len(raw.scenes) == 1
+    (root / "manifest.json").write_text(json.dumps({"package_version": "1.2"}), encoding="utf-8")
+    with pytest.raises(InvalidPackageError, match="legacy 1.x packages are unsupported"):
+        FinalPackageLoader().load(root, tmp_path / "work")
 
 
 def test_zip_traversal_is_rejected_at_boundary(tmp_path: Path) -> None:

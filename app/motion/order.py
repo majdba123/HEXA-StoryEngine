@@ -135,7 +135,7 @@ class MotionOrderResolver:
             activation is not None
             and activation.semantic_group_id
             and activation.sequence_order is not None
-            and activation.source == "final_package_semantic_binding"
+            and activation.source == "unified_final_package"
         )
 
     @classmethod

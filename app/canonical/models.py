@@ -210,34 +210,19 @@ class CanonicalScene(CanonicalRecord):
         return self.semantic_progression
 
 
-class CanonicalManifestObject(CanonicalRecord):
-    scene_id: str
-    role: str = "object"
-    bbox: tuple[int, int, int, int]
-    confidence: float = 1.0
-
-
-class CanonicalManifestAsset(CanonicalRecord):
-    id: str
-    scene_id: str
-    path: str
-    role: str = "object"
-    bbox: tuple[int, int, int, int] | None = None
-    confidence: float = 1.0
-
-
 class CanonicalPackage(CanonicalRecord):
     root: Path
     package_id: str
     script: str | None = None
-    schema_name: str | None = None
-    schema_version: str | None = None
+    contract_name: str = "HEXA_UNIFIED_FINAL_PACKAGE"
+    contract_version: str = "2.0"
+    language: str | None = None
+    project_slug: str | None = None
+    builder_target: str | None = None
+    timing_authority: str | None = None
+    script_audio_relationship: str | None = None
+    has_authoritative_semantics: bool = True
     scenes: tuple[CanonicalScene, ...]
-    manifest_objects: tuple[CanonicalManifestObject, ...] = ()
-    manifest_assets: tuple[CanonicalManifestAsset, ...] = ()
-    semantic_binding_schema_name: str | None = None
-    semantic_binding_schema_version: str | None = None
-    semantic_bindings_present: bool = False
     extension_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -260,7 +245,3 @@ class CanonicalPackage(CanonicalRecord):
             for scene in self.scenes
             for event in scene.semantic_events
         }
-
-    @property
-    def has_semantic_bindings(self) -> bool:
-        return self.semantic_bindings_present

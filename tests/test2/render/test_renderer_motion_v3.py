@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 import shutil
@@ -103,7 +104,7 @@ def test_renderer_executes_motion_v3_program_and_settles_on_composition(tmp_path
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 def test_renderer_executes_choreography_scale_and_recoil(tmp_path: Path) -> None:
     from app.choreography import ChoreographyDirector
-    from app.models import PackageModel, SceneSource
+    from app.models import SceneSource
 
     image_path = tmp_path / "asset.png"
     support_path = tmp_path / "support.png"
@@ -118,7 +119,7 @@ def test_renderer_executes_choreography_scale_and_recoil(tmp_path: Path) -> None
         audio_start=0.28, audio_end=1.45, narration="decline result",
         primary_asset_ids=["primary"], support_asset_ids=["support"], action="REVEAL_DETAIL",
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path, package_id="p", scenes=[SceneSource(
             id="scene-001", image_path=image_path, order=1,
             units=[{"semantic_name":"subsequent_decline","narrative_function":"EXPLAIN_SUBSEQUENT_DECLINE"}],

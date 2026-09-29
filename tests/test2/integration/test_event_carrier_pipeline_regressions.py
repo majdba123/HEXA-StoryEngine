@@ -89,7 +89,7 @@ def _build_reused_carrier_case(
         package_id=f"event-carrier-{event_count}-{interval}",
         script=script,
         scenes=(scene,),
-        semantic_bindings_present=True,
+        has_authoritative_semantics=True,
     )
 
     words = [

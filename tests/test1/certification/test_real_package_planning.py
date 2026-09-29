@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.cutout import CutoutService, Pass2CutoutService
@@ -23,10 +22,10 @@ from tests.test2.support.sprint2_perceptual_oracle import (
 )
 
 _REAL_PACKAGES = (
-    "HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
-    "HEXA_WHITE_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
-    "HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
-    "HEXA_SCRIPT_KIDDIE_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
+    "HEXA_BLACK_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+    "HEXA_WHITE_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+    "HEXA_GRAY_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+    "HEXA_SCRIPT_KIDDIE_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
 )
 
 
@@ -75,7 +74,7 @@ def certify_real_package_to_render_plan(
         pytest.fail(f"REAL PACKAGE CERTIFICATION BLOCKED: missing {filename}")
 
     raw = FinalPackageLoader().load(source, workspace / "load")
-    canonical = CanonicalNormalizer().normalize(raw)
+    canonical = raw
     transcript = deterministic_transcript(canonical)
 
     detections = VisionService().analyze(canonical)

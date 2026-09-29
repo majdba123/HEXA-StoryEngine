@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from pathlib import Path
@@ -14,7 +15,6 @@ from app.models import (
     CompositionBeat,
     LayoutItem,
     MotionCue,
-    PackageModel,
     SceneSource,
     StoryBeat,
     TextPlan,
@@ -230,7 +230,7 @@ def test_long_directional_motion_is_preserved() -> None:
 def test_visual_director_never_invents_asset_ids(tmp_path: Path) -> None:
     scene = tmp_path / "scene.png"
     _image(scene)
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="p",
         scenes=[SceneSource(id="scene-001", image_path=scene, order=1)],

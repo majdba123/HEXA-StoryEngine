@@ -75,7 +75,6 @@ def _run_job(job_id: str, request: JobRequest) -> None:
         output = engine.generate(
             package_path=_path(request.package_path),
             audio_path=_path(request.audio_path),
-            script_path=_path(request.script_path) if request.script_path else None,
             output_name=request.output_name,
             job_id=job_id,
             progress=progress,

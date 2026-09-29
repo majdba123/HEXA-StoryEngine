@@ -45,16 +45,6 @@ class SceneSource(BaseModel):
     semantic_progression: dict[str, Any] | None = None
 
 
-class PackageModel(BaseModel):
-    root: Path
-    package_id: str
-    scenes: list[SceneSource]
-    script: str | None = None
-    manifest: dict[str, Any] = Field(default_factory=dict)
-    scene_plan: dict[str, Any] = Field(default_factory=dict)
-    semantic_bindings: dict[str, Any] = Field(default_factory=dict)
-
-
 class TranscriptWord(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
@@ -437,7 +427,6 @@ class RenderPlan(BaseModel):
 class JobRequest(BaseModel):
     package_path: str
     audio_path: str
-    script_path: str | None = None
     output_name: str | None = None
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.canonical import CanonicalPackage
+from tests.support.canonical_package import canonical_package
 from dataclasses import dataclass
 import json
 import random
@@ -7,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from app.models import PackageModel, SceneSource, Transcript, VisualAsset
+from app.models import SceneSource, Transcript, VisualAsset
 
 
 def make_package(
@@ -20,7 +22,7 @@ def make_package(
     with_relations: bool = True,
     with_locators: bool = True,
     optional_metadata: bool = True,
-) -> PackageModel:
+) -> CanonicalPackage:
     rng = random.Random(seed)
     script_parts: list[str] = []
     scenes: list[SceneSource] = []
@@ -153,23 +155,17 @@ def make_package(
         })
 
     script = " ".join(script_parts)
-    return PackageModel(
+    return canonical_package(
         root=root,
         package_id=f"generated-{seed}",
         scenes=scenes,
         script=script,
-        manifest={"package_schema": "HEXA_V20_SCENE_PACKAGE", "package_version": "1.2"},
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-            "schema_version": "1.2",
-            "scenes": binding_scenes,
-        },
+        semantics={"scenes": binding_scenes},
     )
 
 
 
-# Disk-backed factory used to certify the actual Final Package boundary. The legacy
-# make_package() fixture above remains for representation-only Canonical tests.
+# Disk-backed factory used to certify the Unified Final Package 2.0 boundary.
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,249 +195,209 @@ def _disk_span(script: str, text: str, start_at: int = 0) -> dict[str, int]:
 
 def write_valid_package(root: Path, shape: DiskPackageShape) -> Path:
     package = root / "package"
-    scenes_dir = package / "scenes"
-    scenes_dir.mkdir(parents=True)
+    images_dir = package / "images"
+    images_dir.mkdir(parents=True)
 
-    scene_phrases: list[str] = []
     scene_tokens: list[list[str]] = []
+    scene_phrases: list[str] = []
     for scene_index in range(1, shape.scenes + 1):
         if shape.script_style == "arabic":
-            tokens = [
-                f"مشهد{scene_index}عنصر{asset_index}"
-                for asset_index in range(1, shape.assets_per_scene + 1)
-            ]
+            tokens = [f"مشهد{scene_index}عنصر{i}" for i in range(1, shape.assets_per_scene + 1)]
         elif shape.script_style == "numbers":
             tokens = [
-                f"رقم{scene_index}{asset_index}x{scene_index * asset_index * 100}"
-                for asset_index in range(1, shape.assets_per_scene + 1)
+                f"رقم{scene_index}{i}x{scene_index * i * 100}"
+                for i in range(1, shape.assets_per_scene + 1)
             ]
         else:
             prefix = shape.namespace.lower() or "s"
-            tokens = [
-                f"{prefix}{scene_index}a{asset_index}"
-                for asset_index in range(1, shape.assets_per_scene + 1)
-            ]
+            tokens = [f"{prefix}{scene_index}a{i}" for i in range(1, shape.assets_per_scene + 1)]
         scene_tokens.append(tokens)
         scene_phrases.append(" ".join(tokens))
     script = " ".join(scene_phrases)
-    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
 
-    scene_plan_rows: list[dict] = []
-    semantic_scene_rows: list[dict] = []
-    top_events: list[dict] = []
+    scene_rows: list[dict] = []
     cursor = 0
-    for scene_index, (tokens, phrase) in enumerate(
-        zip(scene_tokens, scene_phrases), start=1
-    ):
+    for scene_index, (tokens, phrase) in enumerate(zip(scene_tokens, scene_phrases), start=1):
         scene_prefix = f"{shape.namespace}_" if shape.namespace else ""
         scene_id = f"{scene_prefix}SCENE_{scene_index:03d}"
-        image_rel = f"scenes/{scene_id}.png"
+        image_rel = f"images/{scene_id}.png"
         Image.new("RGB", (64, 64), "white").save(package / image_rel)
         scene_start = script.index(phrase, cursor)
         scene_end = scene_start + len(phrase)
         cursor = scene_end
 
-        assets: list[dict] = []
+        objects: list[dict] = []
         events: list[dict] = []
         relations: list[dict] = []
         group_count = max(1, min(shape.group_count, max(1, len(tokens))))
+
+        parent_children: dict[str, list[str]] = {}
+        parent_by_asset: dict[str, str | None] = {}
+        for asset_index, _token in enumerate(tokens, start=1):
+            asset_id = f"{scene_id}_A{asset_index:02d}"
+            parent = None
+            binding_type = shape.binding_types[(asset_index - 1) % len(shape.binding_types)]
+            if binding_type == "PARENT" and asset_index > 1:
+                parent = f"{scene_id}_A01"
+                parent_children.setdefault(parent, []).append(asset_id)
+            elif binding_type == "PARENT":
+                binding_type = "EXPLICIT"
+            parent_by_asset[asset_id] = parent
+
         for asset_index, token in enumerate(tokens, start=1):
-            group_index = ((asset_index - 1) % group_count) + 1
-            group_id = f"{scene_id}_G{group_index:02d}"
             asset_id = f"{scene_id}_A{asset_index:02d}"
             event_id = f"{scene_id}_E{asset_index:02d}"
+            group_index = ((asset_index - 1) % group_count) + 1
+            group_id = f"{scene_id}_G{group_index:02d}"
             span = _disk_span(script, token, scene_start)
-            asset = {
-                "scene_id": scene_id,
-                "asset_id": asset_id,
-                "script_text": token,
-                "script_span": span,
-                "anchor_granularity": "EXACT_WORD",
-                "binding_type": shape.binding_types[(asset_index - 1) % len(shape.binding_types)],
-                "semantic_group_id": group_id,
-                "sequence_order": asset_index,
-                "confidence": 0.99,
-                "semantic_role": (
-                    "RESULT"
-                    if asset_index == len(tokens)
-                    else ("OBJECT" if asset_index > 1 else "SUBJECT")
-                ),
-                "visual_focus": (
-                    "RESULT"
-                    if asset_index == len(tokens)
-                    else ("PRIMARY" if asset_index == 1 else "SUPPORT")
-                ),
-                "semantic_event_id": event_id,
-                "compound_visual_classification": (
-                    "COMPOUND_REQUIRED"
-                    if shape.compound and asset_index == len(tokens)
-                    else "SEPARABLE_SAFE"
-                ),
-                "internal_progression_unavailable": bool(
-                    shape.compound and asset_index == len(tokens)
-                ),
-            }
-            if asset["binding_type"] == "PARENT" and asset_index > 1:
-                asset["parent_asset_id"] = f"{scene_id}_A01"
-            elif asset["binding_type"] == "PARENT":
-                asset["binding_type"] = "EXPLICIT"
-            if shape.continuity == "persist" and asset_index == 1:
-                asset["continuity"] = {"mode": "PERSIST"}
-            elif shape.continuity == "transform" and asset_index == 1 and len(tokens) > 1:
-                asset["continuity"] = {
-                    "mode": "TRANSFORM_TO",
-                    "target_asset_id": f"{scene_id}_A02",
-                }
-            if shape.locators == "all" or (
-                shape.locators == "partial" and asset_index % 2
-            ):
+            locator = {"coordinate_space": None, "cx": None, "cy": None, "width": None, "height": None}
+            if shape.locators == "all" or (shape.locators == "partial" and asset_index % 2):
                 width = min(0.18, 0.8 / max(1, len(tokens)))
-                cx = (
-                    0.1 + (asset_index - 1) * (0.8 / max(1, len(tokens) - 1))
-                    if len(tokens) > 1
-                    else 0.5
-                )
-                asset["visual_locator"] = {
+                cx = 0.5 if len(tokens) == 1 else 0.1 + (asset_index - 1) * (0.8 / (len(tokens) - 1))
+                locator = {
                     "coordinate_space": "normalized_scene",
                     "cx": min(0.9, max(0.1, cx)),
                     "cy": 0.5,
                     "width": width,
                     "height": 0.18,
                 }
-            if shape.extra_metadata:
-                asset["future_additive_metadata"] = {
-                    "seed": scene_index * 100 + asset_index
-                }
-            assets.append(asset)
-
-            event = {
+            continuity = {"mode": None, "target_asset_id": None}
+            if shape.continuity == "persist" and asset_index == 1:
+                continuity = {"mode": "PERSIST", "target_asset_id": None}
+            elif shape.continuity == "transform" and asset_index == 1 and len(tokens) > 1:
+                continuity = {"mode": "TRANSFORM_TO", "target_asset_id": f"{scene_id}_A02"}
+            binding_type = shape.binding_types[(asset_index - 1) % len(shape.binding_types)]
+            if binding_type == "PARENT" and asset_index == 1:
+                binding_type = "EXPLICIT"
+            obj = {
+                "unit_id": asset_id,
+                "asset_id": asset_id,
+                "scene_id": scene_id,
+                "object_type": "VISUAL_ASSET_INTENT",
+                "source_asset_id": None,
+                "semantic_name": f"object_{asset_index}",
+                "visual_concept": f"visual {token}",
+                "semantic_meaning": token,
+                "role": "primary" if asset_index == 1 else "supporting",
+                "semantic_role": "RESULT" if asset_index == len(tokens) else ("SUBJECT" if asset_index == 1 else "OBJECT"),
+                "semantic_intent": "EXPLAIN",
+                "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+                "binding_type": binding_type,
+                "script_text": token,
+                "script_span": {"text": token, **span},
+                "appear_trigger": {"text": token, **span},
+                "focus_trigger": {"text": None, "global_char_start": None, "global_char_end": None},
+                "exit_trigger": {"text": None, "global_char_start": None, "global_char_end": None},
+                "semantic_group_id": group_id,
+                "sequence_order": asset_index,
+                "parent_asset_id": parent_by_asset[asset_id],
+                "children_asset_ids": parent_children.get(asset_id, []),
+                "confidence": 0.99,
+                "interaction_target": None,
+                "relationship": None,
+                "semantic_event_id": event_id,
+                "anchor_granularity": "EXACT_WORD",
+                "visual_focus": "RESULT" if asset_index == len(tokens) else ("PRIMARY" if asset_index == 1 else "SUPPORT"),
+                "visual_state": {"before": None, "after": None},
+                "continuity": continuity,
+                "compound_visual_classification": "COMPOUND_REQUIRED" if shape.compound and asset_index == len(tokens) else "SEPARABLE_SAFE",
+                "internal_progression_unavailable": bool(shape.compound and asset_index == len(tokens)),
+                "needs_review": False,
+                "ambiguity_reason": None,
+                "visual_locator": locator,
+            }
+            objects.append(obj)
+            deps: list[str] = []
+            if shape.dependencies and shape.dependency_mode != "none" and asset_index > 1:
+                deps = [f"{scene_id}_E01"] if shape.dependency_mode == "branching" else [f"{scene_id}_E{asset_index - 1:02d}"]
+            participants = [f"{scene_id}_A01"] if shape.reuse_first_asset and asset_index > 1 else []
+            events.append({
                 "semantic_event_id": event_id,
                 "scene_id": scene_id,
                 "script_text": token,
-                "script_span": span,
+                "script_span": {"text": token, **span},
                 "anchor_granularity": "EXACT_WORD",
                 "sequence_order": asset_index,
                 "visual_leader_asset_id": asset_id,
-                "participant_asset_ids": [],
+                "participant_asset_ids": participants,
                 "context_asset_ids": [],
                 "result_asset_ids": [asset_id] if asset_index == len(tokens) else [],
                 "text_anchor_asset_id": asset_id,
                 "confidence": 0.99,
-                "depends_on_event_ids": (
-                    []
-                    if not shape.dependencies or shape.dependency_mode == "none" or asset_index <= 1
-                    else (
-                        [f"{scene_id}_E01"]
-                        if shape.dependency_mode == "branching"
-                        else [f"{scene_id}_E{asset_index - 1:02d}"]
-                    )
-                ),
-            }
-            if shape.reuse_first_asset and asset_index > 1:
-                first_asset_id = f"{scene_id}_A01"
-                if first_asset_id not in event["participant_asset_ids"]:
-                    event["participant_asset_ids"].append(first_asset_id)
-            events.append(event)
-            top_events.append(event)
-
+                "needs_review": False,
+                "ambiguity_reason": None,
+                "depends_on_event_ids": deps,
+            })
             if shape.relations and asset_index > 1:
+                previous = f"{scene_id}_A{asset_index - 1:02d}"
+                relation_text = f"{tokens[asset_index - 2]} {token}"
+                relation_start = _disk_span(script, tokens[asset_index - 2], scene_start)["global_char_start"]
                 relations.append({
                     "relation_id": f"{scene_id}_R{asset_index - 1:02d}",
-                    "subject_asset_id": f"{scene_id}_A{asset_index - 1:02d}",
+                    "subject_asset_id": previous,
                     "relation_type": "ENABLES",
+                    "relationship": "ENABLES",
                     "object_asset_id": asset_id,
-                    "script_text": f"{tokens[asset_index - 2]} {token}",
-                    "script_span": {
-                        "global_char_start": _disk_span(
-                            script, tokens[asset_index - 2], scene_start
-                        )["global_char_start"],
-                        "global_char_end": span["global_char_end"],
-                    },
+                    "result_asset_id": None,
+                    "connector_asset_id": None,
+                    "script_text": relation_text,
+                    "script_span": {"text": script[relation_start:span["global_char_end"]], "global_char_start": relation_start, "global_char_end": span["global_char_end"]},
                     "confidence": 0.97,
                 })
 
         groups = []
         for group_index in range(1, group_count + 1):
-            gid = f"{scene_id}_G{group_index:02d}"
-            members = [
-                row["asset_id"] for row in assets
-                if row["semantic_group_id"] == gid
-            ]
+            group_id = f"{scene_id}_G{group_index:02d}"
+            members = [row["asset_id"] for row in objects if row["semantic_group_id"] == group_id]
             groups.append({
-                "semantic_group_id": gid,
+                "semantic_group_id": group_id,
                 "script_text": phrase,
                 "animation_policy": shape.group_policy,
                 "asset_ids": members,
             })
-        progression = (
-            {
-                "type": "GENERIC_PROGRESS",
-                "event_order": [row["semantic_event_id"] for row in events],
-            }
-            if shape.progression and events
-            else None
-        )
-        scene_plan_rows.append({
+        scene_rows.append({
             "scene_id": scene_id,
-            "order": scene_index,
+            "order": scene_index - 1,
             "image": image_rel,
-            "script_span": {
-                "global_char_start": scene_start,
-                "global_char_end": scene_end,
-                "text": phrase,
-            },
+            "title": None,
+            "narration_hint": phrase,
+            "script_span": {"text": phrase, "global_char_start": scene_start, "global_char_end": scene_end},
             "purpose": "EXPLAIN",
-            "units": [
-                {
-                    "unit_id": row["asset_id"],
-                    "asset_id": row["asset_id"],
-                    "type": "VISUAL_ASSET_INTENT",
-                    "role": row["semantic_role"],
-                    **(
-                        {"visual_locator": row["visual_locator"]}
-                        if "visual_locator" in row
-                        else {}
-                    ),
-                }
-                for row in assets
-            ],
-            "semantic_events": events,
-            "relations": relations,
-            "progression": progression,
-        })
-        semantic_scene_rows.append({
-            "scene_id": scene_id,
-            "script_text": phrase,
-            "assets": assets,
+            "visual_concept": f"concept {scene_index}",
+            "relation_to_previous": None if scene_index == 1 else "CONTINUES_NARRATIVE",
+            "character_category": None,
+            "objects": objects,
+            "visual_progression": [],
             "semantic_groups": groups,
             "semantic_events": events,
             "relations": relations,
-            "progression": progression,
+            "semantic_progression": {
+                "type": "GENERIC_PROGRESS" if shape.progression and events else None,
+                "event_order": [row["semantic_event_id"] for row in events] if shape.progression else [],
+            },
         })
 
-    (package / "manifest.json").write_text(json.dumps({
-        "project_id": f"test1-generated-{shape.namespace or 'default'}",
-        "package_schema": "HEXA_V20_SCENE_PACKAGE",
-        "package_version": "1.2",
-        "scene_plan": "scene_plan.json",
-        "canonical_script": "canonical_script.txt",
-        "semantic_bindings": "semantic_bindings.json",
-    }), encoding="utf-8")
-    (package / "scene_plan.json").write_text(json.dumps({
-        "project_id": f"test1-generated-{shape.namespace or 'default'}",
-        "scenes": scene_plan_rows,
-    }), encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(json.dumps({
-        "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-        "schema_version": "1.2",
-        "asset_is_semantic_intent_not_cutout": True,
-        "cutout_mapping_cardinality": "ZERO_OR_ONE_OR_MANY",
-        "no_fixed_timing": True,
-        "scenes": semantic_scene_rows,
-        "semantic_events": top_events,
-    }), encoding="utf-8")
+    payload = {
+        "contract": "HEXA_UNIFIED_FINAL_PACKAGE",
+        "contract_version": "2.0",
+        "package_id": f"test1-generated-{shape.namespace or 'default'}",
+        "project_slug": f"test1-generated-{shape.namespace or 'default'}",
+        "language": "ar" if shape.script_style in {"arabic", "numbers"} else "en",
+        "builder_target": "HEXA_VIDEO_BUILDER_V20",
+        "timing_authority": "FINAL_VOICE_OVER_SEPARATE_INPUT",
+        "script_audio_relationship": "EXACT_MATCH",
+        "canonical_script": script,
+        "image_spec": {"directory": "images", "format": "png", "width": 64, "height": 64},
+        "source_provenance": {
+            "source_contract_version": "2.0",
+            "source_package_name": "generated-test",
+            "source_sha256": "0" * 64,
+            "conversion_mode": "NATIVE_UNIFIED_TEST",
+        },
+        "scenes": scene_rows,
+    }
+    (package / "package.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return package
-
 
 def seeded_disk_shape(seed: int) -> DiskPackageShape:
     rng = random.Random(seed)

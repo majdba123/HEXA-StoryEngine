@@ -242,7 +242,7 @@ class StoryMotionContract:
                     )
                 max_delta = max(max_delta, delta)
                 if (
-                    activation.source == "final_package_semantic_binding"
+                    activation.source == "unified_final_package"
                     and activation.semantic_group_id
                     and activation.sequence_order is not None
                 ):

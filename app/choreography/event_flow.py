@@ -16,7 +16,7 @@ from .models import (
 
 
 class SemanticEventFlowPlanner:
-    """Compile Final Package 1.2 semantic events into visual mini-story contracts.
+    """Compile Unified Final Package 2.0 semantic events into visual mini-story contracts.
 
     Story has already resolved authored semantic intents to real extracted asset ids and
     narration windows. Choreography consumes that authority rather than re-inferring
@@ -24,7 +24,7 @@ class SemanticEventFlowPlanner:
     happen inside one semantic event; Motion remains responsible for HOW it moves.
     """
 
-    _PACKAGE_SOURCE = "final_package_semantic_binding"
+    _PACKAGE_SOURCE = "unified_final_package"
     _PROXY_SOURCES = SEMANTIC_PROXY_AUTHORITIES
 
     def compile(

@@ -146,8 +146,7 @@ def _pipeline(
         root=root,
         package_id=root.name,
         script=script,
-        semantic_binding_schema_name="HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-        semantic_bindings_present=True,
+        has_authoritative_semantics=True,
         scenes=(
             CanonicalScene(
                 id="scene",
@@ -981,7 +980,7 @@ def test_shared_planners_are_package_local(tmp_path: Path):
     ]
 
 
-def test_legacy_package_keeps_deterministic_fallback(tmp_path: Path):
+def test_non_authoritative_in_memory_fixture_keeps_deterministic_fallback(tmp_path: Path):
     root = tmp_path / "legacy"
     root.mkdir()
     image = root / "scene.png"
@@ -1012,7 +1011,7 @@ def test_legacy_package_keeps_deterministic_fallback(tmp_path: Path):
         StoryPlanner().plan(package, transcript, [asset]),
         StoryPlanner().plan(package, transcript, [asset]),
     )
-    assert first == second and first[0].active_visual_semantic_state is None
+    assert first == second and first[0].active_visual_semantic_state == {}
 
 def test_pass2_child_provenance_cannot_preempt_single_group_semantics(
     tmp_path: Path,

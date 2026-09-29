@@ -1,8 +1,8 @@
+from tests.support.canonical_package import canonical_package
 import pytest
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from app.config import Settings
-from app.models import PackageModel
 from app.pipeline import StoryEnginePipeline
 from app.shared.errors import DependencyUnavailableError
 from app.story.activation import HybridSemanticTextScorer, SemanticActivationPlanner
@@ -27,7 +27,7 @@ def test_required_runtime_is_checked_even_without_candidates(monkeypatch, tmp_pa
     monkeypatch.setattr(scorer, "_load", fail)
     planner = SemanticActivationPlanner(scorer=scorer)
     with pytest.raises(DependencyUnavailableError) as error:
-        planner.enrich(PackageModel(root=tmp_path, package_id="p", scenes=[]),
+        planner.enrich(canonical_package(root=tmp_path, package_id="p", scenes=[]),
                        Transcript(language="ar", duration=1, segments=[]), [], [])
     assert error.value.details["code"] == "SEMANTIC_RUNTIME_UNAVAILABLE"
     assert planner.diagnostics["semantic_runtime_available"] is False

@@ -225,8 +225,8 @@ class SemanticAssetBinder:
     ) -> tuple[str, ...]:
         """Resolve semantic CHARACTER/ACTOR roles through Story-proven identity.
 
-        Final Package 1.1 often represents units as VISUAL_ASSET_INTENT, so scene-unit
-        type alone cannot identify people. Story activations already map semantic units
+        Unified packages may represent several semantic units as VISUAL_ASSET_INTENT, so
+        scene-unit type alone cannot identify people. Story activations already map semantic units
         to real cutouts; reuse that evidence so a large character does not become focus
         merely because it occupies more pixels than the actual concept.
         """

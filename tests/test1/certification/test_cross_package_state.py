@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.shared.handoff import LayerHandoffValidator
@@ -51,7 +50,7 @@ def _run_with_shared_services(
         )
     source = write_valid_package(tmp_path / namespace / "source", shape)
     raw = FinalPackageLoader().load(source, tmp_path / namespace / "work")
-    canonical = CanonicalNormalizer().normalize(raw)
+    canonical = raw
     transcript = deterministic_transcript(canonical)
     assets = controlled_visual_assets(canonical)
     contracts = LayerHandoffValidator()

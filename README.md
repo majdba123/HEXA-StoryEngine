@@ -14,9 +14,29 @@ All engine stages live under `app/`:
 
 `recovery` watches the plan/final QA results, recognizes known issue codes, routes the repair to the owning stage, re-runs QA, and persists the verified outcome so the same class of problem is known on future Final Packages.
 
-## Normal Final Packages
+## Unified Final Package 2.0
 
-V2 does not require extra pre-rendered object images. It can discover visual groups from normal scene images and extract individual assets. When local Florence/SAM2 runtimes are configured, those are used behind the same stage boundaries. Explicit packaged assets are also supported.
+Production accepts exactly one Final Package contract: **HEXA Unified Final Package 2.0**.
+
+A package is a directory or ZIP containing:
+
+```text
+package.json
+images/
+  SCENE_001.png
+  SCENE_002.png
+  ...
+```
+
+`package.json` is the only semantic authority. It contains the canonical script, scene order,
+visual objects, exact script anchors, visual locators, semantic groups/events, dependencies,
+relations, progression, continuity/state metadata, and compound-visual rules. Legacy 1.x
+`manifest.json`, `scene_plan.json`, and `semantic_bindings.json` companions are rejected.
+
+The loader validates the 2.0 contract and produces the immutable `CanonicalPackage` boundary
+directly. Story, Choreography, Composition, Motion, Text, and Render consume only that canonical
+runtime model. Narration timing is still owned by forced alignment; the Final Package owns WHAT,
+not encoded seconds.
 
 ## Local engine
 

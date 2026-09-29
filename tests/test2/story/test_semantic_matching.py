@@ -14,7 +14,9 @@ from app.story.windows import StoryAssetActivation
 from tests.test2.story.test_activation_windows import Scorer, scene_case
 
 
-def _canonical_scene(source: SceneSource) -> CanonicalScene:
+def _canonical_scene(source: SceneSource | CanonicalScene) -> CanonicalScene:
+    if isinstance(source, CanonicalScene):
+        return source
     units = tuple(
         CanonicalAsset(
             unit_id=str(row.get("unit_id") or row.get("asset_id")),
@@ -98,7 +100,7 @@ def test_repeated_phrase_occurrences_are_ambiguous_without_explicit_trigger(tmp_
 
 def test_explicit_occurrence_selects_second_aligned_phrase(tmp_path):
     package, transcript, assets, beat = scene_case(tmp_path, 3)
-    package.script = "again next again"
+    package = package.model_copy(update={"script": "again next again"})
     transcript.words = [
         TranscriptWord(text="again", start=0, end=1, char_start=0, char_end=5),
         TranscriptWord(text="next", start=4, end=5, char_start=6, char_end=10),
@@ -113,10 +115,14 @@ def test_explicit_occurrence_selects_second_aligned_phrase(tmp_path):
 
 def test_explicit_asset_identity_outranks_geometry(tmp_path):
     package, _, assets, beat = scene_case(tmp_path, 2)
-    package.scenes[0].units[0]["asset_id"] = assets[1].id
-    package.scenes[0].units[1]["asset_id"] = assets[0].id
+    scene = package.scenes[0]
+    units = list(scene.units)
+    units[0] = units[0].model_copy(update={"asset_id": assets[1].id})
+    units[1] = units[1].model_copy(update={"asset_id": assets[0].id})
+    scene = scene.model_copy(update={"units": tuple(units)})
+    package = package.model_copy(update={"scenes": (scene,)})
     binding = SemanticAssetBinder().bind(
-        scene=_canonical_scene(package.scenes[0]), assets=assets,
+        scene=scene, assets=assets,
         beat=beat, action=beat.action,
     )
     assert dict(binding.semantic_asset_map) == {"concept00": "concept01", "concept01": "concept00"}
@@ -150,7 +156,7 @@ def test_safe_abstention_blocks_heuristic_semantic_remap_but_proxy_is_allowed(tm
         asset_activations=[
             StoryAssetActivation(
                 asset_id="real-a", semantic_unit_id="trusted-unit",
-                confidence=0.99, source="final_package_semantic_binding", policy="EXPLICIT",
+                confidence=0.99, source="unified_final_package", policy="EXPLICIT",
                 phrase_start=0.1, phrase_end=0.8, reveal_start=0.1, semantic_peak=0.4,
                 settle_at=0.7, activation_policy="OWN_WINDOW",
             ),
@@ -227,7 +233,7 @@ def test_e5_scoring_path_is_primary_and_not_lexical(monkeypatch):
 
 def test_explicit_global_span_does_not_capture_next_word(tmp_path):
     package, transcript, assets, beat = scene_case(tmp_path, 2)
-    package.script = "first next"
+    package = package.model_copy(update={"script": "first next"})
     transcript.words = [
         TranscriptWord(text="first", start=0.0, end=0.8, char_start=0, char_end=5),
         TranscriptWord(text="next", start=0.8, end=1.5, char_start=6, char_end=10),

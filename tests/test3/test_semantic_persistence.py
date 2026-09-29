@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.support.canonical_package import canonical_package
 from dataclasses import dataclass
 from pathlib import Path
 import random
@@ -22,7 +23,6 @@ from app.models import (
     AssetActivation,
     CompositionBeat,
     LayoutItem,
-    PackageModel,
     SceneSource,
     StoryBeat,
     Transcript,
@@ -68,7 +68,7 @@ def _build_pipeline(tmp_path: Path, scenario: Scenario):
     asset_ids = sorted({asset_id for beat in scenario.beats for asset_id, _ in beat})
     scene_path = tmp_path / "scene.png"
     Image.new("RGBA", (64, 64), (255, 255, 255, 255)).save(scene_path)
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id=scenario.name,
         script="continuity fixture",
@@ -116,7 +116,7 @@ def _build_pipeline(tmp_path: Path, scenario: Scenario):
                     spoken_start=cursor,
                     spoken_end=cursor + duration,
                     confidence=1.0,
-                    source="final_package_semantic_binding",
+                    source="unified_final_package",
                     policy="EXPLICIT",
                 )
                 for asset_id, unit_id in participants
@@ -206,8 +206,7 @@ def _real_story_pipeline(tmp_path: Path):
         root=tmp_path,
         package_id="semantic-state",
         script=script,
-        semantic_binding_schema_name="HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-        semantic_bindings_present=True,
+        has_authoritative_semantics=True,
         scenes=(CanonicalScene(
             id="scene",
             image_path=image_path,
@@ -596,8 +595,7 @@ def _single_beat_event_pipeline(
         root=root,
         package_id=root.name,
         script=script,
-        semantic_binding_schema_name="HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-        semantic_bindings_present=True,
+        has_authoritative_semantics=True,
         scenes=(CanonicalScene(
             id="scene",
             image_path=image_path,
@@ -931,8 +929,7 @@ def _package_shape_pipeline(root: Path, *, scene_count: int, event_count: int):
         root=root,
         package_id=root.name,
         script=script,
-        semantic_binding_schema_name="HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-        semantic_bindings_present=True,
+        has_authoritative_semantics=True,
         scenes=tuple(scenes),
     )
     transcript = Transcript(

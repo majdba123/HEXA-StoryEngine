@@ -139,10 +139,10 @@ class StoryPlanner:
         beats = self._assign_visual_timeline(
             beats,
             transcript.duration,
-            preserve_spoken_completion=package.has_semantic_bindings,
+            preserve_spoken_completion=package.has_authoritative_semantics,
         )
         planned = self.activation.enrich(package, transcript, assets, beats)
-        if package.has_semantic_bindings:
+        if package.has_authoritative_semantics:
             planned = self._resolve_active_visual_semantic_state(planned)
         self._require_quality_contract(package=package, assets=assets, beats=planned)
         return planned

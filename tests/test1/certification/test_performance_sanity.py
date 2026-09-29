@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from time import perf_counter
 
-from app.canonical import CanonicalNormalizer
 from app.final_package import FinalPackageLoader
 from tests.test1.factory import DiskPackageShape, write_valid_package
 
 
-def test_large_canonical_normalization_has_no_combinatorial_explosion(tmp_path) -> None:
+def test_large_unified_canonicalization_has_no_combinatorial_explosion(tmp_path) -> None:
     source = write_valid_package(
         tmp_path / "source",
         DiskPackageShape(
@@ -26,7 +25,7 @@ def test_large_canonical_normalization_has_no_combinatorial_explosion(tmp_path) 
     raw = FinalPackageLoader().load(source, tmp_path / "work")
 
     started = perf_counter()
-    canonical = CanonicalNormalizer().normalize(raw)
+    canonical = raw
     elapsed = perf_counter() - started
 
     assert len(canonical.scenes) == 50

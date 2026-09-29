@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from app.canonical import CanonicalNormalizer
 from tests.test1.factory import make_package
 
 
@@ -20,7 +19,7 @@ def test_generated_valid_topologies_normalize_without_unclassified_exceptions(
         with_locators=bool(seed % 3),
         optional_metadata=bool(seed % 5),
     )
-    canonical = CanonicalNormalizer().normalize(package)
+    canonical = package
     assert canonical.package_id == package.package_id
     assert len(canonical.scenes) == len(package.scenes)
     assert len(canonical.asset_by_id) == len(package.scenes) * (1 + seed % 8)

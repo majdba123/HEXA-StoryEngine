@@ -1,3 +1,5 @@
+from app.canonical import CanonicalPackage
+from tests.support.canonical_package import canonical_package
 import re
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
@@ -10,7 +12,6 @@ from app.models import (
     CompositionBeat,
     MotionCue,
     LayoutItem,
-    PackageModel,
     SceneSource,
     StoryBeat,
     Transcript,
@@ -167,7 +168,7 @@ def test_text_motion_is_separate_and_locked_to_spoken_start() -> None:
 
 
 
-def _semantic_package(script: str, *, meanings: list[tuple[str, str]]) -> PackageModel:
+def _semantic_package(script: str, *, meanings: list[tuple[str, str]]) -> CanonicalPackage:
     scene = SceneSource(
         id="scene-001",
         image_path=Path("scene.png"),
@@ -192,13 +193,12 @@ def _semantic_package(script: str, *, meanings: list[tuple[str, str]]) -> Packag
             "sequence_order": index,
             "confidence": 0.98,
         })
-    return PackageModel(
+    return canonical_package(
         root=Path("/tmp"),
         package_id="semantic-text",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": scene.id,
                 "semantic_groups": [{
@@ -304,7 +304,7 @@ def test_text_anchor_uses_exact_asset_activation_span_before_beat_primary() -> N
             trigger_char_start=first_start,
             trigger_char_end=first_end,
             confidence=0.99,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             visual_focus="SUPPORT",
         ),
@@ -313,7 +313,7 @@ def test_text_anchor_uses_exact_asset_activation_span_before_beat_primary() -> N
             trigger_char_start=second_start,
             trigger_char_end=second_end,
             confidence=0.99,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             visual_focus="RESULT",
         ),
@@ -385,7 +385,7 @@ def test_text_motion_consumes_visual_focus_without_leading_speech() -> None:
 def _precise_semantic_package(
     script: str,
     assets: list[dict],
-) -> PackageModel:
+) -> CanonicalPackage:
     scene = SceneSource(
         id="scene-001",
         image_path=Path("scene.png"),
@@ -404,13 +404,12 @@ def _precise_semantic_package(
             "confidence": 1.0,
             **row,
         })
-    return PackageModel(
+    return canonical_package(
         root=Path("/tmp"),
         package_id="precise-text",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": scene.id,
                 "semantic_groups": [{

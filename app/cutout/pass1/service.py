@@ -33,10 +33,6 @@ class CutoutService:
         output_dir = workspace / "assets"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        packaged = self._packaged_assets(package)
-        if packaged:
-            return packaged
-
         if detections:
             extracted = self._extract_detections(detections, output_dir)
             if extracted:
@@ -208,27 +204,6 @@ class CutoutService:
         except Exception:
             self._sam_backend = None
         return self._sam_backend
-
-    def _packaged_assets(self, package: CanonicalPackage) -> list[VisualAsset]:
-        root = package.root.resolve()
-        assets: list[VisualAsset] = []
-        for item in package.manifest_assets:
-            relative = item.path
-            path = (root / relative).resolve()
-            if root not in path.parents and path != root:
-                raise StageFailedError("asset path escapes Final Package", details={"path": relative})
-            if not path.exists() or path.suffix.lower() not in _IMAGE_EXTENSIONS:
-                continue
-            assets.append(VisualAsset(
-                id=item.id,
-                scene_id=item.scene_id,
-                role=item.role,
-                image_path=path,
-                source_bbox=item.bbox,
-                confidence=item.confidence,
-                extraction_method="final_package",
-            ))
-        return assets
 
     @staticmethod
     def _boxed_cutout(

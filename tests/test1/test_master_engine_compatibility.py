@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from tests.test1.canonical import test_authority as authority_tests
-from tests.test1.canonical import test_normalizer as normalizer_tests
+from tests.test1.canonical import test_unified_loader as loader_tests
 from tests.test1.certification import test_canonical_correctness as correctness_tests
 from tests.test1.certification import test_canonical_immutability as immutability_tests
 from tests.test1.certification import test_cross_package_state as state_tests
@@ -16,7 +16,7 @@ from tests.test1.certification.test_generated_full_layer_matrix import (
 )
 from tests.test1.certification.test_raw_data_boundary import (
     contract_bucket_violations,
-    raw_boundary_violations,
+    legacy_contract_violations,
 )
 from tests.test1.certification.test_real_package_planning import (
     _REAL_PACKAGES,
@@ -28,10 +28,10 @@ from tests.test1.factory import seeded_disk_shape
 def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
     """One executable entry point covering the complete Canonical certification."""
 
-    # Canonical normalization / enums / optionals / authority / semantic preservation.
-    normalizer_tests.test_normalizer_preserves_semantic_counts_and_identity(tmp_path / "normalizer")
-    normalizer_tests.test_closed_domains_are_normalized_to_enums(tmp_path / "enums")
-    normalizer_tests.test_optional_metadata_does_not_change_semantic_signature(tmp_path / "optionals")
+    # Unified loader / enums / optionals / authority / semantic preservation.
+    loader_tests.test_unified_loader_preserves_semantic_counts_and_identity(tmp_path / "loader")
+    loader_tests.test_unified_loader_maps_closed_domains_to_enums(tmp_path / "enums")
+    loader_tests.test_optional_metadata_does_not_change_semantic_signature(tmp_path / "optionals")
     authority_tests.test_semantic_authority_is_centralized_and_deterministic()
     correctness_tests.test_generated_semantic_truth_is_preserved_through_canonicalization(
         tmp_path / "correctness"
@@ -45,7 +45,7 @@ def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
         tmp_path / "immutability-deep"
     )
     typed_tests.test_public_package_consumers_declare_canonical_runtime_contract()
-    assert raw_boundary_violations() == []
+    assert legacy_contract_violations() == []
     assert contract_bucket_violations() == []
 
     # The dedicated full-layer module owns the expanded 250+ case matrix.
@@ -79,11 +79,11 @@ def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
         generated_checked += 1
     assert generated_checked == len(master_sample_seeds)
 
-    # Same-process state isolation and large normalization sanity.
+    # Same-process state isolation and large canonicalization sanity.
     state_tests.test_sequential_packages_do_not_leak_state_between_runs(
         tmp_path / "cross-package"
     )
-    performance_tests.test_large_canonical_normalization_has_no_combinatorial_explosion(
+    performance_tests.test_large_unified_canonicalization_has_no_combinatorial_explosion(
         tmp_path / "performance"
     )
 
@@ -109,7 +109,7 @@ def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
 
     print("TEST1 MASTER CERTIFICATION")
     print("Final Package boundary: PASS")
-    print("Canonical normalization: PASS")
+    print("Unified package canonicalization: PASS")
     print("Canonical semantic preservation: PASS")
     print("Canonical immutability: PASS")
     print("Raw-data leakage guard: PASS")

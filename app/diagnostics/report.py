@@ -34,13 +34,11 @@ class BuildReportSession:
         settings: Settings,
         package_path: Path,
         audio_path: Path,
-        script_path: Path | None = None,
     ) -> None:
         self.job_id = job_id
         self.settings = settings
         self.package_path = package_path.expanduser().resolve()
         self.audio_path = audio_path.expanduser().resolve()
-        self.script_path = script_path.expanduser().resolve() if script_path else None
         self.started_at = datetime.now(timezone.utc)
         self._started_monotonic = monotonic()
         self.finished_at: datetime | None = None
@@ -143,7 +141,6 @@ class BuildReportSession:
             "inputs": {
                 "final_package": self._path_metadata(self.package_path),
                 "audio": self._path_metadata(self.audio_path),
-                "script": self._path_metadata(self.script_path) if self.script_path else None,
             },
             "output": self._path_metadata(self.output_path) if self.output_path else None,
             "settings": {

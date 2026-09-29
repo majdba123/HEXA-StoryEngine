@@ -1,26 +1,25 @@
 from pathlib import Path
+import json
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
-from PIL import Image
 
 from app.final_package import FinalPackageLoader
 from app.models import Transcript, TranscriptWord, VisualAsset
 from app.story import StoryPlanner
+from tests.support.unified_package import write_unified_package
 
 
 def _package(tmp_path: Path, scene_json: str, script: str = "alpha beta"):
-    package = tmp_path / "package"
-    (package / "scenes").mkdir(parents=True)
-    image = package / "scenes" / "SCENE_001.png"
-    Image.new("RGB", (320, 180), "white").save(image)
-    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
-    (package / "manifest.json").write_text(
-        '{"project_id":"generic","scene_plan":"scene_plan.json",'
-        '"canonical_script":"canonical_script.txt"}',
-        encoding="utf-8",
+    raw = json.loads(scene_json)
+    scenes = raw["scenes"]
+    for index, scene in enumerate(scenes):
+        scene["order"] = index
+        scene["image"] = f"images/{scene['scene_id']}.png"
+    package = write_unified_package(
+        tmp_path / "package", script=script, scenes=scenes, package_id="story-semantics-v2",
     )
-    (package / "scene_plan.json").write_text(scene_json, encoding="utf-8")
-    return FinalPackageLoader().load(package, tmp_path / "work"), image
+    loaded = FinalPackageLoader().load(package, tmp_path / "work")
+    return loaded, loaded.scenes[0].image_path
 
 
 def _transcript() -> Transcript:
@@ -146,32 +145,23 @@ def test_story_v2_role_classifier_is_topic_independent(tmp_path: Path) -> None:
 
 
 def test_story_v2_graph_preserves_package_continuity_without_inventing_causality(tmp_path: Path) -> None:
-    package = tmp_path / "package-two"
-    (package / "scenes").mkdir(parents=True)
-    for name in ("SCENE_001.png", "SCENE_002.png"):
-        Image.new("RGB", (320, 180), "white").save(package / "scenes" / name)
     script = "alpha beta gamma delta"
-    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
-    (package / "manifest.json").write_text(
-        '{"project_id":"generic","scene_plan":"scene_plan.json",'
-        '"canonical_script":"canonical_script.txt"}',
-        encoding="utf-8",
-    )
-    (package / "scene_plan.json").write_text(
-        '''{"project_id":"generic","scenes":[
-          {"scene_id":"SCENE_001","order":1,"image":"scenes/SCENE_001.png",
-           "script_span":{"global_char_start":0,"global_char_end":9,"text":"alpha beta"},
-           "units":[{"unit_id":"A","semantic_name":"shared_actor","type":"GROUP","role":"PRIMARY"}],
-           "visual_progression":[{"action":"EXPLAIN","targets":["A"],
-             "trigger":{"global_char_start":0,"global_char_end":9}}]},
-          {"scene_id":"SCENE_002","order":2,"image":"scenes/SCENE_002.png",
-           "relation_to_previous":"CONTINUES_EXPLANATION",
-           "script_span":{"global_char_start":11,"global_char_end":21,"text":"gamma delta"},
-           "units":[{"unit_id":"B","semantic_name":"shared_actor","type":"GROUP","role":"PRIMARY"}],
-           "visual_progression":[{"action":"EXPLAIN","targets":["B"],
-             "trigger":{"global_char_start":11,"global_char_end":21}}]}
-        ]}''',
-        encoding="utf-8",
+    package = write_unified_package(
+        tmp_path / "package-two", script=script, package_id="story-graph-v2",
+        scenes=[
+            {
+                "scene_id": "SCENE_001", "order": 0,
+                "script_span": {"text": "alpha beta", "global_char_start": 0, "global_char_end": 10},
+                "units": [{"unit_id": "A", "asset_id": "A", "semantic_name": "shared_actor", "type": "GROUP", "role": "PRIMARY"}],
+                "visual_progression": [{"action": "EXPLAIN", "targets": ["A"], "trigger": {"text": "alpha beta", "global_char_start": 0, "global_char_end": 10}}],
+            },
+            {
+                "scene_id": "SCENE_002", "order": 1, "relation_to_previous": "CONTINUES_EXPLANATION",
+                "script_span": {"text": "gamma delta", "global_char_start": 11, "global_char_end": 22},
+                "units": [{"unit_id": "B", "asset_id": "B", "semantic_name": "shared_actor", "type": "GROUP", "role": "PRIMARY"}],
+                "visual_progression": [{"action": "EXPLAIN", "targets": ["B"], "trigger": {"text": "gamma delta", "global_char_start": 11, "global_char_end": 22}}],
+            },
+        ],
     )
     model = FinalPackageLoader().load(package, tmp_path / "work-two")
     transcript = Transcript(

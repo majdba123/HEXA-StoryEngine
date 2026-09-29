@@ -90,7 +90,7 @@ def _activation(asset_id: str, *, spoken_start: float, spoken_end: float, roles:
         spoken_start=spoken_start,
         spoken_end=spoken_end,
         confidence=0.99,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         semantic_event_id="E1",
         semantic_event_order=1,

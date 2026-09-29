@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from pathlib import Path
@@ -10,7 +11,6 @@ from app.models import (
     AssetActivation,
     CompositionBeat,
     LayoutItem,
-    PackageModel,
     SceneSource,
     StoryBeat,
     StoryEntity,
@@ -112,7 +112,7 @@ def test_story_semantic_activation_anchors_visual_to_spoken_phrase(tmp_path: Pat
             {"unit_id": "IDEA", "type": "ICON", "role": "SUPPORTING"},
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="test",
         scenes=[scene],
@@ -198,7 +198,7 @@ def test_low_confidence_semantics_abstain_instead_of_guessing(tmp_path: Path) ->
             {"unit_id": "IDEA", "type": "ICON", "role": "SUPPORTING"},
         ],
     )
-    package = PackageModel(root=tmp_path, package_id="test", scenes=[scene], script=script)
+    package = canonical_package(root=tmp_path, package_id="test", scenes=[scene], script=script)
     assets = [
         _asset(tmp_path, "character", "character"),
         _asset(tmp_path, "bulb", "unknown_icon"),

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.models import Transcript, TranscriptWord, VisualAsset
@@ -16,7 +15,7 @@ def test_story_choreography_text_accept_canonical_package(tmp_path: Path) -> Non
         tmp_path, scene_count=1, assets_per_scene=1, events_per_scene=1,
         with_relations=False, with_locators=False,
     )
-    canonical = CanonicalNormalizer().normalize(legacy)
+    canonical = legacy
     scene = canonical.scenes[0]
     scene.image_path.write_bytes(b"test-image")
     script = canonical.script or ""

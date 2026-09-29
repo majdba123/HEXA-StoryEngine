@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.final_package import FinalPackageLoader
@@ -38,9 +37,7 @@ def build_handoff_case(tmp_path: Path, *, namespace: str = "HANDOFF"):
             namespace=namespace,
         ),
     )
-    package = CanonicalNormalizer().normalize(
-        FinalPackageLoader().load(source, tmp_path / "work")
-    )
+    package = FinalPackageLoader().load(source, tmp_path / "work")
     transcript = deterministic_transcript(package)
     assets = controlled_visual_assets(package)
     story = StoryPlanner().plan(package, transcript, assets)

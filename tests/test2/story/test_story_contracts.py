@@ -63,7 +63,7 @@ def _package(*, events: tuple[CanonicalSemanticEvent, ...]) -> CanonicalPackage:
         package_id="test2-story",
         script="alpha beta gamma",
         scenes=(scene,),
-        semantic_bindings_present=True,
+        has_authoritative_semantics=True,
     )
 
 
@@ -77,7 +77,7 @@ def _carrier_window() -> StoryAssetActivation:
         spoken_start=0.10,
         spoken_end=0.35,
         confidence=1.0,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         semantic_event_id="E1",
         semantic_event_order=1,

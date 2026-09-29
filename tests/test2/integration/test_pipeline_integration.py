@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 
 from app.config import Settings
 from app.pipeline import StoryEnginePipeline
+from tests.support.unified_package import write_unified_package
 
 
 def _write_wav(path: Path, seconds: float = 2.0, rate: int = 16000) -> None:
@@ -32,31 +33,51 @@ def _write_asset(path: Path, shape: str) -> None:
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="ffmpeg required")
 def test_pipeline_generates_final_video(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    package.mkdir()
-    scene1 = package / "scene-1.png"
-    scene2 = package / "scene-2.png"
-    asset1 = package / "asset-1.png"
-    asset2 = package / "asset-2.png"
-    Image.new("RGB", (640, 360), "white").save(scene1)
-    Image.new("RGB", (640, 360), "white").save(scene2)
-    _write_asset(asset1, "square")
-    _write_asset(asset2, "circle")
-    (package / "script.txt").write_text("First visual idea. Second visual result.", encoding="utf-8")
-    (package / "manifest.json").write_text(
-        """{
-          "package_id": "integration-package",
-          "scenes": [
-            {"id": "s1", "image": "scene-1.png"},
-            {"id": "s2", "image": "scene-2.png"}
-          ],
-          "assets": [
-            {"id": "a1", "scene_id": "s1", "role": "primary", "path": "asset-1.png"},
-            {"id": "a2", "scene_id": "s2", "role": "result", "path": "asset-2.png"}
-          ]
-        }""",
-        encoding="utf-8",
+    script = "First visual idea. Second visual result."
+    first = "First visual idea."
+    second = "Second visual result."
+    second_start = script.index(second)
+    package = write_unified_package(
+        tmp_path / "package",
+        script=script,
+        package_id="integration-package",
+        image_size=(640, 360),
+        scenes=[
+            {
+                "scene_id": "s1", "order": 0,
+                "script_span": {"text": first, "global_char_start": 0, "global_char_end": len(first)},
+                "assets": [{
+                    "asset_id": "a1", "role": "primary", "semantic_role": "OBJECT",
+                    "script_text": first,
+                    "script_span": {"text": first, "global_char_start": 0, "global_char_end": len(first)},
+                    "appear_trigger": {"text": first, "global_char_start": 0, "global_char_end": len(first)},
+                    "binding_type": "EXPLICIT", "visual_focus": "PRIMARY",
+                    "visual_locator": {"coordinate_space": "normalized_scene", "cx": 0.5, "cy": 0.5, "width": 0.45, "height": 0.55},
+                }],
+            },
+            {
+                "scene_id": "s2", "order": 1,
+                "script_span": {"text": second, "global_char_start": second_start, "global_char_end": second_start + len(second)},
+                "assets": [{
+                    "asset_id": "a2", "role": "result", "semantic_role": "RESULT",
+                    "script_text": second,
+                    "script_span": {"text": second, "global_char_start": second_start, "global_char_end": second_start + len(second)},
+                    "appear_trigger": {"text": second, "global_char_start": second_start, "global_char_end": second_start + len(second)},
+                    "binding_type": "EXPLICIT", "visual_focus": "RESULT",
+                    "visual_locator": {"coordinate_space": "normalized_scene", "cx": 0.5, "cy": 0.5, "width": 0.45, "height": 0.55},
+                }],
+            },
+        ],
     )
+    for scene_id, shape in (("s1", "square"), ("s2", "circle")):
+        scene_path = package / "images" / f"{scene_id}.png"
+        image = Image.new("RGBA", (640, 360), "white")
+        draw = ImageDraw.Draw(image)
+        if shape == "square":
+            draw.rounded_rectangle((176, 81, 464, 279), radius=28, fill=(40, 40, 40, 255))
+        else:
+            draw.ellipse((176, 81, 464, 279), fill=(225, 70, 70, 255))
+        image.convert("RGB").save(scene_path)
     audio = tmp_path / "audio.wav"
     _write_wav(audio)
 

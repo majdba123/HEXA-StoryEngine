@@ -185,7 +185,7 @@ class MotionEventFlowResolver:
                 # Story still owns the asset's primary semantic event. The only legal
                 # cross-event participation is an explicit authored relation phase: a
                 # source may INTERACT with a later event and a target may REACT to an
-                # earlier event. This is required for V1.2 event dependency chains and
+                # earlier event. This is required for Unified Final Package event dependency chains and
                 # does not grant unrelated ADD/ESTABLISH/PAYOFF ownership.
                 cross_event_relation = (
                     not owns_event

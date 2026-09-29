@@ -1,3 +1,4 @@
+from tests.support.canonical_package import canonical_package
 from pathlib import Path
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
@@ -5,7 +6,6 @@ from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from tests.test2.support.storytelling_oracle import StorytellingValidator
 from app.models import (
-    PackageModel,
     SceneSource,
     StoryBeat,
     StoryEntity,
@@ -34,7 +34,7 @@ def asset(asset_id: str, scene_id: str, role: str, x: int) -> VisualAsset:
 def semantic_case(
     relationship: str = "TRANSFERS_TO",
     intent: str = "TRANSFER",
-) -> tuple[PackageModel, StoryBeat, list[VisualAsset]]:
+) -> tuple[StoryBeat, list[VisualAsset]]:
     scene_id = "scene-generic"
     scene = SceneSource(
         id=scene_id,
@@ -69,7 +69,7 @@ def semantic_case(
             }
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"), package_id="generic", script="alpha beta", scenes=[scene]
     )
     beat = StoryBeat(
@@ -165,8 +165,11 @@ def test_round5_semantics_generalize_across_unrelated_domains() -> None:
     actions = []
     for domain in ("finance", "commerce", "education"):
         package, beat, assets = semantic_case("BLOCKS", "BLOCK")
-        package.scenes[0].units[0]["semantic_name"] = f"{domain}_subject"
-        package.scenes[0].units[1]["semantic_name"] = f"{domain}_object"
+        scene = package.scenes[0]
+        units = list(scene.units)
+        units[0] = units[0].model_copy(update={"semantic_name": f"{domain}_subject"})
+        units[1] = units[1].model_copy(update={"semantic_name": f"{domain}_object"})
+        package = package.model_copy(update={"scenes": (scene.model_copy(update={"units": tuple(units)}),)})
         actions.append(
             ChoreographyDirector().plan(package, [beat], assets).directives[0].action
         )

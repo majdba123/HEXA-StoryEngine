@@ -559,7 +559,7 @@ class ChoreographyDirector:
         # Final Package semantic events are the strongest non-relational authority for
         # progressive staging. They tell Choreography which visual establishes the idea,
         # which visuals participate, where payoff lives, and how events depend on each
-        # other. This avoids reducing a rich 1.2 event to a generic asset-by-asset reveal.
+        # other. This avoids reducing a rich unified event to a generic asset-by-asset reveal.
         if event_flows:
             executable = [
                 interaction
@@ -599,7 +599,7 @@ class ChoreographyDirector:
             row.sequence_order
             for row in beat.asset_activations
             if (
-                row.source == "final_package_semantic_binding"
+                row.source == "unified_final_package"
                 and row.sequence_order is not None
             )
         }

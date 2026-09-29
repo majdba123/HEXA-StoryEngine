@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.shared.handoff import LayerHandoffValidator
@@ -51,7 +50,7 @@ def _scaled_transcript(transcript: Transcript, duration: float) -> Transcript:
 def _full_planning_handoff(tmp_path: Path, shape: DiskPackageShape):
     source = write_valid_package(tmp_path / "source", shape)
     raw = FinalPackageLoader().load(source, tmp_path / "work")
-    package = CanonicalNormalizer().normalize(raw)
+    package = raw
     transcript = deterministic_transcript(package)
     assets = controlled_visual_assets(package)
     contracts = LayerHandoffValidator()
@@ -177,9 +176,7 @@ def test_duration_density_matrix_remains_cross_layer_executable(
         script_style="arabic" if assets_per_scene > 1 else "numbers",
     )
     source = write_valid_package(tmp_path / "source", shape)
-    package = CanonicalNormalizer().normalize(
-        FinalPackageLoader().load(source, tmp_path / "work")
-    )
+    package = FinalPackageLoader().load(source, tmp_path / "work")
     transcript = _scaled_transcript(deterministic_transcript(package), duration)
     assets = controlled_visual_assets(package)
     contracts = LayerHandoffValidator()
@@ -236,9 +233,7 @@ def test_physically_impossible_density_fails_before_render(
             script_style="arabic",
         ),
     )
-    package = CanonicalNormalizer().normalize(
-        FinalPackageLoader().load(source, tmp_path / "work")
-    )
+    package = FinalPackageLoader().load(source, tmp_path / "work")
     transcript = _scaled_transcript(deterministic_transcript(package), duration)
     assets = controlled_visual_assets(package)
     story = StoryPlanner().plan(package, transcript, assets)

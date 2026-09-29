@@ -1,8 +1,9 @@
+from tests.support.canonical_package import canonical_package
 from pathlib import Path
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from app.choreography import ChoreographyDirector, HookKind, SequencePhase
-from app.models import PackageModel, SceneSource, StoryBeat, VisualAsset
+from app.models import SceneSource, StoryBeat, VisualAsset
 
 
 def _scene(scene_id: str, semantic_name: str, concept: str = "") -> SceneSource:
@@ -55,7 +56,7 @@ def test_choreography_groups_story_and_schedules_multiple_hooks_without_scene_id
         "load_exceeds_gate_limit",
     ]
     scenes = [_scene(f"scene-{i}", semantic) for i, semantic in enumerate(semantics, start=1)]
-    package = PackageModel(root=Path("/tmp"), package_id="p", scenes=scenes, script="x")
+    package = canonical_package(root=Path("/tmp"), package_id="p", scenes=scenes, script="x")
     beats = [_beat(i, semantic.replace("_", " ")) for i, semantic in enumerate(semantics, start=1)]
 
     plan = ChoreographyDirector().plan(package, beats, [])
@@ -71,7 +72,7 @@ def test_choreography_groups_story_and_schedules_multiple_hooks_without_scene_id
 
 
 def test_choreography_uses_semantic_metadata_instead_of_specific_scene_number() -> None:
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"),
         package_id="p",
         scenes=[_scene("scene-77", "subsequent_decline")],
@@ -101,7 +102,7 @@ def test_hook_mechanisms_vary_across_long_story() -> None:
         "actual_available_amount", "load_exceeds_gate_limit", "subsequent_decline", "solution_raise_limit",
     ]
     scenes = [_scene(f"scene-{i}", semantic) for i, semantic in enumerate(semantics, start=1)]
-    package = PackageModel(root=Path("/tmp"), package_id="p", scenes=scenes, script="x")
+    package = canonical_package(root=Path("/tmp"), package_id="p", scenes=scenes, script="x")
     beats = [_beat(i, semantic.replace("_", " ")) for i, semantic in enumerate(semantics, start=1)]
 
     plan = ChoreographyDirector().plan(package, beats, [])
@@ -116,7 +117,7 @@ def test_hook_mechanisms_vary_across_long_story() -> None:
 def test_choreography_marks_cross_asset_focus_as_semantic_handoff() -> None:
     from app.choreography import ContinuityMode
 
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"), package_id="p",
         scenes=[_scene("scene-1", "wallet_model"), _scene("scene-2", "payment_request")],
         script="x",
@@ -149,7 +150,7 @@ def test_choreography_binds_concept_cutout_instead_of_tall_character() -> None:
             },
         ],
     )
-    package = PackageModel(root=Path("/tmp"), package_id="p", scenes=[scene], script="x")
+    package = canonical_package(root=Path("/tmp"), package_id="p", scenes=[scene], script="x")
     beat = StoryBeat(
         id="beat-001",
         scene_id="scene-1",
@@ -230,7 +231,7 @@ def test_story_primary_keeps_narration_locked_timing_when_choreography_focus_is_
 
 
 def test_two_beat_handoff_counts_as_progressive_visual_addition() -> None:
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"),
         package_id="generic-two-beat",
         scenes=[
@@ -275,7 +276,7 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
                 semantic_event_id="E1",
                 semantic_event_order=1,
                 semantic_event_roles=["LEADER", "TEXT_ANCHOR"],
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="EXPLICIT",
                 spoken_start=0.1,
                 spoken_end=0.5,
@@ -286,7 +287,7 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
                 semantic_event_id="E1",
                 semantic_event_order=1,
                 semantic_event_roles=["PARTICIPANT"],
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="EXPLICIT",
                 spoken_start=0.2,
                 spoken_end=0.6,
@@ -297,7 +298,7 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
                 semantic_event_id="E1",
                 semantic_event_order=1,
                 semantic_event_roles=["CONTEXT"],
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="SEMANTIC",
                 spoken_start=0.1,
                 spoken_end=0.6,
@@ -309,7 +310,7 @@ def test_semantic_event_flow_compiles_final_package_roles_into_visual_mini_story
                 semantic_event_order=2,
                 semantic_event_roles=["LEADER", "RESULT", "TEXT_ANCHOR"],
                 semantic_event_dependency_ids=["E1"],
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="EXPLICIT",
                 spoken_start=0.9,
                 spoken_end=1.3,
@@ -404,7 +405,7 @@ def test_event_flow_preserves_every_participant_and_every_result_as_distinct_foc
             semantic_event_order=1,
             semantic_event_roles=[role],
             sequence_order=order,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             spoken_start=start,
             spoken_end=start + 0.2,
@@ -461,7 +462,7 @@ def test_event_flow_dependency_graph_branches_without_fake_serial_handoff() -> N
             semantic_event_order=event_order,
             semantic_event_roles=["LEADER"],
             semantic_event_dependency_ids=deps,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             spoken_start=0.1 * event_order,
             spoken_end=0.1 * event_order + 0.2,
@@ -515,7 +516,7 @@ def test_compare_event_is_relational_but_not_mislabeled_as_cause_effect() -> Non
             semantic_event_id="E1",
             semantic_event_order=1,
             semantic_event_roles=["LEADER"],
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             spoken_start=0.1,
             spoken_end=0.6,
@@ -527,7 +528,7 @@ def test_compare_event_is_relational_but_not_mislabeled_as_cause_effect() -> Non
             semantic_event_id="E1",
             semantic_event_order=1,
             semantic_event_roles=["PARTICIPANT"],
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             spoken_start=0.2,
             spoken_end=0.6,
@@ -579,7 +580,7 @@ def test_event_flow_avoids_duplicate_reaction_for_discovery_with_explicit_result
             semantic_event_id="E1",
             semantic_event_order=1,
             semantic_event_roles=[role],
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             spoken_start=start,
             spoken_end=start + 0.35,
@@ -659,7 +660,7 @@ def test_relation_result_payoff_stays_with_result_story_event_without_result_rol
             semantic_event_id=event_id,
             semantic_event_order=order,
             semantic_event_roles=[role],
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             spoken_start=start,
             spoken_end=start + 0.30,
@@ -728,12 +729,12 @@ def test_explicit_final_package_target_state_can_require_reaction_for_reveal() -
         asset_activations=[
             AssetActivation(
                 asset_id="source", semantic_event_id="E1", semantic_event_order=1,
-                semantic_event_roles=["LEADER"], source="final_package_semantic_binding",
+                semantic_event_roles=["LEADER"], source="unified_final_package",
                 policy="EXPLICIT", spoken_start=0.1, spoken_end=0.5, confidence=0.99,
             ),
             AssetActivation(
                 asset_id="target", semantic_event_id="E1", semantic_event_order=1,
-                semantic_event_roles=["PARTICIPANT"], source="final_package_semantic_binding",
+                semantic_event_roles=["PARTICIPANT"], source="unified_final_package",
                 policy="EXPLICIT", spoken_start=0.2, spoken_end=0.7, confidence=0.99,
             ),
         ],

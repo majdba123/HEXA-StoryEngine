@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 import json
@@ -9,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models import (
-    AssetActivation, PackageModel, SceneSource, StoryBeat, StoryEntity,
+    AssetActivation, SceneSource, StoryBeat, StoryEntity,
     StorySemanticContext, StoryTrigger, Transcript, TranscriptWord, VisualAsset,
 )
 from app.story.activation import SemanticActivationPlanner
@@ -41,7 +42,7 @@ def scene_case(tmp_path: Path, count=5, duration=12.0):
              for i, text in enumerate(labels)]
     scene = SceneSource(id="s", image_path=tmp_path / "s.png", order=0,
                         units=[{"unit_id": text, "type": "ICON"} for text in labels])
-    package = PackageModel(root=tmp_path, package_id="test", scenes=[scene])
+    package = canonical_package(root=tmp_path, package_id="test", scenes=[scene])
     transcript = Transcript(language="en", duration=duration, words=words, segments=[])
     assets = [VisualAsset(id=text, scene_id="s", role="icon",
                           image_path=tmp_path / f"{text}.png", extraction_method="test")
@@ -274,7 +275,7 @@ def test_phrase_start_after_visual_handoff_still_abstains(tmp_path):
     assert "NO_VISUAL_SETTLE_CAPACITY" not in result.evidence
 
 
-def test_uniform_semantic_bindings_anchor_only_real_cutouts_exactly_to_phrase(tmp_path):
+def test_uniform_unified_semantics_anchor_only_real_cutouts_exactly_to_phrase(tmp_path):
     script = "alpha beta"
     scene = SceneSource(
         id="s",
@@ -283,12 +284,12 @@ def test_uniform_semantic_bindings_anchor_only_real_cutouts_exactly_to_phrase(tm
         script_char_start=0,
         script_char_end=len(script) - 1,
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="test",
         scenes=[scene],
         script=script,
-        semantic_bindings={
+        semantics={
             "schema_name": "HEXA_SEMANTIC_BINDINGS",
             "scenes": [{
                 "scene_id": "s",
@@ -339,7 +340,7 @@ def test_uniform_semantic_bindings_anchor_only_real_cutouts_exactly_to_phrase(tm
 
     assert len(result.asset_activations) == 2
     for row in result.asset_activations:
-        assert row.source == "final_package_semantic_binding"
+        assert row.source == "unified_final_package"
         assert row.activation_policy == "OWN_WINDOW"
         assert row.reveal_start == pytest.approx(1.0)
         assert row.phrase_start == pytest.approx(1.0)
@@ -347,19 +348,24 @@ def test_uniform_semantic_bindings_anchor_only_real_cutouts_exactly_to_phrase(tm
         assert row.phrase_end == pytest.approx(1.9)
 
 
-def test_ambiguous_semantic_binding_phrases_fall_back_without_guessing(tmp_path):
+def test_authoritative_v2_without_proven_runtime_identity_abstains_instead_of_guessing(tmp_path):
     package, transcript, assets, beat = scene_case(tmp_path, 2)
     beat.semantic_context = None
-    package.semantic_bindings = {
-        "schema_name": "HEXA_SEMANTIC_BINDINGS",
-        "scenes": [{
-            "scene_id": "s",
-            "assets": [
-                {"asset_id": "a", "script_text": "first phrase"},
-                {"asset_id": "b", "script_text": "second phrase"},
-            ],
-        }],
-    }
+    scene = package.scenes[0]
+    authored = tuple(
+        unit.model_copy(update={
+            "asset_id": f"authored-{index}",
+            "unit_id": f"authored-{index}",
+            "script_text": f"phrase-{index}",
+            "semantic_name": f"meaning-{index}",
+            "binding_type": "EXPLICIT",
+        })
+        for index, unit in enumerate(scene.units)
+    )
+    package = package.model_copy(update={
+        "has_authoritative_semantics": True,
+        "scenes": (scene.model_copy(update={"units": authored}),),
+    })
 
     result = SemanticActivationPlanner(scorer=Scorer()).enrich(
         package, transcript, assets, [beat],
@@ -404,13 +410,12 @@ def test_asset_level_semantic_group_sequences_real_cutouts_without_model(tmp_pat
             {"unit_id": "intent-c", "type": "VISUAL_ASSET_INTENT", "role": "RESULT"},
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="asset-level",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "s",
                 "semantic_groups": [{
@@ -491,7 +496,7 @@ def test_shared_trigger_sequence_stops_before_next_distinct_semantic_hit() -> No
             asset_id="a", semantic_unit_id="a",
             spoken_start=0.20, spoken_end=1.20,
             trigger_char_start=0, trigger_char_end=5,
-            policy="EXPLICIT", source="final_package_semantic_binding",
+            policy="EXPLICIT", source="unified_final_package",
             semantic_group_id="g", sequence_order=1,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         ),
@@ -499,7 +504,7 @@ def test_shared_trigger_sequence_stops_before_next_distinct_semantic_hit() -> No
             asset_id="b", semantic_unit_id="b",
             spoken_start=0.20, spoken_end=1.20,
             trigger_char_start=0, trigger_char_end=5,
-            policy="EXPLICIT", source="final_package_semantic_binding",
+            policy="EXPLICIT", source="unified_final_package",
             semantic_group_id="g", sequence_order=2,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         ),
@@ -507,7 +512,7 @@ def test_shared_trigger_sequence_stops_before_next_distinct_semantic_hit() -> No
             asset_id="later", semantic_unit_id="later",
             spoken_start=0.45, spoken_end=0.90,
             trigger_char_start=7, trigger_char_end=12,
-            policy="EXPLICIT", source="final_package_semantic_binding",
+            policy="EXPLICIT", source="unified_final_package",
         ),
     ]
 
@@ -534,13 +539,13 @@ def test_precise_support_entry_is_bounded_when_later_semantic_hit_exists() -> No
             asset_id="context", semantic_unit_id="context",
             spoken_start=0.20, spoken_end=1.50,
             trigger_char_start=0, trigger_char_end=7,
-            policy="EXPLICIT", source="final_package_semantic_binding",
+            policy="EXPLICIT", source="unified_final_package",
         ),
         AssetActivation(
             asset_id="result", semantic_unit_id="result",
             spoken_start=0.90, spoken_end=1.40,
             trigger_char_start=9, trigger_char_end=14,
-            policy="EXPLICIT", source="final_package_semantic_binding",
+            policy="EXPLICIT", source="unified_final_package",
             visual_focus="RESULT",
         ),
     ]
@@ -562,7 +567,7 @@ def test_same_sequence_order_is_intentionally_simultaneous_visual_unit() -> None
     rows = [
         AssetActivation(
             asset_id=asset_id, spoken_start=0.2, spoken_end=1.8,
-            policy="EXPLICIT", source="final_package_semantic_binding",
+            policy="EXPLICIT", source="unified_final_package",
             semantic_group_id="g", sequence_order=order,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         )
@@ -586,7 +591,7 @@ def test_dense_short_semantic_group_keeps_distinct_ordered_starts() -> None:
     rows = [
         AssetActivation(
             asset_id=f"a{index}", spoken_start=0.1, spoken_end=0.7,
-            policy="SEMANTIC", source="final_package_semantic_binding",
+            policy="SEMANTIC", source="unified_final_package",
             semantic_group_id="g", sequence_order=index + 1,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
         )
@@ -612,10 +617,9 @@ def test_single_unambiguous_group_sequences_unmapped_real_cutout_as_support(tmp_
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path, package_id="asset-level", scenes=[scene], script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "s",
                 "semantic_groups": [{
@@ -680,10 +684,9 @@ def test_unmapped_cutout_does_not_guess_between_multiple_semantic_groups(tmp_pat
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path, package_id="multi-group", scenes=[scene], script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "s",
                 "semantic_groups": [
@@ -762,7 +765,7 @@ def test_precise_speech_order_outranks_conflicting_visual_sequence_hint() -> Non
             trigger_char_start=0,
             trigger_char_end=18,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             semantic_group_id="g",
             sequence_order=1,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
@@ -775,7 +778,7 @@ def test_precise_speech_order_outranks_conflicting_visual_sequence_hint() -> Non
             trigger_char_start=27,
             trigger_char_end=39,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             semantic_group_id="g",
             sequence_order=2,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
@@ -788,7 +791,7 @@ def test_precise_speech_order_outranks_conflicting_visual_sequence_hint() -> Non
             trigger_char_start=7,
             trigger_char_end=18,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             semantic_group_id="g",
             sequence_order=3,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
@@ -827,7 +830,7 @@ def test_identical_precise_trigger_still_uses_sequence_order() -> None:
             trigger_char_start=0,
             trigger_char_end=11,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             semantic_group_id="g",
             sequence_order=index,
             group_animation_policy="SEQUENTIAL_WITHIN_PHRASE",
@@ -873,7 +876,7 @@ def test_authored_attention_calibration_makes_action_shorter_than_result() -> No
             trigger_char_start=0,
             trigger_char_end=6,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
         ),
         AssetActivation(
             asset_id="result",
@@ -883,7 +886,7 @@ def test_authored_attention_calibration_makes_action_shorter_than_result() -> No
             trigger_char_start=20,
             trigger_char_end=26,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             visual_focus="RESULT",
         ),
     ]
@@ -928,7 +931,7 @@ def test_attention_envelopes_compress_at_next_precise_semantic_handoff() -> None
             trigger_char_start=index * 5,
             trigger_char_end=index * 5 + 4,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             visual_focus="RESULT" if role == "RESULT" else None,
         )
         for index, (role, start, end) in enumerate(
@@ -971,7 +974,7 @@ def test_slow_narration_keeps_bounded_entry_then_static_hold() -> None:
             spoken_start=1.0,
             spoken_end=7.0,
             policy="EXPLICIT",
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             visual_focus="RESULT",
         )],
         beat,
@@ -1016,7 +1019,7 @@ def test_final_scheduled_handoff_caps_nested_result_before_later_exact_reveal() 
         trigger_char_start=193,
         trigger_char_end=204,
         confidence=0.98,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         visual_focus="PRIMARY",
         semantic_event_id="SCENE_007_EVENT_01",
@@ -1037,7 +1040,7 @@ def test_final_scheduled_handoff_caps_nested_result_before_later_exact_reveal() 
         trigger_char_start=198,
         trigger_char_end=204,
         confidence=0.98,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         visual_focus="SUPPORT",
         semantic_event_id="SCENE_007_EVENT_01",
@@ -1072,7 +1075,7 @@ def test_final_scheduled_handoff_does_not_clip_same_precise_trigger_cohort() -> 
         StoryAssetActivation(
             asset_id=asset_id, spoken_start=0.4, spoken_end=1.0,
             trigger_char_start=10, trigger_char_end=20, confidence=1.0,
-            source="final_package_semantic_binding", policy="EXPLICIT",
+            source="unified_final_package", policy="EXPLICIT",
             phrase_start=reveal, phrase_end=1.0, reveal_start=reveal,
             semantic_peak=reveal + 0.12, settle_at=reveal + 0.30,
             activation_policy="OWN_WINDOW",
@@ -1108,7 +1111,7 @@ def test_mixed_event_coverage_cannot_disable_authored_event_order() -> None:
     common = {
         "semantic_group_id": "SCENE_033_G01",
         "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
-        "source": "final_package_semantic_binding",
+        "source": "unified_final_package",
         "policy": "EXPLICIT",
         "trigger_char_start": 100,
         "trigger_char_end": 122,

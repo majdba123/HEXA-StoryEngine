@@ -265,7 +265,7 @@ class SemanticActivationPlanner:
             "visual_identity": [],
         }
         if isinstance(self.scorer, HybridSemanticTextScorer):
-            if not package.has_semantic_bindings:
+            if not package.has_authoritative_semantics:
                 try:
                     self.scorer.ensure_available()
                 finally:
@@ -1208,7 +1208,7 @@ class SemanticActivationPlanner:
         entities = self._ordered_entities(beat)
         entity = next((e for e in entities if e.unit_id == row.semantic_unit_id), None)
         source = (
-            "final_package_binding" if row.source == "final_package_semantic_binding" else
+            "final_package_binding" if row.source == "unified_final_package" else
             "derived_context" if row.source == "final_package_scene_context_tail" else
             "inherited" if row.policy == "GROUP" else
             "explicit" if row.policy == "EXPLICIT" else
@@ -1265,10 +1265,7 @@ class SemanticActivationPlanner:
             beat=beat,
         )
         semantic_map = dict(binding.semantic_asset_map)
-        asset_level_bindings = (
-            package.semantic_binding_schema_name
-            == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
-        )
+        asset_level_bindings = package.has_authoritative_semantics
         entities = self._ordered_entities(beat)
         words = self._beat_words(transcript, scene, beat)
         candidates = self._phrase_candidates(words, package.script)
@@ -1652,7 +1649,7 @@ class SemanticActivationPlanner:
                     spoken_start=spoken_start,
                     spoken_end=spoken_end,
                     confidence=confidence,
-                    source="final_package_semantic_binding",
+                    source="unified_final_package",
                     policy=policy,
                     semantic_group_id=group_id,
                     sequence_order=(
@@ -1828,7 +1825,7 @@ class SemanticActivationPlanner:
         anchors = [
             row for row in already_bound.values()
             if row.semantic_group_id == group_id
-            and row.source == "final_package_semantic_binding"
+            and row.source == "unified_final_package"
             and row.spoken_start is not None
             and row.spoken_end is not None
         ]
@@ -1959,7 +1956,7 @@ class SemanticActivationPlanner:
         ):
             return []
 
-        semantic_unit_id = f"semantic_bindings:{scene.id}"
+        semantic_unit_id = f"unified_package:{scene.id}"
         output: list[AssetActivation] = []
         for asset in sorted(assets, key=lambda row: row.id):
             if (
@@ -1969,7 +1966,7 @@ class SemanticActivationPlanner:
                 continue
             self._decisions[(beat.id, asset.id)] = {
                 "semantic_text": phrase,
-                "reason": "accepted_final_package_semantic_binding",
+                "reason": "accepted_unified_package_semantics",
                 "score": 1.0,
                 "runner_up_score": None,
                 "margin": None,
@@ -1985,10 +1982,10 @@ class SemanticActivationPlanner:
                 spoken_start=spoken_start,
                 spoken_end=spoken_end,
                 confidence=1.0,
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="EXPLICIT",
                 evidence=[
-                    "semantic_bindings_scene_uniform_phrase",
+                    "unified_package_scene_uniform_phrase",
                     "exact_final_package_script_text",
                 ],
             ))

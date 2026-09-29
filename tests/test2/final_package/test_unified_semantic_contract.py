@@ -10,6 +10,7 @@ from PIL import Image
 
 from app.choreography import ChoreographyDirector, ChoreographyPlan, ChoreographyPattern
 from app.final_package import FinalPackageLoader
+from tests.support.unified_package import write_unified_package
 from tests.test2.support.storytelling_oracle import StorytellingValidator
 from app.models import (
     AssetActivation,
@@ -36,14 +37,9 @@ from app.text.semantic import KeywordCandidate
 
 def _write_package(tmp_path: Path) -> Path:
     script = "alpha beta gamma"
-    package = tmp_path / "package"
-    (package / "scenes").mkdir(parents=True)
-    Image.new("RGB", (320, 180), "white").save(package / "scenes" / "SCENE_001.png")
-    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
-
     assets = [
         {
-            "scene_id": "SCENE_001", "asset_id": "a", "script_text": "alpha",
+            "asset_id": "a", "script_text": "alpha",
             "script_span": {"global_char_start": 0, "global_char_end": 5},
             "anchor_granularity": "EXACT_WORD", "binding_type": "EXPLICIT",
             "semantic_group_id": "G1", "sequence_order": 1, "confidence": 0.99,
@@ -51,7 +47,7 @@ def _write_package(tmp_path: Path) -> Path:
             "semantic_event_id": "E1", "compound_visual_classification": "SEPARABLE_SAFE",
         },
         {
-            "scene_id": "SCENE_001", "asset_id": "b", "script_text": "beta",
+            "asset_id": "b", "script_text": "beta",
             "script_span": {"global_char_start": 6, "global_char_end": 10},
             "anchor_granularity": "EXACT_WORD", "binding_type": "SEMANTIC",
             "semantic_group_id": "G1", "sequence_order": 2, "confidence": 0.96,
@@ -59,7 +55,7 @@ def _write_package(tmp_path: Path) -> Path:
             "semantic_event_id": "E1", "compound_visual_classification": "SEPARABLE_SAFE",
         },
         {
-            "scene_id": "SCENE_001", "asset_id": "c", "script_text": "gamma",
+            "asset_id": "c", "script_text": "gamma",
             "script_span": {"global_char_start": 11, "global_char_end": 16},
             "anchor_granularity": "EXACT_WORD", "binding_type": "EXPLICIT",
             "semantic_group_id": "G1", "sequence_order": 3, "confidence": 0.99,
@@ -70,74 +66,49 @@ def _write_package(tmp_path: Path) -> Path:
     ]
     events = [
         {
-            "semantic_event_id": "E1", "scene_id": "SCENE_001",
-            "script_text": "alpha beta",
+            "semantic_event_id": "E1", "script_text": "alpha beta",
             "script_span": {"global_char_start": 0, "global_char_end": 10},
             "anchor_granularity": "EXACT_PHRASE", "sequence_order": 1,
             "visual_leader_asset_id": "a", "participant_asset_ids": ["b"],
-            "context_asset_ids": [], "result_asset_ids": [],
-            "text_anchor_asset_id": "a", "confidence": 0.99, "depends_on_event_ids": [],
+            "context_asset_ids": [], "result_asset_ids": [], "text_anchor_asset_id": "a",
+            "confidence": 0.99, "depends_on_event_ids": [],
         },
         {
-            "semantic_event_id": "E2", "scene_id": "SCENE_001",
-            "script_text": "gamma",
+            "semantic_event_id": "E2", "script_text": "gamma",
             "script_span": {"global_char_start": 11, "global_char_end": 16},
             "anchor_granularity": "EXACT_WORD", "sequence_order": 2,
             "visual_leader_asset_id": "c", "participant_asset_ids": [],
-            "context_asset_ids": [], "result_asset_ids": ["c"],
-            "text_anchor_asset_id": "c", "confidence": 0.99, "depends_on_event_ids": ["E1"],
+            "context_asset_ids": [], "result_asset_ids": ["c"], "text_anchor_asset_id": "c",
+            "confidence": 0.99, "depends_on_event_ids": ["E1"],
         },
     ]
     relations = [{
         "relation_id": "R1", "subject_asset_id": "a", "relation_type": "ENABLES",
-        "object_asset_id": "b", "result_asset_id": "c",
-        "script_text": script,
-        "script_span": {"global_char_start": 0, "global_char_end": 16},
-        "confidence": 0.97,
+        "object_asset_id": "b", "result_asset_id": "c", "script_text": script,
+        "script_span": {"global_char_start": 0, "global_char_end": 16}, "confidence": 0.97,
     }]
     scene = {
-        "scene_id": "SCENE_001",
+        "scene_id": "SCENE_001", "order": 0,
+        "script_span": {"text": script, "global_char_start": 0, "global_char_end": 16},
+        "assets": assets,
         "semantic_groups": [{
             "semantic_group_id": "G1", "script_text": script,
-            "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
-            "asset_ids": ["a", "b", "c"],
+            "animation_policy": "SEQUENTIAL_WITHIN_PHRASE", "asset_ids": ["a", "b", "c"],
         }],
-        "assets": assets,
-        "relations": relations,
-        "semantic_events": events,
-        "progression": {"type": "GENERIC_PROGRESS", "event_order": ["E1", "E2"]},
+        "relations": relations, "semantic_events": events,
+        "semantic_progression": {"type": "GENERIC_PROGRESS", "event_order": ["E1", "E2"]},
     }
+    return write_unified_package(
+        tmp_path / "package", script=script, scenes=[scene], package_id="v2-test",
+    )
 
-    (package / "manifest.json").write_text(json.dumps({
-        "project_id": "v12-test", "package_version": "1.2",
-        "scene_plan": "scene_plan.json", "canonical_script": "canonical_script.txt",
-        "semantic_bindings": "semantic_bindings.json",
-    }), encoding="utf-8")
-    (package / "scene_plan.json").write_text(json.dumps({
-        "project_id": "v12-test",
-        "scenes": [{
-            "scene_id": "SCENE_001", "order": 1, "image": "scenes/SCENE_001.png",
-            "script_span": {"global_char_start": 0, "global_char_end": 16, "text": script},
-            "units": [
-                {"unit_id": row["asset_id"], "asset_id": row["asset_id"],
-                 "type": "VISUAL_ASSET_INTENT", "role": row["semantic_role"]}
-                for row in assets
-            ],
-            "semantic_events": events, "relations": relations,
-            "progression": scene["progression"],
-        }],
-    }), encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(json.dumps({
-        "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-        "schema_version": "1.2",
-        "asset_is_semantic_intent_not_cutout": True,
-        "cutout_mapping_cardinality": "ZERO_OR_ONE_OR_MANY",
-        "no_fixed_timing": True,
-        "scenes": [scene],
-        "semantic_events": events,
-    }), encoding="utf-8")
-    return package
 
+
+def _edit_scene(package_path: Path, edit) -> None:
+    path = package_path / "package.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    edit(payload["scenes"][0])
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 def _transcript() -> Transcript:
     return Transcript(
@@ -150,21 +121,22 @@ def _transcript() -> Transcript:
     )
 
 
-def test_v12_loader_accepts_semantic_events_global_spans_relation_type_and_compound(tmp_path: Path) -> None:
+def test_v2_loader_accepts_semantic_events_global_spans_relation_type_and_compound(tmp_path: Path) -> None:
     model = FinalPackageLoader().load(_write_package(tmp_path), tmp_path / "work")
     scene = model.scenes[0]
-    binding = model.semantic_bindings["scenes"][0]
+    assert model.contract_name == "HEXA_UNIFIED_FINAL_PACKAGE"
+    assert model.contract_version == "2.0"
+    assert model.has_authoritative_semantics is True
+    assert [row.semantic_event_id for row in scene.semantic_events] == ["E1", "E2"]
+    assert scene.semantic_progression is not None
+    assert scene.semantic_progression.event_order == ("E1", "E2")
+    assert scene.relations[0].relation_type == "ENABLES"
+    compound = next(row for row in scene.assets if row.asset_id == "c")
+    assert str(compound.compound_visual_classification) == "COMPOUND_REQUIRED"
+    assert compound.internal_progression_unavailable is True
 
-    assert model.manifest["package_version"] == "1.2"
-    assert [row["semantic_event_id"] for row in scene.semantic_events] == ["E1", "E2"]
-    assert scene.semantic_progression["event_order"] == ["E1", "E2"]
-    assert binding["relations"][0]["relation_type"] == "ENABLES"
-    compound = next(row for row in binding["assets"] if row["asset_id"] == "c")
-    assert compound["compound_visual_classification"] == "COMPOUND_REQUIRED"
-    assert compound["internal_progression_unavailable"] is True
 
-
-def test_v12_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: Path) -> None:
+def test_v2_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: Path) -> None:
     package = FinalPackageLoader().load(_write_package(tmp_path), tmp_path / "work")
     scene = package.scenes[0]
     assets = [
@@ -267,11 +239,11 @@ def test_v12_spoken_word_to_event_to_icon_to_relation_to_result_chain(tmp_path: 
     assert coverage.missing_semantic_events == ()
 
 
-def test_v12_compound_required_multi_cutout_unit_never_internal_staggers() -> None:
+def test_v2_compound_required_multi_cutout_unit_never_internal_staggers() -> None:
     activations = [
         AssetActivation(
             asset_id=asset_id, semantic_unit_id="compound", semantic_group_id="g",
-            sequence_order=1, source="final_package_semantic_binding", policy="EXPLICIT",
+            sequence_order=1, source="unified_final_package", policy="EXPLICIT",
             trigger_char_start=0, trigger_char_end=5, spoken_start=0.1, spoken_end=0.8,
             compound_visual_classification="COMPOUND_REQUIRED",
             internal_progression_unavailable=True,
@@ -297,7 +269,7 @@ def test_v12_compound_required_multi_cutout_unit_never_internal_staggers() -> No
     assert all(not cue.params["motion_order"]["stagger_applied"] for cue in cues)
 
 
-def test_v12_text_anchor_metadata_beats_beat_primary_when_spans_tie() -> None:
+def test_v2_text_anchor_metadata_beats_beat_primary_when_spans_tie() -> None:
     beat = StoryBeat(
         id="b", scene_id="s", start=0, end=1, narration="alpha", action="INTRODUCE",
         primary_asset_ids=["visual-primary"],
@@ -321,18 +293,18 @@ def test_v12_text_anchor_metadata_beats_beat_primary_when_spans_tie() -> None:
     ) == "text-anchor"
 
 
-def test_v12_event_leader_wins_same_time_attention_over_context() -> None:
+def test_v2_event_leader_wins_same_time_attention_over_context() -> None:
     rows = [
         AssetActivation(
             asset_id="context", semantic_unit_id="ctx", semantic_group_id="g",
-            sequence_order=1, source="final_package_semantic_binding", policy="SEMANTIC",
+            sequence_order=1, source="unified_final_package", policy="SEMANTIC",
             spoken_start=0.1, spoken_end=0.8, trigger_char_start=0, trigger_char_end=5,
             semantic_event_id="E1", semantic_event_order=1,
             semantic_event_roles=["CONTEXT"], visual_focus="SUPPORT",
         ),
         AssetActivation(
             asset_id="leader", semantic_unit_id="leader", semantic_group_id="g",
-            sequence_order=1, source="final_package_semantic_binding", policy="EXPLICIT",
+            sequence_order=1, source="unified_final_package", policy="EXPLICIT",
             spoken_start=0.1, spoken_end=0.8, trigger_char_start=0, trigger_char_end=5,
             semantic_event_id="E1", semantic_event_order=1,
             semantic_event_roles=["LEADER", "TEXT_ANCHOR"], visual_focus="PRIMARY",
@@ -361,8 +333,8 @@ def test_v12_event_leader_wins_same_time_attention_over_context() -> None:
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
-def test_v12_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) -> None:
-    """Prove the rich V1.2 contract survives through a real encoded MP4.
+def test_v2_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) -> None:
+    """Prove the rich Unified Final Package 2.0 contract survives through a real encoded MP4.
 
     This is intentionally broader than the metadata contract test above:
     FinalPackageLoader -> Story -> Choreography -> Motion segments -> FFmpeg ->
@@ -388,7 +360,7 @@ def test_v12_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) 
             scene_id=scene.id,
             role="support",
             image_path=path,
-            extraction_method="v12-render-contract",
+            extraction_method="v2-render-contract",
             source_area_ratio=0.30 - index * 0.05,
         ))
         items.append(LayoutItem(
@@ -420,7 +392,7 @@ def test_v12_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) 
         motion=motion,
         assets=assets,
     )
-    output = tmp_path / "v12-semantic-motion.mp4"
+    output = tmp_path / "v2-semantic-motion.mp4"
     FFmpegRenderer("ffmpeg").render(plan, output)
 
     assert output.is_file() and output.stat().st_size > 0
@@ -430,17 +402,13 @@ def test_v12_semantic_package_reaches_encoded_motion_end_to_end(tmp_path: Path) 
 
 
 
-def test_v12_relation_without_own_span_inherits_authored_asset_envelope(tmp_path: Path) -> None:
+def test_v2_relation_without_own_span_inherits_authored_asset_envelope(tmp_path: Path) -> None:
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        scenes = payload["scenes"]
-        for scene in scenes:
-            for relation in scene.get("relations", []):
-                relation.pop("script_span", None)
-                relation.pop("script_text", None)
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    def edit(scene):
+        for relation in scene["relations"]:
+            relation["script_span"] = {"text": None, "global_char_start": None, "global_char_end": None}
+            relation["script_text"] = None
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(package_path, tmp_path / "work-spanless-relation")
     scene = package.scenes[0]
@@ -498,26 +466,19 @@ def test_v12_relation_without_own_span_inherits_authored_asset_envelope(tmp_path
 
 
 
-def test_v12_relation_authority_completes_gray_hat_style_motion_contract(tmp_path: Path) -> None:
+def test_v2_relation_authority_completes_gray_hat_style_motion_contract(tmp_path: Path) -> None:
     """Production regression for diagnostic 10f16ca6 relation-completeness class."""
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        scenes = payload["scenes"]
-        for scene in scenes:
-            relation = scene["relations"][0]
-            relation["relation_type"] = "DISCOVERS"
-            relation.pop("script_span", None)
-            relation.pop("script_text", None)
-            for event in scene.get("semantic_events", []):
-                if event["semantic_event_id"] == "E2":
-                    event["result_asset_ids"] = []
-        if filename == "semantic_bindings.json":
-            for event in payload.get("semantic_events", []):
-                if event["semantic_event_id"] == "E2":
-                    event["result_asset_ids"] = []
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    def edit(scene):
+        relation = scene["relations"][0]
+        relation["relation_type"] = "DISCOVERS"
+        relation["relationship"] = "DISCOVERS"
+        relation["script_span"] = {"text": None, "global_char_start": None, "global_char_end": None}
+        relation["script_text"] = None
+        for event in scene["semantic_events"]:
+            if event["semantic_event_id"] == "E2":
+                event["result_asset_ids"] = []
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(
         package_path,
@@ -565,25 +526,19 @@ def test_v12_relation_authority_completes_gray_hat_style_motion_contract(tmp_pat
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
-def test_v12_gray_hat_relation_contract_reaches_encoded_qa(tmp_path: Path) -> None:
+def test_v2_gray_hat_relation_contract_reaches_encoded_qa(tmp_path: Path) -> None:
     """Encode the 10f16ca6 failure class; metadata-only success is insufficient."""
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        for scene_row in payload["scenes"]:
-            relation = scene_row["relations"][0]
-            relation["relation_type"] = "DISCOVERS"
-            relation.pop("script_span", None)
-            relation.pop("script_text", None)
-            for event in scene_row.get("semantic_events", []):
-                if event["semantic_event_id"] == "E2":
-                    event["result_asset_ids"] = []
-        if filename == "semantic_bindings.json":
-            for event in payload.get("semantic_events", []):
-                if event["semantic_event_id"] == "E2":
-                    event["result_asset_ids"] = []
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    def edit(scene):
+        relation = scene["relations"][0]
+        relation["relation_type"] = "DISCOVERS"
+        relation["relationship"] = "DISCOVERS"
+        relation["script_span"] = {"text": None, "global_char_start": None, "global_char_end": None}
+        relation["script_text"] = None
+        for event in scene["semantic_events"]:
+            if event["semantic_event_id"] == "E2":
+                event["result_asset_ids"] = []
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(package_path, tmp_path / "work-gray-encoded")
     scene = package.scenes[0]
@@ -651,17 +606,15 @@ def test_v12_gray_hat_relation_contract_reaches_encoded_qa(tmp_path: Path) -> No
 
 
 
-def test_v12_relation_without_explicit_result_does_not_borrow_event_result(tmp_path: Path) -> None:
+def test_v2_relation_without_explicit_result_does_not_borrow_event_result(tmp_path: Path) -> None:
     """Relation and semantic-event result are independent Final Package authorities."""
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        scene = payload["scenes"][0]
+    def edit(scene):
         relation = scene["relations"][0]
-        relation.pop("result_asset_id", None)
+        relation["result_asset_id"] = None
         relation["relation_type"] = "CONTRASTS_WITH"
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        relation["relationship"] = "CONTRASTS_WITH"
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(package_path, tmp_path / "work-no-relation-result")
     scene = package.scenes[0]
@@ -710,25 +663,20 @@ def test_v12_relation_without_explicit_result_does_not_borrow_event_result(tmp_p
     )
 
 
-def test_v12_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_path: Path) -> None:
+def test_v2_compound_child_event_reuses_parent_cutout_without_new_asset(tmp_path: Path) -> None:
     """Unextracted authored child events refocus their explicit compound parent."""
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        scenes = payload["scenes"]
-        for scene in scenes:
-            for asset in scene.get("assets", []):
-                if asset.get("asset_id") == "b":
-                    asset["binding_type"] = "PARENT"
-                    asset["children_asset_ids"] = ["c"]
-                if asset.get("asset_id") == "c":
-                    asset["binding_type"] = "SUPPORT"
-                    asset["parent_asset_id"] = "b"
-                    asset["visual_locator"] = None
-            # Keep E2 fully authored but make c unavailable as an independent cutout.
-            scene["relations"] = []
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    def edit(scene):
+        for asset in scene["objects"]:
+            if asset["asset_id"] == "b":
+                asset["binding_type"] = "PARENT"
+                asset["children_asset_ids"] = ["c"]
+            if asset["asset_id"] == "c":
+                asset["binding_type"] = "SUPPORT"
+                asset["parent_asset_id"] = "b"
+                asset["visual_locator"] = {"coordinate_space": None, "cx": None, "cy": None, "width": None, "height": None}
+        scene["relations"] = []
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(package_path, tmp_path / "work-compound-proxy")
     scene = package.scenes[0]
@@ -821,22 +769,16 @@ def test_historical_relation_and_handoff_failures_remain_strictly_rejected(
 ) -> None:
     """Lock historical Gray/Black semantic-motion failure classes as regressions."""
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        for scene_row in payload["scenes"]:
-            relation = scene_row["relations"][0]
-            relation["relation_type"] = "DISCOVERS"
-            relation.pop("script_span", None)
-            relation.pop("script_text", None)
-            for event in scene_row.get("semantic_events", []):
-                if event["semantic_event_id"] == "E2":
-                    event["result_asset_ids"] = []
-        if filename == "semantic_bindings.json":
-            for event in payload.get("semantic_events", []):
-                if event["semantic_event_id"] == "E2":
-                    event["result_asset_ids"] = []
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    def edit(scene):
+        relation = scene["relations"][0]
+        relation["relation_type"] = "DISCOVERS"
+        relation["relationship"] = "DISCOVERS"
+        relation["script_span"] = {"text": None, "global_char_start": None, "global_char_end": None}
+        relation["script_text"] = None
+        for event in scene["semantic_events"]:
+            if event["semantic_event_id"] == "E2":
+                event["result_asset_ids"] = []
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(package_path, tmp_path / "work-historical-failures")
     scene = package.scenes[0]
@@ -946,7 +888,7 @@ def test_event_dependency_anchor_prefers_leader_over_late_support() -> None:
         asset_id="leader",
         semantic_unit_id="leader-unit",
         confidence=0.99,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXACT",
         semantic_event_id="E1",
         semantic_event_order=1,
@@ -959,7 +901,7 @@ def test_event_dependency_anchor_prefers_leader_over_late_support() -> None:
         asset_id="support",
         semantic_unit_id="support-unit",
         confidence=0.95,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXACT",
         semantic_event_id="E1",
         semantic_event_order=1,
@@ -976,28 +918,17 @@ def test_event_dependency_anchor_prefers_leader_over_late_support() -> None:
     assert anchors["E1"] == pytest.approx(0.40)
 
 
-def test_v12_group_event_proxy_preserves_unresolved_authored_event_without_new_asset(tmp_path: Path) -> None:
+def test_v2_group_event_proxy_preserves_unresolved_authored_event_without_new_asset(tmp_path: Path) -> None:
     """An unresolved semantic-group member keeps its authored event via one real carrier."""
     package_path = _write_package(tmp_path)
-    for filename in ("scene_plan.json", "semantic_bindings.json"):
-        path = package_path / filename
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        scene = payload["scenes"][0]
-        # Make c an authored later event in the same semantic group, but remove all
-        # direct identity evidence so no independent cutout can be resolved.
-        for asset in scene.get("assets", []):
-            if asset.get("asset_id") == "c":
+    def edit(scene):
+        for asset in scene["objects"]:
+            if asset["asset_id"] == "c":
                 asset["parent_asset_id"] = None
-                asset["visual_locator"] = None
+                asset["visual_locator"] = {"coordinate_space": None, "cx": None, "cy": None, "width": None, "height": None}
                 asset["semantic_group_id"] = "G1"
                 asset["sequence_order"] = 3
-        scene.setdefault("semantic_groups", [{
-            "semantic_group_id": "G1",
-            "script_text": "alpha beta gamma",
-            "animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
-            "asset_ids": ["a", "b", "c"],
-        }])
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    _edit_scene(package_path, edit)
 
     package = FinalPackageLoader().load(
         package_path,

@@ -257,7 +257,7 @@ def test_qa_rejects_missing_actual_evidence_and_invalid_timing(damage):
 
 def test_final_package_binding_motion_runs_from_phrase_start_to_phrase_end():
     row = activation(reveal=5.0, spoken=5.0, settle=5.7).model_copy(
-        update={"source": "final_package_semantic_binding"}
+        update={"source": "unified_final_package"}
     )
     beat, cues = plan(row)
     cue = cues[0]

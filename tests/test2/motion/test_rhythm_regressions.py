@@ -93,7 +93,7 @@ def _activation(
         spoken_start=reveal,
         spoken_end=settle,
         confidence=0.99,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         binding_type="EXPLICIT",
         semantic_event_id=event_id,

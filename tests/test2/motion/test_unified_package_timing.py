@@ -4,26 +4,43 @@ from pathlib import Path
 from app.final_package import FinalPackageLoader
 from app.models import Transcript, TranscriptWord, VisualAsset
 from app.story.planner import StoryPlanner
+from tests.support.unified_package import write_unified_package
 
 
-def test_scene_plan_drives_scene_ids_and_narration_timing(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    (package / "scenes").mkdir(parents=True)
-    from PIL import Image
-    Image.new("RGB", (320, 180), "white").save(package / "scenes" / "SCENE_001.png")
-    Image.new("RGB", (320, 180), "white").save(package / "scenes" / "SCENE_002.png")
+def test_unified_package_drives_scene_ids_and_narration_timing(tmp_path: Path) -> None:
     script = "alpha beta gamma delta"
-    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
-    (package / "manifest.json").write_text(
-        '{"project_id":"p","scene_plan":"scene_plan.json","canonical_script":"canonical_script.txt"}',
-        encoding="utf-8",
-    )
-    (package / "scene_plan.json").write_text(
-        '''{"project_id":"p","scenes":[
-          {"scene_id":"SCENE_001","order":1,"image":"scenes/SCENE_001.png","script_span":{"global_char_start":0,"global_char_end":9,"text":"alpha beta"},"visual_progression":[{"action":"EXPLAIN","trigger":{"global_char_start":0,"global_char_end":9},"targets":["U1"]}]},
-          {"scene_id":"SCENE_002","order":2,"image":"scenes/SCENE_002.png","script_span":{"global_char_start":11,"global_char_end":21,"text":"gamma delta"},"visual_progression":[{"action":"EXPLAIN","trigger":{"global_char_start":11,"global_char_end":21},"targets":["U2"]}]}
-        ]}''',
-        encoding="utf-8",
+    package = write_unified_package(
+        tmp_path / "package", script=script, package_id="timing-v2",
+        scenes=[
+            {
+                "scene_id": "SCENE_001", "order": 0,
+                "script_span": {"text": "alpha beta", "global_char_start": 0, "global_char_end": 10},
+                "assets": [{
+                    "asset_id": "a1", "script_text": "alpha beta",
+                    "script_span": {"text": "alpha beta", "global_char_start": 0, "global_char_end": 10},
+                    "appear_trigger": {"text": "alpha beta", "global_char_start": 0, "global_char_end": 10},
+                    "binding_type": "EXPLICIT", "visual_focus": "PRIMARY",
+                }],
+                "visual_progression": [{
+                    "action": "EXPLAIN", "targets": ["a1"],
+                    "trigger": {"text": "alpha beta", "global_char_start": 0, "global_char_end": 10},
+                }],
+            },
+            {
+                "scene_id": "SCENE_002", "order": 1,
+                "script_span": {"text": "gamma delta", "global_char_start": 11, "global_char_end": 22},
+                "assets": [{
+                    "asset_id": "a2", "script_text": "gamma delta",
+                    "script_span": {"text": "gamma delta", "global_char_start": 11, "global_char_end": 22},
+                    "appear_trigger": {"text": "gamma delta", "global_char_start": 11, "global_char_end": 22},
+                    "binding_type": "EXPLICIT", "visual_focus": "PRIMARY",
+                }],
+                "visual_progression": [{
+                    "action": "EXPLAIN", "targets": ["a2"],
+                    "trigger": {"text": "gamma delta", "global_char_start": 11, "global_char_end": 22},
+                }],
+            },
+        ],
     )
     model = FinalPackageLoader().load(package, tmp_path / "work")
     assert [scene.id for scene in model.scenes] == ["SCENE_001", "SCENE_002"]
@@ -36,8 +53,8 @@ def test_scene_plan_drives_scene_ids_and_narration_timing(tmp_path: Path) -> Non
     ]
     transcript = Transcript(language="en", duration=2.5, segments=[], words=words)
     assets = [
-        VisualAsset(id="a1", scene_id="SCENE_001", role="primary", image_path=package / "scenes" / "SCENE_001.png", extraction_method="test", source_area_ratio=0.4),
-        VisualAsset(id="a2", scene_id="SCENE_002", role="primary", image_path=package / "scenes" / "SCENE_002.png", extraction_method="test", source_area_ratio=0.4),
+        VisualAsset(id="a1", scene_id="SCENE_001", role="primary", image_path=package / "images" / "SCENE_001.png", extraction_method="test", source_area_ratio=0.4),
+        VisualAsset(id="a2", scene_id="SCENE_002", role="primary", image_path=package / "images" / "SCENE_002.png", extraction_method="test", source_area_ratio=0.4),
     ]
     beats = StoryPlanner().plan(model, transcript, assets)
     assert len(beats) == 2

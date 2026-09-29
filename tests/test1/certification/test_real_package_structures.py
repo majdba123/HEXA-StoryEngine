@@ -5,14 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from app.canonical import CanonicalNormalizer
 from app.final_package import FinalPackageLoader
 
 _EXPECTED = {
-    "HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip": (40, 129, 55),
-    "HEXA_WHITE_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip": (35, 145, 51),
-    "HEXA_GRAY_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip": (35, 135, 75),
-    "HEXA_SCRIPT_KIDDIE_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip": (35, 80, 80),
+    "HEXA_BLACK_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": (40, 129, 55),
+    "HEXA_WHITE_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": (35, 145, 51),
+    "HEXA_GRAY_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": (35, 135, 75),
+    "HEXA_SCRIPT_KIDDIE_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": (35, 80, 80),
 }
 
 
@@ -27,5 +26,5 @@ def test_real_corrected_package_corpus(tmp_path: Path, filename: str, expected: 
     if not source.is_file():
         pytest.fail(f"missing certified Final Package fixture: {source}")
     raw = FinalPackageLoader().load(source, tmp_path / filename.removesuffix(".zip"))
-    canonical = CanonicalNormalizer().normalize(raw)
+    canonical = raw
     assert (len(canonical.scenes), len(canonical.asset_by_id), len(canonical.event_by_id)) == expected

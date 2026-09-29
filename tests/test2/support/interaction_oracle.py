@@ -406,7 +406,7 @@ class MotionInteractionContract:
     ) -> MotionSegment | None:
         """Find a result payoff in the relation event or its authored dependent event.
 
-        Final Package V1.2 may model cause and result as separate semantic events:
+        Unified Final Package 2.0 may model cause and result as separate semantic events:
         E1 interaction -> E2 result, where E2 depends on E1. In that case the PAYOFF
         correctly belongs to E2 and does not need to duplicate E1 source/target fields.
         """

@@ -17,7 +17,7 @@ def event(event_id: str, target: str, text: str, start: int, end: int, order: in
 
 def package(assets, events, script: str) -> CanonicalPackage:
     scene = CanonicalScene(id='SCENE_001', image_path=Path('scene.png'), order=0, script_char_start=0, script_char_end=len(script) - 1, units=tuple(assets), semantic_events=tuple(events))
-    return CanonicalPackage(root=Path('.'), package_id='event-carrier-regression', script=script, scenes=(scene,), semantic_bindings_present=True)
+    return CanonicalPackage(root=Path('.'), package_id='event-carrier-regression', script=script, scenes=(scene,), has_authoritative_semantics=True)
 
 def transcript(script: str) -> Transcript:
     words = []
@@ -106,7 +106,7 @@ def test_existing_event_representation_is_not_duplicated():
     pkg = package((sem,), (ev,), script)
     tr = transcript(script)
     rt = visual('runtime', (300, 300, 160, 160))
-    trusted = StoryAssetActivation(asset_id='runtime', semantic_unit_id='intent', trigger_text='alpha', trigger_char_start=0, trigger_char_end=5, spoken_start=0.1, spoken_end=0.3, confidence=1.0, source='final_package_semantic_binding', policy='EXPLICIT', activation_policy='OWN_WINDOW', phrase_start=0.1, phrase_end=0.3, reveal_start=0.1, semantic_peak=0.2, settle_at=0.3, semantic_event_id='E1')
+    trusted = StoryAssetActivation(asset_id='runtime', semantic_unit_id='intent', trigger_text='alpha', trigger_char_start=0, trigger_char_end=5, spoken_start=0.1, spoken_end=0.3, confidence=1.0, source='unified_final_package', policy='EXPLICIT', activation_policy='OWN_WINDOW', phrase_start=0.1, phrase_end=0.3, reveal_start=0.1, semantic_peak=0.2, settle_at=0.3, semantic_event_id='E1')
     assert proxies(pkg, tr, [rt], windows=[trusted]) == []
 
 @pytest.mark.parametrize('bbox,expected', [((431, 431, 138, 138), False), ((430, 430, 140, 140), True), ((400, 400, 180, 180), True), ((350, 350, 240, 240), True), ((300, 300, 400, 400), True)])

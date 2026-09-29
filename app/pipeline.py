@@ -14,7 +14,7 @@ from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import Settings
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter, FinalMediaVerifier
-from app.canonical import CanonicalNormalizer, CanonicalPackage
+from app.canonical import CanonicalPackage
 from app.final_package import FinalPackageLoader
 from app.models import Stage
 from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
@@ -42,7 +42,6 @@ class StoryEnginePipeline:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings.from_env()
         self.loader = FinalPackageLoader()
-        self.canonicalizer = CanonicalNormalizer()
         alignment_models: dict[str, str] = {}
         if self.settings.alignment_ar_model:
             alignment_models["ar"] = self.settings.alignment_ar_model
@@ -103,7 +102,6 @@ class StoryEnginePipeline:
         *,
         package_path: Path,
         audio_path: Path,
-        script_path: Path | None = None,
         output_name: str | None = None,
         job_id: str | None = None,
         progress: ProgressCallback | None = None,
@@ -126,8 +124,7 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.05, "Reading Final Package")
-        raw_package = self.loader.load(package_path, workspace, script_path)
-        package = self.canonicalizer.normalize(raw_package)
+        package = self.loader.load(package_path, workspace)
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.08, "Checking timing dependencies")

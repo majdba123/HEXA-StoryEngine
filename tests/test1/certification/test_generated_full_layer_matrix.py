@@ -4,7 +4,6 @@ from math import isfinite
 
 import pytest
 
-from app.canonical import CanonicalNormalizer
 from app.choreography import ChoreographyDirector
 from app.composition import CompositionPlanner
 from app.shared.handoff import LayerHandoffValidator
@@ -25,7 +24,7 @@ from tests.test1.factory import (
 def _plan(tmp_path, shape: DiskPackageShape):
     source = write_valid_package(tmp_path / "source", shape)
     raw = FinalPackageLoader().load(source, tmp_path / "work")
-    canonical = CanonicalNormalizer().normalize(raw)
+    canonical = raw
     transcript = deterministic_transcript(canonical)
     assets = controlled_visual_assets(canonical)
     contracts = LayerHandoffValidator()

@@ -1,10 +1,11 @@
+from tests.support.canonical_package import canonical_package
 from pathlib import Path
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from PIL import Image, ImageDraw
 
 from app.cutout import CutoutService
-from app.models import PackageModel, SceneSource
+from app.models import SceneSource
 from app.vision.service import VisionService
 
 
@@ -19,12 +20,11 @@ def test_scene_image_discovers_and_extracts_individual_visuals(tmp_path: Path, m
     draw.ellipse((410, 95, 560, 245), fill=(220, 50, 50))
     image.save(source)
 
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="pkg-test",
         scenes=[SceneSource(id="scene-001", image_path=source, order=0)],
         script="test",
-        manifest={},
     )
 
     detections = VisionService().analyze(package)
@@ -49,7 +49,7 @@ def test_strict_separation_keeps_standalone_arrow_independent(tmp_path: Path, mo
     draw.rounded_rectangle((620, 110, 860, 420), radius=40, fill=(70, 70, 70))
     draw.polygon([(360, 220), (500, 220), (500, 170), (590, 250), (500, 330), (500, 280), (360, 280)], fill=(0, 120, 255))
     image.save(source)
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="pkg-arrow",
         scenes=[SceneSource(id="scene-001", image_path=source, order=0)],
@@ -70,7 +70,7 @@ def test_compound_outline_keeps_enclosed_content_together(tmp_path: Path, monkey
     draw.rounded_rectangle((190, 170, 390, 300), radius=30, fill=(150, 70, 20))
     draw.ellipse((540, 80, 740, 420), fill=(20, 80, 180))
     image.save(source)
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="pkg-bubble",
         scenes=[SceneSource(id="scene-001", image_path=source, order=0)],

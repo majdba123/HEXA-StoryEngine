@@ -1,4 +1,6 @@
 from __future__ import annotations
+from app.canonical import CanonicalPackage
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from pathlib import Path
@@ -14,7 +16,6 @@ from app.models import (
     AssetActivation,
     CompositionBeat,
     LayoutItem,
-    PackageModel,
     SceneSource,
     StoryBeat,
     StoryEntity,
@@ -64,8 +65,8 @@ def _beat(
     )
 
 
-def _package(asset_ids: list[str]) -> PackageModel:
-    return PackageModel(
+def _package(asset_ids: list[str]) -> CanonicalPackage:
+    return canonical_package(
         root=Path("/tmp"),
         package_id="p",
         script="semantic visual story",
@@ -101,7 +102,7 @@ def _activation(
         spoken_start=0.8,
         spoken_end=1.5,
         confidence=0.99,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         semantic_group_id="g",
         sequence_order=order,

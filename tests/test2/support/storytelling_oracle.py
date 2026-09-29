@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from app.canonical import CanonicalPackage
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.choreography import ChoreographyPlan, HookKind
 from app.canonical import ensure_canonical_package
-from app.models import CompositionBeat, MotionCue, PackageModel, StoryBeat, TextMotionCue, TextPlan
+from app.models import CompositionBeat, MotionCue, StoryBeat, TextMotionCue, TextPlan
 from app.shared.errors import StageFailedError
 
 
@@ -120,7 +121,7 @@ class StorytellingValidator:
     def inspect(
         cls,
         *,
-        package: PackageModel,
+        package: CanonicalPackage,
         story: list[StoryBeat],
         choreography: ChoreographyPlan,
         composition: list[CompositionBeat],

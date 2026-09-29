@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 from pathlib import Path
@@ -7,7 +8,6 @@ from PIL import Image, ImageDraw
 
 from app.canonical import CanonicalAsset, CanonicalScene, CanonicalVisualLocator
 from app.models import (
-    PackageModel,
     SceneSource,
     StoryBeat,
     Transcript,
@@ -160,13 +160,12 @@ def test_activation_uses_locator_identity_before_heuristic_semantic_map(tmp_path
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="identity",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "s",
                 "semantic_groups": [{
@@ -244,13 +243,12 @@ def test_ambiguous_locator_disables_single_group_support_guessing(tmp_path: Path
         script_char_end=len(script) - 1,
         units=[{"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"}],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="ambiguous",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "s",
                 "semantic_groups": [{
@@ -384,13 +382,12 @@ def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: 
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
         ],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="locator-reservation",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "s",
                 "semantic_groups": [{
@@ -450,7 +447,7 @@ def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: 
     own = [
         row
         for row in result.asset_activations
-        if row.source == "final_package_semantic_binding"
+        if row.source == "unified_final_package"
         and row.policy in {"EXPLICIT", "SEMANTIC"}
     ]
     assert len(own) == 1
@@ -538,13 +535,12 @@ def test_multi_cutout_locator_creates_multiple_asset_activations_for_one_intent(
             "role": "OBJECT",
         }],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="multi-locator",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "cutout_mapping_cardinality": "ZERO_OR_ONE_OR_MANY",
             "scenes": [{
                 "scene_id": "s",
@@ -594,7 +590,7 @@ def test_multi_cutout_locator_creates_multiple_asset_activations_for_one_intent(
     result = SemanticActivationPlanner().enrich(package, transcript, assets, [beat])[0]
     own = [
         row for row in result.asset_activations
-        if row.source == "final_package_semantic_binding"
+        if row.source == "unified_final_package"
         and row.semantic_unit_id == "cards"
     ]
 

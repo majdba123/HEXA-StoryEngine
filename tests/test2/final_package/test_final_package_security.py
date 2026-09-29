@@ -1,253 +1,155 @@
+from __future__ import annotations
+
+import json
 from pathlib import Path
-# Owner-scoped Test2 coverage; historical regression content is preserved.
 from zipfile import ZipFile
 
 import pytest
 
 from app.final_package import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
+from tests.support.unified_package import write_unified_package
+
+
+def _package(tmp_path: Path, *, script: str = "alpha beta") -> Path:
+    return write_unified_package(
+        tmp_path / "package",
+        script=script,
+        package_id="security-v2",
+        scenes=[{
+            "scene_id": "SCENE_001",
+            "order": 0,
+            "script_span": {"text": script, "global_char_start": 0, "global_char_end": len(script)},
+            "assets": [
+                {
+                    "asset_id": "a", "script_text": "alpha",
+                    "script_span": {"text": "alpha", "global_char_start": 0, "global_char_end": 5},
+                    "appear_trigger": {"text": "alpha", "global_char_start": 0, "global_char_end": 5},
+                    "binding_type": "EXPLICIT", "semantic_group_id": "g", "sequence_order": 1,
+                    "semantic_event_id": "E1", "visual_focus": "PRIMARY",
+                    "visual_locator": {"coordinate_space": "normalized_scene", "cx": 0.3, "cy": 0.5, "width": 0.2, "height": 0.2},
+                },
+                {
+                    "asset_id": "b", "script_text": "beta",
+                    "script_span": {"text": "beta", "global_char_start": 6, "global_char_end": 10},
+                    "appear_trigger": {"text": "beta", "global_char_start": 6, "global_char_end": 10},
+                    "binding_type": "SEMANTIC", "semantic_group_id": "g", "sequence_order": 2,
+                    "semantic_event_id": "E2", "visual_focus": "RESULT",
+                    "visual_locator": {"coordinate_space": "normalized_scene", "cx": 0.7, "cy": 0.5, "width": 0.2, "height": 0.2},
+                },
+            ],
+            "semantic_groups": [{"semantic_group_id": "g", "script_text": script, "asset_ids": ["a", "b"]}],
+            "semantic_events": [
+                {"semantic_event_id": "E1", "script_text": "alpha", "script_span": {"text": "alpha", "global_char_start": 0, "global_char_end": 5}, "visual_leader_asset_id": "a", "text_anchor_asset_id": "a", "sequence_order": 1},
+                {"semantic_event_id": "E2", "script_text": "beta", "script_span": {"text": "beta", "global_char_start": 6, "global_char_end": 10}, "visual_leader_asset_id": "b", "result_asset_ids": ["b"], "text_anchor_asset_id": "b", "sequence_order": 2, "depends_on_event_ids": ["E1"]},
+            ],
+            "relations": [{"relation_id": "R1", "subject_asset_id": "a", "relation_type": "ENABLES", "object_asset_id": "b"}],
+            "semantic_progression": {"type": "GENERIC_PROGRESS", "event_order": ["E1", "E2"]},
+        }],
+    )
+
+
+def _load_json(package: Path) -> dict:
+    return json.loads((package / "package.json").read_text(encoding="utf-8"))
+
+
+def _save_json(package: Path, payload: dict) -> None:
+    (package / "package.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def test_rejects_zip_path_traversal(tmp_path: Path) -> None:
     archive = tmp_path / "bad.zip"
     with ZipFile(archive, "w") as handle:
         handle.writestr("../escape.png", b"bad")
-
     with pytest.raises(InvalidPackageError, match="unsafe path"):
         FinalPackageLoader().load(archive, tmp_path / "work")
 
 
-def test_rejects_manifest_scene_outside_package(tmp_path: Path) -> None:
-    package = tmp_path / "package"
+def test_rejects_scene_image_outside_package(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["image"] = "../outside.png"
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="path escapes Final Package"):
+        FinalPackageLoader().load(package, tmp_path / "work")
+
+
+def test_canonical_script_is_inline_authority(tmp_path: Path) -> None:
+    package = _package(tmp_path, script="alpha beta")
+    loaded = FinalPackageLoader().load(package, tmp_path / "work")
+    assert loaded.script == "alpha beta"
+    assert loaded.has_authoritative_semantics is True
+    assert loaded.contract_name == "HEXA_UNIFIED_FINAL_PACKAGE"
+    assert loaded.contract_version == "2.0"
+
+
+def test_legacy_1x_package_is_rejected(tmp_path: Path) -> None:
+    package = tmp_path / "legacy"
     package.mkdir()
-    outside = tmp_path / "outside.png"
-    outside.write_bytes(b"x")
-    (package / "manifest.json").write_text(
-        '{"scenes":[{"id":"bad","image":"../outside.png"}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="escapes Final Package"):
+    (package / "manifest.json").write_text('{"package_version":"1.2"}', encoding="utf-8")
+    with pytest.raises(InvalidPackageError, match="legacy 1.x packages are unsupported"):
         FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_loads_canonical_script_declared_by_final_package(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("نص الاختبار", encoding="utf-8")
-    (package / "manifest.json").write_text(
-        '{"canonical_script":"canonical_script.txt"}',
-        encoding="utf-8",
-    )
-
-    loaded = FinalPackageLoader().load(package, tmp_path / "work")
-
-    assert loaded.script == "نص الاختبار"
-
-
-def test_loads_and_validates_optional_semantic_bindings(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("hello world", encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_SEMANTIC_BINDINGS","scenes":[{"scene_id":"SCENE_001",'
-        '"assets":[{"scene_id":"SCENE_001","asset_id":"icon","script_text":"hello world",'
-        '"parent_asset_id":null}]}]}',
-        encoding="utf-8",
-    )
-
-    loaded = FinalPackageLoader().load(package, tmp_path / "work")
-
-    assert loaded.semantic_bindings["schema_name"] == "HEXA_SEMANTIC_BINDINGS"
-    assert loaded.semantic_bindings["scenes"][0]["assets"][0]["asset_id"] == "icon"
-
-
-def test_rejects_broken_semantic_binding_parent(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_SEMANTIC_BINDINGS","scenes":[{"scene_id":"SCENE_001",'
-        '"assets":[{"asset_id":"child","script_text":"hello","parent_asset_id":"missing"}]}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="parent is missing"):
+def test_parent_reference_must_exist(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["objects"][0]["parent_asset_id"] = "missing"
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="object parent is missing"):
         FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_loads_asset_level_semantic_bindings_contract(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
-    (package / "scene_plan.json").write_text(
-        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
-        '"image":"scenes/SCENE_001.png","script_span":'
-        '{"global_char_start":0,"global_char_end":10,"text":"alpha beta"},'
-        '"units":[{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT"},'
-        '{"unit_id":"intent-b","type":"VISUAL_ASSET_INTENT"}]}]}',
-        encoding="utf-8",
-    )
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",'
-        '"asset_is_semantic_intent_not_cutout":true,"no_fixed_timing":true,'
-        '"scenes":[{"scene_id":"SCENE_001","semantic_groups":['
-        '{"semantic_group_id":"g","script_text":"alpha beta",'
-        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
-        '"asset_ids":["intent-a","intent-b"]}],"assets":['
-        '{"asset_id":"intent-a","script_text":"alpha beta",'
-        '"binding_type":"EXPLICIT","semantic_group_id":"g",'
-        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null},'
-        '{"asset_id":"intent-b","script_text":"alpha beta",'
-        '"binding_type":"SEMANTIC","semantic_group_id":"g",'
-        '"sequence_order":2,"confidence":0.9,"parent_asset_id":null}]}]}',
-        encoding="utf-8",
-    )
-
-    loaded = FinalPackageLoader().load(package, tmp_path / "work")
-
-    assert loaded.semantic_bindings["schema_name"] == "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS"
-    assert loaded.semantic_bindings["scenes"][0]["assets"][1]["sequence_order"] == 2
-
-
-def test_rejects_asset_level_group_membership_mismatch(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
-        '{"scene_id":"SCENE_001","semantic_groups":['
-        '{"semantic_group_id":"g","script_text":"alpha beta",'
-        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
-        '"asset_ids":["intent-a"]}],"assets":['
-        '{"asset_id":"intent-a","script_text":"alpha beta",'
-        '"binding_type":"EXPLICIT","semantic_group_id":"other",'
-        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null}]}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="membership mismatch"):
+def test_group_membership_must_reference_existing_objects(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["semantic_groups"][0]["asset_ids"].append("missing")
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="reference is missing: semantic group"):
         FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_rejects_asset_level_phrase_missing_from_canonical_script(tmp_path: Path) -> None:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
-        '{"scene_id":"SCENE_001","semantic_groups":['
-        '{"semantic_group_id":"g","script_text":"invented phrase",'
-        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE",'
-        '"asset_ids":["intent-a"]}],"assets":['
-        '{"asset_id":"intent-a","script_text":"invented phrase",'
-        '"binding_type":"EXPLICIT","semantic_group_id":"g",'
-        '"sequence_order":1,"confidence":1.0,"parent_asset_id":null}]}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="not found in canonical script"):
+def test_precise_span_must_match_canonical_script(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["objects"][0]["script_span"]["text"] = "invented"
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="script span text mismatch"):
         FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_loads_asset_level_visual_locator_contract(tmp_path: Path) -> None:
-    package = tmp_path / "package-locator"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
-    (package / "scene_plan.json").write_text(
-        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
-        '"image":"scenes/SCENE_001.png","units":['
-        '{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT"}]}]}',
-        encoding="utf-8",
-    )
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
-        '{"scene_id":"SCENE_001","semantic_groups":['
-        '{"semantic_group_id":"g","script_text":"alpha beta",'
-        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
-        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
-        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
-        '"confidence":1.0,"visual_locator":{"coordinate_space":"normalized_scene",'
-        '"cx":0.5,"cy":0.5,"width":0.2,"height":0.2}}]}]}',
-        encoding="utf-8",
-    )
-
-    loaded = FinalPackageLoader().load(package, tmp_path / "work-locator")
-
-    locator = loaded.semantic_bindings["scenes"][0]["assets"][0]["visual_locator"]
-    assert locator["cx"] == 0.5
-    assert locator["coordinate_space"] == "normalized_scene"
+def test_visual_locator_must_fit_normalized_scene(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["objects"][0]["visual_locator"].update({"cx": 0.95, "width": 0.2})
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="exceeds horizontal scene bounds"):
+        FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_rejects_visual_locator_outside_normalized_scene(tmp_path: Path) -> None:
-    package = tmp_path / "package-bad-locator"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS","scenes":['
-        '{"scene_id":"SCENE_001","semantic_groups":['
-        '{"semantic_group_id":"g","script_text":"alpha beta",'
-        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
-        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
-        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
-        '"confidence":1.0,"visual_locator":{"cx":0.95,"cy":0.5,'
-        '"width":0.2,"height":0.2}}]}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="inside scene bounds"):
-        FinalPackageLoader().load(package, tmp_path / "work-bad-locator")
+def test_partial_visual_locator_is_rejected(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["objects"][0]["visual_locator"]["width"] = None
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="visual_locator is incomplete"):
+        FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_rejects_invalid_scene_unit_visual_locator(tmp_path: Path) -> None:
-    package = tmp_path / "package-bad-unit-locator"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "scene_plan.json").write_text(
-        '{"scenes":[{"scene_id":"SCENE_001","order":1,'
-        '"image":"scenes/SCENE_001.png","units":['
-        '{"unit_id":"intent-a","type":"VISUAL_ASSET_INTENT",'
-        '"visual_locator":{"cx":0.5,"cy":0.5,"width":1.2,"height":0.2}}]}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="size must be normalized"):
-        FinalPackageLoader().load(package, tmp_path / "work-bad-unit-locator")
+def test_event_dependency_cycle_is_rejected(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    events = payload["scenes"][0]["semantic_events"]
+    events[0]["depends_on_event_ids"] = ["E2"]
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="dependency cycle"):
+        FinalPackageLoader().load(package, tmp_path / "work")
 
 
-def test_rejects_incompatible_asset_level_cutout_mapping_cardinality(tmp_path: Path) -> None:
-    package = tmp_path / "package-bad-cardinality"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text("alpha beta", encoding="utf-8")
-    (package / "semantic_bindings.json").write_text(
-        '{"schema_name":"HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",'
-        '"cutout_mapping_cardinality":"EXACTLY_ONE",'
-        '"scenes":[{"scene_id":"SCENE_001","semantic_groups":['
-        '{"semantic_group_id":"g","script_text":"alpha beta",'
-        '"animation_policy":"SEQUENTIAL_WITHIN_PHRASE","asset_ids":["intent-a"]}],'
-        '"assets":[{"asset_id":"intent-a","script_text":"alpha beta",'
-        '"binding_type":"EXPLICIT","semantic_group_id":"g","sequence_order":1,'
-        '"confidence":1.0}]}]}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(InvalidPackageError, match="cutout_mapping_cardinality"):
-        FinalPackageLoader().load(package, tmp_path / "work-bad-cardinality")
+def test_relation_refs_must_exist(tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    payload = _load_json(package)
+    payload["scenes"][0]["relations"][0]["object_asset_id"] = "missing"
+    _save_json(package, payload)
+    with pytest.raises(InvalidPackageError, match="reference is missing: relation"):
+        FinalPackageLoader().load(package, tmp_path / "work")

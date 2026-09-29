@@ -120,7 +120,7 @@ def test_story_sync_qa_scopes_sequence_order_to_same_precise_trigger_cluster() -
             trigger_char_start=20,
             trigger_char_end=33,
             confidence=1.0,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             semantic_group_id="g",
             sequence_order=1,
@@ -133,7 +133,7 @@ def test_story_sync_qa_scopes_sequence_order_to_same_precise_trigger_cluster() -
             trigger_char_start=0,
             trigger_char_end=18,
             confidence=1.0,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             semantic_group_id="g",
             sequence_order=2,
@@ -146,7 +146,7 @@ def test_story_sync_qa_scopes_sequence_order_to_same_precise_trigger_cluster() -
             trigger_char_start=0,
             trigger_char_end=18,
             confidence=1.0,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             semantic_group_id="g",
             sequence_order=3,
@@ -191,7 +191,7 @@ def test_story_sync_qa_reports_settle_past_next_semantic_handoff() -> None:
             trigger_char_start=0,
             trigger_char_end=4,
             confidence=1.0,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             visual_focus="PRIMARY",
         ),
@@ -202,7 +202,7 @@ def test_story_sync_qa_reports_settle_past_next_semantic_handoff() -> None:
             trigger_char_start=5,
             trigger_char_end=9,
             confidence=1.0,
-            source="final_package_semantic_binding",
+            source="unified_final_package",
             policy="EXPLICIT",
             visual_focus="RESULT",
         ),
@@ -238,12 +238,12 @@ def test_story_sync_qa_allows_same_frame_aware_semantic_cohort_overlap() -> None
     beat = _beat(
         AssetActivation(
             asset_id="a", spoken_start=0.40, spoken_end=1.20,
-            confidence=1.0, source="final_package_semantic_binding",
+            confidence=1.0, source="unified_final_package",
             policy="EXPLICIT", visual_focus="PRIMARY",
         ),
         AssetActivation(
             asset_id="b", spoken_start=0.45, spoken_end=1.20,
-            confidence=1.0, source="final_package_semantic_binding",
+            confidence=1.0, source="unified_final_package",
             policy="EXPLICIT", visual_focus="RESULT",
         ),
     )
@@ -274,14 +274,14 @@ def test_close_peaks_do_not_merge_distinct_reveal_cohorts() -> None:
         asset_id="a", spoken_start=0.20, spoken_end=1.20,
         phrase_start=0.20, phrase_end=1.20, reveal_start=0.20,
         semantic_peak=0.50, settle_at=0.90, activation_policy="OWN_WINDOW",
-        confidence=1.0, source="final_package_semantic_binding",
+        confidence=1.0, source="unified_final_package",
         policy="EXPLICIT", visual_focus="PRIMARY",
     )
     second = StoryAssetActivation(
         asset_id="b", spoken_start=0.30, spoken_end=1.30,
         phrase_start=0.30, phrase_end=1.30, reveal_start=0.30,
         semantic_peak=0.55, settle_at=0.65, activation_policy="OWN_WINDOW",
-        confidence=1.0, source="final_package_semantic_binding",
+        confidence=1.0, source="unified_final_package",
         policy="EXPLICIT", visual_focus="RESULT",
     )
     beat = _beat(first, second)
@@ -324,7 +324,7 @@ def _v2_attention_peak_case(peak_progress: float) -> tuple[StoryBeat, MotionCue]
         spoken_start=0.40,
         spoken_end=1.40,
         confidence=1.0,
-        source="final_package_semantic_binding",
+        source="unified_final_package",
         policy="EXPLICIT",
         visual_focus="PRIMARY",
     ))

@@ -1,7 +1,8 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
+from tests.support.unified_package import write_unified_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
-import json
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,6 @@ from app.canonical import (
 )
 from app.final_package import FinalPackageLoader
 from app.models import (
-    PackageModel,
     SceneSource,
     StoryBeat,
     Transcript,
@@ -34,68 +34,18 @@ def _write_package(
     script: str,
     semantic_scene: dict,
 ) -> Path:
-    package = tmp_path / "package"
-    scenes = package / "scenes"
-    scenes.mkdir(parents=True)
-    (scenes / "SCENE_001.png").write_bytes(b"png")
-    (package / "canonical_script.txt").write_text(script, encoding="utf-8")
-    unit_rows = [
-        {
-            "unit_id": asset["asset_id"],
-            "asset_id": asset["asset_id"],
-            "type": "VISUAL_ASSET_INTENT",
-            "role": asset.get("semantic_role", "OBJECT"),
-        }
-        for asset in semantic_scene["assets"]
-    ]
-    (package / "scene_plan.json").write_text(
-        json.dumps(
-            {
-                "scenes": [
-                    {
-                        "scene_id": "SCENE_001",
-                        "order": 1,
-                        "image": "scenes/SCENE_001.png",
-                        "script_span": {
-                            "global_char_start": 0,
-                            "global_char_end": len(script) - 1,
-                            "text": script,
-                        },
-                        "units": unit_rows,
-                        "visual_progression": [
-                            {
-                                "event_id": "E1",
-                                "order": 1,
-                                "action": "EXPLAIN",
-                                "targets": [],
-                                "trigger": {
-                                    "phrase": script,
-                                    "global_char_start": 0,
-                                    "global_char_end": len(script) - 1,
-                                },
-                            }
-                        ],
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    scene = dict(semantic_scene)
+    scene.setdefault("scene_id", "SCENE_001")
+    scene.setdefault("order", 0)
+    scene.setdefault("image", "images/SCENE_001.png")
+    scene.setdefault("script_span", {"text": script, "global_char_start": 0, "global_char_end": len(script)})
+    scene.setdefault("visual_progression", [{
+        "event_id": "E1", "order": 1, "action": "EXPLAIN", "targets": [],
+        "trigger": {"text": script, "global_char_start": 0, "global_char_end": len(script)},
+    }])
+    return write_unified_package(
+        tmp_path / "package", script=script, scenes=[scene], package_id="v2-semantic-contract",
     )
-    (package / "semantic_bindings.json").write_text(
-        json.dumps(
-            {
-                "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
-                "asset_is_semantic_intent_not_cutout": True,
-                "no_fixed_timing": True,
-                "cutout_mapping_cardinality": "ZERO_OR_ONE_OR_MANY",
-                "scenes": [semantic_scene],
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    return package
 
 
 def test_group_phrase_may_be_wider_than_precise_asset_trigger(tmp_path: Path) -> None:
@@ -160,8 +110,8 @@ def test_group_phrase_may_be_wider_than_precise_asset_trigger(tmp_path: Path) ->
         tmp_path / "work",
     )
 
-    assets = loaded.semantic_bindings["scenes"][0]["assets"]
-    assert [row["script_text"] for row in assets] == [
+    assets = loaded.scenes[0].assets
+    assert [row.script_text for row in assets] == [
         "برنامج قديم",
         "ما تم تحديثه",
         "من سنوات",
@@ -188,7 +138,7 @@ def test_precise_script_span_must_match_exact_half_open_text(tmp_path: Path) -> 
         }],
     }
 
-    with pytest.raises(InvalidPackageError, match="script_span does not match"):
+    with pytest.raises(InvalidPackageError, match="script span text mismatch"):
         FinalPackageLoader().load(
             _write_package(tmp_path, script=script, semantic_scene=semantic_scene),
             tmp_path / "work",
@@ -287,14 +237,14 @@ def test_story_binder_prefers_locator_proven_activation_and_authored_focus(tmp_p
             AssetActivation(
                 asset_id="large",
                 semantic_unit_id="concept-a",
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="EXPLICIT",
                 confidence=1.0,
             ),
             AssetActivation(
                 asset_id="small",
                 semantic_unit_id="concept-b",
-                source="final_package_semantic_binding",
+                source="unified_final_package",
                 policy="EXPLICIT",
                 confidence=1.0,
                 visual_focus="PRIMARY",
@@ -326,13 +276,12 @@ def test_activation_uses_authored_span_when_phrase_repeats(tmp_path: Path) -> No
         script_char_end=len(script) - 1,
         units=[{"unit_id": "intent", "type": "VISUAL_ASSET_INTENT"}],
     )
-    package = PackageModel(
+    package = canonical_package(
         root=tmp_path,
         package_id="p",
         scenes=[scene],
         script=script,
-        semantic_bindings={
-            "schema_name": "HEXA_ASSET_LEVEL_SEMANTIC_BINDINGS",
+        semantics={
             "scenes": [{
                 "scene_id": "scene-1",
                 "semantic_groups": [{

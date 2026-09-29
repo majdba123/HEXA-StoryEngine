@@ -13,7 +13,6 @@ def parser() -> argparse.ArgumentParser:
     generate = commands.add_parser("generate", help="Generate a video from Final Package + audio")
     generate.add_argument("--package", type=Path, required=True)
     generate.add_argument("--audio", type=Path, required=True)
-    generate.add_argument("--script", type=Path)
     generate.add_argument("--output-name")
 
     serve = commands.add_parser("serve", help="Run the local Premiere engine API")
@@ -31,7 +30,6 @@ def main() -> int:
         output = engine.generate(
             package_path=args.package,
             audio_path=args.audio,
-            script_path=args.script,
             output_name=args.output_name,
         )
         print(output)

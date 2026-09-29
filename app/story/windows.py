@@ -353,7 +353,7 @@ def _enforce_final_semantic_handoffs(
         # Final Package activations reveal exactly on their spoken/Story boundary.
         # Inferred legacy activations may intentionally pre-roll before phrase_start;
         # clipping those against a later reveal could make settle precede phrase_start.
-        if row.source != "final_package_semantic_binding":
+        if row.source != "unified_final_package":
             continue
         if row.reveal_start is None or row.settle_at is None:
             continue
@@ -482,7 +482,7 @@ def schedule_windows(
         duration = end - start
         phrase_end = min(end, visual_upper)
         attention_role = _attention_role(row, beat)
-        exact_package_binding = row.source == "final_package_semantic_binding"
+        exact_package_binding = row.source == "unified_final_package"
         has_authored_attention = (
             exact_package_binding
             and (

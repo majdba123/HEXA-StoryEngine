@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.canonical_package import canonical_package
 # Owner-scoped Test2 coverage; historical regression content is preserved.
 
 import pytest
@@ -118,10 +119,10 @@ def test_standard_easing_boundaries(name: str, expected_mid: float) -> None:
 def test_choreography_reject_creates_meaningful_interaction_and_scale_reaction() -> None:
     from pathlib import Path
     from app.choreography import ChoreographyDirector
-    from app.models import PackageModel, SceneSource
+    from app.models import SceneSource
 
     beat = _beat(action="REVEAL_DETAIL")
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"), package_id="p", script="x",
         scenes=[SceneSource(
             id="scene-001", image_path=Path("/scene.png"), order=1,
@@ -144,7 +145,7 @@ def test_choreography_reject_creates_meaningful_interaction_and_scale_reaction()
 def test_semantic_handoff_begins_from_previous_focal_position() -> None:
     from pathlib import Path
     from app.choreography import ChoreographyDirector
-    from app.models import PackageModel, SceneSource
+    from app.models import SceneSource
 
     first = _beat(beat_id="beat-001", start=0.0, end=1.8, audio_start=0.2, audio_end=1.6)
     first.primary_asset_ids = ["old"]
@@ -153,7 +154,7 @@ def test_semantic_handoff_begins_from_previous_focal_position() -> None:
     second.scene_id = "scene-002"
     second.primary_asset_ids = ["new"]
     second.support_asset_ids = []
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"), package_id="p", script="x",
         scenes=[
             SceneSource(id="scene-001", image_path=Path("/a.png"), order=1, units=[]),
@@ -176,7 +177,7 @@ def test_semantic_handoff_begins_from_previous_focal_position() -> None:
 def test_semantic_handoff_freezes_reject_asset_after_arrival() -> None:
     from pathlib import Path
     from app.choreography import ChoreographyDirector
-    from app.models import PackageModel, SceneSource, VisualAsset
+    from app.models import SceneSource, VisualAsset
 
     first = _beat(beat_id="beat-001", start=0.0, end=1.8, audio_start=0.2, audio_end=1.6)
     first.primary_asset_ids = ["old"]
@@ -185,7 +186,7 @@ def test_semantic_handoff_freezes_reject_asset_after_arrival() -> None:
     second.scene_id = "scene-002"
     second.primary_asset_ids = ["new"]
     second.support_asset_ids = ["target"]
-    package = PackageModel(
+    package = canonical_package(
         root=Path("/tmp"), package_id="p", script="x",
         scenes=[
             SceneSource(id="scene-001", image_path=Path("/a.png"), order=1, units=[]),
