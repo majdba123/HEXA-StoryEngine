@@ -575,6 +575,26 @@ def test_base_entry_dead_zone_normalization_is_resolution_safe(
     assert all(frame.scale == 1.0 for frame in normalized.keyframes)
 
 
+def test_base_entry_with_readable_pixels_but_subframe_duration_is_static() -> None:
+    item = LayoutItem(
+        asset_id="asset", x=0.5, y=0.5, width=0.18, height=0.24
+    )
+    payload = _program(dx=0.025)
+    source = MotionProgram(
+        name=payload["name"],
+        settle_progress=float(payload["settle_progress"]),
+        keyframes=tuple(MotionKeyframe(**frame) for frame in payload["keyframes"]),
+    )
+    normalized = MotionPlanner._normalize_base_entry_renderability(
+        source, duration=0.025, item=item
+    )
+    assert normalized.name.startswith("static_reveal_")
+    assert all(
+        frame.dx == 0.0 and frame.dy == 0.0 and frame.scale == 1.0
+        for frame in normalized.keyframes
+    )
+
+
 def test_motion_planner_collapses_subfloor_base_entry_to_exact_static_reveal() -> None:
     item = LayoutItem(
         asset_id="asset",

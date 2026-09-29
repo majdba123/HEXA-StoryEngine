@@ -280,6 +280,42 @@ def test_relation_result_has_one_consequence_gesture(tmp_path: Path):
     assert [s.phase for s in consequences] == ["PAYOFF"]
 
 
+def test_same_event_same_timestamp_has_one_attention_owner_without_comparison(
+    tmp_path: Path,
+):
+    story, _, _, motion, _ = _pipeline(
+        tmp_path / "same-instant-owner",
+        [
+            Spec(
+                "support-character", "E1", 0.40, role="CHARACTER",
+                leader=False, phrase="character-span", sequence=1, group="g",
+            ),
+            Spec(
+                "support-action", "E1", 0.40, role="ACTION",
+                leader=False, phrase="action-span", sequence=2, group="g",
+            ),
+            Spec(
+                "result", "E1", 0.90, role="RESULT",
+                leader=True, phrase="result-span", sequence=3, group="g",
+            ),
+        ],
+        2.0,
+    )
+    windows = {
+        row.asset_id: story_activation_window(row, story[0])[1]
+        for row in story[0].asset_activations
+    }
+    assert windows["support-character"].reveal_start == pytest.approx(0.40)
+    assert windows["support-action"].reveal_start == pytest.approx(0.40)
+
+    focus = {cue.asset_id: cue.params["semantic_focus"] for cue in motion}
+    same_instant = [focus["support-character"], focus["support-action"]]
+    assert sum(row["cohort_gain"] == pytest.approx(1.0) for row in same_instant) == 1
+    assert min(row["cohort_gain"] for row in same_instant) <= 0.58
+    # The later authored result keeps its own independent Hero moment.
+    assert focus["result"]["cohort_gain"] == pytest.approx(1.0)
+
+
 def _windows(story):
     return {
         row.asset_id: story_activation_window(row, story[0])[1]
@@ -1092,4 +1128,3 @@ def test_300_generated_unbound_cutouts_never_preempt_authored_semantics(tmp_path
         assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
         checked += len(extra_ids)
     assert checked >= 300
-

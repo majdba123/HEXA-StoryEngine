@@ -162,18 +162,18 @@ def semantic_readability_floor(
 
 
 def encoded_motion_temporal_floor_seconds(
-    *, fps: int = 30, required_frames: int = 2
+    *, fps: int = 30, required_intervals: int = 1
 ) -> float:
-    """Minimum duration needed for non-zero motion to have encoded frame evidence.
+    """Minimum time span needed for non-zero motion to have encoded evidence.
 
-    Motion is authored before RenderPlan FPS is materialized, so the production
-    authoring contract uses the current 30fps delivery baseline. Render still
-    validates the actual encoded frame schedule. A shorter stylistic ENTRY is
-    represented as an exact static reveal instead of metadata-only motion.
+    Two decoded samples need one frame interval between them. Motion is authored
+    before RenderPlan FPS is materialized, so the base authoring contract uses the
+    current 30fps delivery baseline. Callers that need an extra pre-accent sample can
+    request two intervals explicitly.
     """
     rate = max(1, int(fps))
-    frames = max(1, int(required_frames))
-    return frames / float(rate)
+    intervals = max(1, int(required_intervals))
+    return intervals / float(rate)
 
 
 def encoded_motion_renderability_floor_px() -> float:

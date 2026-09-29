@@ -11,6 +11,7 @@ import pytest
 
 from app.canonical import CanonicalRelation
 from app.models import MotionCue
+from app.shared.errors import StageFailedError
 from app.render.renderer import FFmpegRenderer
 from app.render.verification import EncodedMotionVerifier
 from tests.test3.test_semantic_reveal_focus import Spec, _pipeline, _windows
@@ -42,7 +43,10 @@ CASES = {
     "subframe-distinct-reveals": [
         Spec("first", "event", 0.101, group="tight", sequence=1),
         Spec("second", "event", 0.109, leader=False, group="tight", sequence=2),
-        Spec("third", "event", 0.117, leader=False, group="tight", sequence=3),
+        Spec(
+            "third", "event", 0.117, leader=False, group="tight",
+            sequence=3, phrase_end=0.40,
+        ),
     ],
 }
 
@@ -89,7 +93,7 @@ def test_frame_safe_visibility_fails_closed_if_nonzero_entry_would_be_fully_hidd
             },
         },
     )
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(StageFailedError) as caught:
         FFmpegRenderer._require_encoded_entry_window(
             cue=cue,
             authored_start=0.10,

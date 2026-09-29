@@ -1218,7 +1218,7 @@ class MotionPlanner:
                 entry_end = float(window[0])
                 if (
                     entry_end - float(cue.start)
-                    >= encoded_motion_temporal_floor_seconds()
+                    >= encoded_motion_temporal_floor_seconds(required_intervals=2)
                 ):
                     fitted = cls._fit_entry_program(
                         entry_program,
@@ -2949,11 +2949,14 @@ class MotionPlanner:
                 anchor_activation.sequence_order,
             )
             # Attention conflict is about simultaneous movement at the same authored
-            # semantic instant. Distinct event/sequence orders are an intentional
-            # progressive reveal: their windows may overlap, but each later peak still
-            # deserves its own Hero moment.
+            # semantic instant. Distinct sequence orders only justify distinct Hero
+            # moments when Story actually gives them distinct reveal instants. If two
+            # non-comparison assets resolve to the exact same narration timestamp inside
+            # one semantic event, visibility may be simultaneous but attention must have
+            # one owner. Explicit comparison beats retain multi-focus semantics.
             same_authored_event = bool(
-                row[1].semantic_event_id
+                str(beat.action or "").upper() != "COMPARE"
+                and row[1].semantic_event_id
                 and row[1].semantic_event_id == anchor_activation.semantic_event_id
                 and abs(
                     float(row[2].reveal_start)
@@ -2962,8 +2965,8 @@ class MotionPlanner:
                 <= 1e-9
             )
             if (
-                current_key == anchor_key
-                and (overlap >= threshold - 1e-9 or same_authored_event)
+                same_authored_event
+                or (current_key == anchor_key and overlap >= threshold - 1e-9)
             ):
                 cohorts[-1].append(row)
                 cohort_end = max(cohort_end, end)
