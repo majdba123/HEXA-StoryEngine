@@ -311,6 +311,8 @@ def test_same_event_same_timestamp_has_one_attention_owner_without_comparison(
     focus = {cue.asset_id: cue.params["semantic_focus"] for cue in motion}
     same_instant = [focus["support-character"], focus["support-action"]]
     assert sum(row["cohort_gain"] == pytest.approx(1.0) for row in same_instant) == 1
+    assert focus["support-action"]["cohort_gain"] == pytest.approx(1.0)
+    assert focus["support-character"]["cohort_gain"] < 1.0
     assert min(row["cohort_gain"] for row in same_instant) <= 0.58
     # The later authored result keeps its own independent Hero moment.
     assert focus["result"]["cohort_gain"] == pytest.approx(1.0)
@@ -348,6 +350,63 @@ def test_dependency_linked_events_at_same_timestamp_share_one_attention_owner(
     assert focus["downstream"]["cohort_gain"] == pytest.approx(1.0)
     assert focus["upstream"]["cohort_gain"] < 1.0
     assert focus["upstream"]["cohort_role"] != "leader"
+
+
+def test_enable_relation_same_anchor_keeps_reaction_with_one_hero(
+    tmp_path: Path,
+):
+    story, choreography, _, motion, _ = _pipeline(
+        tmp_path / "enable-same-anchor",
+        [
+            Spec(
+                "source", "E1", 0.40, role="PRIMARY", leader=True,
+                phrase="source-span", phrase_end=0.80, sequence=1, group="g",
+            ),
+            Spec(
+                "target", "E2", 0.40, role="OBJECT", leader=True,
+                phrase="target-span", phrase_end=0.80, sequence=2, group="g",
+            ),
+        ],
+        1.8,
+        relations=(CanonicalRelation(
+            subject_asset_id="source",
+            object_asset_id="target",
+            relation_type="ENABLES",
+        ),),
+    )
+    assert choreography.directives[0].interactions
+
+    focus = {cue.asset_id: cue.params["semantic_focus"] for cue in motion}
+    assert focus["target"]["cohort_gain"] == pytest.approx(1.0)
+    assert focus["target"]["cohort_role"] == "leader"
+    assert focus["source"]["cohort_gain"] < 1.0
+    assert focus["source"]["cohort_role"] != "leader"
+
+    source = next(cue for cue in motion if cue.asset_id == "source")
+    target = next(cue for cue in motion if cue.asset_id == "target")
+    assert [
+        (segment.phase, segment.involvement)
+        for segment in source.segments
+        if segment.relationship == "ENABLES"
+    ] == [("INTERACT", "SOURCE")]
+    assert [
+        (segment.phase, segment.involvement)
+        for segment in target.segments
+        if segment.relationship == "ENABLES"
+    ] == [("REACT", "TARGET")]
+
+    source_window = next(
+        story_activation_window(row, story[0])[1]
+        for row in story[0].asset_activations
+        if row.asset_id == "source"
+    )
+    target_window = next(
+        story_activation_window(row, story[0])[1]
+        for row in story[0].asset_activations
+        if row.asset_id == "target"
+    )
+    assert source_window.reveal_start == pytest.approx(0.40)
+    assert target_window.reveal_start == pytest.approx(0.40)
 
 
 def _windows(story):

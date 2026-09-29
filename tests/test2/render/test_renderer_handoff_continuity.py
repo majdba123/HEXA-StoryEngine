@@ -1333,3 +1333,42 @@ def test_renderer_fails_closed_on_terminal_exit_then_same_asset_reappears(tmp_pa
                 narration="first", action="EXPLAIN",
             ),
             StoryBeat(
+                id="beat-2", scene_id="scene-2", start=1.0, end=2.0,
+                narration="second", action="EXPLAIN",
+            ),
+        ],
+        composition=[
+            CompositionBeat(
+                beat_id="beat-1",
+                items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
+            ),
+            CompositionBeat(
+                beat_id="beat-2",
+                items=[LayoutItem(asset_id="shared", x=0.5, y=0.5, width=0.4, height=0.4)],
+            ),
+        ],
+        motion=[
+            MotionCue(
+                beat_id="beat-1", asset_id="shared", kind="program_v3",
+                start=0.0, end=0.2,
+                segments=[MotionSegment(
+                    phase="EXIT", start=0.6, end=0.95,
+                    program={"terminal_behavior": "LEAVE"},
+                )],
+            ),
+            MotionCue(
+                beat_id="beat-2", asset_id="shared", kind="program_v3",
+                start=1.1, end=1.3,
+            ),
+        ],
+        assets=[VisualAsset(
+            id="shared", scene_id="scene-1", role="primary",
+            image_path=asset_path, extraction_method="test",
+        )],
+    )
+
+    with pytest.raises(StageFailedError) as exc_info:
+        FFmpegRenderer("ffmpeg").render(plan, tmp_path / "invalid.mp4")
+
+    assert exc_info.value.details["code"] == "TERMINAL_EXIT_ON_PERSISTENT_ASSET"
+    assert exc_info.value.details["asset_ids"] == ["shared"]
