@@ -40,6 +40,30 @@ CASES = {
         Spec("target", "effect", 1.25, role="RESULT"),
     ],
     "authored-cohort": [Spec("left", "event", 0.10), Spec("right", "event", 0.10)],
+    "precise-speech-over-sequence-order": [
+        Spec(
+            "character", "event", 0.10, role="CHARACTER", leader=False,
+            group="g", sequence=1,
+        ),
+        Spec(
+            "negation", "event", 0.55, role="RESULT", leader=True,
+            group="g", sequence=3,
+        ),
+        Spec(
+            "vulnerability", "event", 1.05, role="OBJECT", leader=False,
+            group="g", sequence=2,
+        ),
+    ],
+    "dependent-authored-cohort": [
+        Spec(
+            "context", "E1", 0.30, role="OBJECT", leader=True,
+            phrase="context-span", group="g", sequence=1,
+        ),
+        Spec(
+            "return", "E2", 0.30, role="ACTION", leader=True,
+            phrase="return-span", group="g", sequence=2,
+        ),
+    ],
     "subframe-distinct-reveals": [
         Spec("first", "event", 0.101, group="tight", sequence=1),
         Spec("second", "event", 0.109, leader=False, group="tight", sequence=2),
@@ -161,10 +185,15 @@ def test_narration_sequence_survives_encode(tmp_path: Path, case: str):
         calm = np.array(rows[math.ceil(settled * plan.fps) + 2:])
         assert len(calm) > 2
         assert np.ptp(calm[:, 1:], axis=0).max() <= 1.0, "post-settle motion"
-    if case == "authored-cohort":
+    if case in {"authored-cohort", "dependent-authored-cohort"}:
         assert len(set(first_frames)) == 1
     else:
         assert all(a < b for a, b in zip(first_frames, first_frames[1:])), first_frames
+    if case == "precise-speech-over-sequence-order":
+        by_id = {cue.asset_id: cue for cue in motion}
+        assert by_id["negation"].params["motion_order"]["sequence_order"] == 3
+        assert by_id["vulnerability"].params["motion_order"]["sequence_order"] == 2
+        assert windows["negation"].reveal_start < windows["vulnerability"].reveal_start
     if relations:
         target = next(c for c in motion if c.asset_id == specs[-1].asset)
         assert [s.phase for s in target.segments if s.phase != "ENTRY"] == ["PAYOFF"]
