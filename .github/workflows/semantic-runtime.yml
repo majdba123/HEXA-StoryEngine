@@ -1,0 +1,125 @@
+name: Semantic Runtime Bundle
+
+on:
+  push:
+    branches:
+      - majd
+    paths:
+      - ".github/workflows/semantic-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-semantic-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Hugging Face downloader
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "huggingface-hub==0.34.4"
+
+      - name: Download pinned multilingual E5 model
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          E5_REVISION: "fd1525a9fd15316a2d503bf26ab031a61d056e98"
+        run: |
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="intfloat/multilingual-e5-small",
+              revision="fd1525a9fd15316a2d503bf26ab031a61d056e98",
+              local_dir="semantic_runtime/model",
+              allow_patterns=[
+                  "config.json",
+                  "model.safetensors",
+                  "sentencepiece.bpe.model",
+                  "special_tokens_map.json",
+                  "tokenizer.json",
+                  "tokenizer_config.json",
+              ],
+          )
+          PY
+          find semantic_runtime/model -type d -name .cache -prune -exec rm -rf {} + || true
+
+      - name: Write immutable manifest
+        env:
+          E5_REVISION: "fd1525a9fd15316a2d503bf26ab031a61d056e98"
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("semantic_runtime/model")
+          files = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file():
+                  continue
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                      digest.update(chunk)
+              files.append({
+                  "path": path.relative_to(root).as_posix(),
+                  "size": path.stat().st_size,
+                  "sha256": digest.hexdigest(),
+              })
+
+          manifest = {
+              "runtime": "hexa-semantic-e5-v1",
+              "repo": "intfloat/multilingual-e5-small",
+              "revision": os.environ["E5_REVISION"],
+              "license": "MIT",
+              "files": files,
+          }
+          Path("semantic_runtime/manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print("files", len(files), "bytes", sum(item["size"] for item in files))
+          PY
+
+      - name: Split model weights for transport
+        run: |
+          mkdir -p semantic_transport/parts semantic_transport/meta
+          split -b 240M -d -a 2             semantic_runtime/model/model.safetensors             semantic_transport/parts/model.safetensors.part-
+          find semantic_runtime/model -maxdepth 1 -type f ! -name model.safetensors             -exec cp {} semantic_transport/meta/ \;
+          cp semantic_runtime/manifest.json semantic_transport/meta/manifest.json
+          ls -lh semantic_transport/parts
+
+      - name: Upload E5 metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-semantic-e5-meta-v1
+          path: semantic_transport/meta
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload E5 part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-semantic-e5-part-00-v1
+          path: semantic_transport/parts/model.safetensors.part-00
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload E5 part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-semantic-e5-part-01-v1
+          path: semantic_transport/parts/model.safetensors.part-01
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
