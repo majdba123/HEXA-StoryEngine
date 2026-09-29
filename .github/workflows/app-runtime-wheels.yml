@@ -1,0 +1,42 @@
+name: App Runtime Wheels
+
+on:
+  push:
+    branches:
+      - majd
+    paths:
+      - ".github/workflows/app-runtime-wheels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download CI-compatible app wheels
+        run: |
+          mkdir -p wheels
+          python -m pip download --only-binary=:all: --no-deps --dest wheels             "pydantic==2.13.5"             "pydantic-core==2.46.5"             "annotated-types==0.8.0"             "typing-inspection==0.4.4"             "typing-extensions==4.16.0"
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          rows=[]
+          for p in sorted(Path("wheels").glob("*.whl")):
+              h=hashlib.sha256(p.read_bytes()).hexdigest()
+              rows.append({"name":p.name,"size":p.stat().st_size,"sha256":h})
+          Path("wheels/manifest.json").write_text(json.dumps(rows,indent=2)+"\n")
+          print(rows)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hexa-app-runtime-pydantic-py312
+          path: wheels
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
