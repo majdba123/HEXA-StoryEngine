@@ -13548,3 +13548,173 @@ When the user says "اعمل رندر":
 4. run a fresh production render, no stale cache;
 5. run final encoded/media verification;
 6. return the MP4 to the user for visual acceptance.
+
+===============================================================================
+SPRINT 2 FINAL HARDENING / AUTHORITATIVE VISUAL-ACCEPTANCE CHECKPOINT — 2026-09-29
+===============================================================================
+
+THIS SECTION SUPERSEDES THE EARLIER SPRINT 2 CLOSURE CHECKPOINT ABOVE WHERE
+HEAD / CI / QA COVERAGE DIFFER.
+
+STATUS
+------
+Sprint 1 — CLOSED / visually accepted.
+Sprint 2 — ENGINEERING + DATA CORRECTIONS COMPLETE; OPEN ONLY FOR USER VISUAL
+            ACCEPTANCE OF THE FRESH PRODUCTION RENDER.
+Sprint 3 — NOT STARTED.
+Sprint 4 — NOT STARTED.
+Sprint 5 — NOT STARTED.
+
+Do NOT start Sprint 3 before the user visually accepts the Sprint 2 render.
+
+AUTHORITATIVE CODE CHECKPOINT
+-----------------------------
+Branch: montage
+Engineering HEAD:
+dcf1d62807c74f7d64a30e18f3e6dd65f9192e30
+
+Commit:
+[Sprint2] Harden causal collision and real-package perceptual QA
+
+Important production chain immediately before it:
+- 0fb0c8b5d8c2bf4dec5d6e40bcc2be2baa4eba5a
+  [Sprint2] Sequence causal target reactions after source onset
+- add8f89d748daaff5c82eb836471dc796e37e4a1
+  [Sprint2] Preserve collision coverage for causal relations
+- 05953c8ea69aa3f7e41168ac003bf4b6a9862caf
+  [Sprint2] Add cross-package perceptual generalization matrix
+
+AUTHORITATIVE CI
+----------------
+V2 CI Run #731
+Run ID: 36539542330
+Conclusion: SUCCESS
+
+Linux test job:
+- Compile: SUCCESS
+- Lint: SUCCESS
+- Test1 canonical compatibility: 565 passed, 8 skipped, 4 warnings
+- Full suite: 1470 passed, 8 skipped, 13 warnings
+- Full suite duration: 166.56s
+
+Windows encoded job:
+- Full-HD encoded render contract gate: SUCCESS
+
+FINAL QA HARDENING ADDED AFTER THE EARLIER CLOSURE NOTE
+-------------------------------------------------------
+1. Causal REACT sequencing remains locked:
+   - target visibility may already exist,
+   - target REACT gesture begins only after the causal source onset plus bounded
+     acknowledgement delay,
+   - source INTERACT and target REACT do not launch as competing Heroes.
+
+2. Collision protection now covers the gap created by delayed REACT:
+   - source INTERACT is checked against target REACT;
+   - source INTERACT is ALSO checked against an overlapping target ENTRY that occurs
+     before delayed REACT;
+   - only motion amplitude is reduced when required;
+   - Story timing and Composition resting geometry remain authoritative and unchanged.
+
+3. MotionInteractionQA independently checks the same INTERACT-vs-ENTRY condition.
+   A future package cannot pass simply because the causal REACT was moved later.
+
+4. Shared Sprint-2 perceptual oracle is now permanent:
+   tests/test2/support/sprint2_perceptual_oracle.py
+
+   It certifies across generated and real Final Packages:
+   - no Motion cue begins before Story reveal authority;
+   - one semantic Hero at the same narration instant except explicit COMPARE /
+     SIMULTANEOUS_VISUAL_UNIT semantics;
+   - no boundary carrier pre-exposes future semantics;
+   - relation targets do not inherit source INTERACT;
+   - non-zero ENTRY motion has encoded temporal capacity;
+   - frame-safe reveal scheduling never reveals early;
+   - distinct authored reveal clusters remain distinct encoded frames;
+   - equal authored timestamps remain equal rather than receiving invented sequence.
+
+5. Cross-package generalization environment:
+   - 80 seeded Sprint-2 perceptual packages;
+   - 12 fixed stress topologies;
+   - 92/92 matrix cases green locally and covered by full CI.
+   Fixed patterns include:
+   minimal, 20-asset dense scenes, Arabic, numbers-heavy, branching dependencies,
+   repeated/reused assets, simultaneous visual units, compound visuals, persist
+   continuity, transform continuity, no progression/no locators, support bindings,
+   ambiguous bindings, and parent bindings.
+
+6. Existing broader certification remains active:
+   - 250 seeded full-layer Final Packages;
+   - generated package normalization matrix;
+   - full handoff-depth matrices;
+   - duration/density feasibility matrices;
+   - motion readability/comfort boundaries;
+   - FFmpeg encoded narration/reveal regressions;
+   - Windows Full-HD encoded gate.
+
+7. Encoded ENABLES certification is explicit:
+   - equal authored source/target visibility stays equal at the encoded-frame level;
+   - source owns INTERACT only;
+   - target owns REACT only;
+   - target/downstream owns the Hero attention;
+   - source remains visible but calmed.
+
+REAL FINAL PACKAGE CERTIFICATION ON THE FINAL PRODUCTION BEHAVIOR
+-----------------------------------------------------------------
+All accepted real package families were exercised through:
+FinalPackageLoader
+-> CanonicalNormalizer
+-> Vision
+-> Pass1
+-> Pass2
+-> Story
+-> Choreography
+-> Composition
+-> Motion
+-> Text
+-> RenderPlan
+plus the shared Sprint-2 perceptual oracle.
+
+Results:
+- Black Hat: 40 scenes / 179 runtime assets — PASS
+- White Hat: 35 scenes / 133 runtime assets — PASS
+- Gray Hat: 35 scenes / 153 runtime assets — PASS
+- Script Kiddie: 35 scenes / 122 runtime assets — PASS
+
+BLACK HAT SPRINT-2 ACCEPTANCE PACKAGE — FINAL CERTIFICATION
+-----------------------------------------------------------
+Use:
+HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_SPRINT2_ACCEPTANCE_FIXED.zip
+
+The original corrected package remains untouched. The acceptance copy contains only the
+two previously documented semantic metadata corrections for the proven source
+contradictions; authored scene images remain unchanged.
+
+Final latest-code L5 + perceptual certification:
+- scenes: 40
+- semantic assets: 129
+- semantic events: 55
+- Pass1 assets: 157
+- Pass2/runtime assets: 179
+- Story beats: 40
+- Motion cues: 179
+- result: PASS
+
+RENDER INSTRUCTION — LOCKED
+---------------------------
+Do NOT render until the user explicitly says "اعمل رندر".
+
+When requested:
+1. use the latest montage checkpoint descended from engineering HEAD
+   dcf1d62807c74f7d64a30e18f3e6dd65f9192e30;
+2. use
+   HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_SPRINT2_ACCEPTANCE_FIXED.zip;
+3. identify and use the exact Black Hat narration audio — do not guess among similar
+   ElevenLabs files;
+4. run a completely fresh production render with no stale cache;
+5. run encoded-motion and final-media verification;
+6. return the produced MP4 to the user in the current chat for visual acceptance.
+
+At this checkpoint, no further Sprint-2 engineering work is authorized unless the fresh
+visual-acceptance render exposes a new regression. Do NOT begin Sprint 3 before that
+visual acceptance.
+
