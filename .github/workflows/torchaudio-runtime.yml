@@ -1,0 +1,41 @@
+name: Torchaudio Runtime Wheel
+
+on:
+  push:
+    branches:
+      - majd
+    paths:
+      - ".github/workflows/torchaudio-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download torch-matched CPU torchaudio wheel
+        run: |
+          mkdir -p wheels
+          python -m pip download --no-deps             --dest wheels             --index-url https://download.pytorch.org/whl/cpu             "torchaudio==2.5.1+cpu"
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          rows=[]
+          for p in Path("wheels").glob("*.whl"):
+              rows.append({"name":p.name,"size":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()})
+          Path("wheels/manifest.json").write_text(json.dumps(rows,indent=2)+"\n")
+          print(rows)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hexa-torchaudio-2.5.1-cpu-py312
+          path: wheels
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
