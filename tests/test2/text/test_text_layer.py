@@ -721,3 +721,24 @@ def test_authoritative_text_has_global_editorial_density_budget() -> None:
     assert {row.beat_id for row in retained} == {
         "beat-001", "beat-002", "beat-003", "beat-004"
     }
+
+
+
+def test_authoritative_text_omits_weak_aggregate_phrase() -> None:
+    script = "أصلًا"
+    transcript = _transcript(script)
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=transcript.duration,
+        audio_start=0.0,
+        audio_end=transcript.words[-1].end,
+        narration=script,
+        action="EMPHASIZE",
+    )
+    package = _semantic_package(script, meanings=[("EXPLICIT", "أصلًا")])
+
+    plan = TextPlanner().plan(transcript=transcript, story=[beat], package=package)
+
+    assert plan.cues == []

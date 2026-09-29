@@ -81,7 +81,7 @@ _WEAK_STANDALONE_TERMS = frozenset({
 _WEAK_EDITORIAL_TERMS = frozenset({
     # Exact Final Package spans may still be grammatically weak on their own.
     # Editorial text is allowed to omit them even when the visual binding is authoritative.
-    "جداً", "جدًا", "جدا", "أصلًا", "اصلا", "لو",
+    "جداً", "جدًا", "جدا", "أصلًا", "اصلا", "لو", "وصل",
 })
 _IMPORTANCE_TERMS = frozenset({
     "الرصيد", "المتاح", "متاح", "فعليًا", "فعليا", "محجوز", "محجوزة", "الحد", "حد",
@@ -159,6 +159,8 @@ class TextSemanticSelector:
         deduped: dict[str, KeywordCandidate] = {}
         for candidate in candidates:
             if candidate.score < self.min_candidate_score:
+                continue
+            if not self._has_editorial_content(candidate.display_text.split()):
                 continue
             key = self._normalize(candidate.display_text)
             if not key:
