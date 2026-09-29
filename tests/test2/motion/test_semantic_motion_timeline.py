@@ -27,6 +27,7 @@ from app.models import (
     TranscriptWord,
 )
 from app.motion import MotionPlanner
+from app.motion.collision import fit_relation_collisions
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
@@ -466,32 +467,64 @@ def test_handoff_does_not_terminally_exit_asset_that_continues_next_beat() -> No
     assert segment is None
 
 
-def test_motion_planner_auto_fits_new_collision_from_stronger_motion() -> None:
-    beat, composition, choreography = _fixture()
+def test_collision_fitter_limits_causal_relation_overlap_without_retiming() -> None:
     close_composition = CompositionBeat(
-        beat_id=composition.beat_id,
+        beat_id="beat",
         items=[
-            # Authored boxes just touch without overlap. The relation pulse would cross
-            # the collision envelope, so the planner must fit amplitude safely.
-            LayoutItem(asset_id="a", x=0.320, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="a", x=0.32, y=0.50, width=0.18, height=0.22),
             LayoutItem(asset_id="b", x=0.50, y=0.50, width=0.18, height=0.22),
-            LayoutItem(asset_id="c", x=0.80, y=0.50, width=0.18, height=0.22),
         ],
     )
-    cues = MotionPlanner().plan([beat], [close_composition], choreography)
+    source = MotionSegment(
+        phase="INTERACT", start=0.20, end=0.80,
+        semantic_event_id="E1", relationship="ENABLES",
+        involvement="SOURCE", source_asset_id="a", target_asset_id="b",
+        program={
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {"progress": 0.25, "dx": 0.055, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {"progress": 0.85, "dx": 0.055, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+            ]
+        },
+    )
+    target = MotionSegment(
+        phase="REACT", start=0.45, end=0.90,
+        semantic_event_id="E1", relationship="ENABLES",
+        involvement="TARGET", source_asset_id="a", target_asset_id="b",
+        program={
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {"progress": 0.25, "dx": -0.055, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {"progress": 0.85, "dx": -0.055, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
+            ]
+        },
+    )
+    source_cue = MotionCue(
+        beat_id="beat", asset_id="a", kind="program_v3",
+        start=0.0, end=1.0, segments=[source],
+    )
+    target_cue = MotionCue(
+        beat_id="beat", asset_id="b", kind="program_v3",
+        start=0.0, end=1.0, segments=[target],
+    )
+
+    fitted = fit_relation_collisions(
+        [source_cue, target_cue], close_composition
+    )
     limited = [
         segment
-        for cue in cues
+        for cue in fitted
         for segment in cue.segments
         if bool(segment.program.get("collision_limited"))
     ]
-    assert limited
+    assert len(limited) == 2
     assert all(0.0 <= float(row.program["collision_gain"]) < 1.0 for row in limited)
-
-    report = MotionInteractionQA().inspect(
-        story=[beat], motion=cues, composition=[close_composition],
-    )
-    assert report.ok, report.violations
+    assert fitted[0].segments[0].start == pytest.approx(source.start)
+    assert fitted[0].segments[0].end == pytest.approx(source.end)
+    assert fitted[1].segments[0].start == pytest.approx(target.start)
+    assert fitted[1].segments[0].end == pytest.approx(target.end)
 
 
 def test_motion_interaction_qa_still_rejects_collision_if_planner_fit_is_bypassed() -> None:
