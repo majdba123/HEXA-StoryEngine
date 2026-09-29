@@ -257,17 +257,31 @@ class MotionInteractionContract:
             return
         if cls._geometry_locked(source_cue) or cls._geometry_locked(target_cue):
             return
-        overlap_start = max(float(source.start), float(target.start))
-        overlap_end = min(float(source.end), float(target.end))
-        if overlap_end <= overlap_start + 1e-6:
-            return
         authored = authored_overlap_ratio(source_item, target_item)
-        animated = max_relation_overlap(
-            source=source,
-            target=target,
-            source_item=source_item,
-            target_item=target_item,
-        )
+        target_segments = [target]
+        if target_cue is not None:
+            target_segments.extend(
+                segment
+                for segment in target_cue.segments
+                if segment.phase == "ENTRY"
+                and min(float(source.end), float(segment.end))
+                > max(float(source.start), float(segment.start)) + 1e-6
+            )
+
+        animated_rows = [
+            (segment.phase, max_relation_overlap(
+                source=source,
+                target=segment,
+                source_item=source_item,
+                target_item=target_item,
+            ))
+            for segment in target_segments
+            if min(float(source.end), float(segment.end))
+            > max(float(source.start), float(segment.start)) + 1e-6
+        ]
+        if not animated_rows:
+            return
+        phase, animated = max(animated_rows, key=lambda row: row[1])
         if authored <= 0.02 and animated > 0.12 and animated > authored + 0.08:
             violations.append(MotionInteractionViolation(
                 code="MOTION_CREATES_COLLISION",
@@ -276,7 +290,7 @@ class MotionInteractionContract:
                 event_id=event_id,
                 detail=(
                     f"{source_id or 'source'}->{target_id} authored overlap "
-                    f"{authored:.3f}, animated overlap {animated:.3f}"
+                    f"{authored:.3f}, animated overlap {animated:.3f} during {phase}"
                 ),
             ))
 

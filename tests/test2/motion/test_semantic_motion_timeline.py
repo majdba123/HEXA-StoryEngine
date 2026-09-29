@@ -27,7 +27,11 @@ from app.models import (
     TranscriptWord,
 )
 from app.motion import MotionPlanner
-from app.motion.collision import fit_relation_collisions
+from app.motion.collision import (
+    _SAFE_ANIMATED_OVERLAP,
+    fit_relation_collisions,
+    max_relation_overlap,
+)
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.timing import (
@@ -525,6 +529,100 @@ def test_collision_fitter_limits_causal_relation_overlap_without_retiming() -> N
     assert fitted[0].segments[0].end == pytest.approx(source.end)
     assert fitted[1].segments[0].start == pytest.approx(target.start)
     assert fitted[1].segments[0].end == pytest.approx(target.end)
+
+
+def test_collision_fit_includes_target_entry_before_delayed_reaction() -> None:
+    layout = CompositionBeat(
+        beat_id="beat",
+        items=[
+            LayoutItem(asset_id="source", x=0.32, y=0.50, width=0.18, height=0.22),
+            LayoutItem(asset_id="target", x=0.50, y=0.50, width=0.18, height=0.22),
+        ],
+    )
+    source_segment = MotionSegment(
+        phase="INTERACT",
+        start=1.0,
+        end=1.6,
+        semantic_event_id="E1",
+        relationship="ENABLES",
+        involvement="SOURCE",
+        source_asset_id="source",
+        target_asset_id="target",
+        program={
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+                {"progress": 0.35, "dx": 0.06, "dy": 0.0, "scale": 1.10},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+            ]
+        },
+    )
+    target_entry = MotionSegment(
+        phase="ENTRY",
+        start=1.0,
+        end=1.45,
+        involvement="TARGET",
+        program={
+            "keyframes": [
+                {"progress": 0.0, "dx": -0.04, "dy": 0.0, "scale": 1.08},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+            ]
+        },
+    )
+    target_react = MotionSegment(
+        phase="REACT",
+        start=1.45,
+        end=1.85,
+        semantic_event_id="E1",
+        relationship="ENABLES",
+        involvement="TARGET",
+        source_asset_id="source",
+        target_asset_id="target",
+        program={
+            "keyframes": [
+                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+                {"progress": 0.6, "dx": -0.01, "dy": 0.0, "scale": 1.03},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+            ]
+        },
+    )
+    cues = [
+        MotionCue(
+            beat_id="beat", asset_id="source", kind="program_v3",
+            start=0.8, end=1.0, segments=[source_segment],
+        ),
+        MotionCue(
+            beat_id="beat", asset_id="target", kind="program_v3",
+            start=1.0, end=1.45, segments=[target_entry, target_react],
+        ),
+    ]
+    items = {item.asset_id: item for item in layout.items}
+    before = max_relation_overlap(
+        source=source_segment,
+        target=target_entry,
+        source_item=items["source"],
+        target_item=items["target"],
+    )
+    assert before > _SAFE_ANIMATED_OVERLAP
+
+    fitted = fit_relation_collisions(cues, layout)
+    by_asset = {cue.asset_id: cue for cue in fitted}
+    fitted_source = next(
+        segment for segment in by_asset["source"].segments
+        if segment.phase == "INTERACT"
+    )
+    fitted_entry = next(
+        segment for segment in by_asset["target"].segments
+        if segment.phase == "ENTRY"
+    )
+    after = max_relation_overlap(
+        source=fitted_source,
+        target=fitted_entry,
+        source_item=items["source"],
+        target_item=items["target"],
+    )
+    assert after <= _SAFE_ANIMATED_OVERLAP + 1e-6
+    assert fitted_source.program.get("collision_limited") is True
+    assert fitted_entry.program.get("collision_limited") is True
 
 
 def test_motion_interaction_qa_still_rejects_collision_if_planner_fit_is_bypassed() -> None:

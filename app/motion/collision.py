@@ -65,11 +65,12 @@ def fit_relation_collisions(
     cues: list[MotionCue],
     layout: CompositionBeat,
 ) -> list[MotionCue]:
-    """Reduce only relation amplitude that would create a new visual collision.
+    """Reduce relation/entry amplitude that would create a new visual collision.
 
     Composition remains authoritative. Timing, direction, semantic roles and easing stay
-    unchanged; only dx/dy/scale deltas are uniformly reduced, and only when previously
-    separated authored boxes would overlap materially during INTERACT/REACT.
+    unchanged; only dx/dy/scale deltas are uniformly reduced. A causal REACT may now
+    start later than the source INTERACT, so collision fitting must also consider the
+    target ENTRY that can overlap the source before REACT begins.
     """
     if len(cues) < 2 or not layout.items:
         return cues
@@ -77,24 +78,42 @@ def fit_relation_collisions(
     items = {item.asset_id: item for item in layout.items}
     cue_index = {cue.asset_id: index for index, cue in enumerate(cues)}
     segments = [list(cue.segments) for cue in cues]
-    seen: set[tuple[str, str, str | None, str | None, float, float]] = set()
+    seen: set[tuple[str, str, str | None, str | None, str, float, float]] = set()
 
     for source_cue_index, cue in enumerate(cues):
         if geometry_locked(cue):
             continue
-        for source_segment_index, source_segment in enumerate(list(segments[source_cue_index])):
-            if source_segment.phase != "INTERACT":
+        for source_segment_index, original_source in enumerate(
+            list(segments[source_cue_index])
+        ):
+            if original_source.phase != "INTERACT":
                 continue
-            source_id = source_segment.source_asset_id or cue.asset_id
-            target_id = source_segment.target_asset_id
+            source_id = original_source.source_asset_id or cue.asset_id
+            target_id = original_source.target_asset_id
             if not target_id or source_id not in items or target_id not in items:
                 continue
             target_cue_index = cue_index.get(target_id)
             if target_cue_index is None or geometry_locked(cues[target_cue_index]):
                 continue
 
+            source_item = items[source_id]
+            target_item = items[target_id]
+            authored = authored_overlap_ratio(source_item, target_item)
+            if authored > _AUTHORED_SEPARATION_LIMIT:
+                continue
+
             candidates: list[tuple[int, MotionSegment]] = []
-            for target_segment_index, target_segment in enumerate(segments[target_cue_index]):
+            for target_segment_index, target_segment in enumerate(
+                segments[target_cue_index]
+            ):
+                if min(original_source.end, target_segment.end) <= max(
+                    original_source.start, target_segment.start
+                ) + 1e-9:
+                    continue
+
+                if target_segment.phase == "ENTRY":
+                    candidates.append((target_segment_index, target_segment))
+                    continue
                 if target_segment.phase != "REACT":
                     continue
                 if (
@@ -108,90 +127,81 @@ def fit_relation_collisions(
                 ):
                     continue
                 if (
-                    source_segment.relationship
+                    original_source.relationship
                     and target_segment.relationship
-                    and source_segment.relationship != target_segment.relationship
+                    and original_source.relationship != target_segment.relationship
                 ):
                     continue
-                if min(source_segment.end, target_segment.end) <= max(
-                    source_segment.start, target_segment.start
-                ) + 1e-9:
-                    continue
                 candidates.append((target_segment_index, target_segment))
+
             if not candidates:
                 continue
 
-            target_segment_index, target_segment = max(
-                candidates,
-                key=lambda row: min(source_segment.end, row[1].end)
-                - max(source_segment.start, row[1].start),
-            )
-            key = (
-                source_id,
-                target_id,
-                source_segment.semantic_event_id,
-                source_segment.relationship,
-                float(source_segment.start),
-                float(target_segment.start),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
+            source_segment = original_source
+            for target_segment_index, candidate in sorted(
+                candidates, key=lambda row: (row[1].start, row[1].end, row[0])
+            ):
+                target_segment = segments[target_cue_index][target_segment_index]
+                key = (
+                    source_id,
+                    target_id,
+                    source_segment.semantic_event_id,
+                    source_segment.relationship,
+                    target_segment.phase,
+                    float(source_segment.start),
+                    float(target_segment.start),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
 
-            source_item = items[source_id]
-            target_item = items[target_id]
-            authored = authored_overlap_ratio(source_item, target_item)
-            if authored > _AUTHORED_SEPARATION_LIMIT:
-                continue
-
-            current = max_relation_overlap(
-                source=source_segment,
-                target=target_segment,
-                source_item=source_item,
-                target_item=target_item,
-            )
-            if current <= _SAFE_ANIMATED_OVERLAP:
-                continue
-
-            low, high = 0.0, 1.0
-            for _ in range(_BINARY_STEPS):
-                gain = (low + high) * 0.5
-                trial_source = scale_segment(source_segment, gain)
-                trial_target = scale_segment(target_segment, gain)
-                overlap = max_relation_overlap(
-                    source=trial_source,
-                    target=trial_target,
+                current = max_relation_overlap(
+                    source=source_segment,
+                    target=target_segment,
                     source_item=source_item,
                     target_item=target_item,
                 )
-                if overlap <= _SAFE_ANIMATED_OVERLAP:
-                    low = gain
-                else:
-                    high = gain
+                if current <= _SAFE_ANIMATED_OVERLAP:
+                    continue
 
-            gain = max(0.0, min(1.0, low))
-            fitted_source = scale_segment(
-                source_segment,
-                gain,
-                collision_limited=True,
-                authored_overlap=authored,
-                original_overlap=current,
-            )
-            fitted_target = scale_segment(
-                target_segment,
-                gain,
-                collision_limited=True,
-                authored_overlap=authored,
-                original_overlap=current,
-            )
-            segments[source_cue_index][source_segment_index] = fitted_source
-            segments[target_cue_index][target_segment_index] = fitted_target
+                low, high = 0.0, 1.0
+                for _ in range(_BINARY_STEPS):
+                    gain = (low + high) * 0.5
+                    trial_source = scale_segment(source_segment, gain)
+                    trial_target = scale_segment(target_segment, gain)
+                    overlap = max_relation_overlap(
+                        source=trial_source,
+                        target=trial_target,
+                        source_item=source_item,
+                        target_item=target_item,
+                    )
+                    if overlap <= _SAFE_ANIMATED_OVERLAP:
+                        low = gain
+                    else:
+                        high = gain
+
+                gain = max(0.0, min(1.0, low))
+                source_segment = scale_segment(
+                    source_segment,
+                    gain,
+                    collision_limited=True,
+                    authored_overlap=authored,
+                    original_overlap=current,
+                )
+                fitted_target = scale_segment(
+                    target_segment,
+                    gain,
+                    collision_limited=True,
+                    authored_overlap=authored,
+                    original_overlap=current,
+                )
+                segments[source_cue_index][source_segment_index] = source_segment
+                segments[target_cue_index][target_segment_index] = fitted_target
 
     return [
         cue.model_copy(update={"segments": rows})
         for cue, rows in zip(cues, segments)
     ]
-
 
 def scale_segment(
     segment: MotionSegment,

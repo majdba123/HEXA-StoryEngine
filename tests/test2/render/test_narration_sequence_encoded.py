@@ -64,6 +64,16 @@ CASES = {
             phrase="return-span", group="g", sequence=2,
         ),
     ],
+    "enable-same-anchor": [
+        Spec(
+            "source", "E1", 0.40, role="PRIMARY", leader=True,
+            phrase="source-span", phrase_end=0.80, group="g", sequence=1,
+        ),
+        Spec(
+            "target", "E2", 0.40, role="OBJECT", leader=True,
+            phrase="target-span", phrase_end=0.80, group="g", sequence=2,
+        ),
+    ],
     "subframe-distinct-reveals": [
         Spec("first", "event", 0.101, group="tight", sequence=1),
         Spec("second", "event", 0.109, leader=False, group="tight", sequence=2),
@@ -148,6 +158,11 @@ def test_narration_sequence_survives_encode(tmp_path: Path, case: str):
             subject_asset_id=specs[1].asset, object_asset_id=specs[2].asset,
             relation_type="PROGRESSES_TO",
         ),)
+    elif case == "enable-same-anchor":
+        relations = (CanonicalRelation(
+            subject_asset_id=specs[0].asset, object_asset_id=specs[1].asset,
+            relation_type="ENABLES",
+        ),)
     story, _, _, motion, plan = _pipeline(
         tmp_path / "pipeline", specs, 2.6, relations=relations,
         asset_images=images, asset_boxes=boxes,
@@ -185,7 +200,7 @@ def test_narration_sequence_survives_encode(tmp_path: Path, case: str):
         calm = np.array(rows[math.ceil(settled * plan.fps) + 2:])
         assert len(calm) > 2
         assert np.ptp(calm[:, 1:], axis=0).max() <= 1.0, "post-settle motion"
-    if case in {"authored-cohort", "dependent-authored-cohort"}:
+    if case in {"authored-cohort", "dependent-authored-cohort", "enable-same-anchor"}:
         assert len(set(first_frames)) == 1
     else:
         assert all(a < b for a, b in zip(first_frames, first_frames[1:])), first_frames
@@ -194,8 +209,23 @@ def test_narration_sequence_survives_encode(tmp_path: Path, case: str):
         assert by_id["negation"].params["motion_order"]["sequence_order"] == 3
         assert by_id["vulnerability"].params["motion_order"]["sequence_order"] == 2
         assert windows["negation"].reveal_start < windows["vulnerability"].reveal_start
-    if relations:
+    if case in {"program-install-system", "message-action-target"}:
         target = next(c for c in motion if c.asset_id == specs[-1].asset)
         assert [s.phase for s in target.segments if s.phase != "ENTRY"] == ["PAYOFF"]
+    if case == "enable-same-anchor":
+        source = next(c for c in motion if c.asset_id == "source")
+        target = next(c for c in motion if c.asset_id == "target")
+        assert [
+            (segment.phase, segment.involvement)
+            for segment in source.segments
+            if segment.relationship == "ENABLES"
+        ] == [("INTERACT", "SOURCE")]
+        assert [
+            (segment.phase, segment.involvement)
+            for segment in target.segments
+            if segment.relationship == "ENABLES"
+        ] == [("REACT", "TARGET")]
+        assert target.params["semantic_focus"]["cohort_gain"] == pytest.approx(1.0)
+        assert source.params["semantic_focus"]["cohort_gain"] < 1.0
     report = EncodedMotionVerifier().inspect(video=video, plan=plan)
     assert report.ok, report.violations

@@ -18,6 +18,9 @@ from app.story import StoryPlanner
 from app.text import TextPlanner
 from app.vision import VisionService
 from tests.test1.factory import deterministic_transcript
+from tests.test2.support.sprint2_perceptual_oracle import (
+    assert_sprint2_perceptual_contracts,
+)
 
 _REAL_PACKAGES = (
     "HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_CORRECTED.zip",
@@ -120,6 +123,13 @@ def certify_real_package_to_render_plan(
     assert all(item.asset_id in runtime_asset_ids for beat in composition for item in beat.items)
     assert all(cue.asset_id in runtime_asset_ids and cue.beat_id in beat_ids for cue in motion)
     assert all(cue.beat_id in beat_ids for cue in text.cues)
+    assert_sprint2_perceptual_contracts(
+        canonical,
+        story,
+        composition,
+        motion,
+        plan,
+    )
 
     result = RealPlanningResult(
         filename=filename,
