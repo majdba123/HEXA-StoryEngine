@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+from collections import defaultdict
+
 from app.choreography import ChoreographyDirective, ChoreographyPlan
 from app.canonical import CanonicalPackage, ensure_canonical_package
 from app.models import StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
@@ -112,10 +115,72 @@ class TextPlanner:
                 ))
                 cue_number += 1
 
+        if package is not None and package.has_authoritative_semantics:
+            cues = self._apply_editorial_density(cues)
+
         return TextPlan(
             cues=sorted(cues, key=lambda cue: (cue.spoken_start, -cue.priority, cue.id)),
             styles=sorted(styles.values(), key=lambda style: style.id),
         )
+
+    @classmethod
+    def _apply_editorial_density(cls, cues: list[TextCue]) -> list[TextCue]:
+        """Keep semantic typography sparse instead of approaching subtitle coverage.
+
+        Every beat with useful text may keep one editorial cue.  A bounded global
+        25% accent budget can add a second cue to the strongest beats, but never a
+        third.  The extra cue must represent a distinct spoken moment.  This keeps
+        Final Package text anchors useful while preventing dense packages from turning
+        every valid semantic span into on-screen narration.
+        """
+        if len(cues) <= 2:
+            return list(cues)
+
+        by_beat: dict[str, list[TextCue]] = defaultdict(list)
+        for cue in cues:
+            by_beat[cue.beat_id].append(cue)
+        if not by_beat:
+            return []
+
+        retained: list[TextCue] = []
+        extras: list[TextCue] = []
+        per_beat_count: dict[str, int] = {}
+        for beat_id, rows in by_beat.items():
+            ranked = sorted(rows, key=cls._editorial_rank, reverse=True)
+            primary = ranked[0]
+            retained.append(primary)
+            per_beat_count[beat_id] = 1
+            for candidate in ranked[1:]:
+                if abs(float(candidate.spoken_start) - float(primary.spoken_start)) < 0.45:
+                    continue
+                extras.append(candidate)
+
+        # One cue per covered beat is the base contract. A quarter of the beats may
+        # receive one additional accent when semantic evidence makes it worthwhile.
+        max_total = max(len(retained), math.ceil(len(by_beat) * 1.25))
+        for candidate in sorted(extras, key=cls._editorial_rank, reverse=True):
+            if len(retained) >= max_total:
+                break
+            if per_beat_count.get(candidate.beat_id, 0) >= 2:
+                continue
+            retained.append(candidate)
+            per_beat_count[candidate.beat_id] = per_beat_count.get(candidate.beat_id, 0) + 1
+
+        return retained
+
+    @staticmethod
+    def _editorial_rank(cue: TextCue) -> tuple[int, int, float, str]:
+        evidence = set(cue.package_evidence)
+        score = int(cue.priority)
+        if cue.semantic_type in {"warning_amount", "warning", "amount", "number"}:
+            score += 25
+        if "final_package_text_anchor" in evidence:
+            score += 20
+        if "final_package_visual_leader" in evidence:
+            score += 10
+        if cue.relationship and cue.relationship != "DECLARED_PROGRESSION":
+            score += 4
+        return score, int(cue.priority), -float(cue.spoken_start), cue.id
 
     @staticmethod
     def _anchor_asset_id(

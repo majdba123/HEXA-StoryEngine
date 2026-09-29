@@ -17,6 +17,7 @@ from app.models import (
     Transcript,
     TranscriptSegment,
     TranscriptWord,
+    TextCue,
     VisualAsset,
 )
 from app.motion import TextMotionPlanner
@@ -629,3 +630,94 @@ def test_text_motion_respects_visual_cohort_attention_hierarchy() -> None:
     assert [token.start for token in leader_cue.tokens] == [
         token.start for token in participant_cue.tokens
     ]
+
+
+
+def test_authoritative_text_omits_weak_exact_span() -> None:
+    script = "قبل الضعف"
+    transcript = _transcript(script)
+    beat = StoryBeat(
+        id="beat-001",
+        scene_id="scene-001",
+        start=0.0,
+        end=transcript.duration,
+        audio_start=0.0,
+        audio_end=transcript.words[-1].end,
+        narration=script,
+        action="EMPHASIZE",
+    )
+    before_start = script.index("قبل")
+    weakness_start = script.index("الضعف")
+    package = _precise_semantic_package(
+        script,
+        [
+            {
+                "asset_id": "context",
+                "semantic_role": "PRIMARY",
+                "semantic_meaning": "سياق زمني",
+                "visual_concept": "سياق",
+                "script_text": "قبل",
+                "script_span": {
+                    "char_start": before_start,
+                    "char_end": before_start + len("قبل"),
+                },
+            },
+            {
+                "asset_id": "weakness",
+                "semantic_role": "RESULT",
+                "visual_focus": "RESULT",
+                "semantic_meaning": "نقطة ضعف",
+                "visual_concept": "ثغرة",
+                "script_text": "الضعف",
+                "script_span": {
+                    "char_start": weakness_start,
+                    "char_end": weakness_start + len("الضعف"),
+                },
+            },
+        ],
+    )
+
+    plan = TextPlanner().plan(transcript=transcript, story=[beat], package=package)
+    texts = [cue.text for cue in plan.cues]
+
+    assert "قبل" not in texts
+    assert "الضعف" in texts
+
+
+def test_authoritative_text_has_global_editorial_density_budget() -> None:
+    def cue(index: int, beat_id: str, priority: int) -> TextCue:
+        start = index * 0.7
+        return TextCue(
+            id=f"text-{index:03d}",
+            beat_id=beat_id,
+            text=f"keyword-{index}",
+            semantic_type="emphasis",
+            source_char_start=index * 10,
+            source_char_end=index * 10 + 5,
+            spoken_start=start,
+            spoken_end=start + 0.3,
+            emphasis_time=start,
+            priority=priority,
+            style_id="emphasis",
+            package_evidence=[
+                "final_package_text_anchor" if priority >= 90 else "final_package_semantic_events"
+            ],
+        )
+
+    cues = [
+        cue(1, "beat-001", 100), cue(2, "beat-001", 98), cue(3, "beat-001", 80),
+        cue(4, "beat-002", 100), cue(5, "beat-002", 90),
+        cue(6, "beat-003", 99), cue(7, "beat-003", 92),
+        cue(8, "beat-004", 95), cue(9, "beat-004", 88),
+    ]
+
+    retained = TextPlanner._apply_editorial_density(cues)
+    per_beat: dict[str, int] = {}
+    for row in retained:
+        per_beat[row.beat_id] = per_beat.get(row.beat_id, 0) + 1
+
+    assert len(retained) == 5  # four base cues + 25% editorial accent budget
+    assert max(per_beat.values()) <= 2
+    assert {row.beat_id for row in retained} == {
+        "beat-001", "beat-002", "beat-003", "beat-004"
+    }

@@ -78,6 +78,11 @@ _WEAK_STANDALONE_TERMS = frozenset({
     "يستخدم", "تستخدم", "يكون", "تكون", "يصير", "يعمل", "تعمل", "يسوي",
     "يخلي", "يخليه", "يريد", "تريد",
 })
+_WEAK_EDITORIAL_TERMS = frozenset({
+    # Exact Final Package spans may still be grammatically weak on their own.
+    # Editorial text is allowed to omit them even when the visual binding is authoritative.
+    "جداً", "جدًا", "جدا", "أصلًا", "اصلا", "لو",
+})
 _IMPORTANCE_TERMS = frozenset({
     "الرصيد", "المتاح", "متاح", "فعليًا", "فعليا", "محجوز", "محجوزة", "الحد", "حد",
     "اليومي", "رفض", "مرفوض", "تنرفض", "رفضها", "البنك", "بنك", "البطاقة", "البطاقات",
@@ -454,6 +459,8 @@ class TextSemanticSelector:
                 continue
             cleaned = [self._clean(row.text) for row in matched]
             if any(not token for token in cleaned):
+                continue
+            if not self._has_editorial_content(cleaned):
                 continue
             display = " ".join(cleaned).strip()
             if not display or len(display) > self.max_display_chars:
@@ -971,6 +978,27 @@ class TextSemanticSelector:
             else:
                 current += value
         return str(total + current)
+
+    @classmethod
+    def _has_editorial_content(cls, tokens: list[str]) -> bool:
+        """Return True when a phrase carries meaning worth drawing as editorial text.
+
+        Final Package semantics remain authority for the visual concept, but an exact
+        source span is not automatically valuable typography.  Function words and
+        intensifiers may remain narration-only so the text layer cannot drift toward
+        subtitle coverage.
+        """
+        for token in tokens:
+            normalized = cls._clean(token).lower()
+            if not normalized:
+                continue
+            if normalized in _ARABIC_STOPWORDS or normalized in _ENGLISH_STOPWORDS:
+                continue
+            if normalized in _WEAK_STANDALONE_TERMS or normalized in _WEAK_EDITORIAL_TERMS:
+                continue
+            if cls._is_number_token(normalized) or cls._is_content_word(normalized):
+                return True
+        return False
 
     @staticmethod
     def _is_content_word(value: str) -> bool:
