@@ -551,6 +551,9 @@ def test_cross_event_relation_phase_executes_without_stealing_story_event_owner(
     assert len(cross_source) == 1
     assert len(cross_target) == 1
     assert cross_target[0].start >= cues["c"].start
+    # The target is already visible, but its causal reaction must acknowledge the
+    # source action instead of launching as a second Hero on the same instant.
+    assert cross_target[0].start > cross_source[0].start + 1e-6
     assert min(cross_source[0].end, cross_target[0].end) > max(
         cross_source[0].start, cross_target[0].start
     )
@@ -726,4 +729,3 @@ def test_relation_target_membership_does_not_grant_source_action():
     assert sum(p.stage == EventFlowStage.INTERACT for p in source.phase_chain) == 1
     assert sum(p.stage == EventFlowStage.REACT for p in target.phase_chain) == 1
     assert not any(p.stage == EventFlowStage.INTERACT for p in target.phase_chain)
-

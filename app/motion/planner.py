@@ -1862,6 +1862,22 @@ class MotionPlanner:
                 # introduced. Visibility may stay early, but causal REACT/PAYOFF must
                 # never execute before the source exists in Story timing.
                 peak_lower = max(peak_lower, float(relation_source_start))
+            if phase.stage == EventFlowStage.REACT and relation_bounds is not None:
+                # REACT is a consequence, not a second simultaneous source action.
+                # Preserve Story visibility but require a bounded acknowledgement gap
+                # after whichever comes later: the relation phrase or source reveal.
+                span = relation_bounds[1] - relation_bounds[0]
+                reaction_delay = min(
+                    span * GOLDEN_MINOR,
+                    profile.target_seconds * GOLDEN_MINOR,
+                )
+                causal_origin = max(
+                    relation_bounds[0],
+                    float(relation_source_start)
+                    if relation_source_start is not None
+                    else relation_bounds[0],
+                )
+                peak_lower = max(peak_lower, causal_origin + reaction_delay)
             if phase.stage == EventFlowStage.PAYOFF and has_story_window and story_window is not None:
                 peak_lower = max(peak_lower, float(story_window.reveal_start))
                 peak_upper = min(peak_upper, float(story_window.settle_at))
@@ -1904,12 +1920,15 @@ class MotionPlanner:
                     span * GOLDEN_MINOR,
                     profile.target_seconds * GOLDEN_MINOR,
                 )
-                start = max(
-                    lower,
-                    float(relation_start) + reaction_delay,
+                causal_origin = max(
+                    float(relation_start),
                     float(relation_source_start)
                     if relation_source_start is not None
                     else float(relation_start),
+                )
+                start = max(
+                    lower,
+                    causal_origin + reaction_delay,
                 )
                 end = min(upper, start + profile.target_seconds)
             else:
