@@ -13293,3 +13293,258 @@ Sprint 4 — NOT STARTED.
 Sprint 5 — NOT STARTED.
 
 Do not start Sprint 3 while the above Sprint 2 blockers remain unresolved.
+
+
+===============================================================================
+SPRINT 2 ENGINEERING CLOSURE / READY FOR VISUAL ACCEPTANCE — 2026-09-29
+===============================================================================
+
+STATUS
+------
+Sprint 1 — CLOSED / visually accepted.
+Sprint 2 — ENGINEERING IMPLEMENTATION COMPLETE; OPEN ONLY FOR FINAL USER VISUAL
+            ACCEPTANCE OF A NEW PRODUCTION RENDER.
+Sprint 3 — NOT STARTED.
+Sprint 4 — NOT STARTED.
+Sprint 5 — NOT STARTED.
+
+Do NOT start Sprint 3 until the user visually accepts the new Sprint 2 render.
+
+FINAL CODE / TEST CHECKPOINT
+----------------------------
+Branch: montage
+Code + tests HEAD before this documentation-only closure commit:
+add8f89d748daaff5c82eb836471dc796e37e4a1
+Message:
+[Sprint2] Preserve collision coverage for causal relations
+
+Last production-code commit:
+0fb0c8b5d8c2bf4dec5d6e40bcc2be2baa4eba5a
+Message:
+[Sprint2] Sequence causal target reactions after source onset
+
+Exact-head V2 CI:
+- Run #729
+- Run ID: 36538068367
+- Conclusion: SUCCESS
+- Compile: SUCCESS
+- Lint: SUCCESS
+- Test1 canonical compatibility: 565 passed, 8 skipped
+- Full test suite: 1468 passed, 8 skipped, 13 warnings
+- Windows Full-HD encoded render contract gate: SUCCESS
+
+LOCKED ARCHITECTURE — UNCHANGED
+-------------------------------
+- Pass1 + Pass2 only.
+- No Pass3.
+- No Layer3.
+- No recovery layer.
+- No Black-Hat-specific production branches.
+- Final Package -> Story -> Choreography -> Composition -> Motion -> Text -> Render.
+- Story owns semantic WHEN.
+- Choreography owns interaction/focus semantics.
+- Composition owns final resting geometry.
+- Motion owns HOW attention/movement executes.
+- Renderer owns frame/encoding execution.
+- Pass2 provenance is NOT semantic identity.
+
+SPRINT 2 PRODUCTION FIXES NOW LOCKED
+------------------------------------
+1. Relation target membership no longer grants source INTERACT ownership.
+   - Target movement requires explicit REACT or its own PAYOFF.
+   - Prevents target result assets from receiving INTERACT + PAYOFF merely by membership.
+
+2. Encoded reveal ordering is frame-safe.
+   - Distinct Story reveal instants in authored sequential groups cannot silently collapse
+     into the same encoded frame.
+   - Equal Story timestamps remain equal; renderer does not invent a sequence for an
+     authored simultaneous cohort.
+   - FFmpeg floating-point enable thresholds are placed safely inside legal frame gaps so
+     a target frame is not missed by rounding.
+
+3. Temporal encoded-motion renderability is explicit.
+   - Non-zero ENTRY motion must have enough temporal capacity to produce encoded evidence.
+   - Otherwise Motion emits an exact static semantic reveal instead of metadata-only motion.
+   - Renderer fails closed if frame-safe reveal scheduling would hide an authored moving
+     ENTRY completely.
+
+4. Same-instant attention has one semantic owner unless simultaneous comparison/unit
+   semantics explicitly require multi-focus.
+   - Attention arbitration is based on semantic intent/unit, not raw PNG count.
+   - Pass2/family splits of one meaning do not count as competing Heroes.
+
+5. Dependency-linked events at the exact same timestamp share one attention cohort.
+   - Downstream authored event owns attention.
+   - Upstream visual remains visible/calmed.
+   - Story visibility is not retimed.
+
+6. Boundary visual carriers may not pre-expose future semantics.
+   - If the earliest incoming Story reveal is later than beat start, no current-scene asset
+     may be forced visible from t=0 just to hide a background gap.
+   - Previous-scene bridge/background handles the gap instead.
+
+7. Causal target reactions now follow source onset.
+   - REACT visibility may already exist, but its gesture begins only after
+     max(relation start, source reveal) + bounded acknowledgement delay.
+   - Prevents source INTERACT and target REACT from launching as two simultaneous Heroes.
+   - Story timestamps and Composition geometry remain unchanged.
+
+8. Collision protection remains intact after causal sequencing.
+   - Collision-fitter regression now uses a real delayed REACT + overlapping INTERACT
+     case and verifies amplitude is reduced without retiming either segment.
+
+PERCEPTUAL / GENERALIZATION TEST ENVIRONMENT
+--------------------------------------------
+New permanent Sprint 2 matrix:
+tests/test3/test_sprint2_generalization_matrix.py
+
+Coverage:
+- 80 seeded generated Final Packages.
+- 12 fixed stress topologies.
+- 92/92 local matrix cases green.
+- Matrix is included in the exact-head full CI above.
+
+The fixed stress set covers:
+- 1 asset / minimal package
+- 20 assets
+- Arabic script
+- numbers-heavy script
+- branching dependencies
+- repeated/reused asset continuity
+- SIMULTANEOUS_VISUAL_UNIT
+- compound visuals
+- persist continuity
+- transform continuity
+- no progression / no locators
+- support bindings
+- ambiguous bindings
+- parent bindings
+
+Existing certification remains active, including:
+- 250 seeded full-layer packages
+- full handoff-depth matrices
+- duration/density matrices
+- motion feasibility/readability boundaries
+- real FFmpeg encoded narration/reveal tests
+- full-HD Windows encoded gate
+
+REAL FINAL PACKAGE L5 CERTIFICATION ON FINAL PRODUCTION PATCH
+-------------------------------------------------------------
+The final production patch was run through the real structural path:
+FinalPackageLoader
+-> CanonicalNormalizer
+-> Vision
+-> Pass1
+-> Pass2
+-> Story
+-> Choreography
+-> Composition
+-> Motion
+-> Text
+-> RenderPlan
+
+All four accepted real package families passed independently:
+- Black Hat: PASS
+- White Hat: PASS
+- Gray Hat: PASS
+- Script Kiddie: PASS
+
+BLACK HAT ACCEPTANCE SOURCE CORRECTIONS
+---------------------------------------
+Two remaining visual blockers were proven to be authored-data contradictions rather than
+engine defects. The original accepted ZIP remains untouched.
+
+A new acceptance copy was produced:
+HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_SPRINT2_ACCEPTANCE_FIXED.zip
+
+Images were preserved byte-for-byte. Only semantic metadata was corrected.
+
+SCENE_012 — SMALL_TO_LARGE:
+- Original contradiction:
+  progression/event order said small -> growing,
+  but growing_devices was anchored to an earlier phrase than small_device.
+- Acceptance correction:
+  small_device remains on "شيء بسيط جدًا";
+  growing_devices / EVENT_02 now anchors to "جدًا" (chars 323-327).
+- Real RenderPlan evidence after correction:
+  small device reveal: 22.98s
+  growing-device semantic reveal: 23.82s
+  four runtime growing cutouts then stagger internally.
+
+SCENE_027 — return-to-system:
+- Original contradiction:
+  backdoor context and return arrow both began at "يرجع".
+- Acceptance correction:
+  backdoor_program anchors to "يخليه" (chars 718-723);
+  return_arrow remains on "يرجع" (chars 724-728);
+  server/result remains on "للنظام لاحقًا".
+- Real RenderPlan evidence after correction:
+  backdoor/context: 54.06s
+  return arrow: 54.48s
+  server/result: 54.90s
+
+Acceptance ZIP validation:
+- ZIP integrity: PASS
+- 40 scene PNGs present
+- manifest SHA-256 values updated for changed metadata
+- every manifest file hash verified
+- FinalPackageLoader: PASS
+- CanonicalNormalizer: 40 scenes / 129 semantic assets / 55 semantic events
+- Real L5 path: PASS
+- Pass1 assets: 157
+- Pass2/runtime assets: 179
+- Story beats: 40
+- Motion cues: 179
+
+ORIGINAL USER BLOCKERS — ENGINEERING DISPOSITION
+------------------------------------------------
+1. "أحيانًا يبدأ الموضوع من شيء بسيط"
+   - source contradiction fixed in the acceptance Final Package.
+   - engine narration-first timing remains unchanged.
+
+2. "الهاكر ما يحتاج دائمًا إلى ثغرة خارقة"
+   - precise narration ordering is encoded-certified.
+   - boundary carrier can no longer reveal the rocket/future semantic asset early.
+
+3. "إذا وصل إلى حساب موظف"
+   - target no longer inherits source INTERACT.
+   - same-instant/dependency attention has one owner.
+   - target REACT is causally delayed after source onset.
+
+4. "يثبت برنامج"
+   - real source truth was audited.
+   - same-instant action/character competition is arbitrated to one semantic owner.
+
+5. "يخليه يرجع للنظام مرة ثانية"
+   - source contradiction fixed in the acceptance Final Package.
+   - context -> return action -> result now has distinct authored anchors.
+
+6. "بعض الاختراقات تستمر شهور"
+   - encoded first-visible frame ordering and temporal renderability are enforced.
+   - sub-frame authored differences cannot silently collapse into one burst.
+
+7. "يقلل أي أثر"
+   - competing same-instant attention is bounded.
+   - existing speed/easing/comfort contracts remain active; no global stronger-motion hack.
+
+8. "نجاحه مو بس بالدخول"
+   - same-anchor semantic intent/cohort logic prevents raw cutout count from creating
+     competing Heroes.
+
+9. "الاختراق يبدأ برسالة"
+   - narration-first encoded ordering + dependency-linked one-owner focus are certified.
+
+NEXT STEP — USER-REQUESTED
+--------------------------
+Do NOT start Sprint 3.
+
+The engineering/data corrections are ready for the user's visual acceptance render.
+When the user says "اعمل رندر":
+1. use montage code checkpoint add8f89d748daaff5c82eb836471dc796e37e4a1
+   (production behavior last changed at 0fb0c8b5d8c2bf4dec5d6e40bcc2be2baa4eba5a);
+2. use the acceptance Final Package:
+   HEXA_BLACK_HAT_HACKER_AR_HEXA_V20_FINAL_PACKAGE_1_2_SPRINT2_ACCEPTANCE_FIXED.zip;
+3. identify/use the exact Black Hat narration audio;
+4. run a fresh production render, no stale cache;
+5. run final encoded/media verification;
+6. return the MP4 to the user for visual acceptance.
