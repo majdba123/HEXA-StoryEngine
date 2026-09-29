@@ -13718,3 +13718,312 @@ At this checkpoint, no further Sprint-2 engineering work is authorized unless th
 visual-acceptance render exposes a new regression. Do NOT begin Sprint 3 before that
 visual acceptance.
 
+
+
+===============================================================================
+UNIFIED FINAL PACKAGE 2.0 — AUTHORITATIVE MIGRATION + NEXT-CHAT HANDOFF — 2026-09-29
+===============================================================================
+
+THIS SECTION SUPERSEDES ALL EARLIER FINAL-PACKAGE 1.x INGESTION INSTRUCTIONS.
+The engine is now Unified Final Package 2.0 ONLY.
+
+CURRENT REPOSITORY STATE
+------------------------
+Repository: majdba123/HEXA-StoryEngine
+Branch: montage
+Authoritative HEAD:
+9acebf575b51fa72dac7a62f1437c4f0841a09af
+Commit:
+[final-package] Adopt Unified Final Package 2.0 only
+
+V2 CI:
+- Run #739
+- Run ID: 36565493916
+- Conclusion: SUCCESS
+- Compile: SUCCESS
+- Ruff: All checks passed
+- Test1 canonical compatibility: 573 passed, 8 skipped, 4 warnings
+- Full test suite: 1477 passed, 8 skipped, 13 warnings
+- Windows Full-HD encoded render contract gate: SUCCESS
+- Tested-source artifact:
+  hexa-storyengine-source-9acebf575b51fa72dac7a62f1437c4f0841a09af
+- artifact id: 11031851533
+- artifact SHA256: 887fa36668afb234721248997494d3061aba758c600730859d7c875cb4fbc91d
+
+ARCHITECTURAL DECISION — FINAL
+------------------------------
+Final Package 1.0/1.1/1.2 ingestion is RETIRED.
+There is NO backward-compatibility adapter in production.
+Do not reintroduce manifest.json / scene_plan.json / semantic_bindings.json.
+Do not reintroduce RawFinalPackage or CanonicalNormalizer.
+Do not add a dual-path loader.
+
+The only supported package shape is:
+
+Unified Final Package 2.0 ZIP
+  package.json
+  images/
+
+Production flow:
+Unified Final Package 2.0
+-> strict FinalPackageLoader validation
+-> CanonicalPackage
+-> Vision
+-> Pass1
+-> Pass2
+-> Story
+-> Choreography
+-> Composition
+-> Motion
+-> Text
+-> RenderPlan
+-> FFmpeg Render
+-> final verification
+
+The FinalPackageLoader converts exactly once at the boundary. Every downstream layer
+must receive CanonicalPackage only.
+
+The loader explicitly rejects any ZIP containing legacy companion files named:
+- manifest.json
+- scene_plan.json
+- semantic_bindings.json
+
+The package itself owns the canonical script. CLI/API production generation accepts
+package + audio; there is no external script argument as a second source of truth.
+
+UNIFIED 2.0 DATA PRINCIPLE
+--------------------------
+The new package keeps ONLY montage-relevant semantic truth and required structural data.
+Historical validation summaries, counts, filenames and report metadata are intentionally
+not part of the new contract unless they affect montage behavior.
+
+The package preserves the data required to determine:
+- scene order / scene image / scene script span
+- visual objects / runtime units
+- semantic meaning / role / intent
+- exact narration anchors
+- visual locators
+- sequence order
+- semantic groups and group animation policy
+- semantic events and event roles
+- event dependencies
+- authored relations
+- semantic / visual progression
+- parent/children semantic family identity
+- compound visual behavior
+- continuity and state transitions
+- interaction metadata that is consumed by Story/Choreography/Motion
+
+All four package families share one uniform schema. A field must not disappear merely
+because one package does not use it; non-applicable values use null / [] according to the
+schema.
+
+The loader may derive runtime structures from the single source of truth, but those
+derived structures must NOT be redundantly authored in a second file.
+
+UNIFIED 2.0 LIBRARY SOURCES — AUTHORITATIVE
+--------------------------------------------
+Folder:
+/HEXA/Unified_Final_Package_2_0/
+
+Use these exact files in future chats:
+
+1. Black Hat
+/HEXA/Unified_Final_Package_2_0/HEXA_BLACK_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip
+SHA256:
+bfb64814b1fcdb952e2c93216822f49ba651e7fb113079aa8ee40cdeca53630f
+Source lineage:
+Black Hat Sprint-2 acceptance-fixed package, therefore it already contains the accepted
+SCENE_012 and SCENE_027 semantic-source corrections.
+Counts:
+- 40 scenes
+- 129 objects
+- 40 semantic groups
+- 55 semantic events
+- 15 relations
+
+2. White Hat
+/HEXA/Unified_Final_Package_2_0/HEXA_WHITE_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip
+SHA256:
+58af4ea62a854076c6550b33a1db7b821a1f8cd0288d41337a98e1af4ca6ecd5
+Counts:
+- 35 scenes
+- 215 objects
+- 145 renderable assets
+- 35 semantic groups
+- 51 semantic events
+- 16 relations
+- 35 visual-progression rows
+
+3. Gray Hat
+/HEXA/Unified_Final_Package_2_0/HEXA_GRAY_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip
+SHA256:
+5333873a7bcd1e6dd8740fab473cccbe2e6a950697fb9e90f1efdfe8ce204b55
+Counts:
+- 35 scenes
+- 194 objects
+- 135 renderable assets
+- 35 semantic groups
+- 75 semantic events
+- 35 relations
+
+4. Script Kiddie
+/HEXA/Unified_Final_Package_2_0/HEXA_SCRIPT_KIDDIE_AR_UNIFIED_FINAL_PACKAGE_2_0.zip
+SHA256:
+8c0f7456c7b146c8422930a23c542be58466bafde7712037b7b99ca2431fb332
+Counts:
+- 35 scenes
+- 80 objects
+- 80 semantic groups
+- 80 semantic events
+- 0 authored relations
+
+Conversion validation:
+/HEXA/Unified_Final_Package_2_0/UNIFIED_V2_CONVERSION_VALIDATION.json
+SHA256:
+53379a206012533c2bc64376249d64271c18a1020955ea626e96adcafe5cd951
+Result: PASS
+uniform_schema: true
+images_byte_identical: true for all four converted packages.
+
+IMPORTANT: Script Kiddie relations=[] is inherited source truth, not a conversion loss.
+Do not fabricate relations merely to make package counts look similar.
+
+BLACK-HAT NARRATION — CORRECT FILE
+----------------------------------
+The correct Black-Hat narration for the next real acceptance render is stored at:
+/HEXA/Unified_Final_Package_2_0/audio/ElevenLabs_2026-09-23T03_50_08_Ahmed - Intellectual, Calm & Educational_pvc_sp101_s76_sb100_se0_b_m2.mp3
+
+SHA256:
+1f2afe9ddb7274b0a7617ec07588be2978aaa79f647db5b92ba518f0acbb3f66
+ffprobe duration:
+97.097143s
+
+Do NOT use the earlier 07_14_02 narration file. That was a wrong-audio selection during
+an assistant-side review render and that render is INVALID for acceptance.
+
+RECENT RENDER LESSON — DO NOT LOSE
+-----------------------------------
+A previous assistant-side render was invalid because:
+1. the wrong Black-Hat narration file was chosen;
+2. forced alignment runtime was unavailable in that environment;
+3. script_fallback timing was used;
+4. TextTimingPlanner correctly rejected non-forced-alignment text timing, causing the
+   first review RenderPlan to contain 0 text cues.
+
+A later corrected REVIEW render used the correct audio but still used approximate
+script timing because the real offline forced-alignment runtime was unavailable. That
+review is useful only as a visual/motion diagnostic. It is NOT a production sync proof.
+
+Never close visual acceptance using script_fallback or approximate audio-aware timing.
+Production acceptance requires real forced alignment.
+
+USER'S CURRENT ACCEPTANCE PRIORITY — HIGHEST PRIORITY
+------------------------------------------------------
+The user explicitly stated that AUDIO <-> VISUAL synchronization is the most important
+quality requirement.
+
+The acceptance rule is:
+spoken concept / action
+-> matching icon is visible at the correct semantic moment
+-> matching icon receives focus / interaction at the spoken word or phrase
+-> causal/relation targets react after the source action
+-> payoff occurs on the correct spoken result
+
+A visually attractive motion program is considered a failure if its semantic timing does
+not match narration.
+
+Known diagnostic phrase to inspect carefully:
+"بدل ما يبحث عن الثغرة عشان يقفلها"
+
+The expected visual sentence must read as the narration reads:
+search / actor context
+-> vulnerability is visually readable
+-> on "يقفلها" the vulnerability/target receives a clear close/lock reaction/payoff.
+
+A simple sequence of unrelated pop-ins is NOT sufficient. Timestamp correctness alone is
+not sufficient if the icon interaction does not communicate the verb/relation.
+
+TEXT LAYER — CURRENT USER REQUIREMENT
+-------------------------------------
+The user does NOT want the narration copied onto screen.
+The Text layer must be editorial keyword emphasis only.
+
+Required behavior:
+- select a small number of strong semantic keywords / short phrases;
+- do not generate text for every narration phrase;
+- text must reinforce the exact visual event currently in focus;
+- text should be spatially near the intended icon/object when safe;
+- text must never obscure the visual target or compete with the Hero;
+- text timing must come from real forced alignment;
+- text should be omitted when there is no strong editorial value or safe placement.
+
+Examples of useful keyword behavior:
+- "الثغرة" near the vulnerability icon when that concept is active;
+- "يقفلها" or a stronger concise editorial equivalent only when it supports the lock
+  action, not as a full sentence subtitle.
+
+Do NOT solve this by globally increasing text count.
+Do NOT render full narration as subtitles unless the user explicitly asks for subtitles.
+
+SPRINT / PRODUCT STATUS AFTER 2.0 MIGRATION
+-------------------------------------------
+Sprint 1 — CLOSED / visually accepted.
+Sprint 2 engineering fixes — preserved by the 2.0 migration and regression suite.
+Unified Final Package 2.0 migration — COMPLETE / CI GREEN.
+Sprint 2 visual acceptance — STILL OPEN because the next trustworthy production render
+must use the correct audio + real forced alignment and must be reviewed for semantic
+icon synchronization / interaction / text behavior.
+Sprint 3 — NOT STARTED.
+
+Do NOT begin Sprint 3 until the user accepts a trustworthy production render.
+
+WHAT THE NEXT CHAT MUST DO FIRST
+--------------------------------
+1. Read this entire handoff before implementation.
+2. Verify live montage HEAD. Expected starting HEAD at this handoff:
+   9acebf575b51fa72dac7a62f1437c4f0841a09af
+3. Verify V2 CI run 36565493916 is SUCCESS.
+4. Open the four Unified 2.0 packages from Library using the exact paths listed above.
+5. Open the correct Black-Hat narration from the Library path above.
+6. Do NOT ask the user to resend these files unless Library access actually fails.
+7. Confirm production is Unified Final Package 2.0 ONLY; do not restore 1.x support.
+8. Review current forced-alignment production runtime and run the next Black-Hat
+   production acceptance render only with real forced alignment.
+9. Inspect synchronization timestamp-by-timestamp, especially action/relation scenes.
+10. Evaluate Text as editorial keyword emphasis, not subtitle coverage.
+
+If the new real render still has narration/icon mismatch, trace the first bad owner:
+Unified package semantic truth
+-> CanonicalPackage
+-> forced-aligned word/phrase
+-> Story activation
+-> Choreography event/focus/relation ownership
+-> Motion INTERACT/REACT/PAYOFF timing
+-> RenderPlan
+-> encoded frames.
+
+Do not guess the owner and do not globally stagger or amplify motion.
+
+NEXT IMPLEMENTATION TARGET IF THE REAL RENDER CONFIRMS THE ISSUE
+-----------------------------------------------------------------
+A. Audio-driven visual interaction correctness
+- make semantic action/relation choreography visibly express the spoken verb;
+- preserve one attention owner per semantic moment;
+- ensure target reaction follows source onset;
+- preserve Composition geometry and encoded frame safety.
+
+B. Editorial Text selection / placement
+- reduce cue selection to strong keywords / short high-value phrases;
+- anchor each cue to its semantic visual target;
+- place near that object using negative-space/collision constraints;
+- omit low-value or unsafe cues;
+- timing authority remains forced alignment only.
+
+Both changes must be generic and tested on all four Unified 2.0 package families plus
+seeded generated packages. No Black-Hat-specific production branches.
+
+HANDOFF RULE
+------------
+The next chat must treat this section as the newest authority for Final Package format,
+Library inputs and current visual-acceptance priority.
