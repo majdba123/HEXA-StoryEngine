@@ -545,6 +545,8 @@ class FinalPackageLoader:
             visual_progression=tuple(
                 CanonicalVisualProgression(
                     action=row.action,
+                    event_id=row.event_id,
+                    order=row.order,
                     targets=tuple(row.targets),
                     trigger=self._span_or_none(row.trigger),
                     extension_metadata={
@@ -585,10 +587,12 @@ class FinalPackageLoader:
             ),
             relations=tuple(
                 CanonicalRelation(
+                    relation_id=row.relation_id,
                     subject_asset_id=row.subject_asset_id,
                     relation_type=str(row.relation_type or row.relationship),
                     object_asset_id=row.object_asset_id,
                     result_asset_id=row.result_asset_id,
+                    connector_asset_id=row.connector_asset_id,
                     script_text=row.script_text,
                     script_span=self._span_or_none(row.script_span),
                     confidence=row.confidence,
@@ -615,6 +619,7 @@ class FinalPackageLoader:
             asset_id=row.asset_id,
             scene_id=row.scene_id,
             type=row.object_type,
+            source_asset_id=row.source_asset_id,
             semantic_name=row.semantic_name,
             visual_concept=row.visual_concept,
             semantic_meaning=row.semantic_meaning,

@@ -87,6 +87,7 @@ class CanonicalAsset(CanonicalRecord):
     asset_id: str
     scene_id: str
     type: str = "VISUAL_ASSET_INTENT"
+    source_asset_id: str | None = None
     semantic_name: str | None = None
     visual_concept: str | None = None
     semantic_meaning: str | None = None
@@ -150,10 +151,12 @@ class CanonicalSemanticEvent(CanonicalRecord):
 
 
 class CanonicalRelation(CanonicalRecord):
+    relation_id: str | None = None
     subject_asset_id: str
     relation_type: str
     object_asset_id: str
     result_asset_id: str | None = None
+    connector_asset_id: str | None = None
     script_text: str | None = None
     script_span: CanonicalScriptSpan | None = None
     confidence: float = 1.0
@@ -172,6 +175,8 @@ class CanonicalProgression(CanonicalRecord):
 
 class CanonicalVisualProgression(CanonicalRecord):
     action: str = "EXPLAIN"
+    event_id: str | None = None
+    order: int | None = None
     targets: tuple[str, ...] = ()
     trigger: CanonicalScriptSpan | None = None
     extension_metadata: dict[str, Any] = Field(default_factory=dict)

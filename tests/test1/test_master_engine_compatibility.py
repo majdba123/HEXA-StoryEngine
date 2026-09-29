@@ -23,6 +23,7 @@ from tests.test1.certification.test_real_package_planning import (
     certify_real_package_to_render_plan,
 )
 from tests.test1.factory import seeded_disk_shape
+from tests.test1.final_package import test_unified_contract_lock as contract_lock_tests
 
 
 def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
@@ -32,6 +33,11 @@ def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
     loader_tests.test_unified_loader_preserves_semantic_counts_and_identity(tmp_path / "loader")
     loader_tests.test_unified_loader_maps_closed_domains_to_enums(tmp_path / "enums")
     loader_tests.test_optional_metadata_does_not_change_semantic_signature(tmp_path / "optionals")
+    contract_lock_tests.test_payload_models_are_field_for_field_locked_to_unified_final_package_2_0()
+    contract_lock_tests.test_maximal_unified_contract_survives_boundary_without_montage_field_loss(
+        tmp_path / "unified-contract-lock"
+    )
+    contract_lock_tests.test_pipeline_generate_has_unified_package_as_only_script_source()
     authority_tests.test_semantic_authority_is_centralized_and_deterministic()
     correctness_tests.test_generated_semantic_truth_is_preserved_through_canonicalization(
         tmp_path / "correctness"
@@ -110,6 +116,8 @@ def test_master_engine_compatibility_certification(tmp_path: Path) -> None:
     print("TEST1 MASTER CERTIFICATION")
     print("Final Package boundary: PASS")
     print("Unified package canonicalization: PASS")
+    print("Unified Final Package 2.0 schema lock: PASS")
+    print("Unified Final Package 2.0 field preservation: PASS")
     print("Canonical semantic preservation: PASS")
     print("Canonical immutability: PASS")
     print("Raw-data leakage guard: PASS")
