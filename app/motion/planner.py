@@ -2954,18 +2954,35 @@ class MotionPlanner:
             # non-comparison assets resolve to the exact same narration timestamp inside
             # one semantic event, visibility may be simultaneous but attention must have
             # one owner. Explicit comparison beats retain multi-focus semantics.
-            same_authored_event = bool(
-                str(beat.action or "").upper() != "COMPARE"
-                and row[1].semantic_event_id
-                and row[1].semantic_event_id == anchor_activation.semantic_event_id
-                and abs(
+            same_timestamp = (
+                abs(
                     float(row[2].reveal_start)
                     - float(cohorts[-1][0][2].reveal_start)
                 )
                 <= 1e-9
             )
+            non_comparison = str(beat.action or "").upper() != "COMPARE"
+            same_authored_event = bool(
+                non_comparison
+                and same_timestamp
+                and row[1].semantic_event_id
+                and row[1].semantic_event_id == anchor_activation.semantic_event_id
+            )
+            dependency_linked_events = bool(
+                non_comparison
+                and same_timestamp
+                and row[1].semantic_event_id
+                and anchor_activation.semantic_event_id
+                and (
+                    row[1].semantic_event_id
+                    in set(anchor_activation.semantic_event_dependency_ids)
+                    or anchor_activation.semantic_event_id
+                    in set(row[1].semantic_event_dependency_ids)
+                )
+            )
             if (
                 same_authored_event
+                or dependency_linked_events
                 or (current_key == anchor_key and overlap >= threshold - 1e-9)
             ):
                 cohorts[-1].append(row)
@@ -3016,7 +3033,19 @@ class MotionPlanner:
                 row for row in cohort
                 if "LEADER" in row[1].semantic_event_roles
             ]
-            leader_id = max(explicit_leaders or cohort, key=authority)[0]
+            if explicit_leaders:
+                # When dependent events land on the same encoded instant, the
+                # downstream authored event owns attention. Within one event this
+                # reduces to the historical authority tie-break.
+                leader_id = max(
+                    explicit_leaders,
+                    key=lambda candidate: (
+                        candidate[1].semantic_event_order or -1,
+                        authority(candidate),
+                    ),
+                )[0]
+            else:
+                leader_id = max(cohort, key=authority)[0]
             leader_activation = next(row[1] for row in cohort if row[0] == leader_id)
             leader_unit_id = (
                 leader_activation.semantic_unit_id

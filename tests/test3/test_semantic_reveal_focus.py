@@ -316,6 +316,40 @@ def test_same_event_same_timestamp_has_one_attention_owner_without_comparison(
     assert focus["result"]["cohort_gain"] == pytest.approx(1.0)
 
 
+def test_dependency_linked_events_at_same_timestamp_share_one_attention_owner(
+    tmp_path: Path,
+):
+    story, _, _, motion, _ = _pipeline(
+        tmp_path / "dependency-same-instant",
+        [
+            Spec(
+                "upstream", "E1", 0.40, role="OBJECT",
+                leader=True, phrase="upstream-span", sequence=1, group="g",
+            ),
+            Spec(
+                "downstream", "E2", 0.40, role="ACTION",
+                leader=True, phrase="downstream-span", sequence=2, group="g",
+            ),
+        ],
+        1.5,
+    )
+    windows = {
+        row.asset_id: story_activation_window(row, story[0])[1]
+        for row in story[0].asset_activations
+    }
+    assert windows["upstream"].reveal_start == pytest.approx(0.40)
+    assert windows["downstream"].reveal_start == pytest.approx(0.40)
+    downstream_activation = next(
+        row for row in story[0].asset_activations if row.asset_id == "downstream"
+    )
+    assert "E1" in downstream_activation.semantic_event_dependency_ids
+
+    focus = {cue.asset_id: cue.params["semantic_focus"] for cue in motion}
+    assert focus["downstream"]["cohort_gain"] == pytest.approx(1.0)
+    assert focus["upstream"]["cohort_gain"] < 1.0
+    assert focus["upstream"]["cohort_role"] != "leader"
+
+
 def _windows(story):
     return {
         row.asset_id: story_activation_window(row, story[0])[1]
