@@ -135,7 +135,11 @@ def test_225_frame_quantized_transition_windows_have_no_ownership_gap() -> None:
                 incoming_start=incoming, segment_duration=1.0, fps=fps
             )
             assert end == pytest.approx(first_incoming_frame)
-            assert 0.0 <= end - incoming <= 1.0 / fps + 1e-9
+            # The cover reaches a quarter frame past the first encoded incoming frame, so
+            # that frame is owned whichever way the six-decimal filter bounds round.
+            assert 0.0 <= end - incoming <= 1.25 / fps + 1e-9
+            first_frame = FFmpegRenderer._first_visible_frame(incoming, fps)
+            assert first_frame / fps <= end
             previous_frame = max(0, int(first_incoming_frame * fps) - 1) / fps
             assert start <= previous_frame <= end
         cases += 1

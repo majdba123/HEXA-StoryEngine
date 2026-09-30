@@ -14247,3 +14247,43 @@ beats leaked the next span's first word; after = 0, handoff OK. Six certified pa
 (intended). `tests/certification/story_timeline/` (1286 tests, 647 fail on the pre-fix
 code): 1012 generated boundary cases, 192 explicit A.end==B.start cases, divergence,
 mutation and malformed-input suites.
+
+## RENDER HANDOFF FRAME COVERAGE CHECKPOINT — 2026-10-01
+
+### Root cause
+Two different causes behind `VISUAL_WHITE_FLASH` on unseen packages:
+1. Internal handoff (frame 345 of the State-Linked holdout; old content -> white -> new).
+   Encoded-frame quantization, not a missing carrier: the incoming reveal sat exactly on
+   the frame grid (`k/fps`). Overlay `enable` thresholds and bridge bounds are written with
+   six decimals, so `k/fps` could round a hair after frame k (incoming invisible) while the
+   outgoing trim/enable bound rounded to the same value (outgoing gone): frame k had no
+   owner. Only exact-grid reveals failed (k = 2 and 5 at 30 fps; ungrouped assets had no
+   frame-safe threshold at all).
+2. Video opening (frames 4-25 State-Linked, 4-8 Hacktivist). Not a handoff: the first
+   semantic reveal is at/after the first spoken anchor and no legal carrier exists before
+   it (first reveals were PRIMARY/LEADER, or a carrier would be an early reveal, which
+   existing contracts and tests forbid). The encoded verifier's fixed 0.12 s start guard
+   flagged legitimate pre-narration silence.
+
+### Fix
+- `render/renderer.py`: one frame-aware definition: `_first_visible_frame`,
+  `_frame_threshold` (quarter frame inside the gap after frame k-1, used for every
+  non-persistent reveal, grouped or not) and a bridge end a quarter frame past the first
+  incoming frame in every transition mode. `_require_handoff_coverage` fails an internal
+  boundary with blank frames before FFmpeg (`VISUAL_HANDOFF_COVERAGE_INFEASIBLE`).
+- `final/verification.py`: `opening_blank_seconds(first_spoken_start)` = max(edge guard,
+  min(time before the first spoken word, 1.0 s)); the pipeline passes Story's first
+  `audio_start`. Internal frames, the end guard, thresholds and foreground rules are
+  unchanged; blank frames after the first spoken word are still flagged.
+- No carrier is ever shown before its Story reveal (tests cover every role).
+
+### Known limit (separate Story/Motion item)
+A first reveal later than the first spoken word (State-Linked: reveal 0.84 s, first word
+0.18 s) leaves the canvas empty while narration plays. No legal carrier can cover it, so
+the encoded verifier still rejects it. The fix belongs to event timing, not the renderer.
+
+### Proof
+30 fps minimal repro: 10/40 (fps x boundary x reveal) renders had a white frame before,
+0/40 after. `tests/certification/render_handoff/`: frame-grid oracle (500 boundary, 600
+mode, 200 delayed, 200 threshold, 100 short-beat variants) and 41 real 320x180 encodes
+(32 of 35 fail on the pre-fix renderer).

@@ -11,6 +11,26 @@ from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 
 
+# Frames this close to either end are never flagged (fade-in/out rounding).
+EDGE_GUARD_SECONDS = 0.12
+# Leading narration silence is pre-roll, not a handoff: Story may not reveal semantic
+# content before the first spoken anchor, so frames before it are legitimately empty.
+# Silence beyond this is treated as suspect and stays subject to the white-flash scan.
+MAX_OPENING_SILENCE_SECONDS = 1.0
+
+
+def opening_blank_seconds(first_spoken_start: float | None) -> float:
+    """Seconds at the start of the video that may legitimately show no artwork.
+
+    The larger of the edge guard and the (bounded) time before the first spoken word.
+    Single definition shared by the pre-render coverage check and the encoded verifier.
+    """
+    silence = 0.0
+    if first_spoken_start is not None and first_spoken_start == first_spoken_start:
+        silence = min(max(0.0, float(first_spoken_start)), MAX_OPENING_SILENCE_SECONDS)
+    return max(EDGE_GUARD_SECONDS, silence)
+
+
 @dataclass(frozen=True, slots=True)
 class FinalMediaIssue:
     code: str
@@ -25,7 +45,9 @@ class FinalMediaVerifier:
         self.ffprobe_bin = ffprobe_bin
         self.ffmpeg_bin = ffmpeg_bin
 
-    def inspect(self, video: Path, audio: Path) -> list[FinalMediaIssue]:
+    def inspect(
+        self, video: Path, audio: Path, *, first_spoken_start: float | None = None
+    ) -> list[FinalMediaIssue]:
         if not video.exists() or video.stat().st_size == 0:
             return [FinalMediaIssue("FINAL_MISSING_OUTPUT", "Final output is missing")]
         try:
@@ -77,7 +99,9 @@ class FinalMediaVerifier:
 
         if has_video and video_duration > 0:
             try:
-                white_flashes = self._white_flash_frames(video, video_duration)
+                white_flashes = self._white_flash_frames(
+                    video, video_duration, first_spoken_start=first_spoken_start
+                )
             except (OSError, subprocess.CalledProcessError) as exc:
                 issues.append(FinalMediaIssue(
                     "FINAL_VISUAL_QA_UNAVAILABLE",
@@ -93,8 +117,10 @@ class FinalMediaVerifier:
                     ))
         return self._dedupe(issues)
 
-    def require(self, video: Path, audio: Path) -> None:
-        issues = self.inspect(video, audio)
+    def require(
+        self, video: Path, audio: Path, *, first_spoken_start: float | None = None
+    ) -> None:
+        issues = self.inspect(video, audio, first_spoken_start=first_spoken_start)
         if issues:
             issue = issues[0]
             raise StageFailedError(
@@ -103,7 +129,7 @@ class FinalMediaVerifier:
             )
 
     def _white_flash_frames(
-        self, video: Path, duration: float
+        self, video: Path, duration: float, *, first_spoken_start: float | None = None
     ) -> list[dict[str, float | int]]:
         command = [
             self.ffmpeg_bin, "-hide_banner", "-nostats", "-loglevel", "info",
@@ -114,11 +140,12 @@ class FinalMediaVerifier:
         result = run_hidden(command, check=True, capture_output=True, text=True)
         pattern = re.compile(r"frame:(\d+).*?t:([0-9.]+)")
         flashes: list[dict[str, float | int]] = []
-        guard = min(0.12, duration / 4.0)
+        guard = min(EDGE_GUARD_SECONDS, duration / 4.0)
+        start_guard = max(guard, min(opening_blank_seconds(first_spoken_start), duration / 4.0))
         for match in pattern.finditer(result.stderr or ""):
             frame = int(match.group(1))
             timestamp = float(match.group(2))
-            if not (guard < timestamp < duration - guard):
+            if not (start_guard < timestamp < duration - guard):
                 continue
             if self._frame_has_meaningful_foreground(video, frame):
                 continue

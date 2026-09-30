@@ -310,7 +310,11 @@ class StoryEnginePipeline:
         output_file = self._output_path(package.package_id, output_name)
         self._progress(progress, Stage.final, 0.90, "Building final video")
         final_path = self.final.mux(video_only, audio_path, output_file)
-        self.final_media.require(final_path, audio_path)
+        self.final_media.require(
+            final_path,
+            audio_path,
+            first_spoken_start=story[0].audio_start if story else None,
+        )
         self.rendered_visual_evidence.inspect(final_path, workspace / "diagnostics")
         self._check_cancel(cancelled)
         self._progress(progress, Stage.final, 1.0, "Video ready")

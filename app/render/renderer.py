@@ -17,6 +17,10 @@ from app.render.text import TextRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 
 
+# Safest carrier roles (see ``_visual_carrier_asset_id.safety_rank``): CONTEXT, OBJECT,
+# CHARACTER/ACTOR and SUPPORT. ACTION, PRIMARY and RESULT content is never shown early.
+_SAFE_EARLY_ROLE_RANK = 3
+
 class FFmpegRenderer:
     """Parallel beat-segment renderer with deterministic concat.
 
@@ -277,6 +281,15 @@ class FFmpegRenderer:
                 persistent_ids=persistent_ids,
                 fps=plan.fps,
             )
+        )
+        self._require_handoff_coverage(
+            beat=beat,
+            is_opening=previous_beat is None,
+            ordered_items=ordered_items,
+            persistent_ids=persistent_ids,
+            covered=bridge_duration > 0 or visual_carrier_id is not None,
+            incoming_start=incoming_start,
+            fps=plan.fps,
         )
 
         command: list[str] = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error"]
@@ -619,17 +632,58 @@ class FFmpegRenderer:
         if incoming < duration and end <= incoming:
             if allow_focus_overlap:
                 end = min(duration, incoming + min(0.12, duration - incoming))
+        if fps is not None and fps > 0 and incoming < duration:
+            # Whatever the mode, the outgoing cover must reach the first encoded frame on
+            # which the incoming artwork is visible (never an empty handoff frame).
+            end = max(end, cls._frame_safe_bridge_end(
+                incoming_start=incoming, segment_duration=duration, fps=fps,
+            ))
         return start, max(start, end)
 
     @staticmethod
+    def _first_visible_frame(start: float, fps: int) -> int:
+        """Encoded frame n (timestamp n/fps) that first satisfies ``t >= start``.
+
+        The encoded frame grid is the render authority. ``1e-9`` only absorbs the float
+        error of a start that was computed to sit exactly on a frame (for example
+        ``k/fps`` reached through subtraction); it is far below one frame.
+        """
+        return max(0, math.ceil(max(0.0, float(start)) * int(fps) - 1e-9))
+
+    @staticmethod
+    def _frame_threshold(frame: int, fps: int) -> float:
+        """Overlay ``enable`` threshold whose first visible frame is exactly ``frame``.
+
+        FFmpeg evaluates ``enable`` on frame timestamps and the filtergraph text carries
+        only six decimals. A threshold written at (or derived from) the frame timestamp
+        ``k/fps`` can round a hair *after* frame k and postpone visibility by one frame;
+        the same start can land either side of the grid depending on the decimal. A
+        threshold a quarter frame inside the gap after frame k-1 keeps every earlier frame
+        hidden and frame k visible whichever way the text rounds, and any continuous
+        start between frame k-1 and frame k maps to the same first visible frame.
+        """
+        return max(0.0, (int(frame) - 0.25) / float(fps))
+
+    @classmethod
+    def _frame_safe_reveal_threshold(cls, start: float, fps: int) -> float:
+        return cls._frame_threshold(cls._first_visible_frame(start, fps), fps)
+
+    @classmethod
     def _frame_safe_bridge_end(
-        *, incoming_start: float, segment_duration: float, fps: int | None
+        cls, *, incoming_start: float, segment_duration: float, fps: int | None
     ) -> float:
+        """End of the outgoing cover: through the first encoded frame that shows the incoming.
+
+        The outgoing layer must still own that frame, because the incoming artwork becomes
+        visible on it only at the quarter-frame threshold and trim/overlay bounds are
+        also rounded to six decimals. Ending a quarter frame after the frame timestamp
+        keeps the frame inside the window whichever way the bound rounds.
+        """
         incoming = max(0.0, min(float(segment_duration), float(incoming_start)))
         if fps is None or fps <= 0:
             return incoming
-        first_incoming_frame = math.ceil(incoming * fps)
-        return min(float(segment_duration), first_incoming_frame / fps)
+        first_incoming_frame = cls._first_visible_frame(incoming, fps)
+        return min(float(segment_duration), (first_incoming_frame + 0.25) / fps)
 
     @classmethod
     def _visual_carrier_asset_id(
@@ -743,6 +797,46 @@ class FFmpegRenderer:
         return str(min(cohort, key=safety_rank)["asset_id"])
 
     @classmethod
+    def _require_handoff_coverage(
+        cls,
+        *,
+        beat: StoryBeat,
+        is_opening: bool,
+        ordered_items: list,
+        persistent_ids: frozenset[str],
+        covered: bool,
+        incoming_start: float,
+        fps: int,
+    ) -> None:
+        """Fail before FFmpeg when an internal boundary would show blank frames.
+
+        Structural and O(items): a beat whose first semantic reveal is later than its
+        first encoded frame needs a legal owner for those frames (a persistent asset, an
+        outgoing bridge or a boundary carrier); an internal boundary tolerates no blank
+        frame. The video opening has no outgoing scene and Story may not reveal content
+        before its authored reveal, so it is judged only by the encoded verifier, whose
+        pre-narration pre-roll rule (``opening_blank_seconds``) applies there.
+        """
+        if is_opening or covered or persistent_ids or not ordered_items or fps <= 0:
+            return
+        blank_frames = cls._first_visible_frame(incoming_start, fps)
+        if blank_frames <= 0:
+            return
+        raise StageFailedError(
+            "no legal visual carrier covers the frames before the first semantic reveal",
+            details={
+                "code": "VISUAL_HANDOFF_COVERAGE_INFEASIBLE",
+                "beat_id": beat.id,
+                "scene_id": beat.scene_id,
+                "opening": is_opening,
+                "blank_frames": blank_frames,
+                "allowed_blank_frames": 0,
+                "first_reveal_seconds": round(float(incoming_start), 6),
+                "fps": fps,
+            },
+        )
+
+    @classmethod
     def _incoming_handoff_window(
         cls,
         *,
@@ -820,11 +914,21 @@ class FFmpegRenderer:
         frame_count = max(1, round(float(duration) * int(fps)))
         max_frame = frame_count - 1
         grouped: dict[str, list[tuple[str, float, int]]] = {}
+        output: dict[str, float] = {}
         for asset_id, start, order in rows:
-            if not isinstance(order, dict):
-                continue
-            group_id = order.get("semantic_group_id")
-            if not group_id or order.get("sequence_order") is None:
+            group_id = order.get("semantic_group_id") if isinstance(order, dict) else None
+            if (
+                not isinstance(order, dict)
+                or not group_id
+                or order.get("sequence_order") is None
+            ):
+                # No authored group order to preserve: quantize this reveal on its own.
+                try:
+                    output[asset_id] = FFmpegRenderer._frame_safe_reveal_threshold(
+                        max(0.0, float(start)), fps
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    pass
                 continue
             try:
                 sequence_order = int(order.get("sequence_order"))
@@ -835,7 +939,6 @@ class FFmpegRenderer:
                 (asset_id, raw_start, sequence_order)
             )
 
-        output: dict[str, float] = {}
         for group_id, group_rows in grouped.items():
             ordered = sorted(group_rows, key=lambda row: (row[1], row[2], row[0]))
             clusters: list[list[tuple[str, float, int]]] = []
@@ -868,22 +971,10 @@ class FFmpegRenderer:
                             "asset_ids": [row[0] for row in cluster],
                         },
                     )
-                # FFmpeg evaluates overlay enable expressions on floating-point
-                # timestamps. Using the exact frame timestamp (for example 5/30)
-                # can round the expression boundary a hair *after* that frame and
-                # postpone visibility by one encoded frame. Put the continuous-time
-                # threshold safely inside the gap after the previous frame instead.
-                # No earlier encoded frame can pass this threshold, so Story's
-                # first-visible frame authority is preserved exactly.
-                frame_threshold = max(
-                    raw_start,
-                    (assigned_frame - 0.25) / float(fps),
-                )
-                # If the authored start itself lies at the exact target-frame boundary,
-                # nudge only the renderer expression threshold into the preceding
-                # sub-frame interval. This never exposes an earlier encoded frame.
-                if math.ceil(frame_threshold * fps - 1e-9) > assigned_frame:
-                    frame_threshold = (assigned_frame - 0.25) / float(fps)
+                # Put the continuous-time threshold safely inside the gap after the
+                # previous frame (see _frame_threshold). No earlier encoded frame can
+                # pass it, so Story's first-visible-frame authority is preserved.
+                frame_threshold = FFmpegRenderer._frame_threshold(assigned_frame, fps)
                 for asset_id, _start, _sequence in cluster:
                     output[asset_id] = frame_threshold
                 previous_frame = assigned_frame
