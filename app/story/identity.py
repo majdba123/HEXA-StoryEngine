@@ -108,16 +108,23 @@ class VisualIdentityBinder:
         assets: list[VisualAsset],
     ) -> VisualIdentityBinding:
         asset_by_id = {asset.id: asset for asset in assets}
+        # Presentation roles (``decorative``) are copied from package unit roles and
+        # must not hide a cutout that an authored leader/participant/result locates.
+        required_ids = frozenset(scene.semantic_carrier_roles)
         eligible = [
             asset for asset in assets
             if asset.can_animate_independently
-            and (asset.role or "").casefold() not in {"background", "decorative"}
+            and (asset.role or "").casefold() != "background"
         ]
         real_boxes = {
             asset.id: box
             for asset in eligible
             if (box := self._asset_box(asset)) is not None
         }
+        decorative_ids = frozenset(
+            asset.id for asset in eligible
+            if (asset.role or "").casefold() == "decorative"
+        )
 
         matches: dict[str, VisualIdentityMatch] = {}
         multi_matches: dict[str, tuple[VisualIdentityMatch, ...]] = {}
@@ -149,6 +156,13 @@ class VisualIdentityBinder:
             for semantic_id in locator_rows
             if semantic_id not in matches
         }
+        optional_boxes = {
+            real_id: box for real_id, box in real_boxes.items()
+            if real_id not in decorative_ids
+        }
+
+        def boxes_for(semantic_id: str) -> dict[str, Box]:
+            return real_boxes if semantic_id in required_ids else optional_boxes
 
         # Assign the most certain locator first. Re-ranking after every reservation
         # prevents package ordering from deciding identity when several icons are close.
@@ -159,7 +173,7 @@ class VisualIdentityBinder:
                 ranked = self._rank_candidates(
                     locator=locator,
                     semantic_row=row,
-                    real_boxes=real_boxes,
+                    real_boxes=boxes_for(semantic_id),
                     assets=asset_by_id,
                     reserved=reserved,
                     matches=matches,
@@ -215,7 +229,7 @@ class VisualIdentityBinder:
                 proposal = self._multi_candidate_proposal(
                     semantic_asset_id=semantic_id,
                     locator=locator,
-                    real_boxes=real_boxes,
+                    real_boxes=boxes_for(semantic_id),
                     reserved=reserved,
                 )
                 if proposal is not None:
@@ -317,6 +331,79 @@ class VisualIdentityBinder:
             source="visual_locator_region_proxy",
             locator=locator,
         )
+
+    def contained_carriers(
+        self,
+        *,
+        semantic_asset: CanonicalAsset,
+        scene_locators: dict[str, Box],
+        assets: list[VisualAsset],
+        reserved: set[str],
+        standalone: bool = False,
+    ) -> tuple[VisualIdentityMatch, ...]:
+        """Cutouts that lie inside exactly one authored locator belong to that intent.
+
+        Segmentation may split or merge an authored region, so one authored unit can
+        own several cutouts. A candidate must sit almost entirely inside this locator,
+        must not be reserved by another proof, and must not also sit wholly inside any
+        other authored locator. ``standalone`` (no 1:1 match exists) additionally
+        requires the members to explain the authored region (the multi-cutout
+        locator-coverage floor); a loose locator is left to the region-proxy path.
+        """
+        semantic_id = str(semantic_asset.asset_id)
+        locator = scene_locators.get(semantic_id)
+        if locator is None:
+            return ()
+        output: list[VisualIdentityMatch] = []
+        covered = 0.0
+        for asset in sorted(assets, key=lambda row: row.id):
+            if (
+                asset.id in reserved
+                or not asset.can_animate_independently
+                or (asset.role or "").casefold() == "background"
+            ):
+                continue
+            box = self._asset_box(asset)
+            if box is None or self.contained_share(box, locator) < self._MULTI_MIN_REAL_CONTAINMENT:
+                continue
+            if any(
+                self.contained_share(box, other) >= self._MULTI_MIN_REAL_CONTAINMENT
+                for other_id, other in scene_locators.items()
+                if other_id != semantic_id
+            ):
+                # Wholly inside two authored locators: ownership is ambiguous.
+                continue
+            covered += self._intersection(box, locator)
+            output.append(VisualIdentityMatch(
+                semantic_asset_id=semantic_id,
+                real_asset_id=asset.id,
+                score=self.contained_share(box, locator),
+                runner_up_score=None,
+                margin=None,
+                source="visual_locator_contained",
+                locator=locator,
+            ))
+        if standalone and covered / max(1e-9, self._area(locator)) < self._MULTI_MIN_LOCATOR_COVERAGE:
+            return ()
+        return tuple(output)
+
+    @classmethod
+    def contained_share(cls, inner: Box, outer: Box) -> float:
+        """Fraction of ``inner`` lying inside ``outer``."""
+        area = cls._area(inner)
+        return cls._intersection(inner, outer) / area if area > 0 else 0.0
+
+    @classmethod
+    def overlap_share(cls, left: Box, right: Box) -> float:
+        """Intersection relative to the smaller box."""
+        smaller = min(cls._area(left), cls._area(right))
+        return cls._intersection(left, right) / smaller if smaller > 0 else 0.0
+
+    def locator_box(self, raw: CanonicalVisualLocator | None) -> Box | None:
+        return self._locator_box(raw)
+
+    def asset_box(self, asset: VisualAsset) -> Box | None:
+        return self._asset_box(asset)
 
     def _multi_candidate_proposal(
         self,

@@ -214,6 +214,36 @@ class CanonicalScene(CanonicalRecord):
     def progression(self) -> CanonicalProgression | None:
         return self.semantic_progression
 
+    @property
+    def semantic_carrier_roles(self) -> dict[str, tuple[str, ...]]:
+        """Authored assets that must own a visible runtime carrier, with their roles.
+
+        Event leaders, participants, results and text anchors plus explicit visual
+        progression targets are required semantic participation. Event context and
+        unreferenced units stay optional, so presentation roles such as ``decorative``
+        never outrank explicit event participation.
+        """
+        roles: dict[str, list[str]] = {}
+
+        def add(asset_id: str | None, role: str) -> None:
+            key = str(asset_id or "").strip()
+            if key and role not in roles.setdefault(key, []):
+                roles[key].append(role)
+
+        for event in self.semantic_events:
+            add(event.visual_leader_asset_id, "LEADER")
+            for asset_id in event.participant_asset_ids:
+                add(asset_id, "PARTICIPANT")
+            for asset_id in event.result_asset_ids:
+                add(asset_id, "RESULT")
+            add(event.text_anchor_asset_id, "TEXT_ANCHOR")
+        unit_ids = {unit.asset_id for unit in self.units}
+        for step in self.visual_progression:
+            for target in step.targets:
+                if target in unit_ids:
+                    add(target, "PROGRESSION_TARGET")
+        return {asset_id: tuple(values) for asset_id, values in roles.items()}
+
 
 class CanonicalPackage(CanonicalRecord):
     root: Path

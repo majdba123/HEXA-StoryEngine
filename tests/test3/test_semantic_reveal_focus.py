@@ -25,6 +25,7 @@ from app.models import Transcript, TranscriptWord, VisualAsset
 from app.motion import MotionPlanner
 from app.motion.timing import story_activation_window
 from app.render import RenderPlanner
+from app.shared.errors import StageFailedError
 from app.story import StoryPlanner
 from app.story.windows import StoryAssetActivation
 from tests.test2.motion.test_rhythm_regressions import _beat, _directive, _layout
@@ -1053,22 +1054,27 @@ def test_pass2_child_in_multi_group_scene_abstains_instead_of_inheriting_parent(
         Spec("right", "E2", 1.80, group="g2", sequence=1),
     ]
     child_id = "left:secondary-01"
-    story, *_ = _pipeline(
-        tmp_path / "pass2-child-multi-group",
-        specs,
-        3.0,
-        pass2_children=[("left", child_id)],
+    # The Sprint 1 lifecycle still abstains instead of inheriting the parent's
+    # meaning, but a visually significant cutout it would hide is authored artwork:
+    # Story now refuses to render rather than silently dropping it.
+    with pytest.raises(StageFailedError) as caught:
+        _pipeline(
+            tmp_path / "pass2-child-multi-group",
+            specs,
+            3.0,
+            pass2_children=[("left", child_id)],
+        )
+    assert caught.value.effective_code == "AUTHORED_CONTENT_HIDDEN"
+    violation = next(
+        row for row in caught.value.details["violations"]
+        if row["runtime_asset_id"] == child_id
     )
-    activation = next(
-        row for row in story[0].asset_activations if row.asset_id == child_id
-    )
-    has_v2, window = story_activation_window(activation, story[0])
-
-    assert has_v2 is True and window is None
-    assert activation.source == "semantic_abstention"
-    assert "independent_runtime_cutout_requires_semantic_identity" in activation.evidence
-    assert "inherits_parent_semantic_time" not in activation.evidence
-    assert child_id not in (story[0].active_visual_semantic_state or {})
+    mapping = violation["runtime_mapping"]
+    assert mapping["activation_policy"] == "SAFE_ABSTENTION"
+    assert mapping["source"] == "semantic_abstention"
+    assert "independent_runtime_cutout_requires_semantic_identity" in mapping["evidence"]
+    assert "inherits_parent_semantic_time" not in mapping["evidence"]
+    assert child_id not in violation["visible_scene_asset_ids"]
 
 
 def test_96_generated_pass2_children_never_preempt_authored_semantics(
@@ -1158,20 +1164,24 @@ def test_unbound_cutout_in_multi_group_scene_remains_safe_abstention(tmp_path: P
         Spec("left", "E1", 0.40, group="g1", sequence=1),
         Spec("right", "E2", 1.80, group="g2", sequence=1),
     ]
-    story, *_ = _pipeline(
-        tmp_path / "unbound-multi-group",
-        specs,
-        3.0,
-        extra_asset_ids=["unknown-extra"],
+    # Ownership stays unguessed (safe abstention), and because the hidden cutout is
+    # visually significant the render is refused instead of shipping without it.
+    with pytest.raises(StageFailedError) as caught:
+        _pipeline(
+            tmp_path / "unbound-multi-group",
+            specs,
+            3.0,
+            extra_asset_ids=["unknown-extra"],
+        )
+    assert caught.value.effective_code == "AUTHORED_CONTENT_HIDDEN"
+    violation = next(
+        row for row in caught.value.details["violations"]
+        if row["runtime_asset_id"] == "unknown-extra"
     )
-    activation = next(
-        row for row in story[0].asset_activations if row.asset_id == "unknown-extra"
-    )
-    has_v2, window = story_activation_window(activation, story[0])
-    assert has_v2 is True and window is None
-    assert activation.source == "semantic_abstention"
-    assert "SAFE_ABSTENTION" in activation.evidence
-    assert "unknown-extra" not in (story[0].active_visual_semantic_state or {})
+    assert violation["reason"] == "visually_significant_hidden_cutout"
+    assert violation["runtime_mapping"]["source"] == "semantic_abstention"
+    assert "SAFE_ABSTENTION" in violation["runtime_mapping"]["evidence"]
+    assert "unknown-extra" not in violation["visible_scene_asset_ids"]
 
 
 def test_300_generated_unbound_cutouts_never_preempt_authored_semantics(tmp_path: Path):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from pathlib import Path
@@ -164,6 +165,19 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
         story = self.story.plan(package, transcript, assets)
+        # Per-asset proof of why each required authored asset is (or is merged)
+        # on screen; failures carry the same records in their error details.
+        (workspace / "semantic-carrier-audit.json").write_text(
+            json.dumps(
+                {
+                    "semantic_carriers": self.story.semantic_carrier_audit,
+                    "hidden_content": self.story.hidden_content_audit,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         self.handoff_contracts.require_story_for_choreography(
             package=package, transcript=transcript, assets=assets, story=story
         )

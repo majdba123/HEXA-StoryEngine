@@ -12,6 +12,7 @@ from app.models import StoryBeat, StorySemanticContext, Transcript, VisualAsset
 from app.shared.errors import StageFailedError
 
 from .activation import SemanticActivationPlanner
+from .carriers import SemanticCarrierAuditor
 from .graph import StoryGraph, StoryGraphBuilder
 from .semantic import PackageStoryInterpreter
 
@@ -36,6 +37,9 @@ class StoryPlanner:
     ) -> None:
         self.semantic_interpreter = PackageStoryInterpreter()
         self.graph_builder = StoryGraphBuilder()
+        self.carrier_auditor = SemanticCarrierAuditor()
+        self.semantic_carrier_audit: list[dict] = []
+        self.hidden_content_audit: list[dict] = []
         self.activation = SemanticActivationPlanner(
             semantic_model_name=semantic_model_name,
             semantic_model_required=semantic_model_required,
@@ -142,9 +146,19 @@ class StoryPlanner:
             preserve_spoken_completion=package.has_authoritative_semantics,
         )
         planned = self.activation.enrich(package, transcript, assets, beats)
+        self.semantic_carrier_audit = []
+        self.hidden_content_audit = []
         if package.has_authoritative_semantics:
             planned = self._resolve_active_visual_semantic_state(planned)
+            self.semantic_carrier_audit = self.carrier_auditor.audit(
+                package=package, assets=assets, beats=planned,
+            )
+            self.hidden_content_audit = self.carrier_auditor.audit_hidden_content(
+                package=package, assets=assets, beats=planned,
+            )
         self._require_quality_contract(package=package, assets=assets, beats=planned)
+        self.carrier_auditor.require(self.semantic_carrier_audit)
+        self.carrier_auditor.require_hidden_content(self.hidden_content_audit)
         return planned
 
     @staticmethod
@@ -167,6 +181,11 @@ class StoryPlanner:
                     and getattr(row, "policy", None) != "SAFE_ABSTENTION"
                 )
             }
+            # A semantic-event proxy is Story's proven carrier for an authored event on
+            # an existing cutout; that cutout must be visible even if its own
+            # activation abstained, otherwise the authored event renders nothing.
+            for proxy in beat.semantic_event_proxies:
+                current_state.setdefault(proxy.asset_id, proxy.semantic_unit_id)
             # The runtime asset is the Scene-local lifecycle identity. Semantic-event,
             # focus, and role changes may enrich it, but may never retire or re-enter it.
             for asset_id, semantic_unit_id in current_state.items():

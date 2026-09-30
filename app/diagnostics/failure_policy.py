@@ -181,6 +181,18 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "ASSET_REACHES_STORY", "story", FailureDisposition.PREVENT,
         "Every independently animatable cutout must remain represented by Story",
     ),
+    "SEMANTIC_CARRIER_UNRESOLVED": _policy(
+        "SEMANTIC_CARRIER_UNRESOLVED", "story", FailureDisposition.PREVENT,
+        "Every required authored event asset must own a provable visible carrier",
+    ),
+    "AUTHORED_CONTENT_HIDDEN": _policy(
+        "AUTHORED_CONTENT_HIDDEN", "story", FailureDisposition.PREVENT,
+        "Significant or authored-locator artwork must not be hidden by the lifecycle",
+    ),
+    "SEMANTIC_CARRIER_HIDDEN": _policy(
+        "SEMANTIC_CARRIER_HIDDEN", "story", FailureDisposition.PREVENT,
+        "A proven semantic carrier must be visible in its scene lifecycle",
+    ),
     "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE": _policy(
         "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "choreography", FailureDisposition.PREVENT,
         "Every authored semantic event must own a proven visual carrier and event flow",

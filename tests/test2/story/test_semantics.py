@@ -5,6 +5,9 @@ import json
 
 from app.final_package import FinalPackageLoader
 from app.models import Transcript, TranscriptWord, VisualAsset
+import pytest
+
+from app.shared.errors import StageFailedError
 from app.story import StoryPlanner
 from tests.support.unified_package import write_unified_package
 
@@ -217,6 +220,13 @@ def test_story_keeps_all_dense_scene_assets_for_motion_authoring(tmp_path: Path)
         )
         for index in range(20)
     ]
-    beat = StoryPlanner().plan(package, _transcript(), assets)[0]
-    assert len(beat.primary_asset_ids) + len(beat.support_asset_ids) == 20
-    assert set(beat.primary_asset_ids + beat.support_asset_ids) == {asset.id for asset in assets}
+    # Story ranking never discards dense cutouts ...
+    selected = StoryPlanner._select_assets(assets)
+    assert {asset.id for asset in selected} == {asset.id for asset in assets}
+    # ... and a scene that authors no visual units cannot prove any of them, so the
+    # lifecycle would hide all 20: that must fail closed, never render an empty scene.
+    with pytest.raises(StageFailedError) as caught:
+        StoryPlanner().plan(package, _transcript(), assets)
+    assert caught.value.effective_code == "AUTHORED_CONTENT_HIDDEN"
+    reported = {row["runtime_asset_id"] for row in caught.value.details["violations"]}
+    assert reported == {asset.id for asset in assets}

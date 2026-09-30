@@ -31,6 +31,7 @@ def _build_reused_carrier_case(
     event_count: int,
     interval: float,
     ambiguous: bool = False,
+    straddle: bool = False,
 ) -> tuple[CanonicalPackage, Transcript, list[VisualAsset]]:
     scene_image = root / "scene.png"
     runtime_image = root / "runtime.png"
@@ -116,7 +117,10 @@ def _build_reused_carrier_case(
             role="primary",
             image_path=runtime_image,
             extraction_method="test2-region-carrier",
-            source_bbox=(340, 390, 160, 160) if ambiguous else (360, 360, 160, 160),
+            source_bbox=(
+                (240 if straddle else 340, 390, 160, 160) if ambiguous
+                else (360, 360, 160, 160)
+            ),
             source_canvas_width=1000,
             source_canvas_height=1000,
             source_area_ratio=0.0256,
@@ -131,7 +135,7 @@ def _build_reused_carrier_case(
             role="support",
             image_path=runtime_image,
             extraction_method="test2-region-carrier",
-            source_bbox=(500, 390, 160, 160),
+            source_bbox=(600 if straddle else 500, 390, 160, 160),
             source_canvas_width=1000,
             source_canvas_height=1000,
             source_area_ratio=0.0256,
@@ -203,17 +207,40 @@ def test_ambiguous_region_carrier_fails_closed_at_story_boundary(
     tmp_path: Path,
     event_count: int,
 ) -> None:
+    # Two near-tied cutouts straddling the authored locator: no carrier is provable.
     package, transcript, assets = _build_reused_carrier_case(
         tmp_path,
         event_count=event_count,
         interval=0.65,
         ambiguous=True,
+        straddle=True,
     )
     with pytest.raises(StageFailedError) as exc_info:
         StoryPlanner().plan(package, transcript, assets)
     details = exc_info.value.details or {}
     assert details.get("code") == "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE"
     assert details.get("missing_events")
+
+
+@pytest.mark.parametrize("event_count", [1, 3])
+def test_cutouts_wholly_inside_one_locator_are_that_authored_unit(
+    tmp_path: Path,
+    event_count: int,
+) -> None:
+    """Never pick one of two near-tied cutouts; both inside the locator are the unit."""
+    package, transcript, assets = _build_reused_carrier_case(
+        tmp_path,
+        event_count=event_count,
+        interval=0.65,
+        ambiguous=True,
+    )
+    story = StoryPlanner().plan(package, transcript, assets)
+    rows = [row for row in story[0].asset_activations if row.semantic_unit_id == "intent"]
+    assert {row.asset_id for row in rows} == {"runtime-a", "runtime-b"}
+    assert all(
+        "visual_identity_source=visual_locator_contained" in row.evidence for row in rows
+    )
+    assert {"runtime-a", "runtime-b"} <= set(story[0].active_visual_semantic_state or {})
 
 
 @pytest.mark.parametrize("distractor_count", [0, 4, 9, 19])
