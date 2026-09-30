@@ -139,3 +139,12 @@ def test_real_corpus_preserves_white_and_gray_typed_semantic_linkage(tmp_path: P
     relations = [row for scene in gray.scenes for row in scene.relations]
     assert sum(row.relation_id is not None for row in relations) == 13
     assert sum(row.connector_asset_id is not None for row in relations) == 5
+
+
+def test_committed_corpus_manifest_matches_certified_fingerprints() -> None:
+    """The CI corpus manifest and these fingerprints must describe the same bytes."""
+    from tests.support.real_corpus import certified_packages
+
+    assert certified_packages() == {
+        filename: expected.sha256 for filename, expected in _EXPECTED.items()
+    }

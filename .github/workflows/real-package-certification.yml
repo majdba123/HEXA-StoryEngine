@@ -1,0 +1,114 @@
+name: Real Package Certification
+
+# Fail-closed certification of the six real Unified Final Package 2.0 packages.
+# The ZIPs are not in Git: the corpus is downloaded from the repository variable
+# HEXA_REAL_PACKAGE_CORPUS_URL (optional secret HEXA_REAL_PACKAGE_CORPUS_TOKEN) and
+# verified against Bayer_Packages/unified_2_0_certified_corpus.json. A missing,
+# partial or different corpus fails the job; nothing here can skip to green.
+
+on:
+  push:
+    branches:
+      - main
+      - bayer
+      - montage
+  workflow_dispatch:
+    inputs:
+      level_e:
+        description: "Also run Level E (full-length FFmpeg encode of all six packages)"
+        type: boolean
+        default: false
+
+env:
+  HEXA_REQUIRE_REAL_PACKAGE_CORPUS: "1"
+  HEXA_REAL_PACKAGE_CORPUS: ${{ github.workspace }}/.real-corpus
+
+jobs:
+  levels-a-d:
+    name: Levels A-D (six packages, mandatory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install StoryEngine
+        run: python -m pip install -e ".[dev]"
+      - name: Provision and verify corpus (fails if unavailable or incomplete)
+        env:
+          CORPUS_URL: ${{ vars.HEXA_REAL_PACKAGE_CORPUS_URL }}
+          HEXA_REAL_PACKAGE_CORPUS_TOKEN: ${{ secrets.HEXA_REAL_PACKAGE_CORPUS_TOKEN }}
+        run: |
+          if [ -z "$CORPUS_URL" ]; then
+            echo "::error::REAL PACKAGE CERTIFICATION BLOCKED: repository variable HEXA_REAL_PACKAGE_CORPUS_URL is not set"
+            exit 1
+          fi
+          python -m tests.support.real_corpus fetch "$CORPUS_URL" "$HEXA_REAL_PACKAGE_CORPUS"
+      - name: Level A - structural (ZIP, schema, references, images, fingerprints)
+        run: >
+          pytest -rfEs --junitxml=level-a.xml
+          -k "level_a or real_corrected_package_corpus or zero_relations or typed_semantic_linkage"
+          tests/test1/certification/test_real_package_tiers.py
+          tests/test1/certification/test_real_package_structures.py
+          && python -m tests.support.real_corpus require-executed level-a.xml
+      - name: Level B - semantic (canonical mapping)
+        run: >
+          pytest -rfEs --junitxml=level-b.xml -k "level_b"
+          tests/test1/certification/test_real_package_tiers.py
+          && python -m tests.support.real_corpus require-executed level-b.xml
+      - name: Level C/D - Vision, Pass1, Pass2, Story, Choreography, Composition, Motion, Text, RenderPlan
+        run: >
+          pytest -rfEs --junitxml=level-cd.xml -k "level_c_d or reaches_render_plan"
+          tests/test1/certification/test_real_package_tiers.py
+          tests/test1/certification/test_real_package_planning.py
+          && python -m tests.support.real_corpus require-executed level-cd.xml
+      - name: Certification summary
+        if: always()
+        run: |
+          {
+            echo "### Real package certification"
+            echo "- Levels A-D: **${{ job.status }}** for the six manifest packages"
+            echo "- Level E (full encode): see the Level E job; it is NOT part of this result"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  level-e:
+    name: Level E (full encode) - ${{ inputs.level_e && 'requested' || 'NOT EXECUTED' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Level E not executed
+        if: ${{ !inputs.level_e }}
+        run: |
+          echo "::warning::LEVEL E NOT EXECUTED: full-length encode certification did not run. Levels A-D only. Dispatch this workflow with level_e=true for Level E."
+          echo "### Level E NOT EXECUTED - this run certifies Levels A-D only" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        if: ${{ inputs.level_e }}
+      - uses: actions/setup-python@v5
+        if: ${{ inputs.level_e }}
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg and StoryEngine
+        if: ${{ inputs.level_e }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          python -m pip install -e ".[dev]"
+      - name: Provision and verify corpus (fails if unavailable or incomplete)
+        if: ${{ inputs.level_e }}
+        env:
+          CORPUS_URL: ${{ vars.HEXA_REAL_PACKAGE_CORPUS_URL }}
+          HEXA_REAL_PACKAGE_CORPUS_TOKEN: ${{ secrets.HEXA_REAL_PACKAGE_CORPUS_TOKEN }}
+        run: |
+          if [ -z "$CORPUS_URL" ]; then
+            echo "::error::REAL PACKAGE CERTIFICATION BLOCKED: repository variable HEXA_REAL_PACKAGE_CORPUS_URL is not set"
+            exit 1
+          fi
+          python -m tests.support.real_corpus fetch "$CORPUS_URL" "$HEXA_REAL_PACKAGE_CORPUS"
+      - name: Level E - FFmpeg encode, ffprobe, decode, encoded motion QA
+        if: ${{ inputs.level_e }}
+        env:
+          HEXA_REAL_PACKAGE_ENCODE: "1"
+        run: >
+          pytest -rfEs --junitxml=level-e.xml -k "level_e"
+          tests/test1/certification/test_real_package_tiers.py
+          && python -m tests.support.real_corpus require-executed level-e.xml

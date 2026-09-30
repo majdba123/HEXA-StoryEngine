@@ -32,3 +32,20 @@ Each inspected package contains the expected metadata family:
 - `validation_report.json`
 
 The historical handoff must be reviewed before promoting these from **Golden Working Candidates** to the authoritative working-package policy.
+
+## Certified Unified Final Package 2.0 corpus
+
+Production accepts Unified Final Package 2.0 only. The six certified packages are
+pinned by SHA-256 in `unified_2_0_certified_corpus.json`; ZIP bytes are not committed.
+
+- Gray Hat, Script Kiddie and Hacktivist are the locator-repaired versions
+  (`visual_locator` only; semantics, events, groups and relations unchanged). Every
+  repaired locator is listed in `LOCATOR_REPAIR_REPORT.md`.
+- The `Real Package Certification` workflow downloads the corpus from the repository
+  variable `HEXA_REAL_PACKAGE_CORPUS_URL` (a base URL serving the six filenames; optional
+  secret `HEXA_REAL_PACKAGE_CORPUS_TOKEN` is sent as a Bearer token), verifies the
+  SHA-256 values, and runs Levels A-D with `HEXA_REQUIRE_REAL_PACKAGE_CORPUS=1`. A
+  missing, partial or different corpus fails the job, as does any skipped test.
+- Level E (full-length encode) runs only when the workflow is dispatched with
+  `level_e=true`; otherwise its job reports `LEVEL E NOT EXECUTED`.
+- Local check: `python -m tests.support.real_corpus verify <directory>`.

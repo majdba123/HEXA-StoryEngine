@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "contract": "HEXA_UNIFIED_FINAL_PACKAGE 2.0",
+  "certified_on": "2026-09-30",
+  "certified_at_commit": "74e3516f28c8129cac8bdedd50490e13b0558b93",
+  "certified_levels": ["A", "B", "C", "D", "E"],
+  "note": "ZIP bytes are not committed. The corpus lives outside Git; CI provisions it from HEXA_REAL_PACKAGE_CORPUS_URL and verifies these SHA-256 values before certifying.",
+  "packages": [
+    {
+      "topic": "BLACK_HAT",
+      "filename": "HEXA_BLACK_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+      "sha256": "bfb64814b1fcdb952e2c93216822f49ba651e7fb113079aa8ee40cdeca53630f",
+      "locator_repaired": false
+    },
+    {
+      "topic": "WHITE_HAT",
+      "filename": "HEXA_WHITE_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+      "sha256": "58af4ea62a854076c6550b33a1db7b821a1f8cd0288d41337a98e1af4ca6ecd5",
+      "locator_repaired": false
+    },
+    {
+      "topic": "GRAY_HAT",
+      "filename": "HEXA_GRAY_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+      "sha256": "b51958adc787ec311f3c5ed1b38318a0b2f7b06878b9a863246486a1e66068ed",
+      "locator_repaired": true
+    },
+    {
+      "topic": "SCRIPT_KIDDIE",
+      "filename": "HEXA_SCRIPT_KIDDIE_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+      "sha256": "3527c14399e8de5a255cd5a0d055b38848494e0bfd0815ca5bd9b4ea2c816561",
+      "locator_repaired": true
+    },
+    {
+      "topic": "HACKTIVIST",
+      "filename": "HEXA_HACKTIVIST_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+      "sha256": "2bfe6b78b4ac2889d05e32bd52dcee18f412f1f40630591216b122b8bd9c7285",
+      "locator_repaired": true
+    },
+    {
+      "topic": "STATE_LINKED_GROUP",
+      "filename": "HEXA_STATE_LINKED_GROUP_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+      "sha256": "7ad3675d64f790d6752963064184f85552668656e8837456bea9988440cfea8c",
+      "locator_repaired": false
+    }
+  ]
+}
