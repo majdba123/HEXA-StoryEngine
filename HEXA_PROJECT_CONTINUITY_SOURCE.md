@@ -14027,3 +14027,92 @@ HANDOFF RULE
 ------------
 The next chat must treat this section as the newest authority for Final Package format,
 Library inputs and current visual-acceptance priority.
+
+
+## SEMANTIC CARRIER COMPLETENESS CHECKPOINT — 2026-09-30
+
+### Root cause (Black Hat SCENE_016 clapper / SCENE_018 caution icon)
+`VisualIdentityBinder` excluded every runtime cutout whose role was `decorative`.
+Runtime roles are copied from package unit roles, so a package-`decorative` unit that
+is also an event `visual_leader_asset_id` could never bind to its own cutout even with
+a 0.96 locator match. Its activation fell to `SAFE_ABSTENTION`, the Sprint 1 lifecycle
+hid the cutout (`semantic_continuity = NOT_VISIBLE`), and Story's event-coverage check
+still passed because participants carried the event. SCENE_018's first new visual was
+delayed because the leader never activated.
+
+The same audit found four more generic loss paths:
+1. Proxy-proven carriers (region/dependency/group proxies) never entered
+   `active_visual_semantic_state`, so proxy-only events rendered nothing.
+2. The locator-less size heuristic runs before locator identity reserves cutouts, so a
+   locator-less intent could collide with a locator-proven cutout while another stayed
+   unclaimed (Black Hat SCENE_032 persistence corridor).
+3. Group proxies moved a located member's event onto a sibling cutout far from its
+   locator (Gray Hat gray hat carried by the golden key).
+4. Authored units split by segmentation into several cutouts kept only one visible.
+
+### Generic engine invariants (no package-, scene- or topic-specific logic)
+- `CanonicalScene.semantic_carrier_roles`: event leaders, participants, results, text
+  anchors and visual-progression targets are REQUIRED; event context is optional.
+- Required intents may bind/activate decorative-labelled cutouts; optional decorative
+  units keep the old exclusion.
+- Proxy carriers are visible in the scene lifecycle (Sprint 1 hiding otherwise intact).
+- Locator-less displaced required intent binds by elimination only on an exact 1:1
+  remainder; otherwise abstain.
+- Group proxies require carrier/locator overlap unless identity is explicit.
+- Cutouts wholly inside exactly one authored locator are that unit's members
+  (ZERO_OR_ONE_OR_MANY); standalone membership needs the multi-cutout coverage floor.
+- `SemanticCarrierAuditor` (Story, before Composition/FFmpeg) classifies each required
+  asset CARRIED / MERGED_VISIBLE / HIDDEN / UNRESOLVED and fails closed:
+  `SEMANTIC_CARRIER_UNRESOLVED`, `SEMANTIC_CARRIER_HIDDEN`.
+- Hidden-art gate: `AUTHORED_CONTENT_HIDDEN` when a hidden cutout is visually
+  significant (>=1% frame), carries an authored primary role, or lies inside an
+  authored locator (>=0.2%); tiny unlocated fragments may stay hidden.
+- Diagnostics: scene, events, asset, roles, locator status, candidate hidden cutouts,
+  runtime mapping (unit/policy/source/evidence/visibility), reason, scene window.
+  Pipeline writes `semantic-carrier-audit.json` to the job workspace on success.
+
+- A locator-less required unit carried only by a proxy on another unit's cutout while
+  the scene hides candidate cutouts is UNRESOLVED (`proxy_carrier_while_scene_hides_candidates`).
+
+### Encoded timing budget (found by Level E once hidden art became visible)
+- Multi-cutout units staggered members into sub-frame instants; the renderer's frame
+  quantizer then raised `ENCODED_REVEAL_ORDER_INFEASIBLE` (Black Hat SCENE_031 footprints,
+  Script Kiddie SCENE_014 keys; Black Hat failed identically on the pre-change engine).
+  `_stagger_visual_unit_window` now never authors more distinct reveal instants than
+  the frame budget separates; excess members reveal in frame-spaced cohorts, same order,
+  Story window unchanged.
+- MotionCompiler peak retiming could compress a base-ENTRY leg to ~3 ms after the comfort
+  cap ran (Black Hat SCENE_036, 1.0/s vs 0.15/s). The comfort cap and renderability
+  normalization are re-applied to the compiled cue (reduce-only, timing unchanged).
+- Encoded QA exempts only Motion's deliberate `static_reveal_*` ENTRY with identity
+  keyframes from the readable-motion floor (Motion already declares ENTRY stylistic).
+
+### Real package repairs (visual_locator only; semantics unchanged)
+- Gray Hat SCENE_020: gray hat + missing-permission locators measured from artwork;
+  SCENE_023: footprints locator (its dotted fragments were hidden while its event was
+  proxied onto the house cutout).
+- Script Kiddie: all 35 scenes had template locators that missed their objects
+  (29 scenes hid characters/objects since Sprint 1); 80 locators re-measured.
+- Hacktivist: 10 locators added for 5 scenes that hid people/documents.
+- Review table: 93 locators, 30 grouped units, 1 concept mismatch
+  (Script Kiddie SCENE_001 `novice_cap` is drawn as a toolbox).
+
+### Certification
+Base: montage e0b1fc3 (origin/montage unchanged at commit time).
+Real corpus (HEXA_REAL_PACKAGE_CORPUS + HEXA_REAL_PACKAGE_ENCODE=1), all from zero with
+Vision/Pass1/Pass2, tests/test1/certification/test_real_package_tiers.py:
+| Package | A | B | C/D | E (full encode + ffprobe + decode + encoded motion QA) |
+|---|---|---|---|---|
+| Black Hat | PASS | PASS | PASS | PASS (106 s) |
+| White Hat | PASS | PASS | PASS | PASS (79 s) |
+| Gray Hat (repaired) | PASS | PASS | PASS | PASS (92 s) |
+| Script Kiddie (repaired, relations=[]) | PASS | PASS | PASS | PASS (83 s) |
+| Hacktivist (repaired) | PASS | PASS | PASS | PASS (69 s) |
+| State-Linked Group | PASS | PASS | PASS | PASS (116 s) |
+Suites: Test1 645, Test2 786, Test3 608 passed; compile + ruff clean.
+New coverage: 18 carrier-invariant tests, 421 package-shaped generative cases
+(240 Story shapes, 120 through RenderPlan, 60 defective -> typed failure), 3 stress
+tests (50/100 scenes, fragment-heavy), 29 contract-mutation tests, 8 package-shaped
+Full-HD FFmpeg encodes proving every authored leader is painted, 32 frame-budget tests,
+3 static-entry QA tests. Originals of repaired packages are kept beside them in
+`_pre_locator_repair_2026-09-30`; the per-locator review table is LOCATOR_REPAIR_REPORT.md.

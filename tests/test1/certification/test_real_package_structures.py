@@ -34,14 +34,29 @@ _EXPECTED = {
         scenes=35, objects=215, renderable_assets=145, groups=35, events=51,
         relations=16, visual_progression=35, timing_authority="FINAL_VOICE_OVER",
     ),
+    # Gray Hat, Script Kiddie and Hacktivist carry artwork-measured visual_locator
+    # repairs (semantics, events, groups and relations unchanged) so every required
+    # carrier and all authored artwork are provable by the carrier/hidden-art gates.
     "HEXA_GRAY_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": _ExpectedPackage(
-        sha256="5333873a7bcd1e6dd8740fab473cccbe2e6a950697fb9e90f1efdfe8ce204b55",
+        sha256="b51958adc787ec311f3c5ed1b38318a0b2f7b06878b9a863246486a1e66068ed",
         scenes=35, objects=194, renderable_assets=135, groups=35, events=75,
         relations=35, visual_progression=0, timing_authority="FINAL_VOICE_OVER",
     ),
     "HEXA_SCRIPT_KIDDIE_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": _ExpectedPackage(
-        sha256="8c0f7456c7b146c8422930a23c542be58466bafde7712037b7b99ca2431fb332",
+        sha256="3527c14399e8de5a255cd5a0d055b38848494e0bfd0815ca5bd9b4ea2c816561",
         scenes=35, objects=80, renderable_assets=80, groups=80, events=80,
+        relations=0, visual_progression=0,
+        timing_authority="FINAL_VOICE_OVER_SEPARATE_INPUT",
+    ),
+    "HEXA_HACKTIVIST_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": _ExpectedPackage(
+        sha256="2bfe6b78b4ac2889d05e32bd52dcee18f412f1f40630591216b122b8bd9c7285",
+        scenes=26, objects=62, renderable_assets=62, groups=62, events=62,
+        relations=0, visual_progression=0,
+        timing_authority="FINAL_VOICE_OVER_SEPARATE_INPUT",
+    ),
+    "HEXA_STATE_LINKED_GROUP_AR_UNIFIED_FINAL_PACKAGE_2_0.zip": _ExpectedPackage(
+        sha256="7ad3675d64f790d6752963064184f85552668656e8837456bea9988440cfea8c",
+        scenes=27, objects=111, renderable_assets=111, groups=27, events=27,
         relations=0, visual_progression=0,
         timing_authority="FINAL_VOICE_OVER_SEPARATE_INPUT",
     ),

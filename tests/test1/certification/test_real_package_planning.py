@@ -26,6 +26,8 @@ _REAL_PACKAGES = (
     "HEXA_WHITE_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
     "HEXA_GRAY_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
     "HEXA_SCRIPT_KIDDIE_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+    "HEXA_HACKTIVIST_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+    "HEXA_STATE_LINKED_GROUP_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
 )
 
 
@@ -39,6 +41,7 @@ class RealPlanningResult:
     runtime_assets: int
     story_beats: int
     motion_cues: int
+    plan_path: Path | None = None
 
 
 _REAL_RESULT_CACHE: dict[tuple[str, str], RealPlanningResult] = {}
@@ -139,6 +142,7 @@ def certify_real_package_to_render_plan(
         runtime_assets=len(assets),
         story_beats=len(story),
         motion_cues=len(motion),
+        plan_path=plan_path,
     )
     _REAL_RESULT_CACHE[key] = result
     return result
