@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -46,17 +48,67 @@ def verify(directory: Path) -> list[str]:
     return problems
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Release assets redirect to signed storage URLs that reject a Bearer token."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+_OPENER = urllib.request.build_opener(_DropAuthOnRedirect)
+_GITHUB_RELEASE_API = re.compile(
+    r"^https://api\.github\.com/repos/[^/]+/[^/]+/releases/tags/[^/]+$"
+)
+
+
+def _request(url: str, token: str | None, accept: str | None = None) -> urllib.request.Request:
+    request = urllib.request.Request(url, headers={"User-Agent": "hexa-real-corpus"})
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    if accept:
+        request.add_header("Accept", accept)
+    return request
+
+
+def asset_urls(base_url: str, token: str | None) -> dict[str, tuple[str, str | None]]:
+    """Map each manifest filename to ``(download url, Accept header)``.
+
+    A plain base URL serves ``<base>/<filename>``. A GitHub release API URL
+    (``.../releases/tags/<tag>``, required for private repositories) resolves each
+    asset through the API and downloads it as ``application/octet-stream``.
+    """
+    base = base_url.rstrip("/")
+    if not _GITHUB_RELEASE_API.match(base):
+        return {name: (f"{base}/{name}", None) for name in certified_packages()}
+    with _OPENER.open(_request(base, token, "application/vnd.github+json"), timeout=60) as response:
+        assets = {row["name"]: row["url"] for row in json.load(response)["assets"]}
+    return {
+        name: (assets[name], "application/octet-stream")
+        for name in certified_packages()
+        if name in assets
+    }
+
+
 def fetch(base_url: str, directory: Path) -> list[str]:
     directory.mkdir(parents=True, exist_ok=True)
-    token = os.getenv("HEXA_REAL_PACKAGE_CORPUS_TOKEN")
+    token = os.getenv("HEXA_REAL_PACKAGE_CORPUS_TOKEN") or None
+    try:
+        urls = asset_urls(base_url, token)
+    except (urllib.error.URLError, OSError, KeyError, ValueError) as exc:
+        return [f"RELEASE LOOKUP FAILED  {exc}"]
     problems = []
     for filename in certified_packages():
-        request = urllib.request.Request(f"{base_url.rstrip('/')}/{filename}")
-        if token:
-            request.add_header("Authorization", f"Bearer {token}")
+        if filename not in urls:
+            problems.append(f"MISSING RELEASE ASSET  {filename}")
+            continue
+        url, accept = urls[filename]
         try:
-            with urllib.request.urlopen(request, timeout=600) as response:  # noqa: S310
-                (directory / filename).write_bytes(response.read())
+            with _OPENER.open(_request(url, token, accept), timeout=600) as response:
+                with (directory / filename).open("wb") as handle:
+                    shutil.copyfileobj(response, handle)
         except (urllib.error.URLError, OSError) as exc:
             problems.append(f"DOWNLOAD FAILED  {filename}: {exc}")
     return problems
