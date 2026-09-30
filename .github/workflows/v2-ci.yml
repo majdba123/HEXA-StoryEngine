@@ -26,10 +26,12 @@ jobs:
         run: python -m compileall -q app
       - name: Lint
         run: ruff check app tests
-      - name: Test1 canonical compatibility
+      - name: Test1 canonical compatibility and Unified 2.0 contract lock
         run: pytest tests/test1
-      - name: Test
-        run: pytest
+      - name: Test2 layer contracts, semantic carriers and encoded smoke
+        run: pytest tests/test2
+      - name: Test3 package-shaped generative matrix and stress
+        run: pytest tests/test3
       - name: Upload tested source snapshot
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,4 +66,5 @@ jobs:
         run: >
           pytest -q
           tests/test2/render/test_encoded_motion_regressions.py
+          tests/test2/render/test_package_shaped_encoded_render.py
           tests/test2/integration/test_layer_handoff_motion_contracts.py
