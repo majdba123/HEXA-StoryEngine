@@ -9,6 +9,7 @@ from app.transcription.alignment import (
     AlignmentRejectedError,
     WhisperXForcedAligner,
     detect_script_language,
+    prepare_alignment_text,
 )
 from app.transcription.alignment.whisperx import AlignmentPolicy
 from app.transcription.service import TranscriptionService
@@ -30,7 +31,7 @@ def test_forced_alignment_builds_exact_arabic_script_mapping() -> None:
     ]
 
     transcript = aligner._build_transcript(
-        script=script,
+        prepared=prepare_alignment_text(script),
         language="ar",
         duration=2.0,
         raw_words=raw_words,
@@ -55,7 +56,7 @@ def test_forced_alignment_builds_exact_english_script_mapping() -> None:
     ]
 
     transcript = aligner._build_transcript(
-        script=script,
+        prepared=prepare_alignment_text(script),
         language="en",
         duration=2.0,
         raw_words=raw_words,
@@ -70,7 +71,7 @@ def test_forced_alignment_rejects_shifted_word_mapping() -> None:
     aligner = WhisperXForcedAligner(policy=AlignmentPolicy(min_token_match_ratio=0.98))
     with pytest.raises(AlignmentRejectedError):
         aligner._build_transcript(
-            script="one two three",
+            prepared=prepare_alignment_text("one two three"),
             language="en",
             duration=2.0,
             raw_words=[
@@ -85,7 +86,7 @@ def test_forced_alignment_rejects_non_monotonic_timestamps() -> None:
     aligner = WhisperXForcedAligner()
     with pytest.raises(AlignmentRejectedError):
         aligner._build_transcript(
-            script="one two",
+            prepared=prepare_alignment_text("one two"),
             language="en",
             duration=2.0,
             raw_words=[

@@ -14153,3 +14153,34 @@ mapping needed A/B/C classification. No AMBIGUOUS assignment exists in the corpu
 ### Known risk carried forward
 State-Linked (102 intents) and Hacktivist (46) are mostly bound by the locator-less
 order hint (INFERRED, not geometric proof). Behaviour is unchanged; proof needs locators.
+
+## FORCED ALIGNMENT WHITESPACE MAPPING CHECKPOINT — 2026-09-30
+
+### Root cause
+The canonical tokenizer (`\S+`) treats every Unicode whitespace run as a word boundary,
+but WhisperX 3.8.6 starts a new word only after an ASCII space (`text.split(" ")`,
+`text[cdx + 1] == " "`). The canonical script was sent verbatim, so any paragraph/newline/tab
+boundary merged two tokens on the aligner side (`أسوأ:
+
+معلومات` became one word) and the
+positional comparison cascaded from the first merge. An unseen package showed
+`script=326, aligned=300, match=0.067` although the narration matched the script.
+
+### Fix (adapter boundary inside HEXA, no WhisperX patch)
+`app/transcription/alignment/prepared_text.py` — `prepare_alignment_text(script)` builds a
+`PreparedAlignmentText`: the canonical tokens joined by one ASCII space (`text`) and one
+`AlignmentToken(text, char_start, char_end)` per token pointing at the ORIGINAL span.
+`WhisperXForcedAligner.align()` sends `prepared.text` and `_build_transcript()` consumes the
+same `prepared` object (single tokenization authority). `TranscriptWord.text` and spans are
+canonical; the aligner's word text is used for validation only. The canonical script, the
+scene/event spans, `min_token_match_ratio = 0.98`, the timestamp checks and the strict
+fail-closed policy are unchanged. `AlignmentRejectedError` is now a `HexaError` with typed
+codes (`ALIGNMENT_WORD_MAPPING_UNSAFE`, `ALIGNMENT_TIMESTAMP_INVALID`, ...) and structured
+diagnostics (counts, match ratio, first mismatch with 3 tokens of context; never the script).
+
+### Proof
+Unit: `tests/test2/text/test_alignment_whitespace_normalization.py` (whitespace matrix,
+fake WhisperX round trip, scene span after paragraph break, exact 326→300 regression, all
+fail-closed paths). Certification: `tests/certification/alignment/` (1000 randomized
+whitespace variants, 300 Arabic, 200 English, 200 mixed documents, punctuation edge
+tokens, 120 fake round trips, size matrix 1–5000 tokens, linear time).

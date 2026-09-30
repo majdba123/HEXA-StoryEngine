@@ -32,7 +32,7 @@ jobs:
         run: pytest tests/test2
       - name: Test3 package-shaped generative matrix and stress
         run: pytest tests/test3
-      - name: Semantic carrier acceptance certification (assignment, resolver, generated, mutation)
+      - name: Acceptance certification (semantic carrier assignment/resolver/generated/mutation, alignment text)
         run: pytest tests/certification
       - name: Upload tested source snapshot
         if: always()

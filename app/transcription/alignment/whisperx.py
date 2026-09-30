@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Transcript, TranscriptSegment, TranscriptWord
-from app.shared.errors import DependencyUnavailableError, StageFailedError
+from app.shared.errors import DependencyUnavailableError, HexaError, StageFailedError
 from app.shared.media import decode_audio_mono
+from app.transcription.alignment.prepared_text import (
+    PreparedAlignmentText,
+    prepare_alignment_text,
+)
 
-_WORD_RE = re.compile(r"\S+")
 _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
 _ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
@@ -24,8 +27,18 @@ _DEFAULT_MODELS = {
 }
 
 
-class AlignmentRejectedError(RuntimeError):
-    """Raised when an alignment result is structurally unsafe to trust."""
+class AlignmentRejectedError(HexaError):
+    """Raised when an alignment result is structurally unsafe to trust.
+
+    ``details["code"]`` names the typed reason; word-mapping rejections carry the
+    structured counts and the first mismatch so a failure explains itself.
+    """
+
+    code = "ALIGNMENT_REJECTED"
+
+
+# Tokens shown around the first mismatch. Diagnostics never dump the whole script.
+_MISMATCH_CONTEXT = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +103,19 @@ class WhisperXForcedAligner:
         language = detect_script_language(script)
         model_name = self.model_by_language.get(language)
         if not model_name:
-            raise AlignmentRejectedError(f"no forced-alignment model configured for {language}")
+            raise AlignmentRejectedError(
+                f"no forced-alignment model configured for {language}",
+                details={"code": "ALIGNMENT_MODEL_NOT_CONFIGURED", "language": language},
+            )
+
+        # The aligner receives the ASCII-space token view; the canonical script itself is
+        # never modified and every returned word maps back to its original char span.
+        prepared = prepare_alignment_text(script)
+        if not prepared.tokens:
+            raise AlignmentRejectedError(
+                "script contains no alignable words",
+                details={"code": "ALIGNMENT_SCRIPT_EMPTY", "language": language},
+            )
 
         align_fn, load_model = self._load_api()
         device = self.device or self._auto_device()
@@ -100,7 +125,7 @@ class WhisperXForcedAligner:
             device=device,
             load_model=load_model,
         )
-        source = [{"start": 0.0, "end": duration, "text": script}]
+        source = [{"start": 0.0, "end": duration, "text": prepared.text}]
         waveform = decode_audio_mono(audio, self.ffmpeg_bin, sample_rate=16000)
         try:
             result = align_fn(
@@ -113,11 +138,14 @@ class WhisperXForcedAligner:
                 print_progress=False,
             )
         except Exception as exc:
-            raise AlignmentRejectedError(f"forced alignment failed: {exc}") from exc
+            raise AlignmentRejectedError(
+                f"forced alignment failed: {exc}",
+                details={"code": "ALIGNMENT_RUNTIME_FAILED", "language": language, "error": str(exc)},
+            ) from exc
 
         raw_words = list(result.get("word_segments") or [])
         return self._build_transcript(
-            script=script,
+            prepared=prepared,
             language=language,
             duration=duration,
             raw_words=raw_words,
@@ -186,55 +214,83 @@ class WhisperXForcedAligner:
     def _build_transcript(
         self,
         *,
-        script: str,
+        prepared: PreparedAlignmentText,
         language: str,
         duration: float,
         raw_words: list[dict[str, Any]],
     ) -> Transcript:
-        token_matches = list(_WORD_RE.finditer(script))
-        if not token_matches:
-            raise AlignmentRejectedError("script contains no alignable words")
+        """Map aligner words back onto the canonical tokens the aligner was given.
+
+        ``prepared`` is the same token view that produced the alignment request, so there
+        is exactly one tokenization authority between request and transcript.
+        """
+        script = prepared.script
+        tokens = prepared.tokens
+        if not tokens:
+            raise AlignmentRejectedError(
+                "script contains no alignable words",
+                details={"code": "ALIGNMENT_SCRIPT_EMPTY", "language": language},
+            )
         if not raw_words:
-            raise AlignmentRejectedError("forced aligner returned no word timestamps")
+            raise AlignmentRejectedError(
+                "forced aligner returned no word timestamps",
+                details={
+                    "code": "ALIGNMENT_WORD_MAPPING_UNSAFE",
+                    **word_mapping_diagnostics(prepared, raw_words, language=language),
+                },
+            )
 
         # WhisperX 3.8.4+ preserves words containing digits/symbols with wildcard timing.
         # Still validate a one-to-one monotonic mapping so a bad model result can never
         # silently shift every subsequent word onto the wrong script token.
-        comparable = min(len(token_matches), len(raw_words))
-        matches = 0
-        for index in range(comparable):
-            expected = _normalize_token(token_matches[index].group())
-            actual = _normalize_token(str(raw_words[index].get("word") or ""))
-            if expected and actual and expected == actual:
-                matches += 1
-        match_ratio = matches / max(1, len(token_matches))
-        if len(raw_words) != len(token_matches) or match_ratio < self.policy.min_token_match_ratio:
+        diagnostics = word_mapping_diagnostics(prepared, raw_words, language=language)
+        if (
+            len(raw_words) != len(tokens)
+            or diagnostics["match_ratio"] < self.policy.min_token_match_ratio
+        ):
             raise AlignmentRejectedError(
                 "forced alignment word mapping is unsafe "
-                f"(script={len(token_matches)}, aligned={len(raw_words)}, match={match_ratio:.3f})"
+                f"(script={len(tokens)}, aligned={len(raw_words)}, "
+                f"match={diagnostics['match_ratio']:.3f})",
+                details={"code": "ALIGNMENT_WORD_MAPPING_UNSAFE", **diagnostics},
             )
 
         words: list[TranscriptWord] = []
         previous_end = 0.0
         tolerance = self.policy.timestamp_tolerance
-        for index, match in enumerate(token_matches):
+        for index, token in enumerate(tokens):
             raw = raw_words[index]
             start = _float_or_none(raw.get("start"))
             end = _float_or_none(raw.get("end"))
             if start is None or end is None or end <= start:
-                raise AlignmentRejectedError(f"missing/invalid timestamp for token {index}")
-            if start + tolerance < previous_end:
-                raise AlignmentRejectedError(f"non-monotonic timestamp at token {index}")
-            if start < -tolerance or end > duration + tolerance:
-                raise AlignmentRejectedError(f"timestamp outside audio duration at token {index}")
+                reason = f"missing/invalid timestamp for token {index}"
+            elif start + tolerance < previous_end:
+                reason = f"non-monotonic timestamp at token {index}"
+            elif start < -tolerance or end > duration + tolerance:
+                reason = f"timestamp outside audio duration at token {index}"
+            else:
+                reason = None
+            if reason is not None:
+                raise AlignmentRejectedError(reason, details={
+                    "code": "ALIGNMENT_TIMESTAMP_INVALID",
+                    "language": language,
+                    "token_index": index,
+                    "token": token.text,
+                    "start": start,
+                    "end": end,
+                    "previous_end": previous_end,
+                    "duration": duration,
+                })
             start = max(0.0, start)
             end = min(duration, end)
+            # The canonical token text and its ORIGINAL span are kept; the aligner's word
+            # text was used for validation only.
             words.append(TranscriptWord(
                 start=start,
                 end=end,
-                text=match.group(),
-                char_start=match.start(),
-                char_end=match.end(),
+                text=token.text,
+                char_start=token.char_start,
+                char_end=token.char_end,
             ))
             previous_end = end
 
@@ -256,8 +312,67 @@ def detect_script_language(script: str) -> str:
     arabic = len(_ARABIC_RE.findall(script))
     latin = len(_LATIN_RE.findall(script))
     if arabic == 0 and latin == 0:
-        raise AlignmentRejectedError("script has no Arabic or English letters")
+        raise AlignmentRejectedError(
+            "script has no Arabic or English letters",
+            details={"code": "ALIGNMENT_SCRIPT_UNSUPPORTED"},
+        )
     return "ar" if arabic >= latin else "en"
+
+
+def word_mapping_diagnostics(
+    prepared: PreparedAlignmentText,
+    raw_words: list[dict[str, Any]],
+    *,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """Structured comparison of aligner words against the prepared canonical tokens.
+
+    Positional, normalized comparison (the same rule the gate uses) plus the first
+    mismatch with a few tokens of context. The full script is never included.
+    """
+    tokens = prepared.tokens
+    actual_words = [str(raw.get("word") or "") for raw in raw_words]
+    comparable = min(len(tokens), len(actual_words))
+    matches = 0
+    first_mismatch: int | None = None
+    for index in range(comparable):
+        expected = _normalize_token(tokens[index].text)
+        actual = _normalize_token(actual_words[index])
+        if expected and actual and expected == actual:
+            matches += 1
+        elif first_mismatch is None:
+            first_mismatch = index
+    if first_mismatch is None and len(tokens) != len(actual_words):
+        first_mismatch = comparable
+    diagnostics: dict[str, Any] = {
+        "language": language,
+        "whitespace_normalized": True,
+        "canonical_token_count": len(tokens),
+        "alignment_input_token_count": len(tokens),
+        "aligned_word_count": len(actual_words),
+        "exact_match_count": matches,
+        "match_ratio": round(matches / max(1, len(tokens)), 3),
+        "first_mismatch_index": first_mismatch,
+    }
+    if first_mismatch is not None:
+        index = first_mismatch
+        expected_token = tokens[index].text if index < len(tokens) else None
+        actual_token = actual_words[index] if index < len(actual_words) else None
+        diagnostics.update({
+            "expected_token": expected_token,
+            "actual_token": actual_token,
+            "expected_token_normalized": _normalize_token(expected_token or ""),
+            "actual_token_normalized": _normalize_token(actual_token or ""),
+            "context_before": {
+                "expected": [t.text for t in tokens[max(0, index - _MISMATCH_CONTEXT):index]],
+                "actual": actual_words[max(0, index - _MISMATCH_CONTEXT):index],
+            },
+            "context_after": {
+                "expected": [t.text for t in tokens[index + 1:index + 1 + _MISMATCH_CONTEXT]],
+                "actual": actual_words[index + 1:index + 1 + _MISMATCH_CONTEXT],
+            },
+        })
+    return diagnostics
 
 
 def _segments_from_script(script: str, words: list[TranscriptWord]) -> list[TranscriptSegment]:

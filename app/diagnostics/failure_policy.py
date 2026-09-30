@@ -137,6 +137,26 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "ALIGNMENT_SCRIPT_UNSUPPORTED", "input", FailureDisposition.FAIL_FAST,
         "Narration script cannot be aligned safely by the configured production path",
     ),
+    "ALIGNMENT_REJECTED": _policy(
+        "ALIGNMENT_REJECTED", "transcription", FailureDisposition.FAIL_FAST,
+        "Forced alignment result is structurally unsafe to drive timing",
+    ),
+    "ALIGNMENT_SCRIPT_EMPTY": _policy(
+        "ALIGNMENT_SCRIPT_EMPTY", "transcription", FailureDisposition.FAIL_FAST,
+        "Canonical script contains no alignable words",
+    ),
+    "ALIGNMENT_RUNTIME_FAILED": _policy(
+        "ALIGNMENT_RUNTIME_FAILED", "transcription", FailureDisposition.FAIL_FAST,
+        "Forced-alignment runtime raised while aligning narration",
+    ),
+    "ALIGNMENT_WORD_MAPPING_UNSAFE": _policy(
+        "ALIGNMENT_WORD_MAPPING_UNSAFE", "transcription", FailureDisposition.FAIL_FAST,
+        "Aligned words do not map one-to-one onto canonical script tokens; timing must not be guessed",
+    ),
+    "ALIGNMENT_TIMESTAMP_INVALID": _policy(
+        "ALIGNMENT_TIMESTAMP_INVALID", "transcription", FailureDisposition.FAIL_FAST,
+        "Aligned word timestamps are missing, non-monotonic, or outside the audio duration",
+    ),
     "FFMPEG_CAPABILITY_PROBE_FAILED": _policy(
         "FFMPEG_CAPABILITY_PROBE_FAILED", "input", FailureDisposition.FAIL_FAST,
         "FFmpeg capabilities could not be established safely",
