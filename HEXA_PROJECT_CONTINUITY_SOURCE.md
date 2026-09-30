@@ -14116,3 +14116,40 @@ tests (50/100 scenes, fragment-heavy), 29 contract-mutation tests, 8 package-sha
 Full-HD FFmpeg encodes proving every authored leader is painted, 32 frame-budget tests,
 3 static-entry QA tests. Originals of repaired packages are kept beside them in
 `_pre_locator_repair_2026-09-30`; the per-locator review table is LOCATOR_REPAIR_REPORT.md.
+
+
+## SPRINT 3 — SEMANTIC CARRIER RESOLVER CHECKPOINT — 2026-09-30
+
+### Why
+Sprint 2 made a lost required carrier fail closed, but ownership itself was still decided
+in several places: VisualIdentityBinder (iterative most-certain-first loop), the
+locator-less size/order map, elimination and containment inside Story activation, and
+region lookups inside the proxy builders. Any one of them could decide differently.
+
+### Design (single authority, no new dependency)
+`app/story/carrier_resolver.py` — `SemanticCarrierResolver.resolve(scene, assets, order_hints)`
+returns one `SceneCarrierResolution`; Story activation and the proxy builders only consume it.
+1. Candidates + scoring: locator geometry for every intent x eligible cutout (IoU,
+   containment, centre distance, size, aspect, parent/family bonus). Thresholds live as
+   named constants on VisualIdentityBinder / CarrierResolverConfig.
+2. Global assignment (`app/story/assignment.py`): local Hungarian, O(n^2 m). Objective is
+   sum of (score - 0.50)^2 so one strong owner is never traded for two weak matches.
+   Rows/columns are sorted, so the result is independent of input order.
+3. Ambiguity: a match is withdrawn when a free cutout, an unmatched intent, or a
+   near-neutral swap is within the 0.065 margin. Nothing is guessed.
+4. Compound carriers: one intent -> many cutouts (multi-cutout unit, members wholly inside
+   the locator); many intents -> one cutout only as a SHARED region carrier (proxy).
+5. Locator-less intents: unclaimed legacy order hint (INFERRED), or 1:1 elimination.
+6. Confidence: PROVEN / HIGH_CONFIDENCE / INFERRED / AMBIGUOUS / UNRESOLVED.
+Required + AMBIGUOUS fails before render with `SEMANTIC_CARRIER_AMBIGUOUS`; invalid
+candidate sets fail with `SEMANTIC_CARRIER_INPUT_INVALID`. A required locator that
+covers no runtime cutout is now UNRESOLVED instead of MERGED_VISIBLE.
+Diagnostics: `semantic-carrier-resolution.json` per job (written on failure too).
+
+### Baseline comparison (six certified packages)
+Carrier mapping before vs after the resolver: 0 differences in all six packages, so no
+mapping needed A/B/C classification. No AMBIGUOUS assignment exists in the corpus.
+
+### Known risk carried forward
+State-Linked (102 intents) and Hacktivist (46) are mostly bound by the locator-less
+order hint (INFERRED, not geometric proof). Behaviour is unchanged; proof needs locators.
