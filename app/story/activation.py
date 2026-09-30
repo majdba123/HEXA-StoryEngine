@@ -30,6 +30,7 @@ from app.models import (
 )
 
 from .binding import SemanticAssetBinder
+from .carrier_resolver import SceneCarrierResolution, SemanticCarrierResolver
 from .identity import VisualIdentityBinder
 from .windows import ScheduledStoryBeat, schedule_windows
 
@@ -229,6 +230,9 @@ class SemanticActivationPlanner:
     ) -> None:
         self.binder = SemanticAssetBinder()
         self.identity_binder = VisualIdentityBinder()
+        self.carrier_resolver = SemanticCarrierResolver(self.identity_binder)
+        # beat id -> scene resolution of the current job (never shared across jobs).
+        self.carrier_resolutions: dict[str, SceneCarrierResolution] = {}
         self._identity_incomplete_beats: set[str] = set()
         self.scorer = scorer or HybridSemanticTextScorer(
             semantic_model_name, required=semantic_model_required
@@ -248,6 +252,7 @@ class SemanticActivationPlanner:
     ) -> list[StoryBeat]:
         package = ensure_canonical_package(package)
         self._decisions.clear()
+        self.carrier_resolutions.clear()
         self._eligible_asset_ids.clear()
         self._trusted_eligible_ids.clear()
         self._inherited_eligible_ids.clear()
@@ -968,27 +973,21 @@ class SemanticActivationPlanner:
         # A locator can be too approximate to prove semantic identity while still
         # identifying one renderable scene region unambiguously.  Preserve that
         # distinction: the strict binder remains unchanged, and the weaker evidence is
-        # exposed only as an event-proxy carrier.
-        identity = self.identity_binder.bind(
-            scene=scene,
-            semantic_assets=list(binding.assets),
-            assets=assets,
+        # exposed only as an event-proxy carrier. The shared carrier comes from the
+        # scene's single carrier resolution, never from a second local decision.
+        resolution = self.carrier_resolutions.get(beat.id) or self.carrier_resolver.resolve(
+            scene=binding, assets=assets,
         )
-        for semantic_id in sorted(identity.unresolved_locator_ids):
+        for semantic_id in sorted(resolution.identity.unresolved_locator_ids):
             metadata = asset_metadata.get(semantic_id)
-            if metadata is None:
-                continue
-            region = self.identity_binder.region_carrier(
-                semantic_asset=metadata,
-                assets=assets,
-            )
+            region = resolution.assignments[semantic_id].shared if metadata is not None else None
             if region is None:
                 continue
             rows = carriers_by_unit.setdefault(semantic_id, [])
-            if not any(asset_id == region.real_asset_id for asset_id, _confidence, _source in rows):
-                runtime = runtime_by_id[region.real_asset_id]
+            if not any(asset_id == region.cutout_id for asset_id, _confidence, _source in rows):
+                runtime = runtime_by_id[region.cutout_id]
                 rows.append((
-                    region.real_asset_id,
+                    region.cutout_id,
                     min(
                         float(metadata.confidence),
                         float(runtime.confidence),
@@ -1490,13 +1489,16 @@ class SemanticActivationPlanner:
             return []
         groups = {row.semantic_group_id: row for row in scene_binding.semantic_groups}
         events_by_id = {row.semantic_event_id: row for row in scene_binding.semantic_events}
-        required_ids = frozenset(scene_binding.semantic_carrier_roles)
         asset_by_id = {asset.id: asset for asset in assets}
-        identity = self.identity_binder.bind(
-            scene=scene,
-            semantic_assets=binding_assets,
+        # Ownership is decided once, scene-wide, by the carrier resolver. This layer
+        # only turns its proven members into narration-timed activations.
+        resolution = self.carrier_resolver.resolve(
+            scene=scene_binding,
             assets=assets,
+            order_hints=semantic_map,
         )
+        self.carrier_resolutions[beat.id] = resolution
+        identity = resolution.identity
         if identity.has_incomplete_locator_binding:
             self._identity_incomplete_beats.add(beat.id)
         for semantic_id in sorted(identity.locator_semantic_ids):
@@ -1527,26 +1529,6 @@ class SemanticActivationPlanner:
                     else "ambiguous_or_missing_real_cutout_geometry"
                 ),
             })
-        identity_claimed_real: dict[str, str] = {}
-        for semantic_id in identity.locator_semantic_ids:
-            for match in identity.matches_for(semantic_id):
-                identity_claimed_real[match.real_asset_id] = semantic_id
-        explicit_real_ids = {
-            str(row.asset_id) for row in binding_assets if str(row.asset_id) in asset_by_id
-        }
-        scene_locators = {
-            str(row.asset_id): box
-            for row in binding_assets
-            if (box := self.identity_binder.locator_box(row.visual_locator)) is not None
-        }
-        locator_less_real, eliminated_real = self._eliminate_displaced_carrier(
-            binding_assets=binding_assets,
-            identity=identity,
-            identity_claimed_real=identity_claimed_real,
-            semantic_map=semantic_map,
-            asset_by_id=asset_by_id,
-            required_ids=required_ids,
-        )
         audio_start = beat.audio_start if beat.audio_start is not None else beat.start
         audio_end = beat.audio_end if beat.audio_end is not None else beat.end
         tolerance = 0.025
@@ -1559,54 +1541,14 @@ class SemanticActivationPlanner:
             binding_type = str(row.binding_type or "").upper()
             if not semantic_id or not phrase or binding_type == "AMBIGUOUS":
                 continue
-            identity_matches = identity.matches_for(semantic_id)
+            # Locator members keep their identity evidence; locator-less members
+            # (order hint / elimination) carry none, exactly as before the resolver.
+            located = semantic_id in identity.locator_semantic_ids
+            eliminated = False
             resolved_assets: list[tuple[VisualAsset, Any]] = []
-            if semantic_id in identity.locator_semantic_ids:
-                # A visual locator is explicit identity evidence. It may describe one
-                # real cutout or one authored visual unit composed of several detached
-                # cutouts. If neither can be resolved conservatively, abstain instead
-                # of falling back to size/order heuristics that can swap meanings.
-                # An authored unit may be several cutouts (ZERO_OR_ONE_OR_MANY):
-                # unreserved cutouts lying wholly inside only this locator are its
-                # members too, whether or not one cutout already matched 1:1.
-                if identity_matches or semantic_id in required_ids:
-                    matched = {match.real_asset_id for match in identity_matches}
-                    identity_matches = (*identity_matches, *(
-                        match
-                        for match in self.identity_binder.contained_carriers(
-                            semantic_asset=row,
-                            scene_locators=scene_locators,
-                            assets=assets,
-                            reserved={
-                                *identity_claimed_real,
-                                *locator_less_real.values(),
-                                *eliminated_real.values(),
-                                *explicit_real_ids,
-                            },
-                            standalone=not identity_matches,
-                        )
-                        if match.real_asset_id not in matched
-                    ))
-                if not identity_matches:
-                    continue
-                for identity_match in identity_matches:
-                    asset = asset_by_id.get(identity_match.real_asset_id)
-                    if not self._carrier_eligible(asset, required=semantic_id in required_ids):
-                        continue
-                    resolved_assets.append((asset, identity_match))
-            elif semantic_id in eliminated_real:
-                resolved_assets.append((asset_by_id[eliminated_real[semantic_id]], None))
-            else:
-                real_id = semantic_map.get(semantic_id)
-                if real_id is None and semantic_id in asset_by_id:
-                    real_id = semantic_id
-                claimed_by = identity_claimed_real.get(real_id or "")
-                if claimed_by is not None and claimed_by != semantic_id:
-                    continue
-                asset = asset_by_id.get(real_id or "")
-                if not self._carrier_eligible(asset, required=semantic_id in required_ids):
-                    continue
-                resolved_assets.append((asset, None))
+            for member in resolution.members(semantic_id):
+                eliminated = eliminated or member.source == "locatorless_elimination"
+                resolved_assets.append((asset_by_id[member.cutout_id], member if located else None))
             if not resolved_assets:
                 continue
 
@@ -1743,7 +1685,7 @@ class SemanticActivationPlanner:
                         "asset_level_final_package_binding",
                         *(
                             ["visual_identity_by_elimination"]
-                            if semantic_id in eliminated_real
+                            if eliminated
                             else []
                         ),
                         "exact_final_package_script_text",
@@ -1964,80 +1906,6 @@ class SemanticActivationPlanner:
             }
             output.append(row)
         return output
-
-    @classmethod
-    def _eliminate_displaced_carrier(
-        cls,
-        *,
-        binding_assets: list[Any],
-        identity: Any,
-        identity_claimed_real: dict[str, str],
-        semantic_map: dict[str, str],
-        asset_by_id: dict[str, VisualAsset],
-        required_ids: frozenset[str],
-    ) -> tuple[dict[str, str], dict[str, str]]:
-        """Resolve locator-less intents: ``(kept, eliminated)``.
-
-        ``kept`` maps locator-less intents to their heuristic cutout when locator
-        identity did not claim it. ``eliminated`` binds one locator-less required
-        intent to the only unclaimed cutout. The size/order heuristic map is computed before locator identity reserves
-        cutouts, so a locator-less intent can collide with a locator-proven cutout
-        while another cutout stays unclaimed. Only an exact 1:1 remainder (one
-        displaced required intent, one unclaimed eligible cutout) is unambiguous;
-        anything else abstains so Story's carrier audit can report it.
-        """
-        locator_less = [
-            str(row.asset_id)
-            for row in binding_assets
-            if str(row.asset_id or "").strip()
-            and str(row.script_text or "").strip()
-            and str(row.binding_type or "").upper() != "AMBIGUOUS"
-            and str(row.asset_id) not in identity.locator_semantic_ids
-        ]
-        kept: dict[str, str] = {}
-        displaced: list[str] = []
-        for semantic_id in locator_less:
-            real_id = semantic_map.get(semantic_id) or (
-                semantic_id if semantic_id in asset_by_id else None
-            )
-            claimed_by = identity_claimed_real.get(real_id or "")
-            if (
-                real_id is not None
-                and (claimed_by is None or claimed_by == semantic_id)
-                and cls._carrier_eligible(
-                    asset_by_id.get(real_id), required=semantic_id in required_ids
-                )
-            ):
-                kept[semantic_id] = real_id
-            elif semantic_id in required_ids:
-                displaced.append(semantic_id)
-        if len(displaced) != 1:
-            return kept, {}
-        taken = set(identity_claimed_real) | set(kept.values())
-        remainder = [
-            asset_id
-            for asset_id, asset in sorted(asset_by_id.items())
-            if asset_id not in taken
-            and not asset.parent_asset_id
-            and cls._carrier_eligible(asset, required=True)
-        ]
-        if len(remainder) != 1:
-            return kept, {}
-        return kept, {displaced[0]: remainder[0]}
-
-    @staticmethod
-    def _carrier_eligible(asset: VisualAsset | None, *, required: bool) -> bool:
-        """Whether a runtime cutout may carry an authored semantic intent.
-
-        ``decorative`` is a presentation role inherited from package units; it keeps
-        optional intents off decorative cutouts but never hides a required carrier.
-        """
-        if asset is None or not asset.can_animate_independently:
-            return False
-        role = (asset.role or "").casefold()
-        if role == "background":
-            return False
-        return required or role != "decorative"
 
     @staticmethod
     def _asset_visual_weight(asset: VisualAsset) -> float:

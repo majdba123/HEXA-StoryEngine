@@ -40,6 +40,7 @@ class StoryPlanner:
         self.carrier_auditor = SemanticCarrierAuditor()
         self.semantic_carrier_audit: list[dict] = []
         self.hidden_content_audit: list[dict] = []
+        self.carrier_resolution_report: list[dict] = []
         self.activation = SemanticActivationPlanner(
             semantic_model_name=semantic_model_name,
             semantic_model_required=semantic_model_required,
@@ -55,6 +56,7 @@ class StoryPlanner:
         assets: list[VisualAsset],
     ) -> list[StoryBeat]:
         package = ensure_canonical_package(package)
+        self.carrier_resolution_report = []
         assets_by_scene: dict[str, list[VisualAsset]] = defaultdict(list)
         for asset in assets:
             assets_by_scene[asset.scene_id].append(asset)
@@ -148,10 +150,15 @@ class StoryPlanner:
         planned = self.activation.enrich(package, transcript, assets, beats)
         self.semantic_carrier_audit = []
         self.hidden_content_audit = []
+        self.carrier_resolution_report = [
+            {"beat_id": beat_id, **resolution.to_payload()}
+            for beat_id, resolution in sorted(self.activation.carrier_resolutions.items())
+        ]
         if package.has_authoritative_semantics:
             planned = self._resolve_active_visual_semantic_state(planned)
             self.semantic_carrier_audit = self.carrier_auditor.audit(
                 package=package, assets=assets, beats=planned,
+                resolutions=self.activation.carrier_resolutions,
             )
             self.hidden_content_audit = self.carrier_auditor.audit_hidden_content(
                 package=package, assets=assets, beats=planned,

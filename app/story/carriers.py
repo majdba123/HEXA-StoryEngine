@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from typing import Any, Mapping
 
 from app.canonical import CanonicalPackage, CanonicalScene
 from app.models import StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
 
+from .carrier_resolver import CarrierConfidence, SceneCarrierResolution
 from .identity import VisualIdentityBinder
 
 
@@ -46,6 +47,7 @@ class SemanticCarrierAuditor:
         package: CanonicalPackage,
         assets: list[VisualAsset],
         beats: list[StoryBeat],
+        resolutions: Mapping[str, SceneCarrierResolution] | None = None,
     ) -> list[dict[str, Any]]:
         beats_by_scene: dict[str, list[StoryBeat]] = defaultdict(list)
         for beat in beats:
@@ -60,21 +62,50 @@ class SemanticCarrierAuditor:
             scene_beats = beats_by_scene.get(scene.id, [])
             if not required or not scene_beats:
                 continue
-            records.extend(self._audit_scene(
+            rows = self._audit_scene(
                 scene=scene,
                 required=required,
                 beats=scene_beats,
                 assets=assets_by_scene.get(scene.id, []),
-            ))
+            )
+            resolution = next(
+                (
+                    (resolutions or {})[beat.id]
+                    for beat in scene_beats if beat.id in (resolutions or {})
+                ),
+                None,
+            )
+            for row in rows:
+                assignment = (
+                    resolution.assignments.get(row["semantic_asset_id"])
+                    if resolution is not None else None
+                )
+                if assignment is None:
+                    continue
+                row["resolution"] = assignment.to_payload()
+                # A near-tied ownership the resolver refused to guess is not proof,
+                # even when the contested cutouts happen to be on screen.
+                if (
+                    assignment.confidence is CarrierConfidence.AMBIGUOUS
+                    and row["status"] in {"MERGED_VISIBLE", "UNRESOLVED"}
+                ):
+                    row["status"] = "AMBIGUOUS"
+                    row["reason"] = "ambiguous_carrier_ownership"
+            records.extend(rows)
         return records
 
     def require(self, records: list[dict[str, Any]]) -> None:
         hidden = [row for row in records if row["status"] == "HIDDEN"]
         unresolved = [row for row in records if row["status"] == "UNRESOLVED"]
-        if not hidden and not unresolved:
+        ambiguous = [row for row in records if row["status"] == "AMBIGUOUS"]
+        if not hidden and not unresolved and not ambiguous:
             return
-        code = "SEMANTIC_CARRIER_UNRESOLVED" if unresolved else "SEMANTIC_CARRIER_HIDDEN"
-        violations = unresolved or hidden
+        code = (
+            "SEMANTIC_CARRIER_UNRESOLVED" if unresolved
+            else "SEMANTIC_CARRIER_AMBIGUOUS" if ambiguous
+            else "SEMANTIC_CARRIER_HIDDEN"
+        )
+        violations = unresolved + ambiguous or hidden
         first = violations[0]
         raise StageFailedError(
             f"{first['scene_id']}: authored {'/'.join(first['roles'])} "
@@ -289,6 +320,12 @@ class SemanticCarrierAuditor:
             elif own:
                 status, reason = "HIDDEN", "proven_carrier_not_in_scene_visible_state"
                 candidates = own
+            elif locator is not None and not any(
+                self._overlaps(locator, asset) for asset in assets if asset.can_animate_independently
+            ):
+                # The authored locator points at no runtime cutout at all: the asset
+                # is not on screen, merged or otherwise.
+                status, reason = "UNRESOLVED", "authored_locator_covers_no_runtime_cutout"
             elif not hidden_assets:
                 status, reason = "MERGED_VISIBLE", "no_own_carrier_all_scene_cutouts_visible"
             elif locator is not None:

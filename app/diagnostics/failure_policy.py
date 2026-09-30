@@ -189,6 +189,14 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "AUTHORED_CONTENT_HIDDEN", "story", FailureDisposition.PREVENT,
         "Significant or authored-locator artwork must not be hidden by the lifecycle",
     ),
+    "SEMANTIC_CARRIER_AMBIGUOUS": _policy(
+        "SEMANTIC_CARRIER_AMBIGUOUS", "story", FailureDisposition.PREVENT,
+        "A required authored asset with near-tied carrier candidates is never guessed",
+    ),
+    "SEMANTIC_CARRIER_INPUT_INVALID": _policy(
+        "SEMANTIC_CARRIER_INPUT_INVALID", "story", FailureDisposition.PREVENT,
+        "Carrier resolution needs unique, scene-local, finite runtime cutout geometry",
+    ),
     "SEMANTIC_CARRIER_HIDDEN": _policy(
         "SEMANTIC_CARRIER_HIDDEN", "story", FailureDisposition.PREVENT,
         "A proven semantic carrier must be visible in its scene lifecycle",

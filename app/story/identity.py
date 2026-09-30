@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image
 
 from app.canonical import CanonicalAsset, CanonicalScene, CanonicalVisualLocator
 from app.models import VisualAsset
+
+from .assignment import GlobalMatch, assign_globally
 
 
 Box = tuple[float, float, float, float]
@@ -30,6 +32,11 @@ class VisualIdentityBinding:
     multi_matches: dict[str, tuple[VisualIdentityMatch, ...]]
     locator_semantic_ids: frozenset[str]
     unresolved_locator_ids: frozenset[str]
+    # Locator intents withdrawn because ownership was a near-tie (never guessed).
+    ambiguous_ids: frozenset[str] = frozenset()
+    # semantic id -> ((cutout id, score), ...) strongest first, for diagnostics.
+    candidates: dict[str, tuple[tuple[str, float], ...]] = field(default_factory=dict)
+    rivals: dict[str, str] = field(default_factory=dict)
 
     @property
     def has_incomplete_locator_binding(self) -> bool:
@@ -73,6 +80,8 @@ class VisualIdentityBinder:
 
     _MIN_SCORE = 0.60
     _MIN_MARGIN = 0.065
+    # Assignment weight is (score - floor)^2: one strong match outweighs two weak ones.
+    _ASSIGNMENT_WEIGHT_FLOOR = 0.50
     _MIN_ALPHA = 10
     # Event-carrier fallback is deliberately weaker than semantic identity matching.
     # It never claims that a runtime cutout *is* the authored semantic asset.  Story
@@ -164,58 +173,52 @@ class VisualIdentityBinder:
         def boxes_for(semantic_id: str) -> dict[str, Box]:
             return real_boxes if semantic_id in required_ids else optional_boxes
 
-        # Assign the most certain locator first. Re-ranking after every reservation
-        # prevents package ordering from deciding identity when several icons are close.
-        while unresolved:
-            proposals: list[_Proposal] = []
-            for semantic_id in sorted(unresolved):
-                row, locator = locator_rows[semantic_id]
-                ranked = self._rank_candidates(
-                    locator=locator,
-                    semantic_row=row,
+        # Scene-global 1:1 ownership. Every locator-bearing intent is scored against
+        # every eligible cutout and one assignment is solved for the whole scene, so
+        # neither package order nor a locally attractive pick can take a cutout that
+        # another intent owns more strongly. The family bonus needs the parent's
+        # carrier, so a second pass re-scores with the first pass's assignments.
+        candidate_scores: dict[str, dict[str, float]] = {}
+        accepted: dict[str, VisualIdentityMatch] = {}
+        ambiguous: dict[str, GlobalMatch] = {}
+        for _ in range(2):
+            parents = {**matches, **accepted}
+            candidate_scores = {
+                semantic_id: dict(self._rank_candidates(
+                    locator=locator_rows[semantic_id][1],
+                    semantic_row=locator_rows[semantic_id][0],
                     real_boxes=boxes_for(semantic_id),
                     assets=asset_by_id,
                     reserved=reserved,
-                    matches=matches,
-                )
-                if not ranked:
-                    continue
-                top_id, top_score = ranked[0]
-                runner_up = ranked[1][1] if len(ranked) > 1 else None
-                margin = top_score - runner_up if runner_up is not None else top_score
-                if top_score < self._MIN_SCORE or margin < self._MIN_MARGIN:
-                    continue
-                proposals.append(_Proposal(
-                    semantic_asset_id=semantic_id,
-                    real_asset_id=top_id,
-                    score=top_score,
-                    runner_up_score=runner_up,
-                    margin=margin,
-                    locator=locator,
+                    matches=parents,
                 ))
-
-            if not proposals:
-                break
-
-            chosen = max(
-                proposals,
-                key=lambda row: (
-                    row.margin if row.margin is not None else row.score,
-                    row.score,
-                    row.semantic_asset_id,
-                ),
+                for semantic_id in sorted(unresolved)
+            }
+            solved = assign_globally(
+                candidate_scores,
+                minimum_score=self._MIN_SCORE,
+                minimum_margin=self._MIN_MARGIN,
+                weight_floor=self._ASSIGNMENT_WEIGHT_FLOOR,
             )
-            matches[chosen.semantic_asset_id] = VisualIdentityMatch(
-                semantic_asset_id=chosen.semantic_asset_id,
-                real_asset_id=chosen.real_asset_id,
-                score=chosen.score,
-                runner_up_score=chosen.runner_up_score,
-                margin=chosen.margin,
-                source="visual_locator",
-                locator=chosen.locator,
-            )
-            reserved.add(chosen.real_asset_id)
-            unresolved.remove(chosen.semantic_asset_id)
+            accepted = {
+                semantic_id: VisualIdentityMatch(
+                    semantic_asset_id=semantic_id,
+                    real_asset_id=row.column,
+                    score=row.score,
+                    runner_up_score=row.runner_up_score,
+                    margin=row.margin,
+                    source="visual_locator",
+                    locator=locator_rows[semantic_id][1],
+                )
+                for semantic_id, row in solved.items()
+                if row.column is not None and not row.ambiguous
+            }
+            ambiguous = {
+                semantic_id: row for semantic_id, row in solved.items() if row.ambiguous
+            }
+        matches.update(accepted)
+        reserved.update(match.real_asset_id for match in accepted.values())
+        unresolved -= set(accepted)
 
         # Some semantic intents intentionally represent a visual unit composed of
         # several detached cutouts (for example a row of cards or network nodes). The
@@ -269,6 +272,14 @@ class VisualIdentityBinder:
             multi_matches=multi_matches,
             locator_semantic_ids=locator_ids,
             unresolved_locator_ids=frozenset(locator_ids - resolved_locator_ids),
+            ambiguous_ids=frozenset(set(ambiguous) - resolved_locator_ids),
+            candidates={
+                semantic_id: tuple(sorted(row.items(), key=lambda item: (-item[1], item[0]))[:6])
+                for semantic_id, row in candidate_scores.items()
+            },
+            rivals={
+                semantic_id: row.rival for semantic_id, row in ambiguous.items() if row.rival
+            },
         )
 
     def region_carrier(

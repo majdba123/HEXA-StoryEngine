@@ -164,7 +164,15 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.story, 0.43, "Building visual story")
-        story = self.story.plan(package, transcript, assets)
+        try:
+            story = self.story.plan(package, transcript, assets)
+        finally:
+            # Candidates, scores, selected/rejected carriers and confidence per scene:
+            # written on failure too, so a blocked render still explains itself.
+            (workspace / "semantic-carrier-resolution.json").write_text(
+                json.dumps(self.story.carrier_resolution_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         # Per-asset proof of why each required authored asset is (or is merged)
         # on screen; failures carry the same records in their error details.
         (workspace / "semantic-carrier-audit.json").write_text(
