@@ -288,7 +288,10 @@ class SemanticCarrierResolver:
             for cutout_id, asset in sorted(asset_by_id.items())
             if cutout_id not in taken
             and not asset.parent_asset_id
-            and self.eligible(asset, required=True)
+            # A decorative label was copied from another authored (decorative) unit's
+            # locator, so that cutout is not an open candidate for this intent; counting
+            # it would let one unrelated speck block a provable elimination.
+            and self.eligible(asset, required=False)
         ]
         if len(remainder) != 1:
             return kept, {}

@@ -4,6 +4,11 @@ import math
 from dataclasses import dataclass
 
 
+# Margins are differences of decimal scores; a margin that is exactly the threshold
+# must not flip to "ambiguous" through binary floating-point rounding.
+_MARGIN_EPSILON = 1e-9
+
+
 @dataclass(frozen=True, slots=True)
 class GlobalMatch:
     """One accepted or rejected row of a scene-global assignment."""
@@ -153,7 +158,8 @@ def assign_globally(
                 # a barely-accepted match with a near-equal free rival is not proof.
                 rivals.append((other_score, other_column))
             elif other_score >= minimum_score and edge(other_owner, column) > 0.0 and (
-                scores[other_owner][other_column] - scores[other_owner][column] < minimum_margin
+                scores[other_owner][other_column] - scores[other_owner][column]
+                < minimum_margin - _MARGIN_EPSILON
             ):
                 rivals.append((other_score, other_column))
         for other_row in row_ids:
@@ -165,7 +171,7 @@ def assign_globally(
             row=row, column=column, score=score,
             runner_up_score=runner_up[0] if runner_up else None,
             margin=margin,
-            ambiguous=margin < minimum_margin,
+            ambiguous=margin < minimum_margin - _MARGIN_EPSILON,
             rival=runner_up[1] if runner_up else None,
         )
     return output

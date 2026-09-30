@@ -158,3 +158,12 @@ def test_accepted_matches_are_exclusive_real_and_above_the_floor(seed: int) -> N
         assert match.column in columns
         assert match.score == scores[match.row][match.column] >= MIN_SCORE
         assert match.margin is not None and match.margin >= MIN_MARGIN
+
+
+@pytest.mark.parametrize("top", [0.70, 0.80, 0.99])
+def test_margin_exactly_at_the_threshold_is_not_ambiguous(top: float) -> None:
+    """Regression: 0.70 - 0.635 is 0.06499999 in binary floats; the boundary is inclusive."""
+    at_threshold = _assign({"A": {"c1": top, "c2": round(top - MIN_MARGIN, 6)}})["A"]
+    just_below = _assign({"A": {"c1": top, "c2": round(top - MIN_MARGIN + 0.001, 6)}})["A"]
+    assert not at_threshold.ambiguous and at_threshold.column == "c1"
+    assert just_below.ambiguous

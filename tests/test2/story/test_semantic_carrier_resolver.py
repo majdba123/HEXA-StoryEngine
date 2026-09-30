@@ -507,3 +507,15 @@ def test_hint_to_a_missing_runtime_cutout_is_ignored_not_trusted() -> None:
     assert set(row.assignments) == {semantic_id}
     assert row.assignments[semantic_id].confidence is Conf.UNRESOLVED
     assert not row.assignments[semantic_id].members
+
+def test_decorative_speck_is_not_an_elimination_candidate() -> None:
+    """Regression: an unrelated decorative fragment must not block a provable elimination."""
+    units = [Unit("LOC", (0, 0), role="primary", locator=locator_for(A)), Unit("FREE", (1, 2))]
+    events = (Event("E1", "LOC", (0, 2), participants=("FREE",)),)
+    for extra in ((), (Cutout("asset-03", (985, 985, 9, 9), role="decorative"),)):
+        _, _, of = _resolve(_spec(units, [Cutout("asset-01", A), Cutout("asset-02", C), *extra], events))
+        assert (of("FREE").kind, _ids(of("FREE"))) == (Kind.ELIMINATION, ["asset-02"])
+    # A second *non-decorative* free cutout is a real rival: still never guessed.
+    _, _, of = _resolve(_spec(units, [Cutout("asset-01", A), Cutout("asset-02", C),
+                                      Cutout("asset-03", D)], events))
+    assert not of("FREE").members
