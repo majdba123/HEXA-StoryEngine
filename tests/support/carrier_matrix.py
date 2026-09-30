@@ -191,6 +191,104 @@ def _negative_scene(family: str, rng: random.Random) -> SceneSpec:
     )
 
 
+RESOLVER_FAMILIES = (
+    "repeated_icons",
+    "jittered_locators",
+    "extra_components",
+    "under_segmented",
+    "one_locator_missing",
+    "dense_25",
+    "dense_50",
+)
+RESOLVER_NEGATIVE_FAMILIES = {
+    "neg_ambiguous_participant": "SEMANTIC_CARRIER_AMBIGUOUS",
+    "neg_locator_on_nothing": "SEMANTIC_CARRIER_UNRESOLVED",
+}
+
+
+def _jitter(box: tuple[int, int, int, int], rng: random.Random, amount: float):
+    x, y, w, h = box
+    dx, dy = (int(w * rng.uniform(-amount, amount)), int(h * rng.uniform(-amount, amount)))
+    dw, dh = (int(w * rng.uniform(-amount, amount)), int(h * rng.uniform(-amount, amount)))
+    x, y = max(0, x + dx), max(0, y + dy)
+    return locator_for((x, y, max(20, min(CANVAS - x, w + dw)), max(20, min(CANVAS - y, h + dh))))
+
+
+def _resolver_scene(family: str, rng: random.Random) -> SceneSpec:
+    if family == "neg_ambiguous_participant":
+        lead = (40, 100, 200, 300)
+        return SceneSpec(
+            phrase=tuple(f"kalima{i}" for i in range(6)),
+            units=(Unit("LEAD", (0, 1), role="primary", locator=locator_for(lead)),
+                   Unit("PART", (2, 3), locator=locator_for((515, 110, 300, 300)))),
+            cutouts=(Cutout("asset-01", lead, role="primary"),
+                     Cutout("asset-02", (455, 50, 420, 420)), Cutout("asset-03", (475, 70, 420, 420))),
+            events=(Event("E01", "LEAD", (0, 3), participants=("PART",)),),
+            group_policy="SIMULTANEOUS_VISUAL_UNIT",
+        )
+    if family == "neg_locator_on_nothing":
+        lead, stray = (40, 100, 200, 300), (rng.randint(500, 600), 500, 250, 300)
+        return SceneSpec(
+            phrase=tuple(f"kalima{i}" for i in range(6)),
+            units=(Unit("LEAD", (0, 1), role="primary", locator=locator_for(lead)),
+                   Unit("PART", (2, 3), locator=(0.85, 0.12, 0.2, 0.15))),
+            cutouts=(Cutout("asset-01", lead, role="primary"), Cutout("asset-02", stray)),
+            events=(Event("E01", "LEAD", (0, 3), participants=("PART",)),),
+            group_policy="SIMULTANEOUS_VISUAL_UNIT",
+        )
+
+    count = {"dense_25": 25, "dense_50": 50, "repeated_icons": rng.randint(3, 8),
+             "under_segmented": 2}.get(family, rng.randint(2, 6))
+    words = max(6, count + 2)
+    phrase = tuple(f"kalima{index}" for index in range(words))
+    names = [f"U{index:02d}" for index in range(count)]
+    roles = ["primary"] + ["supporting"] * (count - 1)
+    if family == "repeated_icons":
+        side = min(150, 900 // count - 20)
+        boxes = [(40 + index * (900 // count), 400, side, side) for index in range(count)]
+    else:
+        boxes = _grid(count, rng)
+    events = _events(names, rng, words, each_own=family == "under_segmented", result_tail=False)
+
+    if family == "under_segmented":
+        merged = (300, 250, 420, 400)
+        halves = [(300, 250, 200, 400), (520, 250, 200, 400)]
+        return SceneSpec(
+            phrase=phrase,
+            units=tuple(
+                Unit(name, (index, index), role=roles[index], locator=_shrink(halves[index], 0.8))
+                for index, name in enumerate(names)
+            ),
+            cutouts=(Cutout("asset-01", merged, role="primary"),),
+            events=events,
+        )
+
+    units, cutouts = [], []
+    missing = rng.randrange(1, count) if family == "one_locator_missing" else None
+    for index, (name, box, role) in enumerate(zip(names, boxes, roles)):
+        cutouts.append(Cutout(f"asset-{index + 1:02d}", box, role=role))
+        if index == missing:
+            locator = None
+        elif family == "jittered_locators":
+            locator = _jitter(box, rng, 0.03)
+        else:
+            locator = locator_for(box)
+        units.append(Unit(name, (min(index, words - 1),) * 2, role=role, locator=locator))
+    policy = "SEQUENTIAL_WITHIN_PHRASE"
+    if family == "extra_components":
+        policy = "SIMULTANEOUS_VISUAL_UNIT"
+        for extra in range(rng.randint(2, 7)):
+            cutouts.append(Cutout(f"asset-{len(cutouts) + 1:02d}", (6 + 18 * extra, CANVAS - 16, 9, 9)))
+    return SceneSpec(phrase=phrase, units=tuple(units), cutouts=tuple(cutouts), events=events,
+                     group_policy=policy)
+
+
+def resolver_case(family: str, seed: int) -> CarrierCase:
+    """One-scene resolver-focused case (positive or negative family)."""
+    scene = _resolver_scene(family, random.Random(seed))
+    return CarrierCase(seed, (family,), (scene,), RESOLVER_NEGATIVE_FAMILIES.get(family))
+
+
 def family_case(family: str, seed: int) -> CarrierCase:
     """One-scene case of a named family (positive or negative)."""
     rng = random.Random(seed)
