@@ -14184,3 +14184,25 @@ fake WhisperX round trip, scene span after paragraph break, exact 326→300 regr
 fail-closed paths). Certification: `tests/certification/alignment/` (1000 randomized
 whitespace variants, 300 Arabic, 200 English, 200 mixed documents, punctuation edge
 tokens, 120 fake round trips, size matrix 1–5000 tokens, linear time).
+
+### Real-model evidence (unseen package, run with whisperx 3.8.6, CPU)
+Canonical script 326 tokens (55 `
+
+` + 15 `
+` boundaries), narration 159.09 s.
+- BEFORE: aligned words 300, exact matches 22, match 0.067, first mismatch token 22
+  (expected `أسوأ:`, aligner word `أسوأ:
+
+معلومات`).
+- AFTER: prepared tokens 326, aligned words 326, exact matches 326, match 1.000, no missing
+  timestamps; `script[char_start:char_end] == word.text` for all 326 words; every one of the
+  27 scene starts lands on the same aligned word as its Story beat (max drift 0.000 s).
+- The other five certified scripts contain no non-space whitespace, so their alignment text
+  equals the script byte for byte (no behavioural change by construction); Hacktivist
+  (43 `
+`) and State-Linked now use the normalized view.
+- Full pipeline on the same package reached RenderPlan, the FFmpeg encode and the encoded
+  motion QA (ok, 0 violations) and then stopped at the final-media `VISUAL_WHITE_FLASH` gate
+  (near-blank frames 4-25 = 0.13-0.87 s before the first semantic reveal, and frame 345).
+  That is a Story/Motion opening-handoff question, independent of alignment timing, and is
+  recorded as a separate open item.
