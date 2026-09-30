@@ -77,7 +77,10 @@ def test_release_missing_an_asset_or_serving_wrong_bytes_fails(
 ) -> None:
     url = "https://api.github.com/repos/owner/corpus/releases/assets/1"
     monkeypatch.setattr(real_corpus, "_OPENER", _FakeOpener({"A.zip": url}, {url: b"wrong"}))
-    assert real_corpus.fetch(RELEASE, tmp_path) == ["MISSING RELEASE ASSET  B.zip"]
+    problems = real_corpus.fetch(RELEASE, tmp_path)
+    assert len(problems) == 2
+    assert problems[0].startswith("DOWNLOAD FAILED  A.zip") and "SHA-256" in problems[0]
+    assert problems[1] == "MISSING RELEASE ASSET  B.zip"
     assert real_corpus.main(["fetch", RELEASE, str(tmp_path)]) == 1
     (tmp_path / "B.zip").write_bytes(two_packages["B.zip"])
     assert any(line.startswith("SHA256 MISMATCH  A.zip") for line in real_corpus.verify(tmp_path))

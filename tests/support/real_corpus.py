@@ -105,13 +105,30 @@ def fetch(base_url: str, directory: Path) -> list[str]:
             problems.append(f"MISSING RELEASE ASSET  {filename}")
             continue
         url, accept = urls[filename]
+        error = _download(url, token, accept, directory / filename, certified_packages()[filename])
+        if error:
+            problems.append(f"DOWNLOAD FAILED  {filename}: {error}")
+    return problems
+
+
+def _download(
+    url: str, token: str | None, accept: str | None, target: Path, sha256: str,
+    attempts: int = 4,
+) -> str | None:
+    """Download with retries; a dropped connection can end a stream early silently."""
+    error = "no attempt made"
+    for _ in range(attempts):
         try:
             with _OPENER.open(_request(url, token, accept), timeout=600) as response:
-                with (directory / filename).open("wb") as handle:
+                with target.open("wb") as handle:
                     shutil.copyfileobj(response, handle)
         except (urllib.error.URLError, OSError) as exc:
-            problems.append(f"DOWNLOAD FAILED  {filename}: {exc}")
-    return problems
+            error = str(exc)
+            continue
+        if _sha256(target) == sha256:
+            return None
+        error = f"received {target.stat().st_size} bytes that do not match the manifest SHA-256"
+    return error
 
 
 def require_executed(junit_xml: Path) -> list[str]:
