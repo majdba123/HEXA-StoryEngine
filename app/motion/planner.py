@@ -631,6 +631,8 @@ class MotionPlanner:
                         ),
                     )
                 )
+                if not family_secondary and not compound_unit_locked:
+                    cues[-1] = self._recap_compiled_base_entry(cues[-1], item=item)
                 cue_params = dict(cues[-1].params)
                 active_visual_state = beat.active_visual_semantic_state
                 is_active = (
@@ -1608,6 +1610,51 @@ class MotionPlanner:
             keyframes=frames,
             settle_progress=program.settle_progress,
         )
+
+    @classmethod
+    def _recap_compiled_base_entry(cls, cue: MotionCue, *, item: LayoutItem) -> MotionCue:
+        """Re-apply the ENTRY comfort/renderability contract after compilation.
+
+        MotionCompiler retimes keyframe progress so the peak lands on Story's semantic
+        instant. On very short Story windows that can compress a return leg into a few
+        milliseconds after the pre-compile cap already ran. Only reduces motion (and
+        may collapse it to the deliberate static reveal); timing is never changed.
+        """
+        payload = cue.params.get("program") if isinstance(cue.params, dict) else None
+        if not isinstance(payload, dict) or len(payload.get("keyframes") or []) < 2:
+            return cue
+        duration = max(1e-6, float(cue.end) - float(cue.start))
+        frames = tuple(
+            MotionKeyframe(
+                progress=float(frame["progress"]),
+                dx=float(frame.get("dx", 0.0)),
+                dy=float(frame.get("dy", 0.0)),
+                scale=float(frame.get("scale", 1.0)),
+                easing=frame.get("easing", "linear"),
+            )
+            for frame in payload["keyframes"]
+        )
+        capped = cls._cap_entry_leg_speed(
+            frames, duration=duration, asset_extent=max(1e-6, min(item.width, item.height)),
+        )
+        program = cls._normalize_base_entry_renderability(
+            MotionProgram(
+                name=str(payload.get("name") or "entry"),
+                keyframes=capped,
+                settle_progress=float(payload.get("settle_progress", 1.0)),
+            ),
+            duration=duration,
+            item=item,
+        )
+        if program.keyframes == frames:
+            return cue
+        rebuilt = dict(payload)
+        rebuilt["name"] = program.name
+        rebuilt["keyframes"] = [
+            {**original, "dx": frame.dx, "dy": frame.dy, "scale": frame.scale}
+            for original, frame in zip(payload["keyframes"], program.keyframes)
+        ]
+        return cue.model_copy(update={"params": {**cue.params, "program": rebuilt}})
 
     @staticmethod
     def _normalize_base_entry_renderability(

@@ -706,13 +706,20 @@ class MotionTimingPolicy:
 
         if motion_duration >= span - 1e-9:
             return window
-        step = (span - motion_duration) / (count - 1)
-        if step <= 1e-6:
+        # Never author more distinct reveal instants than the encoded frame budget can
+        # separate (over-segmented units would otherwise push later members past their
+        # entry window). Excess members reveal together in frame-spaced cohorts that
+        # keep the geometric order; the Story window itself is never widened.
+        start_span = span - motion_duration
+        slots = min(count, int(start_span / encoded_motion_temporal_floor_seconds() + 1e-9) + 1)
+        if slots <= 1:
             return window
+        cohort = index * slots // count
+        step = start_span / (slots - 1)
 
-        start = window.start + step * index
+        start = window.start + step * cohort
         end = min(window.end, start + motion_duration)
-        if index == count - 1:
+        if cohort == slots - 1:
             end = window.end
         if end <= start:
             return window

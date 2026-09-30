@@ -155,10 +155,18 @@ class EncodedMotionVerifier:
                 program_name = str(segment.program.get("name") or "")
                 collision_limited = bool(segment.program.get("collision_limited"))
                 qa_base_entry = bool(segment.program.get("qa_base_entry"))
+                # Motion's deliberate alpha-only ENTRY (no readable transform fits) has
+                # no motion to be "too weak"; only exact identity keyframes qualify.
+                static_entry = (
+                    segment.phase == "ENTRY"
+                    and program_name.startswith("static_reveal_")
+                    and expected_px <= 1e-9
+                )
                 enforce_floor = (
                     "compound_unit" not in program_name
                     and not collision_limited
                     and not qa_base_entry
+                    and not static_entry
                 )
                 enforce_speed = "compound_unit" not in program_name
 

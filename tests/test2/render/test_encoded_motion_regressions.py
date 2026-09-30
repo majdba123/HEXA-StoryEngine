@@ -763,3 +763,42 @@ def test_establish_rendered_floor_matches_shared_planner_contract() -> None:
     )
     assert rendered_px == pytest.approx(shared * 1920, abs=1e-9)
     assert rendered_px == pytest.approx(15.36, abs=1e-6)
+
+def _entry_plan(path: Path, *, name: str, dx: float) -> RenderPlan:
+    plan = _plan(path, rendered_segment=False)
+    program = _program(dx=dx)
+    program["name"] = name
+    cue = plan.motion[0].model_copy(update={"segments": [
+        MotionSegment(phase="ENTRY", start=0.40, end=0.82, program=program, semantic_event_id="E1"),
+    ]})
+    return plan.model_copy(update={"motion": [cue]})
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_deliberate_static_reveal_entry_is_not_weak_motion(tmp_path: Path) -> None:
+    """Motion's alpha-only ENTRY (no readable transform fits) has nothing to floor."""
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _entry_plan(asset, name="static_reveal_reference_pop_reveal", dx=0.0)
+    video = tmp_path / "static-entry.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+    assert report.ok, report.violations
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+@pytest.mark.parametrize(
+    "name,dx",
+    [("static_reveal_reference_pop_reveal", 0.0008), ("reference_pop_reveal", 0.0)],
+    ids=["static-name-with-micro-motion", "zero-motion-without-static-contract"],
+)
+def test_entry_floor_still_rejects_weak_or_undeclared_static_motion(
+    tmp_path: Path, name: str, dx: float,
+) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    plan = _entry_plan(asset, name=name, dx=dx)
+    video = tmp_path / "weak-entry.mp4"
+    FFmpegRenderer("ffmpeg").render(plan, video)
+    report = RenderedMotionQA().inspect(video=video, plan=plan)
+    assert any(row.code == "MOTION_BELOW_PERCEPTUAL_FLOOR" for row in report.violations)
