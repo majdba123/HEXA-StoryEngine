@@ -201,7 +201,7 @@ def build_package(
             order=order,
             narration_hint=" ".join(spec.phrase),
             script_char_start=spans[0][0],
-            script_char_end=spans[-1][1] - 1,
+            script_char_end=spans[-1][1],
             units=units,
             semantic_events=events,
             semantic_groups=(

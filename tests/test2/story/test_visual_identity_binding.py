@@ -154,7 +154,7 @@ def test_activation_uses_locator_identity_before_heuristic_semantic_map(tmp_path
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[
             {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
@@ -240,7 +240,7 @@ def test_ambiguous_locator_disables_single_group_support_guessing(tmp_path: Path
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[{"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"}],
     )
     package = canonical_package(
@@ -376,7 +376,7 @@ def test_locator_claim_cannot_be_overridden_by_heuristic_semantic_map(tmp_path: 
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[
             {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
@@ -528,7 +528,7 @@ def test_multi_cutout_locator_creates_multiple_asset_activations_for_one_intent(
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[{
             "unit_id": "cards",
             "type": "VISUAL_ASSET_INTENT",

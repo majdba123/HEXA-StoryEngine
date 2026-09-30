@@ -79,9 +79,7 @@ class StoryPlanner:
                     if event.trigger.global_char_start is not None:
                         char_start = event.trigger.global_char_start
                     if event.trigger.global_char_end is not None:
-                        # Canonical spans are half-open; the legacy timing helper takes
-                        # an inclusive upper bound.
-                        char_end = event.trigger.global_char_end - 1
+                        char_end = event.trigger.global_char_end
                 fallback_segment = None
                 if transcript.segments:
                     fallback_segment = transcript.segments[min(scene.order, len(transcript.segments) - 1)]
@@ -312,15 +310,11 @@ class StoryPlanner:
             if relation.trigger_char_start is None or relation.trigger_char_end is None:
                 relations.append(relation)
                 continue
-            # Semantic-binding script_span is validated by FinalPackageLoader as
-            # half-open [start, end). _timing_for_span is a legacy helper whose
-            # char_end parameter is inclusive, so convert only at this boundary.
-            inclusive_end = relation.trigger_char_end - 1
             spoken_start, spoken_end, _ = cls._timing_for_span(
                 transcript,
                 script,
                 relation.trigger_char_start,
-                inclusive_end,
+                relation.trigger_char_end,
                 relation.trigger_text,
             )
             start = max(lower, min(upper, float(spoken_start)))
@@ -426,16 +420,17 @@ class StoryPlanner:
         fallback_segment=None,
     ) -> tuple[float, float, str]:
         if char_start is not None and char_end is not None:
-            effective_end = char_end + 1
+            # Canonical script spans are half-open [char_start, char_end): a word that
+            # starts at char_end belongs to the NEXT span and is never included.
             words = [
                 word for word in transcript.words
                 if word.char_start is not None
                 and word.char_end is not None
                 and word.char_end > char_start
-                and word.char_start < effective_end
+                and word.char_start < char_end
             ]
             if words:
-                narration = (script[char_start:effective_end] if script else hint) or " ".join(
+                narration = (script[char_start:char_end] if script else hint) or " ".join(
                     word.text for word in words
                 )
                 return words[0].start, words[-1].end, narration.strip()
@@ -443,8 +438,8 @@ class StoryPlanner:
             if script:
                 script_length = max(1, len(script))
                 start = transcript.duration * max(0, char_start) / script_length
-                end = transcript.duration * min(script_length, effective_end) / script_length
-                narration = script[char_start:effective_end].strip() or (hint or "")
+                end = transcript.duration * min(script_length, char_end) / script_length
+                narration = script[char_start:char_end].strip() or (hint or "")
                 return start, max(start + 0.12, end), narration
 
         if hint:

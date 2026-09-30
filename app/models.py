@@ -246,6 +246,16 @@ class SemanticEventProxy(BaseModel):
 
 
 class StoryBeat(BaseModel):
+    """One Story beat.
+
+    ``audio_start``/``audio_end`` are the authoritative SPOKEN semantic interval
+    (forced alignment over the canonical half-open script span). ``start``/``end`` are
+    the Story-owned VISUAL interval: it may begin before the spoken start (visual lead)
+    and may end differently from the spoken end. Downstream visual planners
+    (Choreography sequence windows, Composition, Motion) must stay inside
+    ``start``/``end``; they use ``audio_*`` only for spoken anchors and pacing.
+    """
+
     id: str
     scene_id: str
     start: float

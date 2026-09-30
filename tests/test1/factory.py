@@ -133,7 +133,7 @@ def make_package(
             order=scene_index,
             narration_hint=phrase,
             script_char_start=start,
-            script_char_end=end - 1,
+            script_char_end=end,
             purpose=f"purpose {scene_index}",
             visual_concept=f"concept {scene_index}",
             units=units,

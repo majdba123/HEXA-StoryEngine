@@ -14206,3 +14206,44 @@ Canonical script 326 tokens (55 `
   (near-blank frames 4-25 = 0.13-0.87 s before the first semantic reveal, and frame 345).
   That is a Story/Motion opening-handoff question, independent of alignment timing, and is
   recorded as a separate open item.
+
+## STORY / CHOREOGRAPHY TIMELINE BOUNDARY CHECKPOINT — 2026-10-01
+
+### Root cause
+Two independent defects of the same domain:
+1. Mixed inclusive/exclusive char spans. The loader validates every canonical span as
+   half-open `[start, end)`, but Story's timing path treated `char_end` as inclusive:
+   `_timing_for_span()` added `+1`, the default-progression path passed the exclusive
+   `script_char_end` straight into it (net `+1`), the authored/relation paths compensated
+   with `-1` (net 0), and four more readers (`_beat_words`, `_words_for_trigger`, the scene
+   phrase window, the text selector scene window) added `+1` or used `<=`. A word starting
+   exactly at `A.end` therefore joined scene A (audio_end(A) reached into B), and the
+   visual handoff to B then cut A before its own audio_end.
+2. Audio window used as visual owner. `ChoreographyDirector` built each sequence window
+   from `audio_start/audio_end` while the handoff gate (correctly) requires
+   `StoryBeat.start/end`. Latent on its own (fires whenever audio and visual intervals
+   diverge), triggered by defect 1 on the holdout: 8 x `sequence_window_outside_story`
+   (e.g. sequence end 9.862 vs story end 9.042).
+
+### Contract
+- Canonical script spans are half-open `[start, end)` everywhere (scene, object, event,
+  trigger, relation, Story timing, text readers). A word belongs to a span iff
+  `word.char_end > start and word.char_start < end`; narration is `script[start:end]`.
+  No `+1` / `-1` conversions remain in the Story timing path.
+- `StoryBeat.audio_start/audio_end` = authoritative spoken interval (forced alignment).
+  `StoryBeat.start/end` = Story-owned visual interval (may lead speech). Choreography
+  sequence windows are `first.start .. last.end`; `audio_*` stay available for anchors,
+  pacing and hooks. The handoff gate is unchanged and strict.
+- Authored event spans with edge whitespace are tightened to their non-whitespace extent
+  instead of being rejected (previously dropped the event -> FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE).
+- The loader validates each span on its own; scene-span overlap is permitted and every
+  scene is timed independently. An empty span (`start == end`) owns no word and falls back
+  to its proportional position, never to a neighbour's timestamps.
+
+### Proof
+Real holdout (unseen Hacktivist package + narration): before = 8 violations, 19 of 20
+beats leaked the next span's first word; after = 0, handoff OK. Six certified packages:
+0 Story beat timing differences; 74 sequence windows now start at the Story visual start
+(intended). `tests/certification/story_timeline/` (1286 tests, 647 fail on the pre-fix
+code): 1012 generated boundary cases, 192 explicit A.end==B.start cases, divergence,
+mutation and malformed-input suites.

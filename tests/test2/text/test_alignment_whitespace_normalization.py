@@ -168,10 +168,10 @@ def test_scene_span_after_paragraph_break_resolves_to_its_own_word_timing(
     transcript = aligner.align(audio_stub(tmp_path), script, 2.0)
     bbb = transcript.words[1]
     assert (bbb.char_start, bbb.char_end) == (5, 8)  # original span, not "AAA BBB" offset 4
-    start, end, narration = StoryPlanner._timing_for_span(transcript, script, 5, 7, None)
+    start, end, narration = StoryPlanner._timing_for_span(transcript, script, 5, 8, None)
     assert (start, end) == (bbb.start, bbb.end) and narration == "BBB"
     # The span of the first token still resolves to the first word only.
-    start, end, _ = StoryPlanner._timing_for_span(transcript, script, 0, 2, None)
+    start, end, _ = StoryPlanner._timing_for_span(transcript, script, 0, 3, None)
     assert (start, end) == (transcript.words[0].start, transcript.words[0].end)
 
 

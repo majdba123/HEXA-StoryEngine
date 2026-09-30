@@ -120,8 +120,12 @@ class ChoreographyDirector:
         for sequence_index, group in enumerate(groups, start=1):
             sequence_id = f"sequence-{sequence_index:03d}"
             hook, mechanism = sequence_hooks.get(sequence_id, (HookKind.NONE, HookMechanism.NONE))
-            start = self._audio_start(group[0])
-            end = self._audio_end(group[-1])
+            # A sequence is a VISUAL unit: its outer window is the Story-owned visual
+            # interval (beat.start/end). Spoken timing (audio_start/audio_end) stays
+            # available per beat for anchors, pacing and hook scheduling, but must never
+            # widen the window Story owns.
+            start = group[0].start
+            end = group[-1].end
             peak = max(decisions[beat.id].tension for beat in group)
             interaction_count = sum(
                 1

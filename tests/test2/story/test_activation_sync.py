@@ -106,7 +106,7 @@ def test_story_semantic_activation_anchors_visual_to_spoken_phrase(tmp_path: Pat
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[
             {"unit_id": "HACKER", "type": "MAIN_CHARACTER", "role": "PRIMARY"},
             {"unit_id": "IDEA", "type": "ICON", "role": "SUPPORTING"},
@@ -192,7 +192,7 @@ def test_low_confidence_semantics_abstain_instead_of_guessing(tmp_path: Path) ->
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[
             {"unit_id": "HACKER", "type": "MAIN_CHARACTER", "role": "PRIMARY"},
             {"unit_id": "IDEA", "type": "ICON", "role": "SUPPORTING"},

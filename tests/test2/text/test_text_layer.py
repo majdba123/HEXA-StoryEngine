@@ -175,7 +175,7 @@ def _semantic_package(script: str, *, meanings: list[tuple[str, str]]) -> Canoni
         image_path=Path("scene.png"),
         order=1,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
     )
     assets = []
     asset_ids = []
@@ -392,7 +392,7 @@ def _precise_semantic_package(
         image_path=Path("scene.png"),
         order=1,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
     )
     asset_ids = [row["asset_id"] for row in assets]
     normalized_assets = []

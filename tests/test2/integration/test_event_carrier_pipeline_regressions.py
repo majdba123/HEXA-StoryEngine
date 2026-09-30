@@ -81,7 +81,7 @@ def _build_reused_carrier_case(
         image_path=scene_image,
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=(semantic,),
         semantic_events=events,
     )

@@ -2026,9 +2026,14 @@ class SemanticActivationPlanner:
                 and isinstance(end, int)
                 and not isinstance(end, bool)
                 and 0 <= start < end <= len(script)
-                and script[start:end] == phrase
+                and script[start:end].strip() == phrase.strip()
             ):
-                return start, end
+                # Half-open [start, end). Edge whitespace belongs to no word, so the
+                # phrase span is tightened to its non-whitespace extent.
+                text = script[start:end]
+                leading = len(text) - len(text.lstrip())
+                trailing = len(text) - len(text.rstrip())
+                return start + leading, end - trailing
             return None
         return SemanticActivationPlanner._binding_phrase_span(script, scene, phrase)
 
@@ -2041,7 +2046,7 @@ class SemanticActivationPlanner:
         if not script or scene.script_char_start is None or scene.script_char_end is None:
             return None
         scene_start = max(0, scene.script_char_start)
-        scene_end = min(len(script), scene.script_char_end + 1)
+        scene_end = min(len(script), scene.script_char_end)
         if scene_end <= scene_start:
             return None
         haystack = script[scene_start:scene_end]
@@ -2243,7 +2248,7 @@ class SemanticActivationPlanner:
                 if word.char_start is not None
                 and word.char_end is not None
                 and word.char_end > char_start
-                and word.char_start <= char_end + 1
+                and word.char_start < char_end
             ]
             if rows:
                 return rows
@@ -2356,7 +2361,7 @@ class SemanticActivationPlanner:
                 if word.char_start is not None
                 and word.char_end is not None
                 and word.char_end > trigger.global_char_start
-                and word.char_start <= trigger.global_char_end
+                and word.char_start < trigger.global_char_end
             ]
 
         phrase = (trigger.phrase or "").strip()
@@ -2365,7 +2370,7 @@ class SemanticActivationPlanner:
 
         scene_start = scene.script_char_start or 0
         scene_end = (
-            scene.script_char_end + 1
+            scene.script_char_end
             if scene.script_char_end is not None
             else len(script)
         )

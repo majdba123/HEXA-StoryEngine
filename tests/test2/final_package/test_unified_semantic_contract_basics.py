@@ -273,7 +273,7 @@ def test_activation_uses_authored_span_when_phrase_repeats(tmp_path: Path) -> No
         image_path=tmp_path / "scene.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[{"unit_id": "intent", "type": "VISUAL_ASSET_INTENT"}],
     )
     package = canonical_package(

@@ -282,7 +282,7 @@ def test_uniform_unified_semantics_anchor_only_real_cutouts_exactly_to_phrase(tm
         image_path=tmp_path / "s.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
     )
     package = canonical_package(
         root=tmp_path,
@@ -403,7 +403,7 @@ def test_asset_level_semantic_group_sequences_real_cutouts_without_model(tmp_pat
         image_path=tmp_path / "s.png",
         order=0,
         script_char_start=0,
-        script_char_end=len(script) - 1,
+        script_char_end=len(script),
         units=[
             {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
@@ -611,7 +611,7 @@ def test_single_unambiguous_group_sequences_unmapped_real_cutout_as_support(tmp_
     script = "alpha beta"
     scene = SceneSource(
         id="s", image_path=tmp_path / "s.png", order=0,
-        script_char_start=0, script_char_end=len(script) - 1,
+        script_char_start=0, script_char_end=len(script),
         units=[
             {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},
@@ -678,7 +678,7 @@ def test_unmapped_cutout_does_not_guess_between_multiple_semantic_groups(tmp_pat
     script = "alpha beta"
     scene = SceneSource(
         id="s", image_path=tmp_path / "s.png", order=0,
-        script_char_start=0, script_char_end=len(script) - 1,
+        script_char_start=0, script_char_end=len(script),
         units=[
             {"unit_id": "intent-a", "type": "VISUAL_ASSET_INTENT", "role": "PRIMARY"},
             {"unit_id": "intent-b", "type": "VISUAL_ASSET_INTENT", "role": "OBJECT"},

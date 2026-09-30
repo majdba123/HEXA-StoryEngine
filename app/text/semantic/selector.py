@@ -770,7 +770,7 @@ class TextSemanticSelector:
 
         if scene is not None and scene.script_char_start is not None and scene.script_char_end is not None:
             scene_start = scene.script_char_start
-            scene_end = scene.script_char_end + 1
+            scene_end = scene.script_char_end
             in_scene = [
                 index for index in candidates
                 if index < scene_end and index + len(phrase) > scene_start

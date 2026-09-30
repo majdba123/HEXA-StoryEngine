@@ -16,7 +16,7 @@ def event(event_id: str, target: str, text: str, start: int, end: int, order: in
     return CanonicalSemanticEvent(semantic_event_id=event_id, scene_id='SCENE_001', script_text=text, script_span=CanonicalScriptSpan(text=text, global_char_start=start, global_char_end=end), sequence_order=order, visual_leader_asset_id=target, participant_asset_ids=(target,), depends_on_event_ids=tuple(depends))
 
 def package(assets, events, script: str) -> CanonicalPackage:
-    scene = CanonicalScene(id='SCENE_001', image_path=Path('scene.png'), order=0, script_char_start=0, script_char_end=len(script) - 1, units=tuple(assets), semantic_events=tuple(events))
+    scene = CanonicalScene(id='SCENE_001', image_path=Path('scene.png'), order=0, script_char_start=0, script_char_end=len(script), units=tuple(assets), semantic_events=tuple(events))
     return CanonicalPackage(root=Path('.'), package_id='event-carrier-regression', script=script, scenes=(scene,), has_authoritative_semantics=True)
 
 def transcript(script: str) -> Transcript:
