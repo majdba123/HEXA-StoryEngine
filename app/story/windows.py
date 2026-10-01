@@ -468,7 +468,7 @@ def _establish_opening_visual(
         elif "PARTICIPANT" in roles:
             role_rank = 2
         else:
-            role_rank = 3
+            return (99, 99, 99, row.asset_id)
         return (
             role_rank,
             row.semantic_event_order if row.semantic_event_order is not None else 0,

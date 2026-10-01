@@ -1244,3 +1244,21 @@ def test_nonopening_exact_binding_remains_phrase_locked() -> None:
 
     assert scheduled.reveal_start == pytest.approx(5.68)
     assert "opening_spoken_coverage" not in scheduled.evidence
+
+
+def test_opening_unclassified_asset_is_not_guessed_early() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.26, audio_end=2.0, narration="intro then unknown", action="INTRODUCE",
+    )
+    row = AssetActivation(
+        asset_id="unknown", semantic_unit_id="unknown",
+        spoken_start=0.68, spoken_end=1.20,
+        policy="EXPLICIT", source="unified_final_package",
+        semantic_event_id="E1", semantic_event_order=1,
+    )
+
+    scheduled = schedule_windows([row], beat, 2.0, {"unknown"}, opening=True)[0]
+
+    assert scheduled.reveal_start == pytest.approx(0.68)
+    assert "opening_spoken_coverage" not in scheduled.evidence
