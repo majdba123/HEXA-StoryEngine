@@ -1162,3 +1162,85 @@ def test_mixed_event_coverage_cannot_disable_authored_event_order() -> None:
         "semantic_group_sequential_window" in row.evidence
         for row in scheduled.values()
     )
+
+
+# Opening narration coverage regression: unseen Hacktivist package rendered white frames
+# 9-20 (0.30-0.67 s) because exact Unified 2.0 bindings delayed the first visual until
+# its phrase even though narration had already begun. Story may establish only the first
+# safe semantic cohort, within its existing 0.42 s visual-lead budget.
+def test_opening_exact_binding_establishes_first_safe_cohort_at_spoken_start() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.26, audio_end=2.0, narration="intro then subject", action="INTRODUCE",
+    )
+    row = AssetActivation(
+        asset_id="leader", semantic_unit_id="leader",
+        spoken_start=0.68, spoken_end=1.20,
+        policy="EXPLICIT", source="unified_final_package",
+        semantic_event_id="E1", semantic_event_order=1,
+        semantic_event_roles=["LEADER"], visual_focus="PRIMARY",
+    )
+
+    scheduled = schedule_windows([row], beat, 2.0, {"leader"}, opening=True)[0]
+
+    assert scheduled.reveal_start == pytest.approx(0.26)
+    assert scheduled.phrase_start == pytest.approx(0.68)
+    assert scheduled.semantic_peak >= scheduled.phrase_start
+    assert "opening_spoken_coverage" in scheduled.evidence
+
+
+def test_opening_result_is_never_revealed_early() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.0,
+        audio_start=0.26, audio_end=2.0, narration="intro then result", action="RESULT",
+    )
+    row = AssetActivation(
+        asset_id="result", semantic_unit_id="result",
+        spoken_start=0.68, spoken_end=1.20,
+        policy="EXPLICIT", source="unified_final_package",
+        semantic_event_id="E1", semantic_event_order=1,
+        semantic_event_roles=["LEADER", "RESULT"], visual_focus="RESULT",
+    )
+
+    scheduled = schedule_windows([row], beat, 2.0, {"result"}, opening=True)[0]
+
+    assert scheduled.reveal_start == pytest.approx(0.68)
+    assert "opening_spoken_coverage" not in scheduled.evidence
+
+
+def test_opening_establishment_does_not_cross_visual_lead_budget() -> None:
+    beat = StoryBeat(
+        id="b", scene_id="s", start=0.0, end=2.5,
+        audio_start=0.20, audio_end=2.5, narration="long intro then subject", action="INTRODUCE",
+    )
+    row = AssetActivation(
+        asset_id="leader", semantic_unit_id="leader",
+        spoken_start=0.90, spoken_end=1.40,
+        policy="EXPLICIT", source="unified_final_package",
+        semantic_event_id="E1", semantic_event_order=1,
+        semantic_event_roles=["LEADER"], visual_focus="PRIMARY",
+    )
+
+    scheduled = schedule_windows([row], beat, 2.5, {"leader"}, opening=True)[0]
+
+    assert scheduled.reveal_start == pytest.approx(0.90)
+    assert "opening_spoken_coverage" not in scheduled.evidence
+
+
+def test_nonopening_exact_binding_remains_phrase_locked() -> None:
+    beat = StoryBeat(
+        id="b2", scene_id="s2", start=5.0, end=7.0,
+        audio_start=5.26, audio_end=7.0, narration="intro then subject", action="INTRODUCE",
+    )
+    row = AssetActivation(
+        asset_id="leader", semantic_unit_id="leader",
+        spoken_start=5.68, spoken_end=6.20,
+        policy="EXPLICIT", source="unified_final_package",
+        semantic_event_id="E1", semantic_event_order=1,
+        semantic_event_roles=["LEADER"], visual_focus="PRIMARY",
+    )
+
+    scheduled = schedule_windows([row], beat, 7.0, {"leader"}, opening=False)[0]
+
+    assert scheduled.reveal_start == pytest.approx(5.68)
+    assert "opening_spoken_coverage" not in scheduled.evidence

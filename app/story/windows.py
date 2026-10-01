@@ -11,6 +11,7 @@ from app.models import AssetActivation, StoryBeat
 
 
 _WINDOW_EVIDENCE = "story_activation_v2:"
+_MAX_OPENING_ESTABLISH_LEAD_SECONDS = 0.42
 
 
 class StoryAssetActivation(AssetActivation):
@@ -350,7 +351,8 @@ def _enforce_final_semantic_handoffs(
     for index, row in enumerate(output):
         if row.activation_policy not in {"OWN_WINDOW", "INHERITED_WINDOW"}:
             continue
-        # Final Package activations reveal exactly on their spoken/Story boundary.
+        # Final Package activations normally reveal on their spoken/Story boundary.
+        # The first safe opening carrier may use Story's bounded establishment lead.
         # Inferred legacy activations may intentionally pre-roll before phrase_start;
         # clipping those against a later reveal could make settle precede phrase_start.
         if row.source != "unified_final_package":
@@ -401,9 +403,100 @@ def _enforce_final_semantic_handoffs(
         output[index] = StoryAssetActivation(**data).with_legacy_evidence()
     return output
 
+
+def _establish_opening_visual(
+    activations: list[StoryAssetActivation],
+    beat: StoryBeat,
+    *,
+    opening: bool,
+) -> list[StoryAssetActivation]:
+    """Cover narration start with the first safe authored visual, without future reveals.
+
+    Unified 2.0 exact bindings normally reveal on their precise spoken phrase. At the
+    video opening that can leave narration playing over a white canvas when the first
+    authored visual phrase starts slightly later. Story already owns up to 0.42 s of
+    visual lead, so the first dependency-free, non-RESULT event cohort may establish one
+    legal carrier at the first spoken instant. Semantic peak/settle and the exact phrase
+    anchor stay unchanged; later events and RESULT content are never pulled forward.
+    """
+    if not opening or not activations:
+        return activations
+
+    audio_start = beat.audio_start if beat.audio_start is not None else beat.start
+    if not math.isfinite(audio_start):
+        return activations
+    audio_start = max(float(beat.start), float(audio_start))
+
+    trusted = [
+        (index, row)
+        for index, row in enumerate(activations)
+        if row.activation_policy == "OWN_WINDOW"
+        and row.source == "unified_final_package"
+        and row.reveal_start is not None
+        and row.phrase_start is not None
+    ]
+    if not trusted:
+        return activations
+
+    earliest_reveal = min(float(row.reveal_start) for _, row in trusted)
+    if earliest_reveal <= audio_start + 1e-9:
+        return activations
+    lead = earliest_reveal - audio_start
+    if lead > _MAX_OPENING_ESTABLISH_LEAD_SECONDS + 1e-9:
+        return activations
+
+    cohort = [
+        (index, row)
+        for index, row in trusted
+        if abs(float(row.reveal_start) - earliest_reveal) <= 1e-6
+    ]
+
+    def safety_rank(item: tuple[int, StoryAssetActivation]) -> tuple[int, int, int, str]:
+        _index, row = item
+        roles = {str(value).upper() for value in row.semantic_event_roles}
+        focus = str(row.visual_focus or "").upper()
+        if "RESULT" in roles or focus == "RESULT":
+            return (99, 99, 99, row.asset_id)
+        if row.semantic_event_dependency_ids:
+            return (99, 99, 99, row.asset_id)
+        if row.semantic_event_order not in (None, 1):
+            return (99, 99, 99, row.asset_id)
+        if focus == "CONTEXT" or "CONTEXT" in roles:
+            role_rank = 0
+        elif "LEADER" in roles or focus == "PRIMARY":
+            role_rank = 1
+        elif "PARTICIPANT" in roles:
+            role_rank = 2
+        else:
+            role_rank = 3
+        return (
+            role_rank,
+            row.semantic_event_order if row.semantic_event_order is not None else 0,
+            row.sequence_order if row.sequence_order is not None else 0,
+            row.asset_id,
+        )
+
+    candidate_index, candidate = min(cohort, key=safety_rank)
+    if safety_rank((candidate_index, candidate))[0] >= 99:
+        return activations
+
+    data = candidate.model_dump()
+    data.update(
+        reveal_start=audio_start,
+        evidence=[
+            *candidate.evidence,
+            "opening_spoken_coverage",
+            "opening_establishment_first_semantic_cohort",
+            f"opening_establish_lead={lead:.6f}",
+        ],
+    )
+    output = list(activations)
+    output[candidate_index] = StoryAssetActivation.model_validate(data).with_legacy_evidence()
+    return output
+
 def schedule_windows(
     activations: list[AssetActivation], beat: StoryBeat, audio_duration: float,
-    primary_ids: set[str],
+    primary_ids: set[str], *, opening: bool = False,
 ) -> list[StoryAssetActivation]:
     """Bound reveals by phrase rhythm, scene capacity and available pre-roll.
 
@@ -548,6 +641,8 @@ def schedule_windows(
         ).with_legacy_evidence())
         if row.policy != "GROUP":
             previous_peak = start + duration * 0.5
+
+    output = _establish_opening_visual(output, beat, opening=opening)
 
     # Group members receive precisely the parent's window, not a second schedule.
     by_unit = {r.semantic_unit_id: r for r in output

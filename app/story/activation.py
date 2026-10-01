@@ -283,6 +283,7 @@ class SemanticActivationPlanner:
             assets_by_scene.setdefault(asset.scene_id, []).append(asset)
 
         output: list[StoryBeat] = []
+        opening_pending = True
         for beat in beats:
             scene = scene_by_id.get(beat.scene_id)
             scene_assets = assets_by_scene.get(beat.scene_id, [])
@@ -297,8 +298,13 @@ class SemanticActivationPlanner:
                 beat=beat,
             )
             windows = schedule_windows(
-                activations, beat, transcript.duration, set(beat.primary_asset_ids),
+                activations,
+                beat,
+                transcript.duration,
+                set(beat.primary_asset_ids),
+                opening=opening_pending,
             )
+            opening_pending = False
             compound_proxies = self._compound_semantic_event_proxies(
                 package=package,
                 transcript=transcript,
