@@ -31,6 +31,7 @@ from app.canonical import (
 )
 from app.shared.errors import InvalidPackageError
 
+from .image_contract import ImageContractRepair
 from .models import (
     ContinuityPayload,
     ScriptSpanPayload,
@@ -53,6 +54,7 @@ class FinalPackageLoader:
 
     def load(self, source: Path, workspace: Path) -> CanonicalPackage:
         source = source.expanduser().resolve()
+        workspace = workspace.expanduser().resolve()
         if not source.exists():
             raise InvalidPackageError(f"Final Package not found: {source}")
         package_root = self._materialize(source, workspace)
@@ -63,6 +65,12 @@ class FinalPackageLoader:
             )
         self._reject_legacy_companions(package_root)
         payload = self._load_payload(package_json)
+        self._validate_image_spec(payload)
+        ImageContractRepair().repair(
+            payload,
+            package_root,
+            workspace / "diagnostics" / "image-contract-repair.json",
+        )
         self._validate_payload(payload, package_root)
         return self._canonical(payload, package_root)
 
@@ -83,13 +91,16 @@ class FinalPackageLoader:
 
     def _materialize(self, source: Path, workspace: Path) -> Path:
         workspace.mkdir(parents=True, exist_ok=True)
-        if source.is_dir():
-            return source
-        if source.suffix.lower() != ".zip":
+        if not source.is_dir() and source.suffix.lower() != ".zip":
             raise InvalidPackageError("Final Package must be a directory or .zip")
         target = workspace / "package"
+        if source.is_dir() and (target == source or source in target.parents):
+            raise InvalidPackageError("Final Package workspace must be outside the source directory")
         if target.exists():
             shutil.rmtree(target)
+        if source.is_dir():
+            shutil.copytree(source, target)
+            return target
         target.mkdir(parents=True)
         try:
             with zipfile.ZipFile(source) as archive:
@@ -131,10 +142,7 @@ class FinalPackageLoader:
             raise InvalidPackageError("canonical_script must be non-empty")
         if not package.scenes:
             raise InvalidPackageError("Unified Final Package contains no scenes")
-        if package.image_spec.width <= 0 or package.image_spec.height <= 0:
-            raise InvalidPackageError("image_spec dimensions must be positive")
-        if package.image_spec.format.casefold() not in {"png", "jpg", "jpeg", "webp"}:
-            raise InvalidPackageError("unsupported image_spec format")
+        self._validate_image_spec(package)
 
         scene_ids = [scene.scene_id for scene in package.scenes]
         if len(scene_ids) != len(set(scene_ids)):
@@ -147,6 +155,13 @@ class FinalPackageLoader:
         global_event_ids: set[str] = set()
         for scene in package.scenes:
             self._validate_scene(package, root, scene, global_object_ids, global_event_ids)
+
+    @staticmethod
+    def _validate_image_spec(package: UnifiedFinalPackagePayload) -> None:
+        if package.image_spec.width <= 0 or package.image_spec.height <= 0:
+            raise InvalidPackageError("image_spec dimensions must be positive")
+        if package.image_spec.format.casefold() not in {"png", "jpg", "jpeg", "webp"}:
+            raise InvalidPackageError("unsupported image_spec format")
 
     def _validate_scene(
         self,
