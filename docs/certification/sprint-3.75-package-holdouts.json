@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "status": "BLOCKED",
+  "baseline": {
+    "name": "certified BLACK HAT Unified Final Package 2.0",
+    "scenes": 40,
+    "objects": 129,
+    "semantic_groups": 40,
+    "semantic_events": 55,
+    "relations": 15,
+    "live_profile_verification": "BLOCKED: HEXA_REAL_PACKAGE_CORPUS is unset"
+  },
+  "generated": {
+    "total_cases": 76,
+    "structural_cases": 64,
+    "encoded_cases": 8,
+    "full_render_cases": 4,
+    "pass": 76,
+    "expected_rejection": 0,
+    "unexpected_failure": 0,
+    "seeds": {
+      "structural": "37500-37563",
+      "encoded": "37600-37607",
+      "full_render": [37700, 37701, 37702, 37703]
+    }
+  },
+  "full_render_path": [
+    "Strict Loader/Validator", "Vision", "Pass1", "Pass2", "Story",
+    "Choreography", "Composition", "Motion", "Text", "RenderPlan",
+    "FFmpeg render", "mux with simulated audio", "EncodedMotionVerifier",
+    "FinalMediaVerifier", "full decode", "final MP4"
+  ],
+  "historical_regressions": {
+    "whisperx_326_to_300": "tests/test2/text/test_alignment_whitespace_normalization.py",
+    "unsafe_alignment_fail_closed": "tests/certification/alignment",
+    "half_open_span_leakage": "tests/certification/story_timeline",
+    "sequence_window_outside_story": "tests/certification/story_timeline/test_sequence_windows.py",
+    "story_visual_vs_audio_ownership": "tests/certification/story_timeline",
+    "semantic_carrier_codes": "tests/certification/semantic_carrier",
+    "authored_content_hidden": "tests/certification/semantic_carrier",
+    "group_progression_carriers": "tests/test2/story",
+    "exact_frame_white_handoff": "tests/certification/render_handoff",
+    "visual_handoff_coverage_infeasible": "tests/certification/render_handoff/test_frame_coverage.py",
+    "opening_vs_internal_blank": "tests/test2/render/test_renderer_handoff_continuity.py",
+    "visual_white_flash": "tests/certification/render_handoff",
+    "image_dimension_mismatch": "tests/test1/final_package/test_image_contract_repair.py",
+    "locator_fit_pad_remap": "tests/test1/final_package/test_image_contract_repair.py"
+  },
+  "existing_suites": {
+    "compileall": "PASS",
+    "ruff": "PASS",
+    "git_diff_check": "PASS",
+    "tests_test1": "673 collected; all executable cases passed; one ENOSPC failure passed on exact rerun; real-corpus cases unavailable",
+    "tests_test2": "1204 collected; PASS",
+    "tests_test3": "814 collected; PASS",
+    "tests_certification": "6725 collected; PASS",
+    "tests_package_holdouts": "76 passed",
+    "real_corpus_levels_a_d": "BLOCKED: HEXA_REAL_PACKAGE_CORPUS is unset",
+    "real_corpus_level_e": "BLOCKED: corpus unavailable"
+  },
+  "failures": [
+    {
+      "stage": "real corpus provisioning",
+      "code": "REAL_PACKAGE_CERTIFICATION_BLOCKED",
+      "message": "HEXA_REAL_PACKAGE_CORPUS is unset"
+    }
+  ]
+}
