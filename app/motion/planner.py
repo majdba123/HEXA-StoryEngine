@@ -13,7 +13,10 @@ from app.motion.continuity import ContinuityContract
 from app.models import AssetActivation, CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
 from app.motion.collision import fit_relation_collisions
+from app.choreography.interactions import is_connectable_relation
 from app.motion.compiler import MotionCompiler
+from app.reference.profile import HexaVisualProfile
+from app.motion.emphasis import apply_character_emphasis, deemphasize_supporting
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
 from app.motion.models import MotionKeyframe, MotionProgram
@@ -560,6 +563,7 @@ class MotionPlanner:
                                 "primary_asset_id": directive.primary_asset_id,
                                 "interaction_asset_id": directive.interaction_asset_id,
                                 "actor_asset_ids": list(directive.actor_asset_ids),
+                                "emphasis_asset_ids": list(directive.emphasis_asset_ids),
                                 "continuity_from": directive.continuity_from,
                                 "continuity_mode": directive.continuity_mode.value,
                                 "participant_role": participant_role,
@@ -673,6 +677,22 @@ class MotionPlanner:
                             next_layout,
                         ),
                     )
+                if (
+                    directive is not None
+                    and item.asset_id in directive.emphasis_asset_ids
+                    and not family_secondary
+                    and not compound_unit_locked
+                ):
+                    cues[-1] = apply_character_emphasis(
+                        cues[-1],
+                        item=item,
+                        layout_items=ordered_items,
+                        bound=self._next_semantic_reveal(beat, cues[-1]),
+                        semantic_event_id=(
+                            activation.semantic_event_id if activation is not None else None
+                        ),
+                        entry_segment=self._carried_entry_segment(cues[-1], item=item),
+                    )
             if len(cues) > beat_cue_start:
                 cues[beat_cue_start:] = self._enforce_relation_temporal_overlap(
                     cues[beat_cue_start:],
@@ -682,6 +702,22 @@ class MotionPlanner:
                     cues[beat_cue_start:],
                     layout,
                 )
+                if directive is not None and directive.emphasis_asset_ids:
+                    protected = set(directive.actor_asset_ids) | set(directive.emphasis_asset_ids)
+                    for focus_id in directive.emphasis_asset_ids:
+                        beat_cues = cues[beat_cue_start:]
+                        focus_cue = next((c for c in beat_cues if c.asset_id == focus_id), None)
+                        focus_params = focus_cue.params.get("semantic_focus") if focus_cue else None
+                        cues[beat_cue_start:] = deemphasize_supporting(
+                            beat_cues,
+                            focus_asset_id=focus_id,
+                            layout_items=ordered_items,
+                            protected_asset_ids=protected,
+                            semantic_event_id=(
+                                focus_params.get("semantic_event_id") if focus_params else None
+                            ),
+                            carry_entry=self._carried_entry_segment,
+                        )
                 if directive is not None:
                     self._assert_authored_relation_contract(
                         cues[beat_cue_start:],
@@ -710,6 +746,55 @@ class MotionPlanner:
         cues = normalized_cues
 
         return cues
+
+    @staticmethod
+    def _carried_entry_segment(cue: MotionCue, *, item: LayoutItem) -> MotionSegment | None:
+        """The base ENTRY program, carried as a segment so a later segment cannot hide it.
+
+        The renderer evaluates segments only once a cue has any. The program is unchanged
+        (short directional entries collapse to a static reveal exactly as the Reference
+        enforcer would) and keeps the ``qa_base_entry`` verification class it always had,
+        so encoded QA judges it by the same rule as before the segment existed.
+        """
+        del item
+        payload = cue.params.get("program")
+        frames = payload.get("keyframes") if isinstance(payload, dict) else None
+        if not isinstance(frames, list) or len(frames) < 2 or cue.end <= cue.start:
+            return None
+        duration = float(cue.end) - float(cue.start)
+        directional = any(
+            abs(float(f.get("dx", 0.0))) > 1e-5 or abs(float(f.get("dy", 0.0))) > 1e-5
+            for f in frames
+        )
+        program = dict(payload)
+        if directional and duration + 1e-9 < (
+            HexaVisualProfile.production().minimum_directional_frames / 30
+        ):
+            program["keyframes"] = [
+                {**f, "dx": 0.0, "dy": 0.0, "scale": 1.0} for f in frames
+            ]
+        program["qa_base_entry"] = True
+        return MotionSegment(
+            phase="ENTRY", start=float(cue.start), end=float(cue.end), program=program,
+        )
+
+    @staticmethod
+    def _next_semantic_reveal(beat: StoryBeat, cue: MotionCue) -> float:
+        """Earliest Story-owned reveal after this cue's own reveal, else the beat end."""
+        reveals = [float(beat.end)]
+        for other in beat.asset_activations:
+            if other.asset_id == cue.asset_id:
+                continue
+            _has, window = story_activation_window(other, beat)
+            if window is not None and float(window.reveal_start) > float(cue.start) + 1e-6:
+                reveals.append(float(window.reveal_start))
+        reveals.extend(
+            float(proxy.reveal_start)
+            for proxy in beat.semantic_event_proxies
+            if proxy.asset_id != cue.asset_id
+            and float(proxy.reveal_start) > float(cue.start) + 1e-6
+        )
+        return min(reveals)
 
     @staticmethod
     def _retime_segment_end(segment: MotionSegment, new_end: float) -> MotionSegment:
@@ -1324,6 +1409,14 @@ class MotionPlanner:
                     source_asset_id=phase.source_asset_id,
                     target_asset_id=phase.target_asset_id,
                     result_asset_id=phase.result_asset_id,
+                    connection=bool(
+                        phase.stage == EventFlowStage.INTERACT
+                        and phase.involvement == "SOURCE"
+                        and phase.source_asset_id
+                        and phase.target_asset_id
+                        and phase.source_asset_id != phase.target_asset_id
+                        and is_connectable_relation(phase.relationship)
+                    ),
                     handoff_deadline=(
                         min(phase_deadline, float(phase.spoken_end))
                         if (

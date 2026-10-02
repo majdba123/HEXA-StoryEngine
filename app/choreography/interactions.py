@@ -76,6 +76,21 @@ _MEANING_ACTIONS = {
     "CONNECT",
 }
 
+# Authored directional flow/cause relations: only these may be drawn as a visible
+# connection. Descriptive (SPECIFIES, EXPLAINS...), containment and persistence relations
+# carry no direction, so a drawn arrow would invent meaning.
+CONNECTABLE_RELATIONS = frozenset({
+    "ENABLES", "LEADS_TO", "LEADS_TO_DISCOVERY", "CAUSES", "PROGRESSES_TO", "TRIGGERS",
+    "RESULTS_IN", "PRODUCES", "CREATES", "TRANSFERS_TO", "SENDS_TO", "MOVES_TO",
+    "FLOWS_TO", "ATTACKS", "CONNECTS_TO", "LINKS_TO", "GRANTS_ACCESS_TO", "REPORTS_TO",
+    "AUTHORIZES", "RECEIVES",
+})
+
+
+def is_connectable_relation(kind: str | None) -> bool:
+    return str(kind or "").strip().upper().replace("-", "_").replace(" ", "_") in CONNECTABLE_RELATIONS
+
+
 # These relations describe a guide/context actor pointing toward a concept. The concept
 # should remain the focal visual; the actor is a participant, not the thing being taught.
 _OBJECT_FOCUS_RELATIONS = {"EXPLAINS", "CONTEXT_FOR", "SUPPORTS", "SPECIFIES"}

@@ -235,6 +235,8 @@ class ChoreographyDirective:
     grammar_stages: tuple[VisualGrammarStage, ...] = ()
     asset_requirements: tuple[AssetRequirement, ...] = ()
     event_flows: tuple[SemanticEventFlow, ...] = ()
+    # Authored characters the current event is about (Motion decides how much).
+    emphasis_asset_ids: tuple[str, ...] = ()
 
     def participant_role(self, asset_id: str) -> ParticipantRole:
         # A declared human actor keeps ACTOR semantics even when an explicit relationship

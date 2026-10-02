@@ -9,6 +9,7 @@ from app.story.binding import AssetBinding, SemanticAssetBinder
 
 from .actions import ActionDecision, SemanticActionResolver
 from .continuity import ContinuityResolver
+from .emphasis import select_character_emphasis
 from .event_flow import SemanticEventFlowPlanner
 from .grammar import ReferenceGrammarPlanner
 from .interactions import InteractionCompiler
@@ -261,6 +262,7 @@ class ChoreographyDirector:
                     grammar_stages=grammar_stages,
                     asset_requirements=requirements[beat.id],
                     event_flows=event_flows,
+                    emphasis_asset_ids=select_character_emphasis(beat, assets, event_flows),
                 ))
                 if focus:
                     previous_focus = focus

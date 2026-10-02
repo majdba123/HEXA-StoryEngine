@@ -307,6 +307,8 @@ class MotionSegment(BaseModel):
     target_asset_id: str | None = None
     result_asset_id: str | None = None
     handoff_deadline: float | None = Field(default=None, ge=0)
+    # Authored directional relation the renderer may draw as a visible connection.
+    connection: bool = False
 
     @model_validator(mode="after")
     def end_after_start(self) -> "MotionSegment":

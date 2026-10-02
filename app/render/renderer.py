@@ -12,6 +12,7 @@ from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
+from app.render.connection import connection_specs, draw_connection, fade_seconds
 from app.render.motion import FFmpegMotionAdapter
 from app.render.text import TextRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
@@ -309,6 +310,32 @@ class FFmpegRenderer:
                     details={"asset_id": item.asset_id, "beat_id": beat.id},
                 )
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
+        # Authored directional relations become one visible connection each (Composition
+        # boxes only; Motion segments carry the relation, the renderer only draws it).
+        connections = connection_specs(
+            beat=beat,
+            items={
+                item.asset_id: (
+                    float(geometry[2]), float(geometry[3]),
+                    float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]),
+                )
+                for item in ordered_items
+                for geometry in (self._geometry(plan, item),)
+            },
+            cues={
+                item.asset_id: motion[(beat.id, item.asset_id)]
+                for item in ordered_items if (beat.id, item.asset_id) in motion
+            },
+            segment_start=segment_start,
+            duration=duration,
+        )
+        connection_inputs = len(ordered_items) + len(outgoing_items)
+        for connection_index, connection in enumerate(connections):
+            png = draw_connection(
+                connection, (plan.width, plan.height),
+                target.parent / f"{target.stem}-connection-{connection_index}.png",
+            )
+            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(png)])
 
         filters: list[str] = [
             f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:d={duration:.6f},"
@@ -522,6 +549,21 @@ class FFmpegRenderer:
                 f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
                 f"enable='between(t,{enable_start:.6f},{enable_end:.6f})':eof_action=pass:shortest=0"
                 f"[{next_label}]"
+            )
+            composite_label = next_label
+
+        for connection_index, connection in enumerate(connections):
+            label = f"connection{connection_index}"
+            filters.append(
+                f"[{connection_inputs + connection_index}:v]format=rgba,"
+                f"fade=t=in:st={connection.start:.6f}:d={fade_seconds(connection):.6f}:alpha=1,"
+                f"trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
+            )
+            next_label = f"connmix{connection_index}"
+            filters.append(
+                f"[{composite_label}][{label}]overlay=x=0:y=0:"
+                f"enable='between(t,{connection.start:.6f},{duration:.6f})':"
+                f"eof_action=pass:shortest=0[{next_label}]"
             )
             composite_label = next_label
 
