@@ -2100,6 +2100,13 @@ class SemanticActivationPlanner:
             resolved = resolve(relation.script_text, relation.script_span)
             if resolved is not None:
                 authored_starts.append(resolved[0])
+        for progression in binding.visual_progression:
+            trigger = progression.trigger
+            if trigger is None:
+                continue
+            resolved = resolve(trigger.text, trigger)
+            if resolved is not None:
+                authored_starts.append(resolved[0])
 
         output: dict[str, OpeningEventEvidence] = {}
         for event_id, (left, right) in event_spans.items():

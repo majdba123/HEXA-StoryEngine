@@ -266,12 +266,15 @@ def test_established_window_survives_legacy_serialization() -> None:
 
 
 # Planner evidence: SCENE_PRELUDE must be proven from authored spans, never assumed. ---
+_LOADED: list = []
+
+
 def _span(script: str, text: str) -> dict:
     start = script.index(text)
     return {"global_char_start": start, "global_char_end": start + len(text), "text": text}
 
 
-def _opening_evidence(tmp_path, *, event_text: str, extra_objects=(), relations=(), events=()):
+def _opening_evidence(tmp_path, *, event_text: str, extra_objects=(), relations=(), events=(), progression=()):
     from app.final_package import FinalPackageLoader
     from app.story.activation import SemanticActivationPlanner
     from tests.support.unified_package import write_unified_package
@@ -294,10 +297,12 @@ def _opening_evidence(tmp_path, *, event_text: str, extra_objects=(), relations=
             "visual_leader_asset_id": "S1_A0", "participant_asset_ids": ["S1_A1"],
         }, *events],
         "relations": list(relations),
+        **({"visual_progression": list(progression)} if progression else {}),
     }
     root = write_unified_package(tmp_path / "pkg", script=script, scenes=[scene])
     package = FinalPackageLoader().load(root, tmp_path / "load")
     transcript = deterministic_transcript(package)
+    _LOADED.append((package, transcript))
     return SemanticActivationPlanner._opening_event_evidence(
         package=package, transcript=transcript, scene=package.scenes[0],
     ), transcript
@@ -339,3 +344,33 @@ def test_prelude_with_authored_relation_is_not_authority(tmp_path) -> None:
     )
     assert evidence["S1_E1"].authority == "AUTHORED_EVENT_SPOKEN"
     assert evidence["S1_E1"].establish_from == pytest.approx(transcript.words[2].start)
+
+
+def test_visual_progression_trigger_before_event_prevents_scene_prelude(tmp_path) -> None:
+    script = "opening words person acts result"
+    evidence, transcript = _opening_evidence(
+        tmp_path, event_text="person acts",
+        progression=[{"action": "EXPLAIN", "event_id": "S1_E1", "order": 1,
+                      "targets": ["S1_A0"], "trigger": _span(script, "opening")}],
+    )
+    assert evidence["S1_E1"].authority == "AUTHORED_EVENT_SPOKEN"
+    assert evidence["S1_E1"].establish_from == pytest.approx(transcript.words[2].start)
+
+
+def test_unresolved_visual_progression_trigger_fails_closed(tmp_path) -> None:
+    from app.canonical import CanonicalScriptSpan, CanonicalVisualProgression
+    from app.story.activation import SemanticActivationPlanner
+
+    # The loader rejects mismatched spans, so corrupt the loaded canonical scene.
+    evidence, _ = _opening_evidence(tmp_path, event_text="person acts")
+    assert evidence["S1_E1"].authority == "SCENE_PRELUDE"
+    package, transcript = _LOADED[-1]
+    scene = package.scenes[0].model_copy(update={"visual_progression": (CanonicalVisualProgression(
+        event_id="S1_E1", order=1,
+        trigger=CanonicalScriptSpan(text="absent", global_char_start=0, global_char_end=6),
+    ),)})
+    package = package.model_copy(update={"scenes": (scene,)})
+    result = SemanticActivationPlanner._opening_event_evidence(
+        package=package, transcript=transcript, scene=scene,
+    )
+    assert result["S1_E1"].authority == "AUTHORED_EVENT_SPOKEN"
