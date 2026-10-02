@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
-  "status": "BLOCKED",
+  "status": "CLOSED",
+  "sprint": "3.75",
+  "title": "Final Package Reliability / Holdout Certification",
+  "contract": "HEXA_UNIFIED_FINAL_PACKAGE 2.0",
+  "certified_behavior_head": "fa79af937e64bd3d6eed4aed0fa4d0f4a4764d03",
+  "closure_policy": "The behavioral certification is anchored to certified_behavior_head. The closure commit only updates this evidence record and does not change runtime behavior.",
   "baseline": {
     "name": "certified BLACK HAT Unified Final Package 2.0",
     "scenes": 40,
@@ -8,29 +13,125 @@
     "semantic_groups": 40,
     "semantic_events": 55,
     "relations": 15,
-    "live_profile_verification": "BLOCKED: HEXA_REAL_PACKAGE_CORPUS is unset"
+    "live_profile_verification": "PASS"
   },
-  "generated": {
-    "total_cases": 76,
+  "generated_holdouts": {
+    "total_cases": 80,
     "structural_cases": 64,
     "encoded_cases": 8,
     "full_render_cases": 4,
-    "pass": 76,
+    "opening_coverage_cases": 4,
+    "pass": 80,
+    "skipped": 0,
     "expected_rejection": 0,
     "unexpected_failure": 0,
     "seeds": {
       "structural": "37500-37563",
       "encoded": "37600-37607",
       "full_render": [37700, 37701, 37702, 37703]
+    },
+    "ci_gate": {
+      "workflow": "V2 CI",
+      "run_number": 768,
+      "run_id": 37011499337,
+      "head_sha": "fa79af937e64bd3d6eed4aed0fa4d0f4a4764d03",
+      "result": "PASS",
+      "evidence": "80/80 executed and passed with zero skips, failures or errors"
     }
   },
   "full_render_path": [
-    "Strict Loader/Validator", "Vision", "Pass1", "Pass2", "Story",
-    "Choreography", "Composition", "Motion", "Text", "RenderPlan",
-    "FFmpeg render", "mux with simulated audio", "EncodedMotionVerifier",
-    "FinalMediaVerifier", "full decode", "final MP4"
+    "Strict Loader/Validator",
+    "Vision",
+    "Pass1",
+    "Pass2",
+    "Story",
+    "Choreography",
+    "Composition",
+    "Motion",
+    "Text",
+    "RenderPlan",
+    "FFmpeg render",
+    "mux",
+    "EncodedMotionVerifier",
+    "FinalMediaVerifier",
+    "full decode",
+    "final MP4"
   ],
-  "historical_regressions": {
+  "real_diagnostic_replay": {
+    "original_failure_job_id": "570a01cb029c4fce8226447a544a8b72",
+    "package": "HEXA_INSIDER_THREAT_AR_UNIFIED_FINAL_PACKAGE_2_0.zip",
+    "audio": "التهديد الداخلي.mp3",
+    "head_sha": "fa79af937e64bd3d6eed4aed0fa4d0f4a4764d03",
+    "pipeline": "production pipeline with real narration and real WhisperX forced alignment",
+    "result": "PASS",
+    "opening": {
+      "first_spoken_seconds": 0.18,
+      "authority": "SCENE_PRELUDE",
+      "semantic_lead_seconds": 1.12,
+      "white_frames_before_narration": [0, 1, 2, 3, 4, 5],
+      "white_frames_after_narration": 0,
+      "visual_white_flash": 0
+    },
+    "final_media_verifier": "PASS",
+    "encoded_motion_verifier": "PASS",
+    "full_ffmpeg_decode": "PASS",
+    "output": {
+      "video_codec": "H.264",
+      "audio_codec": "AAC",
+      "frame_rate": "30 fps",
+      "audio_start_seconds": 0.0,
+      "video_start_seconds": 0.0
+    },
+    "semantic_carrier_audit": "PASS: no hidden authored content"
+  },
+  "real_package_certification": {
+    "workflow": "Real Package Certification",
+    "run_number": 23,
+    "run_id": 37019664408,
+    "event": "workflow_dispatch",
+    "branch": "montage",
+    "head_sha": "fa79af937e64bd3d6eed4aed0fa4d0f4a4764d03",
+    "corpus": {
+      "packages": 6,
+      "fingerprint_verification": "PASS"
+    },
+    "levels_a_d": {
+      "result": "PASS",
+      "packages_passed": 6,
+      "packages_failed": 0
+    },
+    "level_e": {
+      "requested": true,
+      "executed": true,
+      "result": "PASS",
+      "packages_passed": 6,
+      "packages_failed": 0,
+      "pytest_result": "6 passed, 18 deselected",
+      "duration_seconds": 442.30,
+      "proof": [
+        "FFmpeg full encode",
+        "ffprobe",
+        "full decode",
+        "EncodedMotionVerifier"
+      ]
+    }
+  },
+  "core_ci": {
+    "workflow": "V2 CI",
+    "run_number": 768,
+    "run_id": 37011499337,
+    "head_sha": "fa79af937e64bd3d6eed4aed0fa4d0f4a4764d03",
+    "result": "PASS",
+    "compileall": "PASS",
+    "ruff": "PASS",
+    "tests_test1": "PASS",
+    "tests_test2": "PASS",
+    "tests_test3": "PASS",
+    "tests_certification": "PASS",
+    "tests_package_holdouts": "80/80 PASS",
+    "encoded_render_windows": "PASS"
+  },
+  "historical_regressions_locked": {
     "whisperx_326_to_300": "tests/test2/text/test_alignment_whitespace_normalization.py",
     "unsafe_alignment_fail_closed": "tests/certification/alignment",
     "half_open_span_leakage": "tests/certification/story_timeline",
@@ -44,25 +145,27 @@
     "opening_vs_internal_blank": "tests/test2/render/test_renderer_handoff_continuity.py",
     "visual_white_flash": "tests/certification/render_handoff",
     "image_dimension_mismatch": "tests/test1/final_package/test_image_contract_repair.py",
-    "locator_fit_pad_remap": "tests/test1/final_package/test_image_contract_repair.py"
+    "locator_fit_pad_remap": "tests/test1/final_package/test_image_contract_repair.py",
+    "opening_scene_prelude": "tests/test2/story/test_opening_establishment.py",
+    "visual_progression_prelude_guard": "tests/test2/story/test_opening_establishment.py"
   },
-  "existing_suites": {
-    "compileall": "PASS",
-    "ruff": "PASS",
-    "git_diff_check": "PASS",
-    "tests_test1": "673 collected; all executable cases passed; one ENOSPC failure passed on exact rerun; real-corpus cases unavailable",
-    "tests_test2": "1204 collected; PASS",
-    "tests_test3": "814 collected; PASS",
-    "tests_certification": "6725 collected; PASS",
-    "tests_package_holdouts": "76 passed",
-    "real_corpus_levels_a_d": "BLOCKED: HEXA_REAL_PACKAGE_CORPUS is unset",
-    "real_corpus_level_e": "BLOCKED: corpus unavailable"
+  "closure_gates": {
+    "root_cause_proven": true,
+    "generic_fix": true,
+    "no_package_specific_workaround": true,
+    "final_media_verifier_remains_strict": true,
+    "real_audio_replay_passed": true,
+    "visual_white_flash_resolved": true,
+    "holdouts_exact_head_passed": true,
+    "levels_a_d_exact_head_passed": true,
+    "level_e_exact_head_executed": true,
+    "level_e_all_packages_passed": true,
+    "sprint_1_2_3_3_5_contracts_regression": false
   },
-  "failures": [
-    {
-      "stage": "real corpus provisioning",
-      "code": "REAL_PACKAGE_CERTIFICATION_BLOCKED",
-      "message": "HEXA_REAL_PACKAGE_CORPUS is unset"
-    }
-  ]
+  "non_blocking_warnings": [
+    "Pillow Image.fromarray(mode=...) deprecation warning is scheduled for removal in Pillow 13; cleanup belongs to maintenance and did not affect certification.",
+    "GitHub Actions emitted Node.js action-runtime deprecation warnings; this did not affect certification results."
+  ],
+  "final_verdict": "SPRINT 3.75 CLOSED",
+  "next_sprint": "Sprint 4 — Visual / Motion Quality"
 }
