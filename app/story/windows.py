@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -12,6 +13,24 @@ from app.models import AssetActivation, StoryBeat
 
 _WINDOW_EVIDENCE = "story_activation_v2:"
 _MAX_OPENING_ESTABLISH_LEAD_SECONDS = 0.42
+# Forced-alignment tolerance between authored opening evidence and the first spoken
+# instant. Matches the planner's spoken-span admission tolerance.
+_OPENING_EVENT_SPOKEN_TOLERANCE_SECONDS = 0.025
+_OPENING_EVENT_AUTHORITIES = frozenset({"AUTHORED_EVENT_SPOKEN", "SCENE_PRELUDE"})
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningEventEvidence:
+    """Forced-aligned proof of when an authored opening event may be established.
+
+    ``AUTHORED_EVENT_SPOKEN``: the event's own authored script span is spoken from
+    ``establish_from``. ``SCENE_PRELUDE``: the event is the scene's first authored
+    meaning and every scene word before it is bound to no authored unit, event or
+    relation, so the prelude from ``establish_from`` can disclose nothing else.
+    """
+
+    establish_from: float
+    authority: str
 
 
 class StoryAssetActivation(AssetActivation):
@@ -409,15 +428,25 @@ def _establish_opening_visual(
     beat: StoryBeat,
     *,
     opening: bool,
+    event_evidence: dict[str, OpeningEventEvidence] | None = None,
 ) -> list[StoryAssetActivation]:
     """Cover narration start with the first safe authored visual, without future reveals.
 
     Unified 2.0 exact bindings normally reveal on their precise spoken phrase. At the
     video opening that can leave narration playing over a white canvas when the first
-    authored visual phrase starts slightly later. Story already owns up to 0.42 s of
-    visual lead, so the first dependency-free, non-RESULT event cohort may establish one
-    legal carrier at the first spoken instant. Semantic peak/settle and the exact phrase
-    anchor stay unchanged; later events and RESULT content are never pulled forward.
+    authored visual phrase starts later. Only the first dependency-free, non-RESULT
+    reveal cohort of event order 1 may establish one legal carrier at the first spoken
+    instant, and only with an explicit authority for the lead:
+
+    * BOUNDED_STORY_LEAD: the lead is within Story's generic 0.42 s visual lead.
+    * AUTHORED_EVENT_SPOKEN / SCENE_PRELUDE: Final Package evidence, resolved against
+      forced alignment by the planner (``OpeningEventEvidence``), proves the
+      carrier's own event may be established from the first spoken instant. The lead
+      is bounded by that authored evidence, never by a larger constant.
+
+    Semantic peak/settle and the exact phrase anchor stay unchanged; the carrier stays
+    the first reveal, so later events, later reveals and RESULT content are never pulled
+    forward. Without an authority Story fails closed and changes nothing.
     """
     if not opening or not activations:
         return activations
@@ -442,8 +471,24 @@ def _establish_opening_visual(
     if earliest_reveal <= audio_start + 1e-9:
         return activations
     lead = earliest_reveal - audio_start
-    if lead > _MAX_OPENING_ESTABLISH_LEAD_SECONDS + 1e-9:
-        return activations
+    bounded_lead = lead <= _MAX_OPENING_ESTABLISH_LEAD_SECONDS + 1e-9
+
+    def lead_authority(row: StoryAssetActivation) -> str | None:
+        if bounded_lead:
+            return "BOUNDED_STORY_LEAD"
+        # A long lead needs explicit authored event evidence: a known event id with
+        # order exactly 1 that may be established from the first spoken word.
+        event_id = str(row.semantic_event_id or "").strip()
+        if not event_id or row.semantic_event_order != 1 or not event_evidence:
+            return None
+        evidence = event_evidence.get(event_id)
+        if evidence is None or evidence.authority not in _OPENING_EVENT_AUTHORITIES:
+            return None
+        if not math.isfinite(evidence.establish_from):
+            return None
+        if evidence.establish_from > audio_start + _OPENING_EVENT_SPOKEN_TOLERANCE_SECONDS:
+            return None
+        return evidence.authority
 
     cohort = [
         (index, row)
@@ -460,6 +505,8 @@ def _establish_opening_visual(
         if row.semantic_event_dependency_ids:
             return (99, 99, 99, row.asset_id)
         if row.semantic_event_order not in (None, 1):
+            return (99, 99, 99, row.asset_id)
+        if lead_authority(row) is None:
             return (99, 99, 99, row.asset_id)
         if focus == "CONTEXT" or "CONTEXT" in roles:
             role_rank = 0
@@ -488,6 +535,7 @@ def _establish_opening_visual(
             "opening_spoken_coverage",
             "opening_establishment_first_semantic_cohort",
             f"opening_establish_lead={lead:.6f}",
+            f"opening_establish_authority={lead_authority(candidate)}",
         ],
     )
     output = list(activations)
@@ -497,6 +545,7 @@ def _establish_opening_visual(
 def schedule_windows(
     activations: list[AssetActivation], beat: StoryBeat, audio_duration: float,
     primary_ids: set[str], *, opening: bool = False,
+    opening_event_evidence: dict[str, OpeningEventEvidence] | None = None,
 ) -> list[StoryAssetActivation]:
     """Bound reveals by phrase rhythm, scene capacity and available pre-roll.
 
@@ -642,7 +691,12 @@ def schedule_windows(
         if row.policy != "GROUP":
             previous_peak = start + duration * 0.5
 
-    output = _establish_opening_visual(output, beat, opening=opening)
+    output = _establish_opening_visual(
+        output,
+        beat,
+        opening=opening,
+        event_evidence=opening_event_evidence,
+    )
 
     # Group members receive precisely the parent's window, not a second schedule.
     by_unit = {r.semantic_unit_id: r for r in output

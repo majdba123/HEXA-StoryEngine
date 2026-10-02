@@ -32,7 +32,7 @@ from app.models import (
 from .binding import SemanticAssetBinder
 from .carrier_resolver import SceneCarrierResolution, SemanticCarrierResolver
 from .identity import VisualIdentityBinder
-from .windows import ScheduledStoryBeat, schedule_windows
+from .windows import OpeningEventEvidence, ScheduledStoryBeat, schedule_windows
 
 
 _LOG = logging.getLogger(__name__)
@@ -303,6 +303,15 @@ class SemanticActivationPlanner:
                 transcript.duration,
                 set(beat.primary_asset_ids),
                 opening=opening_pending,
+                opening_event_evidence=(
+                    self._opening_event_evidence(
+                        package=package,
+                        transcript=transcript,
+                        scene=scene,
+                    )
+                    if opening_pending
+                    else None
+                ),
             )
             opening_pending = False
             compound_proxies = self._compound_semantic_event_proxies(
@@ -2015,6 +2024,113 @@ class SemanticActivationPlanner:
             for phrase in phrases
         }
         return phrases[0] if len(normalized) == 1 else None
+
+    @classmethod
+    def _opening_event_evidence(
+        cls,
+        *,
+        package: CanonicalPackage,
+        transcript: Transcript,
+        scene: CanonicalScene,
+    ) -> dict[str, OpeningEventEvidence]:
+        """Prove from authored spans + forced alignment when opening events may establish.
+
+        Every span is resolved exactly against the script; anything ambiguous yields no
+        evidence (fail closed). SCENE_PRELUDE additionally requires that every authored
+        unit, event and relation span in the scene resolves, so an unbound prelude is
+        proven rather than assumed.
+        """
+        binding = package.scene_by_id.get(scene.id)
+        script = package.script
+        if binding is None or not script:
+            return {}
+
+        unresolved = False
+
+        def resolve(text: str | None, span: CanonicalScriptSpan | None) -> tuple[int, int] | None:
+            nonlocal unresolved
+            phrase = str(text or "").strip()
+            if not phrase and span is not None:
+                left, right = span.global_char_start, span.global_char_end
+                if isinstance(left, int) and isinstance(right, int) and 0 <= left < right <= len(script):
+                    phrase = script[left:right].strip()
+                else:
+                    unresolved = True
+                    return None
+            if not phrase:
+                return None
+            resolved = cls._binding_authored_span(script, scene, phrase, span)
+            if resolved is None:
+                unresolved = True
+            return resolved
+
+        def spoken(left: int, right: int) -> list[TranscriptWord]:
+            return [
+                word
+                for word in transcript.words
+                if word.char_start is not None
+                and word.char_end is not None
+                and word.char_end > left
+                and word.char_start < right
+            ]
+
+        event_spans: dict[str, tuple[int, int]] = {}
+        authored_starts: list[int] = []
+        for event in binding.semantic_events:
+            span = resolve(event.script_text, event.script_span)
+            event_id = str(event.semantic_event_id or "").strip()
+            if span is None:
+                continue
+            authored_starts.append(span[0])
+            if event_id:
+                event_spans[event_id] = span
+        for unit in binding.units:
+            for text, span in (
+                (unit.script_text, unit.script_span),
+                *(
+                    (trigger.text, trigger)
+                    for trigger in (unit.appear_trigger, unit.focus_trigger, unit.exit_trigger)
+                    if trigger is not None
+                ),
+            ):
+                resolved = resolve(text, span)
+                if resolved is not None:
+                    authored_starts.append(resolved[0])
+        for relation in binding.relations:
+            resolved = resolve(relation.script_text, relation.script_span)
+            if resolved is not None:
+                authored_starts.append(resolved[0])
+
+        output: dict[str, OpeningEventEvidence] = {}
+        for event_id, (left, right) in event_spans.items():
+            words = spoken(left, right)
+            if words:
+                output[event_id] = OpeningEventEvidence(
+                    establish_from=float(min(word.start for word in words)),
+                    authority="AUTHORED_EVENT_SPOKEN",
+                )
+
+        scene_start = scene.script_char_start
+        if unresolved or scene_start is None or not authored_starts:
+            return output
+        first_authored = min(authored_starts)
+        prelude = [
+            word for word in spoken(scene_start, first_authored)
+            if word.char_start is not None and word.char_start >= scene_start
+        ]
+        if not prelude:
+            return output
+        prelude_start = float(min(word.start for word in prelude))
+        for event_id, (left, _right) in event_spans.items():
+            current = output.get(event_id)
+            if left != first_authored or current is None:
+                continue
+            if prelude_start < current.establish_from:
+                output[event_id] = OpeningEventEvidence(
+                    establish_from=prelude_start,
+                    authority="SCENE_PRELUDE",
+                )
+        return output
 
     @staticmethod
     def _binding_authored_span(

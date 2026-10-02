@@ -49,9 +49,41 @@ def _art(path: Path, size: tuple[int, int], boxes: list[tuple[int, int, int, int
     image.save(path)
 
 
+OPENING_LEAD_FAMILIES = ("opening_lead", "opening_prelude", "opening_result_first")
+
+
+def _opening_lead_spans(phrase: str, start: int, family: str) -> dict[str, tuple[int, int]]:
+    """Word-level spans for an opening whose narration precedes every visual phrase.
+
+    Mirrors production diagnostic 570a01cb: two unbound words open the narration, then a
+    PARTICIPANT phrase, the LEADER, and the RESULT last.
+
+    * ``opening_lead``: the semantic event is authored over the whole sentence.
+    * ``opening_prelude``: the event starts at the first visual word; the two opening
+      words are bound to nothing (the exact production shape).
+    * ``opening_result_first``: as ``opening_prelude`` but the RESULT is the first
+      visual phrase, so no safe carrier exists and Story must fail closed.
+    """
+    words = phrase.split(" ")
+    offsets = []
+    cursor = start
+    for word in words:
+        offsets.append((cursor, cursor + len(word)))
+        cursor += len(word) + 1
+    event_start = start if family == "opening_lead" else offsets[2][0]
+    first, second, last = offsets[2], offsets[3], offsets[4]
+    if family == "opening_result_first":
+        return {"result": first, "participant": second, "leader": last,
+                "event": (event_start, start + len(phrase))}
+    return {"participant": first, "leader": second, "result": last,
+            "event": (event_start, start + len(phrase))}
+
+
 def generate(case: HoldoutCase, root: Path) -> GeneratedPackage:
     separators = (" ", "\n", "\r\n", "\u00a0")
     phrases = [f"unit{case.seed}_{i} acts result{i}" for i in range(case.scene_count)]
+    if case.family in OPENING_LEAD_FAMILIES:
+        phrases[0] = f"lead{case.seed} words {phrases[0]}"
     script = "".join((separators[i % len(separators)] if i else "") + value for i, value in enumerate(phrases))
     scenes = []
     cursor = 0
@@ -99,13 +131,25 @@ def generate(case: HoldoutCase, root: Path) -> GeneratedPackage:
             "result_asset_ids": [objects[-1]["asset_id"]] if len(objects) > 1 else [],
             "text_anchor_asset_id": objects[0]["asset_id"],
         }]
+        if case.family in OPENING_LEAD_FAMILIES and index == 0:
+            spans = _opening_lead_spans(phrase, start, case.family)
+            for row, key in zip(objects, ("leader", "participant", "result")):
+                left, right = spans[key]
+                span = {"global_char_start": left, "global_char_end": right, "text": script[left:right]}
+                row.update(script_text=span["text"], script_span=span, appear_trigger=dict(span))
+            left, right = spans["event"]
+            events[0].update(
+                script_text=script[left:right],
+                script_span={"global_char_start": left, "global_char_end": right, "text": script[left:right]},
+            )
         relations = []
         if case.family not in {"sparse", "no_relations"} and len(objects) > 1:
             relations.append({
                 "relation_id": f"{scene_id}_R0", "subject_asset_id": objects[0]["asset_id"],
                 "relation_type": "CAUSES", "object_asset_id": objects[-1]["asset_id"],
-                "script_text": phrase,
-                "script_span": {"global_char_start": start, "global_char_end": end, "text": phrase},
+                # Relations share the event's authored span (the whole phrase by default).
+                "script_text": events[0]["script_text"],
+                "script_span": dict(events[0]["script_span"]),
             })
         scenes.append({
             "scene_id": scene_id, "order": index,
