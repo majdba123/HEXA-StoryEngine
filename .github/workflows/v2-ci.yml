@@ -49,6 +49,26 @@ jobs:
           retention-days: 7
 
 
+  package-holdouts:
+    # Sprint 3.75 certification gate: every generated Unified 2.0 package holdout
+    # (structural, encoded FFmpeg, full muxed renders, opening coverage) on the exact
+    # pushed HEAD. Runs in parallel with the core suites; it is never optional.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install StoryEngine
+        run: python -m pip install -e ".[dev]"
+      - name: Sprint 3.75 package holdouts (exact count, no skips)
+        run: >
+          pytest -rfEs --junitxml=package-holdouts.xml tests/package_holdouts
+          && python -m tests.package_holdouts.report require package-holdouts.xml
+
   encoded-render-windows:
     runs-on: windows-latest
     steps:
