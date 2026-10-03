@@ -38,7 +38,7 @@ def select_character_emphasis(
     visible = set(beat.primary_asset_ids) | set(beat.support_asset_ids)
     characters = {
         asset_id
-        for asset_id in SemanticAssetBinder._authored_character_assets(beat, scene_assets)
+        for asset_id in SemanticAssetBinder.authored_character_assets(beat, scene_assets)
         if asset_id in visible
     }
     if not characters:

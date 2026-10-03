@@ -29,6 +29,7 @@ from app.motion.emphasis import (
 from app.motion.reference import ReferenceMotionEnforcer
 from app.reference.profile import HexaVisualProfile
 from app.story import StoryPlanner
+from app.story.binding import SemanticAssetBinder
 from tests.support.carrier_scene import (
     Cutout,
     Event,
@@ -215,6 +216,12 @@ def test_primary_character_becomes_visual_leader_when_focused(two_characters) ->
         1.0 + CHARACTER_EMPHASIS_MAX_DELTA + 1e-9
     )
     assert _segments(two_characters.cue(0, "hero"), "ESTABLISH")
+
+
+def test_choreography_reuses_public_story_character_classification(two_characters) -> None:
+    beat = two_characters.story[0]
+    authored = SemanticAssetBinder.authored_character_assets(beat, two_characters.assets)
+    assert authored == two_characters.choreography.directives[0].emphasis_asset_ids
 
 
 def test_secondary_participating_character_is_emphasized(two_characters) -> None:

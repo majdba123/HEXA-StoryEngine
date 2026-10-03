@@ -54,7 +54,7 @@ class SemanticAssetBinder:
             candidates = [asset for asset in ranked if self._is_character_candidate(asset)]
             actor_ids = tuple(asset.id for asset in candidates[:character_count])
 
-        authored_actor_ids = self._authored_character_assets(beat, assets)
+        authored_actor_ids = self.authored_character_assets(beat, assets)
         actor_ids = tuple(dict.fromkeys((*authored_actor_ids, *actor_ids)))
         actor_set = set(actor_ids)
         independent = [asset for asset in assets if asset.can_animate_independently]
@@ -219,7 +219,7 @@ class SemanticAssetBinder:
         return {unit_id: asset_id for unit_id, asset_id in mapping.items() if asset_id in asset_by_id}
 
     @staticmethod
-    def _authored_character_assets(
+    def authored_character_assets(
         beat: StoryBeat | None,
         assets: list[VisualAsset],
     ) -> tuple[str, ...]:

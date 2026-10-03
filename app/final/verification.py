@@ -137,7 +137,17 @@ class FinalMediaVerifier:
             "scale=320:-2:flags=fast_bilinear,negate,blackframe=amount=99:threshold=24",
             "-f", "null", "-",
         ]
-        result = run_hidden(command, check=True, capture_output=True, text=True)
+        # Only ASCII blackframe diagnostics are parsed. Media metadata may contain
+        # arbitrary localized bytes, so replace undecodable text instead of letting a
+        # Windows locale reader thread discard stderr.
+        result = run_hidden(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         pattern = re.compile(r"frame:(\d+).*?t:([0-9.]+)")
         flashes: list[dict[str, float | int]] = []
         guard = min(EDGE_GUARD_SECONDS, duration / 4.0)
@@ -199,7 +209,16 @@ class FinalMediaVerifier:
             "-of", "json", str(path),
         ]
         try:
-            result = run_hidden(command, check=True, capture_output=True, text=True)
+            # ffprobe emits UTF-8 JSON. Windows' locale codec (often cp1252) cannot
+            # decode arbitrary Arabic metadata and may fail in its reader thread,
+            # leaving stdout as None even though ffprobe succeeded.
+            result = run_hidden(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
         except FileNotFoundError as exc:
             raise DependencyUnavailableError("ffprobe is not available") from exc
         except subprocess.CalledProcessError as exc:

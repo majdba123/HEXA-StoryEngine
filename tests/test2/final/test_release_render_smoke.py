@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from subprocess import CompletedProcess
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,23 @@ from app.models import (
 from app.render.evidence import RenderedVisualEvidence as RenderedVisualQA
 from app.final import FinalMediaVerifier
 from app.render.renderer import FFmpegRenderer
+import app.final.verification as final_verification
 
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
     reason="ffmpeg/ffprobe required",
 )
+
+
+def test_final_media_probe_decodes_ffprobe_json_as_utf8(monkeypatch, tmp_path: Path) -> None:
+    def fake_run(command, **kwargs):
+        assert kwargs["encoding"] == "utf-8"
+        return CompletedProcess(command, 0, stdout='{"format":{"tags":{"title":"هاكتيفست"}}}')
+
+    monkeypatch.setattr(final_verification, "run_hidden", fake_run)
+    probe = FinalMediaVerifier("ffprobe", "ffmpeg")._probe(tmp_path / "audio.mp3")
+    assert probe["format"]["tags"]["title"] == "هاكتيفست"
 
 
 def _asset(path: Path, rgba: tuple[int, int, int, int]) -> None:
