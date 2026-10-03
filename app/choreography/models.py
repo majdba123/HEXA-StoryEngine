@@ -207,6 +207,33 @@ class SemanticEventFlow:
         ))
 
 
+class RelationTreatment(StrEnum):
+    """Smallest visual expression Choreography chose for one authored relation."""
+
+    FOCUS_HANDOFF = "FOCUS_HANDOFF"
+    INTERACTION = "INTERACTION"
+    ABSTAIN = "ABSTAIN"
+
+
+@dataclass(frozen=True, slots=True)
+class RelationFlowDecision:
+    """Authored relation -> visual treatment, with the evidence or abstention reason.
+
+    FOCUS_HANDOFF: an authored directional relation whose target leads a later authored
+    event; at the target's Story reveal the source becomes support. INTERACTION: the
+    existing INTERACT/REACT (and Sprint 4.1 connector) expression is the whole treatment.
+    ABSTAIN: no relationship behavior beyond what already existed.
+    """
+
+    relationship: str | None
+    source_asset_id: str | None
+    target_asset_id: str | None
+    treatment: RelationTreatment
+    reason: str
+    source_event_id: str | None = None
+    target_event_id: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class ChoreographyDirective:
     beat_id: str
@@ -237,6 +264,8 @@ class ChoreographyDirective:
     event_flows: tuple[SemanticEventFlow, ...] = ()
     # Authored characters the current event is about (Motion decides how much).
     emphasis_asset_ids: tuple[str, ...] = ()
+    # One decision per authored relation (Motion executes FOCUS_HANDOFF only).
+    relation_flows: tuple[RelationFlowDecision, ...] = ()
 
     def participant_role(self, asset_id: str) -> ParticipantRole:
         # A declared human actor keeps ACTOR semantics even when an explicit relationship

@@ -17,6 +17,7 @@ from app.choreography.interactions import is_connectable_relation
 from app.motion.compiler import MotionCompiler
 from app.reference.profile import HexaVisualProfile
 from app.motion.emphasis import apply_character_emphasis, deemphasize_supporting
+from app.motion.relation_flow import apply_relation_focus_handoffs
 from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver, MotionEventPhase
 from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
 from app.motion.models import MotionKeyframe, MotionProgram
@@ -625,6 +626,18 @@ class MotionPlanner:
                                 "event_focus_path_asset_ids": list(
                                     directive.event_focus_path_asset_ids
                                 ),
+                                "relation_flows": [
+                                    {
+                                        "relationship": row.relationship,
+                                        "source_asset_id": row.source_asset_id,
+                                        "target_asset_id": row.target_asset_id,
+                                        "treatment": row.treatment.value,
+                                        "reason": row.reason,
+                                        "source_event_id": row.source_event_id,
+                                        "target_event_id": row.target_event_id,
+                                    }
+                                    for row in directive.relation_flows
+                                ],
                                 "rhythm": rhythm.to_payload(),
                                 "event_flow_assignment": (
                                     assignment.to_payload() if assignment is not None else None
@@ -718,6 +731,15 @@ class MotionPlanner:
                             ),
                             carry_entry=self._carried_entry_segment,
                         )
+                if directive is not None and directive.relation_flows:
+                    cues[beat_cue_start:] = apply_relation_focus_handoffs(
+                        cues[beat_cue_start:],
+                        beat=beat,
+                        decisions=directive.relation_flows,
+                        layout_items=ordered_items,
+                        next_reveal=lambda cue, beat=beat: self._next_semantic_reveal(beat, cue),
+                        carry_entry=self._carried_entry_segment,
+                    )
                 if directive is not None:
                     self._assert_authored_relation_contract(
                         cues[beat_cue_start:],

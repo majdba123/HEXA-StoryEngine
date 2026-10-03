@@ -25,6 +25,7 @@ from .models import (
     SequencePhase,
     VisualStateTransition,
 )
+from .relation_flow import plan_relation_flow
 from .requirements import AssetRequirementCompiler
 from .sequence import SequenceGrouper
 from .state import VisualStateCompiler
@@ -263,6 +264,7 @@ class ChoreographyDirector:
                     asset_requirements=requirements[beat.id],
                     event_flows=event_flows,
                     emphasis_asset_ids=select_character_emphasis(beat, assets, event_flows),
+                    relation_flows=plan_relation_flow(beat, all_interactions, event_flows),
                 ))
                 if focus:
                     previous_focus = focus
