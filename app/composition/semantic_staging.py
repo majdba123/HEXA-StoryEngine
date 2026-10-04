@@ -5,10 +5,12 @@ from math import hypot
 
 from app.assets import AssetManager
 from app.choreography import ChoreographyDirective, RelationTreatment
+from app.layout.connection_geometry import MIN_LENGTH_PX as _MIN_LENGTH_PX
+from app.layout.connection_geometry import connector_endpoints as _endpoints
+from app.layout.connection_geometry import segment_hits_rect as _segment_hits_rect
 from app.layout.footprint import AlphaFootprintResolver
 from app.models import LayoutItem, RenderPlan, VisualAsset
 from app.reference import HexaVisualProfile
-from app.render.connection import _MIN_LENGTH_PX, _endpoints, _segment_hits_rect
 
 Rect = tuple[float, float, float, float]
 

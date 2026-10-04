@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, cos, hypot, sin
+from math import atan2, cos, sin
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from app.layout.connection_geometry import Rect
+from app.layout.connection_geometry import connector_endpoints as _endpoints
 from app.models import MotionCue, StoryBeat
 
-_GAP_PX = 14.0
-_MIN_LENGTH_PX = 70.0
 _MIN_VISIBLE_SECONDS = 0.25
 _FADE_SECONDS = 0.20
 _LINE_PX = 7
@@ -27,9 +27,6 @@ class ConnectionSpec:
     end: float
     p0: tuple[float, float]
     p1: tuple[float, float]
-
-
-Rect = tuple[float, float, float, float]  # left, top, right, bottom in pixels
 
 
 def connection_specs(
@@ -79,64 +76,6 @@ def connection_specs(
             seen.add((source_id, target_id))
             specs.append(ConnectionSpec(start=start, end=end, p0=points[0], p1=points[1]))
     return specs
-
-
-def _center(rect: Rect) -> tuple[float, float]:
-    return (rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0
-
-
-def _exit_point(rect: Rect, origin: tuple[float, float], direction: tuple[float, float]):
-    """Where a ray from the rect centre leaves the rect, pushed out by the gap."""
-    half_w, half_h = (rect[2] - rect[0]) / 2.0, (rect[3] - rect[1]) / 2.0
-    dx, dy = direction
-    scale = min(
-        half_w / abs(dx) if abs(dx) > 1e-9 else float("inf"),
-        half_h / abs(dy) if abs(dy) > 1e-9 else float("inf"),
-    )
-    return origin[0] + dx * (scale + _GAP_PX), origin[1] + dy * (scale + _GAP_PX)
-
-
-def _endpoints(source: Rect, target: Rect, others: list[Rect]):
-    sx, sy = _center(source)
-    tx, ty = _center(target)
-    length = hypot(tx - sx, ty - sy)
-    if length < 1e-6:
-        return None
-    ux, uy = (tx - sx) / length, (ty - sy) / length
-    p0 = _exit_point(source, (sx, sy), (ux, uy))
-    p1 = _exit_point(target, (tx, ty), (-ux, -uy))
-    if hypot(p1[0] - p0[0], p1[1] - p0[1]) < _MIN_LENGTH_PX:
-        return None
-    # The segment must leave source and enter target in order (no overlap inversion).
-    if (p1[0] - p0[0]) * ux + (p1[1] - p0[1]) * uy <= 0.0:
-        return None
-    for rect in others:
-        if _segment_hits_rect(p0, p1, rect):
-            return None
-    return p0, p1
-
-
-def _segment_hits_rect(p0, p1, rect: Rect) -> bool:
-    """Liang-Barsky segment/rectangle intersection."""
-    left, top, right, bottom = rect
-    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
-    t0, t1 = 0.0, 1.0
-    for p, q in ((-dx, p0[0] - left), (dx, right - p0[0]),
-                 (-dy, p0[1] - top), (dy, bottom - p0[1])):
-        if abs(p) < 1e-12:
-            if q < 0:
-                return False
-            continue
-        t = q / p
-        if p < 0:
-            if t > t1:
-                return False
-            t0 = max(t0, t)
-        else:
-            if t < t0:
-                return False
-            t1 = min(t1, t)
-    return t0 <= t1
 
 
 def draw_connection(spec: ConnectionSpec, size: tuple[int, int], path: Path) -> Path:

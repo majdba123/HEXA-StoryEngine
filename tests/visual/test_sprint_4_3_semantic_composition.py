@@ -37,10 +37,10 @@ from app.composition.semantic_staging import (
     StagingResult,
 )
 from app.layout import ConstraintLayoutSolver
+from app.layout.connection_geometry import connector_endpoints as _endpoints
 from app.models import CompositionBeat, LayoutItem, StoryBeat, VisualAsset
 from app.motion.collision import authored_overlap_ratio, box, overlap_ratio
 from app.reference.profile import HexaVisualProfile
-from app.render.connection import _endpoints
 from tests.visual.test_sprint_4_2_semantic_relationship_flow import (
     CHIP,
     BLOCKER,
