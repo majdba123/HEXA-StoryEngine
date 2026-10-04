@@ -9,6 +9,7 @@ from app.models import CompositionBeat, LayoutItem, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
 
 from .geometry import AuthoredGeometryMapper
+from .semantic_staging import SemanticStagingPlanner
 from .states import CompositionStateDirector
 
 
@@ -18,12 +19,15 @@ class CompositionPlanner:
     Cutout stages answer *what can move*. Story/Choreography answer *when/why it moves*.
     Composition has one spatial responsibility: map every extracted scene asset back to
     its authoritative source location. Asset count is therefore irrelevant to layout.
+    The single exception is Sprint 4.3 semantic staging: a bounded, rigid, audited nudge
+    of one asset family, only when it makes an authored relation clearly readable.
     """
 
     def __init__(self, *, solver: ConstraintLayoutSolver | None = None) -> None:
         self.states = CompositionStateDirector()
         self.solver = solver or ConstraintLayoutSolver()
         self.geometry = AuthoredGeometryMapper()
+        self.staging = SemanticStagingPlanner(footprints=self.solver.footprints)
 
     def plan(
         self,
@@ -37,14 +41,15 @@ class CompositionPlanner:
         for asset in all_assets:
             by_scene[asset.scene_id].append(asset)
         direction_by_beat = {row.beat_id: row for row in (directions or [])}
+        staged = self._stage_scenes(beats, by_scene, choreography)
 
         output: list[CompositionBeat] = []
         for beat in beats:
-            scene_assets = by_scene.get(beat.scene_id, [])
-            items = self._scene_layout(scene_assets)
+            items, staging_evidence = staged[beat.scene_id]
             direction = direction_by_beat.get(beat.id)
             evidence = list(direction.evidence) if direction else []
             evidence.append("layout:final_package_geometry")
+            evidence.append(staging_evidence)
             output.append(CompositionBeat(
                 beat_id=beat.id,
                 items=items,
@@ -59,6 +64,27 @@ class CompositionPlanner:
         solved = [self.solver.solve(layout, all_assets) for layout in directed]
         self._require_owned_contracts(beats=beats, layouts=solved, assets=all_assets)
         return solved
+
+    def _stage_scenes(
+        self,
+        beats: list[StoryBeat],
+        by_scene: dict[str, list[VisualAsset]],
+        choreography: ChoreographyPlan | None,
+    ) -> dict[str, tuple[list[LayoutItem], str]]:
+        """Resolve Sprint 4.3 semantic staging once per scene, shared by all its beats."""
+        directives: dict[str, list] = defaultdict(list)
+        for beat in beats:
+            directive = choreography.for_beat(beat.id) if choreography else None
+            if directive is not None:
+                directives[beat.scene_id].append(directive)
+        staged: dict[str, tuple[list[LayoutItem], str]] = {}
+        for scene_id in dict.fromkeys(beat.scene_id for beat in beats):
+            scene_assets = by_scene.get(scene_id, [])
+            result = self.staging.stage(
+                self._scene_layout(scene_assets), scene_assets, directives[scene_id],
+            )
+            staged[scene_id] = (result.items, result.evidence)
+        return staged
 
     def _require_owned_contracts(
         self,
