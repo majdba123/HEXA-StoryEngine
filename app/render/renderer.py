@@ -26,8 +26,10 @@ class FFmpegRenderer:
     """Parallel beat-segment renderer with deterministic concat.
 
     Beat segments are encoded independently for bounded render cost. Visual
-    cutouts stay opaque while moving: alpha crossfades on a white canvas create the exact
-    washed-out "ghost" silhouette that looks like a bad mask. Scene boundaries instead
+    cutouts stay opaque once settled and while moving: alpha crossfades on a white canvas
+    create the exact washed-out "ghost" silhouette that looks like a bad mask. The single
+    exception is Motion's entry opacity clock (Sprint 4.4): a short reveal -> settle ramp
+    on the asset's own layer, shared by every layer of a Pass2 family. Scene boundaries
     use a bounded opaque outgoing bridge behind crisp incoming artwork; explicit authored
     handoffs may blur that old full-scene bridge before it is removed.
     """
@@ -470,16 +472,26 @@ class FFmpegRenderer:
             # Keep cutout alpha exactly as authored. The transparent pad gives Motion a
             # stable Composition-sized transform box, so scale pulses can happen around
             # the element centre without changing semantic placement.
+            entry_fade = (
+                ""
+                if persistent or visual_carrier
+                else self._entry_opacity_filter(
+                    cue,
+                    segment_start=segment_start,
+                    effective_reveal_start=effective_reveal_start,
+                    fps=plan.fps,
+                )
+            )
             filters.append(
                 f"[{layer_index}:v]format=rgba,setsar=1,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
                 f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
-                f"[{base_source_label}]"
+                f"{entry_fade}[{base_source_label}]"
             )
-            # Keep authored alpha intact. Semantic visibility is controlled by the
-            # overlay enable window below; this avoids pale/ghost silhouettes from
-            # alpha-fading family-canvas members over a white background.
+            # Authored alpha stays intact after the entry. The only alpha change is the
+            # Motion-owned entry clock (reveal -> settle); family layers share one clock,
+            # so a Pass2 family never fades as separate pieces.
             transform_source_label = base_source_label
 
             scale_expr = "1"
@@ -900,6 +912,46 @@ class FFmpegRenderer:
         if not windows:
             return 0.0, min(0.12, duration)
         return min(windows, key=lambda row: row[0])
+
+    @classmethod
+    def _entry_opacity_filter(
+        cls,
+        cue: MotionCue | None,
+        *,
+        segment_start: float,
+        effective_reveal_start: float,
+        fps: int,
+    ) -> str:
+        """Alpha ramp for Motion's entry opacity clock, or "" to keep the hard reveal.
+
+        The first encoded frame at/after the Story reveal shows ``initial`` opacity and
+        the ramp reaches exactly 1.0 at the Story settle. Fails closed (no fade) when the
+        asset is visible before its clock starts or the ramp cannot span two frames.
+        """
+        clock = cue.params.get("entry_opacity") if cue is not None and isinstance(cue.params, dict) else None
+        if not isinstance(clock, dict):
+            return ""
+        try:
+            initial = float(clock["initial"])
+            start = float(clock["start"]) - segment_start
+            settle = float(clock["settle"]) - segment_start
+        except (KeyError, TypeError, ValueError):
+            return ""
+        first_frame = cls._first_visible_frame(start, fps)
+        if not 0.0 < initial < 1.0 or cls._first_visible_frame(effective_reveal_start, fps) < first_frame:
+            return ""
+        first_time = first_frame / float(fps)
+        ramp = settle - first_time
+        if ramp < 2.0 / fps:
+            return ""
+        duration = ramp / (1.0 - initial)
+        fade_start = first_time - initial * duration
+        if fade_start < 0.0:
+            return ""
+        # A looped image stream ticks in whole frames; the fade would round its start to a
+        # frame and can land exactly on the reveal frame (alpha 0, a one-frame-late reveal).
+        # A microsecond timebase makes the clock exact at every encoded frame.
+        return f",settb=AVTB,fade=t=in:st={fade_start:.6f}:d={duration:.6f}:alpha=1"
 
     @staticmethod
     def _cue_window(

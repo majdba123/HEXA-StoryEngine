@@ -87,6 +87,19 @@ class MotionHandoffMixin(_HandoffCore):
                 program=base_program,
                 kind_prefix="motion_cue",
             )
+            entry_opacity = cue.params.get("entry_opacity") if isinstance(cue.params, dict) else None
+            if entry_opacity is not None and not cls._entry_opacity_inside_story_window(
+                entry_opacity, cue,
+            ):
+                cls._add(
+                    violations,
+                    "motion_cue_entry_opacity_outside_story_window",
+                    beat_id=beat.id,
+                    asset_id=cue.asset_id,
+                    entry_opacity=entry_opacity,
+                    start=cue.start,
+                    end=cue.end,
+                )
             layout_item = next(
                 (item for item in (layout.items if layout else []) if item.asset_id == cue.asset_id),
                 None,
@@ -253,6 +266,24 @@ class MotionHandoffMixin(_HandoffCore):
             "motion->text/render",
             "MOTION_HANDOFF_CONTRACT_VIOLATIONS",
             violations,
+        )
+
+    @staticmethod
+    def _entry_opacity_inside_story_window(clock: object, cue: MotionCue) -> bool:
+        """The entry opacity clock must be exactly the cue's Story reveal -> settle window."""
+        if not isinstance(clock, dict):
+            return False
+        try:
+            initial = float(clock["initial"])
+            start = float(clock["start"])
+            settle = float(clock["settle"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            0.0 < initial < 1.0
+            and abs(start - float(cue.start)) <= _EPS
+            and abs(settle - float(cue.end)) <= _EPS
+            and settle > start
         )
 
     @classmethod

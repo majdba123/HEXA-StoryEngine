@@ -18,7 +18,7 @@ from app.final import FinalExporter, FinalMediaVerifier
 from app.canonical import CanonicalPackage
 from app.final_package import FinalPackageLoader
 from app.models import Stage
-from app.motion import MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
+from app.motion import EntryMotionGrammar, MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.render import RenderPlanner
@@ -87,6 +87,7 @@ class StoryEnginePipeline:
         self.text_composition = TextCompositionPlanner()
         self.motion = MotionPlanner()
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
+        self.entry_grammar = EntryMotionGrammar()
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
@@ -235,6 +236,11 @@ class StoryEnginePipeline:
         self._progress(progress, Stage.motion, 0.61, "Planning final visual motion")
         motion = self.motion_reference.enforce(
             self.motion.plan(story, composition, choreography, assets=assets)
+        )
+        # Sprint 4.4: reference-derived entry motion (opacity clock inside the Story
+        # window). Runs after the Reference contract; certified planning is untouched.
+        motion = self.entry_grammar.apply(
+            motion, composition=composition, choreography=choreography, assets=assets,
         )
         self.handoff_contracts.require_motion_for_text_and_render(
             story=story,
