@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.layout.connection_geometry import GAP_PX, segment_hits_rect
 from app.layout.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.composition.text_constraints import TextLayoutContract
@@ -61,6 +62,8 @@ class TextPlacementDirector:
     _SAFE_MARGIN_Y = 0.055
     _GRID_STEP_X = 0.02
     _GRID_STEP_Y = 0.0225
+    # Protected padding every artwork receives, whatever its role.
+    _BASE_PROTECTED_PAD = (0.016, 0.020)
 
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
@@ -308,6 +311,81 @@ class TextPlacementDirector:
                 deduped[key] = candidate
         return list(deduped.values())
 
+    def couple_to_owner(
+        self,
+        *,
+        beat: StoryBeat,
+        visual: CompositionBeat,
+        cue: TextCue,
+        owner: LayoutItem,
+        current: PlacementResult,
+        concurrent_text: list[PlacedTextRegion],
+        assets_by_id: dict[str, VisualAsset],
+        connectors: list[tuple[tuple[float, float], tuple[float, float]]],
+        canvas: tuple[int, int] = (1920, 1080),
+    ) -> tuple[PlacementResult | None, dict]:
+        """Move an already legal label beside its authored owner, or keep it (None).
+
+        "Attached" is measured against the label itself: the gap to the owner's visible
+        artwork may not exceed one label height. A local slot must keep the existing
+        protected padding free of every visible artwork pixel (so it never touches the
+        owner or a limb), stay clear of other text and authored connectors, and sit
+        inside the safe frame. Typography is never changed here.
+        """
+        scale = current.item.font_scale
+        width, height = self.estimated_box(cue, scale=scale)
+        owner_box = self.footprints.resolve(owner, assets_by_id.get(owner.asset_id)).box
+        attached = height * canvas[1]
+        gap_before = self._pixel_gap(current.box, owner_box, canvas)
+        audit = {"gap_before_px": round(gap_before, 1), "attach_limit_px": round(attached, 1),
+                 "zone_before": current.zone}
+        if gap_before <= attached + 1e-6:
+            return None, {**audit, "decision": "kept", "reason": "already_attached"}
+        regions = self._visual_regions(beat, visual, assets_by_id)
+        occupancy = self.occupancy.build(list(visual.items), assets_by_id) if visual.items else None
+        x_low = self._SAFE_MARGIN_X + width / 2
+        x_high = 1.0 - self._SAFE_MARGIN_X - width / 2
+        y_low = self._SAFE_MARGIN_Y + height / 2
+        y_high = 1.0 - self._SAFE_MARGIN_Y - height / 2
+        rows = []
+        for candidate in self._anchor_candidates(owner, width, height, x_low, x_high, y_low, y_high):
+            score, candidate, box, visual_overlap, text_overlap = self._score_candidate(
+                candidate, width=width, height=height, anchor=owner, visual_regions=regions,
+                concurrent_text=concurrent_text, preferred_zone=None, cue=cue, occupancy=occupancy,
+            )
+            if not self.contract.accepts(visual_overlap=visual_overlap, text_overlap=text_overlap):
+                continue
+            if text_overlap > 0.0 or self._edge_penalty(box) > 1e-9:
+                continue
+            padded = self._expand(box, *self._BASE_PROTECTED_PAD)
+            if occupancy is not None and self.occupancy.overlap(occupancy, padded).occupied_pixels > 0:
+                continue
+            gap = self._pixel_gap(box, owner_box, canvas)
+            if gap > attached + 1e-6:
+                continue
+            pixel_box = (
+                box[0] * canvas[0] - GAP_PX, box[1] * canvas[1] - GAP_PX,
+                box[2] * canvas[0] + GAP_PX, box[3] * canvas[1] + GAP_PX,
+            )
+            if any(segment_hits_rect(p0, p1, pixel_box) for p0, p1 in connectors):
+                continue
+            rows.append((score, candidate.prior, candidate.y, candidate.x, candidate, box,
+                         visual_overlap, text_overlap, gap))
+        if not rows:
+            return None, {**audit, "decision": "kept", "reason": "no_safe_local_slot"}
+        score, _, _, _, candidate, box, visual_overlap, text_overlap, gap = min(rows, key=lambda row: row[:4])
+        item = current.item.model_copy(update={"x": candidate.x, "y": candidate.y, "placement": candidate.zone})
+        result = PlacementResult(item=item, box=box, zone=candidate.zone, score=score,
+                                 visual_overlap=visual_overlap, text_overlap=text_overlap)
+        return result, {**audit, "decision": "moved", "reason": "attached_to_authored_owner",
+                        "gap_after_px": round(gap, 1), "zone_after": candidate.zone}
+
+    @staticmethod
+    def _pixel_gap(left: Box, right: Box, canvas: tuple[int, int]) -> float:
+        dx = max(right[0] - left[2], left[0] - right[2], 0.0) * canvas[0]
+        dy = max(right[1] - left[3], left[1] - right[3], 0.0) * canvas[1]
+        return (dx * dx + dy * dy) ** 0.5
+
     def _anchor_candidates(
         self,
         anchor: LayoutItem,
@@ -419,7 +497,7 @@ class TextPlacementDirector:
                 pad_x, pad_y = 0.022, 0.027
             else:
                 weight = 1.0
-                pad_x, pad_y = 0.016, 0.020
+                pad_x, pad_y = self._BASE_PROTECTED_PAD
             footprint = self.footprints.resolve(item, assets_by_id.get(item.asset_id))
             box = footprint.box
             output.append(

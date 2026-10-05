@@ -9,6 +9,7 @@ from typing import Callable
 from app.choreography import ChoreographyDirector
 from app.shared.handoff import LayerHandoffValidator
 from app.assets import AssetManager
+from app.boundary import SceneBoundaryPlanner
 from app.director import Qwen3VLBackend, VisualDirector
 from app.reference import ReferenceAnalyzer
 from app.composition import CompositionPlanner, TextCompositionPlanner
@@ -88,6 +89,7 @@ class StoryEnginePipeline:
         self.motion = MotionPlanner()
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.entry_grammar = EntryMotionGrammar()
+        self.scene_boundaries = SceneBoundaryPlanner()
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
@@ -272,6 +274,12 @@ class StoryEnginePipeline:
             text_composition=text_composition,
             text_motion=text_motion,
         )
+        diagnostics = workspace / "diagnostics"
+        diagnostics.mkdir(parents=True, exist_ok=True)
+        (diagnostics / "text-owner-coupling.json").write_text(
+            json.dumps(self.text_composition.owner_coupling, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         self._progress(
             progress,
             Stage.composition,
@@ -288,6 +296,19 @@ class StoryEnginePipeline:
             ),
         )
 
+        # Sprint 4.5: how each outgoing scene leaves the screen. Planned here, on final
+        # geometry, motion and text; the renderer only executes the result.
+        scene_boundaries = self.scene_boundaries.plan(
+            story=story,
+            composition=composition,
+            motion=motion,
+            assets=assets,
+            duration=transcript.duration,
+            text=text,
+            text_composition=text_composition,
+            text_motion=text_motion,
+        )
+
         self._check_cancel(cancelled)
         self._progress(progress, Stage.render, 0.69, "Compiling render plan")
         plan, _ = self.render_planner.compile(
@@ -300,6 +321,7 @@ class StoryEnginePipeline:
             text=text,
             text_composition=text_composition,
             text_motion=text_motion,
+            scene_boundaries=scene_boundaries,
         )
 
         self._check_cancel(cancelled)

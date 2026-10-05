@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -422,6 +422,27 @@ class TextMotionCue(BaseModel):
     tokens: list[TextMotionToken] = Field(default_factory=list)
 
 
+class SceneBoundaryRelease(BaseModel):
+    """How the outgoing scene is released at one scene boundary (planned above the renderer).
+
+    ``HARD_CUT`` means the release abstains and the certified boundary behaviour runs
+    unchanged. The other modes fade the whole outgoing scene on one opacity clock:
+    ``EXACT_END`` reaches zero on the incoming opener frame, ``OVERLAP`` a few frames
+    after it. Times are absolute seconds on the encoded frame grid. Nothing here carries
+    cross-scene meaning: collisions only ever downgrade the mode.
+    """
+
+    beat_id: str
+    from_beat_id: str
+    mode: Literal["HARD_CUT", "EXACT_END", "OVERLAP"] = "HARD_CUT"
+    opener_at: float | None = None
+    release_start: float | None = None
+    release_end: float | None = None
+    reason: str
+    downgrade_reason: str | None = None
+    audit: dict[str, Any] = Field(default_factory=dict)
+
+
 class RenderPlan(BaseModel):
     width: int = 1920
     height: int = 1080
@@ -434,6 +455,7 @@ class RenderPlan(BaseModel):
     text: TextPlan = Field(default_factory=TextPlan)
     text_composition: list[TextCompositionBeat] = Field(default_factory=list)
     text_motion: list[TextMotionCue] = Field(default_factory=list)
+    scene_boundaries: list[SceneBoundaryRelease] = Field(default_factory=list)
 
 
 class JobRequest(BaseModel):

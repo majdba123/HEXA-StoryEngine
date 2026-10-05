@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from app.composition.text_director import PlacedTextRegion, TextPlacementDirector
+from app.composition.text_director import PlacedTextRegion, PlacementResult, TextPlacementDirector
+from app.layout.connection_geometry import connector_endpoints
 from app.models import CompositionBeat, MotionCue, StoryBeat, TextCompositionBeat, TextCue, VisualAsset
 from app.text.timing.visibility import TextVisibilityPolicy
 
@@ -13,6 +14,8 @@ class TextCompositionPlanner:
     def __init__(self) -> None:
         self.director = TextPlacementDirector()
         self.visibility = TextVisibilityPolicy()
+        # One audit row per cue from the last plan() call (Sprint 4.5 owner coupling).
+        self.owner_coupling: list[dict] = []
 
     def plan(
         self,
@@ -34,6 +37,7 @@ class TextCompositionPlanner:
 
         preferred_zone_by_scene: dict[str, str] = {}
         output: list[TextCompositionBeat] = []
+        self.owner_coupling = []
 
         for beat in beats:
             cues = sorted(
@@ -77,6 +81,18 @@ class TextCompositionPlanner:
                 )
                 if result is None:
                     continue
+                certified = result
+                result = self._couple_to_authored_owner(
+                    beat=beat,
+                    visual=visual,
+                    cue_visual=cue_visual,
+                    cue=cue,
+                    result=certified,
+                    concurrent=concurrent,
+                    visible_end=visible_end,
+                    motion_by_key=motion_by_key,
+                    assets_by_id=assets_by_id,
+                )
                 items.append(result.item)
                 placed.append(
                     PlacedTextRegion(
@@ -89,16 +105,126 @@ class TextCompositionPlanner:
                 )
 
                 # Preserve a soft scene-level typography lane only when the selected
-                # placement is actually clean. Unsafe layouts must be free to move.
-                if result.visual_overlap <= 0.015:
+                # placement is actually clean. Unsafe layouts must be free to move. The
+                # lane follows the certified placement: owner coupling is local to one
+                # cue and never steers later cues.
+                if certified.visual_overlap <= 0.015:
                     preferred_zone_by_scene[beat.scene_id] = self.director._zone_family(
-                        result.zone
+                        certified.zone
                     )
 
             if items:
                 output.append(TextCompositionBeat(beat_id=beat.id, items=items))
 
         return output
+
+    def _couple_to_authored_owner(
+        self,
+        *,
+        beat: StoryBeat,
+        visual: CompositionBeat | None,
+        cue_visual: CompositionBeat | None,
+        cue: TextCue,
+        result: PlacementResult,
+        concurrent: list[PlacedTextRegion],
+        visible_end: float,
+        motion_by_key: dict[tuple[str, str], MotionCue],
+        assets_by_id: dict[str, VisualAsset],
+    ) -> PlacementResult:
+        """Sprint 4.5: sit a label beside its owner only on explicit, on-screen ownership.
+
+        Placement only: text timing is never touched, and every abstention keeps the
+        certified placement. The owner must be authored, already on screen when the text
+        appears and still on screen for the whole text interval.
+        """
+        row = {"beat_id": beat.id, "text_cue_id": cue.id, "anchor_asset_id": cue.anchor_asset_id}
+        reason = self._owner_abstention(beat, visual, cue_visual, cue, visible_end, motion_by_key)
+        if reason is not None:
+            self.owner_coupling.append({**row, "decision": "abstained", "reason": reason})
+            return result
+        owner = next(item for item in cue_visual.items if item.asset_id == cue.anchor_asset_id)
+        coupled, audit = self.director.couple_to_owner(
+            beat=beat,
+            visual=cue_visual,
+            cue=cue,
+            owner=owner,
+            current=result,
+            concurrent_text=concurrent,
+            assets_by_id=assets_by_id,
+            connectors=self._connectors(beat, cue_visual, motion_by_key),
+        )
+        self.owner_coupling.append({**row, **audit})
+        return coupled or result
+
+    @staticmethod
+    def _owner_abstention(
+        beat: StoryBeat,
+        visual: CompositionBeat | None,
+        cue_visual: CompositionBeat | None,
+        cue: TextCue,
+        visible_end: float,
+        motion_by_key: dict[tuple[str, str], MotionCue],
+    ) -> str | None:
+        if not cue.anchor_asset_id or "final_package_text_anchor" not in cue.package_evidence:
+            return "ownership_not_authored"
+        if visual is None or cue_visual is None or not motion_by_key:
+            return "final_visual_timing_unknown"
+        if not any(item.asset_id == cue.anchor_asset_id for item in visual.items):
+            return "owner_not_in_scene"
+        if beat.active_visual_semantic_state is not None and (
+            cue.anchor_asset_id not in beat.active_visual_semantic_state
+        ):
+            return "owner_not_in_scene"
+
+        def visible_start(motion_cue: MotionCue) -> float:
+            starts = [float(segment.start) for segment in motion_cue.segments if segment.phase != "EXIT"]
+            return min([float(motion_cue.start), *starts])
+
+        owner_cue = motion_by_key.get((beat.id, cue.anchor_asset_id))
+        if owner_cue is None:
+            return "final_visual_timing_unknown"
+        owner_start = visible_start(owner_cue)
+        scene_start = min(
+            visible_start(row) for (beat_id, _), row in motion_by_key.items() if beat_id == beat.id
+        )
+        if owner_start >= visible_end:
+            return "future_owner"  # the owner appears only after the text is gone
+        if float(cue.spoken_start) < scene_start - 1e-6:
+            return "held_previous_scene"  # the text shows before its own scene does
+        if owner_start > float(cue.spoken_start) + 1e-6:
+            return "owner_absent_when_text_appears"
+        if visible_end > float(beat.end) + 1e-6:
+            return "owner_not_present_through_text"
+        return None
+
+    @staticmethod
+    def _connectors(
+        beat: StoryBeat,
+        visual: CompositionBeat,
+        motion_by_key: dict[tuple[str, str], MotionCue],
+        canvas: tuple[int, int] = (1920, 1080),
+    ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+        """Authored connector lines that can be drawn in this beat (Composition boxes)."""
+        rects = {
+            item.asset_id: (
+                (item.x - item.width / 2) * canvas[0], (item.y - item.height / 2) * canvas[1],
+                (item.x + item.width / 2) * canvas[0], (item.y + item.height / 2) * canvas[1],
+            )
+            for item in visual.items
+        }
+        lines = []
+        for (beat_id, _), motion_cue in motion_by_key.items():
+            if beat_id != beat.id:
+                continue
+            for segment in motion_cue.segments:
+                source, target = segment.source_asset_id, segment.target_asset_id
+                if not segment.connection or source not in rects or target not in rects:
+                    continue
+                others = [rect for asset_id, rect in rects.items() if asset_id not in {source, target}]
+                points = connector_endpoints(rects[source], rects[target], others)
+                if points is not None:
+                    lines.append(points)
+        return lines
 
     @staticmethod
     def _visual_for_text_window(

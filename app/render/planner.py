@@ -7,6 +7,7 @@ from app.models import (
     CompositionBeat,
     MotionCue,
     RenderPlan,
+    SceneBoundaryRelease,
     StoryBeat,
     TextCompositionBeat,
     TextMotionCue,
@@ -30,6 +31,7 @@ class RenderPlanner:
         text: TextPlan | None = None,
         text_composition: list[TextCompositionBeat] | None = None,
         text_motion: list[TextMotionCue] | None = None,
+        scene_boundaries: list[SceneBoundaryRelease] | None = None,
     ) -> tuple[RenderPlan, Path]:
         plan = RenderPlan(
             duration=transcript.duration,
@@ -40,6 +42,7 @@ class RenderPlanner:
             text=text or TextPlan(),
             text_composition=text_composition or [],
             text_motion=text_motion or [],
+            scene_boundaries=scene_boundaries or [],
         )
         self._require_executable(plan)
         path = workspace / "render-plan.json"

@@ -16,6 +16,7 @@ from app.render.connection import connection_specs, draw_connection, fade_second
 from app.render.motion import FFmpegMotionAdapter
 from app.render.text import TextRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
+from app.shared.frame_grid import beat_segments, first_visible_frame, time_to_frame
 
 
 # Safest carrier roles (see ``_visual_carrier_asset_id.safety_rank``): CONTEXT, OBJECT,
@@ -31,7 +32,9 @@ class FFmpegRenderer:
     exception is Motion's entry opacity clock (Sprint 4.4): a short reveal -> settle ramp
     on the asset's own layer, shared by every layer of a Pass2 family. Scene boundaries
     use a bounded opaque outgoing bridge behind crisp incoming artwork; explicit authored
-    handoffs may blur that old full-scene bridge before it is removed.
+    handoffs may blur that old full-scene bridge before it is removed. When the plan
+    carries a scene-boundary release (Sprint 4.5), the whole outgoing scene fades as one
+    group on the planned clock instead of drifting; the renderer only executes it.
     """
 
     def __init__(
@@ -116,19 +119,15 @@ class FFmpegRenderer:
                 frame_count=first_frame,
             )
 
-        start_frame = first_frame
-        for index, beat in enumerate(story, start=1):
-            if index < len(story):
-                end_frame = self._time_to_frame(story[index].start, plan.fps, total_frames)
-            else:
-                end_frame = total_frames
-            end_frame = max(start_frame + 1, min(total_frames, end_frame))
-            frame_count = end_frame - start_frame
-            segment_start = start_frame / plan.fps
-            target = segment_root / f"{index:04d}-{beat.id}.mp4"
-            previous_beat = story[index - 2] if index > 1 else None
-            jobs.append((index, beat, previous_beat, segment_start, frame_count, target))
-            start_frame = end_frame
+        for segment in beat_segments(story, duration=plan.duration, fps=plan.fps):
+            jobs.append((
+                segment.index,
+                segment.beat,
+                segment.previous_beat,
+                segment.start_frame / plan.fps,
+                segment.frame_count,
+                segment_root / f"{segment.index:04d}-{segment.beat.id}.mp4",
+            ))
 
         worker_env = os.getenv("HEXA_RENDER_WORKERS")
         if worker_env:
@@ -273,6 +272,18 @@ class FFmpegRenderer:
                     in {SceneTransitionMode.OBJECT_HANDOFF, SceneTransitionMode.BLUR_BRIDGE}
                 ),
             )
+        release = self._scene_release_window(
+            plan=plan,
+            beat=beat,
+            previous_beat=previous_beat,
+            transition_mode=transition.mode,
+            has_outgoing=bool(outgoing_items),
+            incoming_start=incoming_start,
+            segment_start=segment_start,
+            frame_count=frame_count,
+        )
+        if release is not None:
+            bridge_start, bridge_end = release[0], release[2]
         bridge_duration = max(0.0, bridge_end - bridge_start)
         visual_carrier_id = (
             None
@@ -349,8 +360,11 @@ class FFmpegRenderer:
             # Keep the outgoing scene crisp while waiting for a later Story-owned
             # incoming reveal. Only the short handoff interval receives exit motion
             # and optional blur; a narration gap must never become a long blurred hold.
+            # A planned release fades the outgoing artwork only, never the background:
+            # the group is composited on a transparent canvas.
+            old_canvas = "white@0.0" if release is not None else "white"
             filters.append(
-                f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:"
+                f"color=c={old_canvas}:s={plan.width}x{plan.height}:r={plan.fps}:"
                 f"d={bridge_end:.6f},format=rgba[oldbase0]"
             )
             old_label = "oldbase0"
@@ -370,7 +384,9 @@ class FFmpegRenderer:
                 target_item = current_items_by_id.get(
                     object_target_by_outgoing.get(item.asset_id, "")
                 )
-                horizontal, vertical = self._bridge_exit_offset(
+                # The planned opacity release owns the boundary: the legacy exit drift
+                # is not stacked on top of it.
+                horizontal, vertical = (0, 0) if release is not None else self._bridge_exit_offset(
                     plan=plan,
                     item=item,
                     mode=transition.mode,
@@ -406,6 +422,14 @@ class FFmpegRenderer:
                     f"eof_action=pass:shortest=0[bridgebase]"
                 )
             else:
+                if release is not None:
+                    # One opacity clock for the whole outgoing scene, so every layer of
+                    # every Pass2 family leaves together.
+                    filters.append(
+                        f"[{old_label}]settb=AVTB,fade=t=out:st={release[0]:.6f}:"
+                        f"d={release[1]:.6f}:alpha=1[oldrelease]"
+                    )
+                    old_label = "oldrelease"
                 filters.append(
                     f"[{composite_label}][{old_label}]overlay=x=0:y=0:"
                     f"enable='between(t,0,{bridge_end:.6f})':"
@@ -597,6 +621,58 @@ class FFmpegRenderer:
 
 
 
+    @classmethod
+    def _scene_release_window(
+        cls,
+        *,
+        plan: RenderPlan,
+        beat: StoryBeat,
+        previous_beat: StoryBeat | None,
+        transition_mode: SceneTransitionMode,
+        has_outgoing: bool,
+        incoming_start: float,
+        segment_start: float,
+        frame_count: int,
+    ) -> tuple[float, float, float] | None:
+        """Execute a planned scene release: (fade start, fade duration, cover end).
+
+        The plan decides; this only maps it onto the segment's frame grid. Anything the
+        renderer cannot execute exactly as planned returns None, which keeps the certified
+        boundary behaviour (fail closed).
+        """
+        if previous_beat is None or not has_outgoing:
+            return None
+        if transition_mode != SceneTransitionMode.MOTION_HANDOFF:
+            return None
+        row = next((item for item in plan.scene_boundaries if item.beat_id == beat.id), None)
+        if row is None or row.mode == "HARD_CUT" or row.from_beat_id != previous_beat.id:
+            return None
+        if row.opener_at is None or row.release_start is None or row.release_end is None:
+            return None
+        fps = plan.fps
+        frames = []
+        for value in (row.opener_at, row.release_start, row.release_end):
+            exact = (float(value) - segment_start) * fps
+            if abs(exact - round(exact)) > 1e-3:
+                return None
+            frames.append(round(exact))
+        opener, start, zero = frames
+        if opener != cls._first_visible_frame(incoming_start, fps):
+            return None
+        if start < 0 or zero - start < 2 or zero > frame_count:
+            return None
+        if (row.mode == "EXACT_END" and zero != opener) or (row.mode == "OVERLAP" and zero <= opener):
+            return None
+        duration = frame_count / fps
+        cover_end = max(
+            cls._frame_safe_bridge_end(
+                incoming_start=incoming_start, segment_duration=duration, fps=fps),
+            # Cover through the zero-opacity frame so frame zero - 1 keeps its last fade step
+            # (a quarter frame keeps the bound rounding-safe).
+            min(duration, (zero + 0.25) / fps),
+        )
+        return start / fps, (zero - start) / fps, cover_end
+
     @staticmethod
     def _bridge_exit_offset(
         *,
@@ -702,7 +778,7 @@ class FFmpegRenderer:
         error of a start that was computed to sit exactly on a frame (for example
         ``k/fps`` reached through subtraction); it is far below one frame.
         """
-        return max(0, math.ceil(max(0.0, float(start)) * int(fps) - 1e-9))
+        return first_visible_frame(start, fps)
 
     @staticmethod
     def _frame_threshold(frame: int, fps: int) -> float:
@@ -1372,7 +1448,7 @@ class FFmpegRenderer:
 
     @staticmethod
     def _time_to_frame(value: float, fps: int, total_frames: int) -> int:
-        return max(0, min(total_frames, round(max(0.0, value) * fps)))
+        return time_to_frame(value, fps, total_frames)
 
     @staticmethod
     def _entry_expression(target: int, start: float, end: float, *, offset: int) -> str:
