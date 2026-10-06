@@ -461,7 +461,10 @@ def _render(planned: Planned, workspace: Path):
     workspace.mkdir(parents=True)
     plan_, _ = RenderPlanner().compile(planned.transcript, planned.assets, planned.story,
                                        planned.composition, planned.motion, workspace, text=text)
-    return FFmpegRenderer("ffmpeg").render(plan_, workspace / "video.mp4"), plan_
+    from app.config import RenderResourceSettings
+
+    renderer = FFmpegRenderer("ffmpeg", resources=RenderResourceSettings(keep_intermediates=True))
+    return renderer.render(plan_, workspace / "video.mp4"), plan_
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")

@@ -1,8 +1,29 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+
+@dataclass(frozen=True, slots=True)
+class RenderResourceSettings:
+    workers_override: int | None = None
+    keep_intermediates: bool = False
+
+    @classmethod
+    def from_env(cls) -> "RenderResourceSettings":
+        raw = os.getenv("HEXA_RENDER_WORKERS")
+        if raw:
+            try:
+                workers = max(1, min(8, int(raw)))
+            except ValueError:
+                workers = 1
+        else:
+            workers = None
+        return cls(
+            workers_override=workers,
+            keep_intermediates=os.getenv("HEXA_KEEP_RENDER_INTERMEDIATES", "0") == "1",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +44,7 @@ class Settings:
     qwen3_vl_model: str | None = None
     semantic_text_model: str | None = None
     require_semantic_model: bool = False
+    render_resources: RenderResourceSettings = field(default_factory=RenderResourceSettings.from_env)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,4 +81,5 @@ class Settings:
             # Production must not silently downgrade semantic phrase matching to
             # lexical-only timing when the multilingual encoder is unavailable.
             require_semantic_model=os.getenv("HEXA_REQUIRE_SEMANTIC_MODEL", "1") == "1",
+            render_resources=RenderResourceSettings.from_env(),
         )

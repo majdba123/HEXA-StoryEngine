@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import os
 import math
+import re
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
@@ -14,6 +15,7 @@ from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.connection import connection_specs, draw_connection, fade_seconds
 from app.render.motion import FFmpegMotionAdapter
+from app.render.resources import RenderConcurrencyPolicy
 from app.render.text import TextRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import beat_segments, first_visible_frame, time_to_frame
@@ -42,8 +44,14 @@ class FFmpegRenderer:
         ffmpeg_bin: str = "ffmpeg",
         *,
         text_font_family: str = "Noto Kufi Arabic",
+        resources: RenderResourceSettings | None = None,
+        defer_cleanup: bool = False,
     ) -> None:
         self.ffmpeg_bin = ffmpeg_bin
+        self.resources = resources or RenderResourceSettings.from_env()
+        self.concurrency = RenderConcurrencyPolicy(self.resources)
+        self.defer_cleanup = defer_cleanup
+        self.last_worker_count: int | None = None
         self._filter_complex_file_option_cache: str | None = None
         self.text_renderer = TextRenderer(font_family=text_font_family)
         self.transition_policy = VisualTransitionPolicy()
@@ -101,6 +109,8 @@ class FFmpegRenderer:
         composition = {beat.beat_id: beat for beat in plan.composition}
         motion = {(cue.beat_id, cue.asset_id): cue for cue in plan.motion}
         segment_root = output.parent / f"{output.stem}-segments"
+        if segment_root.is_symlink():
+            raise StageFailedError("renderer segment directory must not be a symlink")
         segment_root.mkdir(parents=True, exist_ok=True)
         # Resolve file-backed filter transport before worker threads begin. Pipeline
         # preflight normally seeds the cache, but direct renderer callers get the same
@@ -129,14 +139,8 @@ class FFmpegRenderer:
                 segment_root / f"{segment.index:04d}-{segment.beat.id}.mp4",
             ))
 
-        worker_env = os.getenv("HEXA_RENDER_WORKERS")
-        if worker_env:
-            try:
-                worker_count = max(1, min(8, int(worker_env)))
-            except ValueError:
-                worker_count = 1
-        else:
-            worker_count = max(1, min(4, (os.cpu_count() or 2) // 2))
+        worker_count = self.concurrency.workers(width=plan.width, height=plan.height)
+        self.last_worker_count = worker_count
 
         failures: list[Exception] = []
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="hexa-render") as pool:
@@ -171,8 +175,36 @@ class FFmpegRenderer:
         if prelude.exists():
             segments.append(prelude)
         segments.extend(target for _, _, _, _, _, target in jobs)
+        if any(not segment.is_file() or segment.stat().st_size == 0 for segment in segments):
+            raise StageFailedError("render segment missing or empty before concat")
         self._concat_segments(segments, output)
+        if not self.resources.keep_intermediates and not self.defer_cleanup:
+            self.cleanup_intermediates(output, source_paths={Path(a.image_path) for a in plan.assets})
         return output
+
+    @staticmethod
+    def cleanup_intermediates(output: Path, *, source_paths: set[Path] | None = None) -> None:
+        """Remove only recognized renderer files after all workers and concat finish."""
+        segment_root = output.parent / f"{output.stem}-segments"
+        if segment_root.is_symlink() or segment_root.resolve().parent != output.parent.resolve():
+            raise StageFailedError("unsafe renderer cleanup path")
+        if source_paths and any(segment_root == source or segment_root in source.parents
+                                for source in (p.resolve() for p in source_paths)):
+            raise StageFailedError("renderer cleanup overlaps a source asset")
+        allowed = re.compile(
+            r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
+            r"-text\.ass|-connection-\d+\.png)|ffmpeg-filter-option-probe\.ffgraph)"
+        )
+        if segment_root.exists():
+            for path in segment_root.iterdir():
+                if path.is_symlink() or not path.is_file() or not allowed.fullmatch(path.name):
+                    continue
+                path.unlink()
+            if not any(segment_root.iterdir()):
+                segment_root.rmdir()
+        concat_file = output.parent / f"{output.stem}-concat.txt"
+        if concat_file.is_file() and not concat_file.is_symlink():
+            concat_file.unlink()
 
     def _render_beat_segment(
         self,

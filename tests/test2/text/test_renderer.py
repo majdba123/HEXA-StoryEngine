@@ -168,7 +168,9 @@ def test_ffmpeg_renderer_burns_text_in_same_segment_encode(tmp_path: Path) -> No
     plan = _plan(tmp_path)
     target = tmp_path / "out.mp4"
 
-    FFmpegRenderer().render(plan, target)
+    from app.config import RenderResourceSettings
+
+    FFmpegRenderer(resources=RenderResourceSettings(keep_intermediates=True)).render(plan, target)
 
     assert target.is_file()
     assert target.stat().st_size > 0

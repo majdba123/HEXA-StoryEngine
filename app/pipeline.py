@@ -94,7 +94,10 @@ class StoryEnginePipeline:
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
-        self.renderer = FFmpegRenderer(self.settings.ffmpeg_bin)
+        self.renderer = FFmpegRenderer(
+            self.settings.ffmpeg_bin, resources=self.settings.render_resources,
+            defer_cleanup=True,
+        )
         self.final = FinalExporter(self.settings.ffmpeg_bin)
         self.final_media = FinalMediaVerifier(
             self.settings.ffprobe_bin,
@@ -345,6 +348,17 @@ class StoryEnginePipeline:
         )
         self.rendered_visual_evidence.inspect(final_path, workspace / "diagnostics")
         self._check_cancel(cancelled)
+        if not self.settings.render_resources.keep_intermediates:
+            self.renderer.cleanup_intermediates(
+                video_only, source_paths={asset.image_path for asset in plan.assets},
+            )
+            # The encoded-motion and final-media checks have finished. This copy
+            # exists only to feed mux/QA; the verified export and diagnostics stay.
+            render_dir = (workspace / "render").resolve()
+            if (video_only.name == "video-only.mp4" and not video_only.is_symlink()
+                    and video_only.resolve().parent == render_dir
+                    and video_only.resolve() != final_path.resolve()):
+                video_only.unlink()
         self._progress(progress, Stage.final, 1.0, "Video ready")
         return final_path
 
