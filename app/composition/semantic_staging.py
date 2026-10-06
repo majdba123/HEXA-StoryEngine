@@ -9,15 +9,14 @@ from app.layout.connection_geometry import MIN_LENGTH_PX as _MIN_LENGTH_PX
 from app.layout.connection_geometry import connector_endpoints as _endpoints
 from app.layout.connection_geometry import segment_hits_rect as _segment_hits_rect
 from app.layout.footprint import AlphaFootprintResolver
-from app.models import LayoutItem, RenderPlan, VisualAsset
+from app.models import LayoutItem, VisualAsset
 from app.reference import HexaVisualProfile
+from app.targets import active_target
 
 Rect = tuple[float, float, float, float]
 
 STAGED_PLACEMENT_SOURCE = "authored_semantic_staging"
 _ACTIVE_TREATMENTS = frozenset({RelationTreatment.FOCUS_HANDOFF, RelationTreatment.INTERACTION})
-_WIDTH = RenderPlan.model_fields["width"].default
-_HEIGHT = RenderPlan.model_fields["height"].default
 # Hard ceiling per axis (normalized frame units), never a target: candidates are tried
 # smallest-first, so the first effective one is the minimal intervention.
 MAX_SHIFT = 0.04
@@ -63,6 +62,9 @@ class SemanticStagingPlanner:
     ) -> None:
         self.profile = profile or HexaVisualProfile.production()
         self.footprints = footprints or AlphaFootprintResolver()
+        reference = active_target()
+        self._frame = reference.frame
+        self._safe_frame = reference.safe_zones.content
 
     def stage(
         self,
@@ -70,6 +72,11 @@ class SemanticStagingPlanner:
         assets: list[VisualAsset],
         directives: list[ChoreographyDirective],
     ) -> StagingResult:
+        # Pixel rules and the safe frame belong to the target being authored; on the
+        # 16:9 reference they are the certified 1920x1080 / HexaVisualProfile values.
+        target = active_target()
+        self._frame = target.frame
+        self._safe_frame = target.safe_zones.content
         by_id = {asset.id: asset for asset in assets}
         if not items or any(not item.placement_source.startswith("authored") for item in items):
             return StagingResult(items, "semantic_staging:baseline:no_authored_geometry")
@@ -120,7 +127,7 @@ class SemanticStagingPlanner:
             partners.setdefault(family_of[target], set()).add(family_of[source])
         candidates = sorted(
             (
-                hypot(step * dx * _WIDTH, step * dy * _HEIGHT),
+                hypot(step * dx * self._frame[0], step * dy * self._frame[1]),
                 any(asset_id in leaders for asset_id in members[family]),
                 family,
                 index,
@@ -240,10 +247,11 @@ class SemanticStagingPlanner:
         partners: set[str],
     ) -> bool:
         foot = self._union(members[family], moved, by_id)
-        p = self.profile
+        p = self._safe_frame
+        width, height = self._frame
         if (
-            foot[0] < p.safe_left * _WIDTH or foot[2] > p.safe_right * _WIDTH
-            or foot[1] < p.safe_top * _HEIGHT or foot[3] > p.safe_bottom * _HEIGHT
+            foot[0] < p.left * width or foot[2] > p.right * width
+            or foot[1] < p.top * height or foot[3] > p.bottom * height
         ):
             return False
         before = _center(feet[family])
@@ -284,16 +292,17 @@ class SemanticStagingPlanner:
         self, ids: list[str], layout: dict[str, LayoutItem], by_id: dict[str, VisualAsset],
     ) -> Rect:
         boxes = [self.footprints.resolve(layout[a], by_id.get(a)).box for a in ids]
+        width, height = self._frame
         return (
-            min(b[0] for b in boxes) * _WIDTH, min(b[1] for b in boxes) * _HEIGHT,
-            max(b[2] for b in boxes) * _WIDTH, max(b[3] for b in boxes) * _HEIGHT,
+            min(b[0] for b in boxes) * width, min(b[1] for b in boxes) * height,
+            max(b[2] for b in boxes) * width, max(b[3] for b in boxes) * height,
         )
 
-    @staticmethod
-    def _px(item: LayoutItem) -> Rect:
+    def _px(self, item: LayoutItem) -> Rect:
+        width, height = self._frame
         return (
-            (item.x - item.width / 2) * _WIDTH, (item.y - item.height / 2) * _HEIGHT,
-            (item.x + item.width / 2) * _WIDTH, (item.y + item.height / 2) * _HEIGHT,
+            (item.x - item.width / 2) * width, (item.y - item.height / 2) * height,
+            (item.x + item.width / 2) * width, (item.y + item.height / 2) * height,
         )
 
     @staticmethod

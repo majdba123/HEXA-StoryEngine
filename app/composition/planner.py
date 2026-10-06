@@ -7,6 +7,7 @@ from app.director import SceneDirection
 from app.layout import ConstraintLayoutSolver
 from app.models import CompositionBeat, LayoutItem, StoryBeat, VisualAsset
 from app.shared.errors import StageFailedError
+from app.targets import VisualTargetProfile, active_target, composition_policy
 
 from .geometry import AuthoredGeometryMapper
 from .semantic_staging import SemanticStagingPlanner
@@ -21,9 +22,20 @@ class CompositionPlanner:
     its authoritative source location. Asset count is therefore irrelevant to layout.
     The single exception is Sprint 4.3 semantic staging: a bounded, rigid, audited nudge
     of one asset family, only when it makes an authored relation clearly readable.
+
+    Output format: the authored scene is first mapped to the 16:9 reference geometry,
+    then the target's composition policy projects it onto the target frame (identity
+    for the reference target, responsive reflow otherwise) before the shared staging/state/solver
+    contracts run on the target geometry. ``target`` defaults to the active target.
     """
 
-    def __init__(self, *, solver: ConstraintLayoutSolver | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        solver: ConstraintLayoutSolver | None = None,
+        target: VisualTargetProfile | None = None,
+    ) -> None:
+        self.target = target
         self.states = CompositionStateDirector()
         self.solver = solver or ConstraintLayoutSolver()
         self.geometry = AuthoredGeometryMapper()
@@ -41,6 +53,7 @@ class CompositionPlanner:
         for asset in all_assets:
             by_scene[asset.scene_id].append(asset)
         direction_by_beat = {row.beat_id: row for row in (directions or [])}
+        self.target_evidence: dict[str, str] = {}
         staged = self._stage_scenes(beats, by_scene, choreography)
 
         output: list[CompositionBeat] = []
@@ -71,7 +84,8 @@ class CompositionPlanner:
         by_scene: dict[str, list[VisualAsset]],
         choreography: ChoreographyPlan | None,
     ) -> dict[str, tuple[list[LayoutItem], str]]:
-        """Resolve Sprint 4.3 semantic staging once per scene, shared by all its beats."""
+        """Resolve target projection and Sprint 4.3 staging once per scene (all its beats)."""
+        policy = composition_policy(self.target or active_target())
         directives: dict[str, list] = defaultdict(list)
         for beat in beats:
             directive = choreography.for_beat(beat.id) if choreography else None
@@ -80,10 +94,12 @@ class CompositionPlanner:
         staged: dict[str, tuple[list[LayoutItem], str]] = {}
         for scene_id in dict.fromkeys(beat.scene_id for beat in beats):
             scene_assets = by_scene.get(scene_id, [])
-            result = self.staging.stage(
+            projection = policy.project(
                 self._scene_layout(scene_assets), scene_assets, directives[scene_id],
             )
+            result = self.staging.stage(projection.items, scene_assets, directives[scene_id])
             staged[scene_id] = (result.items, result.evidence)
+            self.target_evidence[scene_id] = projection.evidence
         return staged
 
     def _require_owned_contracts(

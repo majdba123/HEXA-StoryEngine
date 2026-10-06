@@ -16,6 +16,7 @@ from app.models import (
     VisualAsset,
 )
 from app.shared.errors import StageFailedError
+from app.targets import VisualTargetProfile, active_target
 
 
 class RenderPlanner:
@@ -32,8 +33,14 @@ class RenderPlanner:
         text_composition: list[TextCompositionBeat] | None = None,
         text_motion: list[TextMotionCue] | None = None,
         scene_boundaries: list[SceneBoundaryRelease] | None = None,
+        target: VisualTargetProfile | None = None,
     ) -> tuple[RenderPlan, Path]:
+        target = target or active_target()
         plan = RenderPlan(
+            target_id=target.target_id,
+            width=target.width,
+            height=target.height,
+            fps=target.fps,
             duration=transcript.duration,
             assets=assets,
             story=story,

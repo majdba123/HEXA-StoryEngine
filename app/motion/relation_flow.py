@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 from app.choreography import RelationFlowDecision, RelationTreatment
 from app.models import LayoutItem, MotionCue, MotionSegment, StoryBeat
-from app.reference.profile import HexaVisualProfile
+from app.targets import active_target, frame_size
 
 from .collision import authored_overlap_ratio, box, overlap_ratio
 from .emphasis import (
@@ -15,6 +15,7 @@ from .emphasis import (
     _SAFETY,
     _dip_delta,
     _is_static,
+    reference_dip_delta,
 )
 from .timing import motion_comfort
 
@@ -23,7 +24,6 @@ from .timing import motion_comfort
 HANDOFF_LEAN_MAX_PX = 28.0
 _OVERLAP_SLACK = 0.005
 _EPS = 1e-6
-_FRAME = (1920.0, 1080.0)
 
 
 def apply_relation_focus_handoffs(
@@ -34,6 +34,7 @@ def apply_relation_focus_handoffs(
     layout_items: list[LayoutItem],
     next_reveal: Callable[[MotionCue], float],
     carry_entry,
+    reference_applied: Callable[[str, str], bool | None] | None = None,
 ) -> list[MotionCue]:
     """Execute Choreography FOCUS_HANDOFF decisions, or abstain per relation.
 
@@ -60,11 +61,14 @@ def apply_relation_focus_handoffs(
             continue
         source = output[index[source_id]]
         target = output[index[target_id]]
+        forced = reference_applied(source_id, target_id) if reference_applied else None
         reason, plan = _plan(
             source=source, target=target, beat=beat, items=items,
             layout_items=layout_items, unit_by_asset=unit_by_asset,
-            next_reveal=next_reveal(target),
+            next_reveal=next_reveal(target), force_readable=forced is True,
         )
+        if forced is False and plan is not None:
+            reason, plan = "reference_target_abstained", None
         audit: dict[str, Any] = {
             "relationship": decision.relationship,
             "target_asset_id": target_id,
@@ -114,6 +118,7 @@ def _plan(
     layout_items: list[LayoutItem],
     unit_by_asset: dict[str, str | None],
     next_reveal: float,
+    force_readable: bool = False,
 ) -> tuple[str, tuple[float, float, float, float, float] | None]:
     source_id = source.asset_id
     unit = unit_by_asset.get(source_id)
@@ -141,6 +146,9 @@ def _plan(
         return "short_window", None
     item = items[source_id]
     delta = _dip_delta(item, duration)
+    if delta is None and force_readable:
+        # Reference decided: size the recede within this geometry's comfort budget.
+        delta = reference_dip_delta(item, duration)
     if delta is None:
         return "unreadable_recede", None
     dx, dy = _lean(item, items.get(target.asset_id), layout_items, delta, duration)
@@ -157,6 +165,7 @@ def _lean(
     """Small lean toward the target, or none when it is unsafe or uncomfortable."""
     if target is None:
         return 0.0, 0.0
+    _FRAME = tuple(float(value) for value in frame_size())
     vx = (float(target.x) - float(item.x)) * _FRAME[0]
     vy = (float(target.y) - float(item.y)) * _FRAME[1]
     length = hypot(vx, vy)
@@ -172,10 +181,10 @@ def _lean(
     if max(delta * extent, hypot(dx, dy)) / max(leg, _EPS) > limit:
         return 0.0, 0.0
     moved = box(item, (dx, dy, 1.0 - delta))
-    profile = HexaVisualProfile.production()
+    profile = active_target().safe_zones.content
     if (
-        moved[0] < profile.safe_left - _EPS or moved[2] > profile.safe_right + _EPS
-        or moved[1] < profile.safe_top - _EPS or moved[3] > profile.safe_bottom + _EPS
+        moved[0] < profile.left - _EPS or moved[2] > profile.right + _EPS
+        or moved[1] < profile.top - _EPS or moved[3] > profile.bottom + _EPS
     ):
         return 0.0, 0.0
     for other in layout_items:

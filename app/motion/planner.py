@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from math import hypot
 
 from app.choreography import ChoreographyPattern, ChoreographyPlan, EventFlowStage, HookKind
@@ -22,6 +23,8 @@ from app.motion.event_flow import MotionEventAssignment, MotionEventFlowResolver
 from app.motion.lifetime import SemanticLifetimeDecision, SemanticVisualLifetimeIndex
 from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
+from app.motion.semantic_reference import MotionSemanticReference
+from app.targets import frame_size
 from app.motion.rhythm import (
     MIN_FOCUS_OVERLAP_SECONDS,
     ReferenceRhythmPolicy,
@@ -73,7 +76,14 @@ class MotionPlanner:
         composition: list[CompositionBeat],
         choreography: ChoreographyPlan | None = None,
         assets: list[VisualAsset] | None = None,
+        reference: MotionSemanticReference | None = None,
     ) -> list[MotionCue]:
+        """Plan Motion on ``composition`` geometry.
+
+        ``reference`` (non-reference output formats only) carries the reference-format
+        plan: geometry-gated semantic decisions are reproduced from it so every format
+        tells the same edit; this format's geometry still sizes every movement.
+        """
         by_beat = {item.beat_id: item for item in composition}
         by_asset = {asset.id: asset for asset in assets or []}
         cues: list[MotionCue] = []
@@ -96,11 +106,18 @@ class MotionPlanner:
             activation_by_asset = {
                 row.asset_id: row for row in beat.asset_activations
             }
+            order_items = reference.order_items(beat.id, layout.items) if reference else None
             ordered_slots = self.ordering.resolve(
                 beat=beat,
-                items=layout.items,
+                items=order_items or layout.items,
                 assets_by_id=by_asset,
             )
+            if order_items:
+                # Order ties were broken on the reference geometry; motion uses ours.
+                own = {item.asset_id: item for item in layout.items}
+                ordered_slots = [
+                    replace(slot, item=own[slot.item.asset_id]) for slot in ordered_slots
+                ]
             ordered_items = [slot.item for slot in ordered_slots]
             items_by_id = {row.asset_id: row for row in ordered_items}
             if directive is None and choreography is None:
@@ -705,6 +722,9 @@ class MotionPlanner:
                             activation.semantic_event_id if activation is not None else None
                         ),
                         entry_segment=self._carried_entry_segment(cues[-1], item=item),
+                        reference=(
+                            reference.emphasis(beat.id, item.asset_id) if reference else None
+                        ),
                     )
             if len(cues) > beat_cue_start:
                 cues[beat_cue_start:] = self._enforce_relation_temporal_overlap(
@@ -730,6 +750,9 @@ class MotionPlanner:
                                 focus_params.get("semantic_event_id") if focus_params else None
                             ),
                             carry_entry=self._carried_entry_segment,
+                            reference_dips=(
+                                reference.dipped_supports(beat.id, focus_id) if reference else None
+                            ),
                         )
                 if directive is not None and directive.relation_flows:
                     cues[beat_cue_start:] = apply_relation_focus_handoffs(
@@ -739,6 +762,10 @@ class MotionPlanner:
                         layout_items=ordered_items,
                         next_reveal=lambda cue, beat=beat: self._next_semantic_reveal(beat, cue),
                         carry_entry=self._carried_entry_segment,
+                        reference_applied=(
+                            (lambda s, t, beat=beat: reference.handoff_applied(beat.id, s, t))
+                            if reference else None
+                        ),
                     )
                 if directive is not None:
                     self._assert_authored_relation_contract(
@@ -1777,8 +1804,8 @@ class MotionPlanner:
         *,
         duration: float,
         item: LayoutItem | None,
-        frame_width: int = 1920,
-        frame_height: int = 1080,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
     ) -> MotionProgram:
         """Remove the encoded-motion dead zone from stylistic base ENTRY.
 
@@ -1791,6 +1818,7 @@ class MotionPlanner:
         """
         if item is None or not program.keyframes:
             return program
+        frame_width, frame_height = _target_frame(frame_width, frame_height)
         floor_px = encoded_motion_renderability_floor_px()
         activity_px = max(
             (
@@ -2238,9 +2266,10 @@ class MotionPlanner:
         duration: float,
         readability_duration: float | None = None,
         peak_progress: float = GOLDEN_MAJOR,
-        frame_width: int = 1920,
-        frame_height: int = 1080,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
     ) -> tuple[float, float, float]:
+        frame_width, frame_height = _target_frame(frame_width, frame_height)
         movement_duration = max(0.0, float(duration))
         contract_duration = (
             movement_duration
@@ -3517,3 +3546,9 @@ class MotionPlanner:
         if item.asset_id == primary_item.asset_id:
             return (target_item.x - item.x, target_item.y - item.y)
         return (primary_item.x - item.x, primary_item.y - item.y)
+
+
+def _target_frame(width: int | None, height: int | None) -> tuple[int, int]:
+    """Explicit frame size, else the active output target (16:9 reference by default)."""
+    active = frame_size()
+    return (active[0] if width is None else width, active[1] if height is None else height)

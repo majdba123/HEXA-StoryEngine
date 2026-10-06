@@ -72,10 +72,27 @@ def _run_job(job_id: str, request: JobRequest) -> None:
                 message=message,
             )
 
-        output = engine.generate(
+        if request.output_name:
+            # Explicitly named single output: the legacy 16:9-only contract.
+            output = engine.generate(
+                package_path=_path(request.package_path),
+                audio_path=_path(request.audio_path),
+                output_name=request.output_name,
+                job_id=job_id,
+                progress=progress,
+            )
+            _store.update(
+                job_id,
+                state=JobState.completed,
+                stage=Stage.final,
+                progress=1.0,
+                message="Ready for Premiere",
+                output_path=str(output),
+            )
+            return
+        bundle = engine.generate_bundle(
             package_path=_path(request.package_path),
             audio_path=_path(request.audio_path),
-            output_name=request.output_name,
             job_id=job_id,
             progress=progress,
         )
@@ -85,7 +102,9 @@ def _run_job(job_id: str, request: JobRequest) -> None:
             stage=Stage.final,
             progress=1.0,
             message="Ready for Premiere",
-            output_path=str(output),
+            output_path=str(bundle.youtube.path),
+            outputs={key: str(row.path) for key, row in bundle.outputs.items()},
+            bundle_path=str(bundle.directory),
         )
     except HexaError as exc:
         _store.update(

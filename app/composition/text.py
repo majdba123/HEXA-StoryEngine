@@ -5,6 +5,7 @@ from collections import defaultdict
 from app.composition.text_director import PlacedTextRegion, PlacementResult, TextPlacementDirector
 from app.layout.connection_geometry import connector_endpoints
 from app.models import CompositionBeat, MotionCue, StoryBeat, TextCompositionBeat, TextCue, VisualAsset
+from app.targets import frame_size
 from app.text.timing.visibility import TextVisibilityPolicy
 
 
@@ -202,9 +203,10 @@ class TextCompositionPlanner:
         beat: StoryBeat,
         visual: CompositionBeat,
         motion_by_key: dict[tuple[str, str], MotionCue],
-        canvas: tuple[int, int] = (1920, 1080),
+        canvas: tuple[int, int] | None = None,
     ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
         """Authored connector lines that can be drawn in this beat (Composition boxes)."""
+        canvas = canvas or frame_size()
         rects = {
             item.asset_id: (
                 (item.x - item.width / 2) * canvas[0], (item.y - item.height / 2) * canvas[1],

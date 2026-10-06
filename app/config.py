@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Machine-local product settings (not committed). Environment variables win over it.
+LOCAL_SETTINGS_FILE = PROJECT_ROOT / "hexa.settings.json"
+_GIB = 1024 ** 3
+
+
+def local_settings() -> dict:
+    path = Path(os.getenv("HEXA_SETTINGS_FILE") or LOCAL_SETTINGS_FILE)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"HEXA settings file is unreadable: {path}: {exc}") from exc
+    return payload if isinstance(payload, dict) else {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +62,21 @@ class Settings:
     semantic_text_model: str | None = None
     require_semantic_model: bool = False
     render_resources: RenderResourceSettings = field(default_factory=RenderResourceSettings.from_env)
+    # Production export bundles: <export_root>/<PACKAGE>/vN/. None -> <output_root>/exports.
+    export_root: Path | None = None
+    # Free space required before expensive work: dual-format finals on the export root,
+    # beat segments + intermediates on the work root.
+    export_min_free_bytes: int = 2 * _GIB
+    work_min_free_bytes: int = 3 * _GIB
+
+    @property
+    def resolved_export_root(self) -> Path:
+        return self.export_root if self.export_root is not None else self.output_root / "exports"
 
     @classmethod
     def from_env(cls) -> "Settings":
+        local = local_settings()
+        export_raw = os.getenv("HEXA_EXPORT_ROOT") or local.get("export_root") or None
         root = Path(os.getenv("HEXA_WORK_ROOT", ".hexa/work")).resolve()
         output = Path(os.getenv("HEXA_OUTPUT_ROOT", ".hexa/outputs")).resolve()
         root.mkdir(parents=True, exist_ok=True)
@@ -82,4 +111,7 @@ class Settings:
             # lexical-only timing when the multilingual encoder is unavailable.
             require_semantic_model=os.getenv("HEXA_REQUIRE_SEMANTIC_MODEL", "1") == "1",
             render_resources=RenderResourceSettings.from_env(),
+            # Never resolved against the CWD and never created here: the export root is
+            # validated (and may fail closed) only when a bundle is generated.
+            export_root=Path(export_raw).expanduser() if export_raw else None,
         )

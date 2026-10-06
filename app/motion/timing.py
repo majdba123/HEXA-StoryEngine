@@ -114,8 +114,8 @@ def semantic_readability_floor(
     item_width: float,
     item_height: float,
     duration: float,
-    frame_width: int = 1920,
-    frame_height: int = 1080,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
 ) -> float:
     """Canonical motion readability floor in normalized Composition space.
 
@@ -145,6 +145,7 @@ def semantic_readability_floor(
         }.get(phase_name, 0.0)
         if ratio <= 0.0:
             return 0.0
+        frame_width, frame_height = _frame(frame_width, frame_height)
         width = max(1.0, float(frame_width))
         height = max(1.0, float(frame_height))
         # Reproduce the historical encoded-QA pixel floor exactly, then normalize it
@@ -192,10 +193,11 @@ def semantic_readability_floor_px(
     item_width: float,
     item_height: float,
     duration: float,
-    frame_width: int = 1920,
-    frame_height: int = 1080,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
 ) -> float:
     """Return the exact encoded-pixel floor projected from the shared contract."""
+    frame_width, frame_height = _frame(frame_width, frame_height)
     width = max(1, int(frame_width))
     return float(width) * semantic_readability_floor(
         phase,
@@ -214,10 +216,11 @@ def projected_motion_activity_px(
     scale: float,
     item_width: float,
     item_height: float,
-    frame_width: int = 1920,
-    frame_height: int = 1080,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
 ) -> float:
     """Measure the exact pixel activity used by encoded-motion QA."""
+    frame_width, frame_height = _frame(frame_width, frame_height)
     width = max(1.0, float(frame_width))
     height = max(1.0, float(frame_height))
     translation_px = hypot(float(dx) * width, float(dy) * height)
@@ -231,10 +234,11 @@ def required_translation_for_pixel_floor(
     dx: float,
     dy: float,
     floor_px: float,
-    frame_width: int = 1920,
-    frame_height: int = 1080,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
 ) -> float:
     """Return normalized translation magnitude required to reach the pixel floor."""
+    frame_width, frame_height = _frame(frame_width, frame_height)
     floor_px = max(0.0, float(floor_px))
     if floor_px <= 0.0:
         return 0.0
@@ -255,9 +259,10 @@ def required_scale_delta_for_pixel_floor(
     floor_px: float,
     item_width: float,
     item_height: float,
-    frame_width: int = 1920,
-    frame_height: int = 1080,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
 ) -> float:
+    frame_width, frame_height = _frame(frame_width, frame_height)
     width = max(1.0, float(frame_width))
     height = max(1.0, float(frame_height))
     asset_px = max(1.0, min(width * float(item_width), height * float(item_height)))
@@ -779,3 +784,11 @@ class MotionTimingPolicy:
         if high < low:
             return low
         return max(low, min(high, value))
+
+
+def _frame(width: int | None, height: int | None) -> tuple[int, int]:
+    """Explicit frame size, else the active output target (16:9 reference by default)."""
+    from app.targets import frame_size
+
+    active = frame_size()
+    return (active[0] if width is None else width, active[1] if height is None else height)

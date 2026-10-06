@@ -444,6 +444,8 @@ class SceneBoundaryRelease(BaseModel):
 
 
 class RenderPlan(BaseModel):
+    # Output format this plan was authored for (app.targets registry id).
+    target_id: str = "YOUTUBE_16_9"
     width: int = 1920
     height: int = 1080
     fps: int = 30
@@ -471,4 +473,7 @@ class JobSnapshot(BaseModel):
     progress: float = Field(default=0, ge=0, le=1)
     message: str = ""
     output_path: str | None = None
+    # Dual-format bundle: target id -> final file, plus the published version folder.
+    outputs: dict[str, str] = Field(default_factory=dict)
+    bundle_path: str | None = None
     error_code: str | None = None

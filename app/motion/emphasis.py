@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.models import LayoutItem, MotionCue, MotionSegment
-from app.reference.profile import HexaVisualProfile
+from app.targets import active_target, frame_size
 
 from .collision import authored_overlap_ratio, box, overlap_ratio
 from .timing import motion_comfort, semantic_readability_floor_px
@@ -29,13 +29,21 @@ def apply_character_emphasis(
     bound: float,
     semantic_event_id: str | None,
     entry_segment: MotionSegment | None = None,
+    reference: dict[str, Any] | None = None,
 ) -> MotionCue:
     """Add one comfort-bounded emphasis to the character's own reveal window, or abstain.
 
     ``bound`` is the next Story-owned semantic reveal (or beat end): the emphasis ends
     before it. Any failed bound (window, comfort speed, safe frame, overlaps, collisions
     with the cue's own later segments) means no emphasis.
+
+    ``reference`` is the reference-format audit for the same cue (non-reference targets
+    only): its decision is reproduced, and only the amplitude is solved on this geometry.
     """
+    if reference is not None and not reference.get("applied"):
+        params = dict(cue.params)
+        params["character_emphasis"] = {**reference, "reference_decision": True}
+        return cue.model_copy(update={"params": params})
     existing_entry = next((row for row in cue.segments if row.phase == "ENTRY"), None)
     entry = existing_entry or entry_segment
     if entry is None:
@@ -62,6 +70,8 @@ def apply_character_emphasis(
         return _audit(cue, applied=False, reason="overlaps_semantic_segment")
 
     planned = _plan_scale(duration=duration, item=item, layout_items=layout_items)
+    if planned is None and reference is not None:
+        planned = _reference_fallback_scale(item, duration)
     if planned is None:
         return _audit(
             cue, applied=False, reason="no_safe_headroom", free_seconds=duration,
@@ -142,21 +152,21 @@ def _fit(
     more); the offset is temporary and zero again at settle. Overlaps with neighbours may
     not exceed what Composition already authored.
     """
-    profile = HexaVisualProfile.production()
+    profile = active_target().safe_zones.content
     left, top, right, bottom = box(item, (0.0, 0.0, scale))
     dx = dy = 0.0
-    if left < profile.safe_left:
-        dx = profile.safe_left - left
-    elif right > profile.safe_right:
-        dx = profile.safe_right - right
-    if top < profile.safe_top:
-        dy = profile.safe_top - top
-    elif bottom > profile.safe_bottom:
-        dy = profile.safe_bottom - bottom
+    if left < profile.left:
+        dx = profile.left - left
+    elif right > profile.right:
+        dx = profile.right - right
+    if top < profile.top:
+        dy = profile.top - top
+    elif bottom > profile.bottom:
+        dy = profile.bottom - bottom
     grown = box(item, (dx, dy, scale))
     if (
-        grown[0] < profile.safe_left - _EPS or grown[2] > profile.safe_right + _EPS
-        or grown[1] < profile.safe_top - _EPS or grown[3] > profile.safe_bottom + _EPS
+        grown[0] < profile.left - _EPS or grown[2] > profile.right + _EPS
+        or grown[1] < profile.top - _EPS or grown[3] > profile.bottom + _EPS
     ):
         return None
     for other in others:
@@ -166,6 +176,30 @@ def _fit(
         if overlap_ratio(grown, box(other, (0.0, 0.0, 1.0))) > allowed:
             return None
     return dx, dy
+
+
+def _reference_fallback_scale(item: LayoutItem, duration: float) -> tuple[float, float, float]:
+    """Reference-decided growth this geometry could not size normally.
+
+    The minimal growth, never faster than the comfort speed, with no lean (a lean could
+    cross neighbours this layout places closer than the reference did).
+    """
+    delta = comfort_bounded_delta(item, duration, CHARACTER_EMPHASIS_MIN_DELTA)
+    return 1.0 + delta, 0.0, 0.0
+
+
+def comfort_bounded_delta(item: LayoutItem, duration: float, wanted: float) -> float:
+    """Largest scale delta up to ``wanted`` whose peak speed stays inside ESTABLISH comfort."""
+    extent = max(1e-6, min(item.width, item.height))
+    limit = motion_comfort("ESTABLISH").max_normalized_speed * _SAFETY
+    leg = min(_PEAK_PROGRESS, 1.0 - _PEAK_PROGRESS) * duration
+    return max(0.0, min(wanted, limit * max(leg, _EPS) / extent))
+
+
+def reference_dip_delta(item: LayoutItem, duration: float) -> float:
+    """Dip for a reference-decided recede: the readable dip if this geometry allows it,
+    otherwise the largest comfortable one (never faster than the comfort contract)."""
+    return _dip_delta(item, duration) or comfort_bounded_delta(item, duration, SUPPORT_DIP_MAX_DELTA)
 
 
 def _plan_scale(
@@ -216,6 +250,7 @@ def deemphasize_supporting(
     protected_asset_ids: set[str],
     semantic_event_id: str | None,
     carry_entry,
+    reference_dips: set[str] | None = None,
 ) -> list[MotionCue]:
     """Recede the settled supporting elements during a focus window, or abstain.
 
@@ -259,6 +294,14 @@ def deemphasize_supporting(
         delta = _dip_delta(item, duration)
         if delta is not None:
             plans[cue.asset_id] = delta
+    if reference_dips is not None:
+        # Non-reference target: the reference decided which supports recede; this
+        # geometry only sizes the dip (readable maximum when the floor cannot be met).
+        plans = {
+            cue.asset_id: reference_dip_delta(items[cue.asset_id], duration)
+            for cue in cues
+            if cue.asset_id in reference_dips and cue.asset_id in items
+        }
     if not plans or len(plans) > SUPPORT_DIP_MAX_ELEMENTS:
         reason = "no_eligible_support" if not plans else "too_many_supporting"
         return _mark_focus(cues, focus_asset_id, {"applied": False, "reason": reason})
@@ -311,7 +354,8 @@ def _mark_focus(cues: list[MotionCue], focus_asset_id: str, audit: dict[str, Any
 
 def _dip_delta(item: LayoutItem, duration: float) -> float | None:
     """Smallest dip that clears the encoded readability floor, inside comfort speed."""
-    asset_px = max(1.0, min(1920.0 * item.width, 1080.0 * item.height))
+    frame_w, frame_h = (float(value) for value in frame_size())
+    asset_px = max(1.0, min(frame_w * item.width, frame_h * item.height))
     floor_px = semantic_readability_floor_px(
         "ESTABLISH", item_width=item.width, item_height=item.height, duration=duration,
     )

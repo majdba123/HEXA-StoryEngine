@@ -117,6 +117,26 @@ class FinalMediaVerifier:
                     ))
         return self._dedupe(issues)
 
+    def summary(self, video: Path) -> dict:
+        """Container/stream facts of a verified final output (for export manifests)."""
+        probe = self._probe(video)
+        streams = probe.get("streams", [])
+        video_stream = next((row for row in streams if row.get("codec_type") == "video"), {})
+        audio_stream = next((row for row in streams if row.get("codec_type") == "audio"), {})
+        return {
+            "video_codec": video_stream.get("codec_name"),
+            "audio_codec": audio_stream.get("codec_name"),
+            "width": video_stream.get("width"),
+            "height": video_stream.get("height"),
+            "pix_fmt": video_stream.get("pix_fmt"),
+            "r_frame_rate": video_stream.get("r_frame_rate"),
+            "avg_frame_rate": video_stream.get("avg_frame_rate"),
+            "nb_frames": video_stream.get("nb_frames"),
+            "video_duration": self._duration(video_stream, probe),
+            "audio_duration": self._duration(audio_stream, probe),
+            "format_duration": float(probe.get("format", {}).get("duration") or 0),
+        }
+
     def require(
         self, video: Path, audio: Path, *, first_spoken_start: float | None = None
     ) -> None:

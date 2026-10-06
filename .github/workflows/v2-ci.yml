@@ -69,6 +69,24 @@ jobs:
           pytest -rfEs --junitxml=package-holdouts.xml tests/package_holdouts
           && python -m tests.package_holdouts.report require package-holdouts.xml
 
+  visual-gates:
+    # Permanent visual architecture gates, including Roadmap V2 Sprint 1: every
+    # target-sensitive check parameterizes over SUPPORTED_VISUAL_TARGETS, so a change to
+    # any shared visual layer is exercised against YouTube 16:9 and Reels 9:16 here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install StoryEngine
+        run: python -m pip install -e ".[dev]"
+      - name: Visual gates (all supported output formats)
+        run: pytest -rfEs tests/visual
+
   encoded-render-windows:
     runs-on: windows-latest
     steps:

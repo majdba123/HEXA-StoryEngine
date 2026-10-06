@@ -9,6 +9,7 @@ from app.composition.text_constraints import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
 from app.text.metrics import TextTypographyMetrics
 from app.story.windows import StoryAssetActivation
+from app.targets import active_target
 
 
 Box = tuple[float, float, float, float]
@@ -67,8 +68,30 @@ class TextPlacementDirector:
 
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
-        self.occupancy = VisualOccupancyMap()
+        self._occupancy_by_frame: dict[tuple[int, int], VisualOccupancyMap] = {}
         self.contract = TextLayoutContract()
+
+    @property
+    def occupancy(self) -> VisualOccupancyMap:
+        """Square-cell (6 px) occupancy grid of the active target frame (320x180 at 16:9)."""
+        frame = active_target().frame
+        grid = self._occupancy_by_frame.get(frame)
+        if grid is None:
+            grid = VisualOccupancyMap(width=frame[0] // 6, height=frame[1] // 6)
+            self._occupancy_by_frame[frame] = grid
+        return grid
+
+    @staticmethod
+    def _safe() -> tuple[float, float, float, float]:
+        """Text-safe frame of the active target (the certified margins at 16:9)."""
+        m = active_target().safe_zones.text_margins
+        return m.left, m.top, 1.0 - m.right, 1.0 - m.bottom
+
+    @staticmethod
+    def _px_scale() -> tuple[float, float]:
+        """Reference-pixel constants -> normalized units on the active target (1.0 at 16:9)."""
+        target = active_target()
+        return target.x_scale(), target.y_scale()
 
     def place(
         self,
@@ -239,8 +262,8 @@ class TextPlacementDirector:
         cue: TextCue,
         *,
         scale: float = 1.0,
-        canvas_width: int = 1920,
-        canvas_height: int = 1080,
+        canvas_width: int | None = None,
+        canvas_height: int | None = None,
     ) -> tuple[float, float]:
         # Measure the shaped Arabic glyphs with the same production font geometry used
         # by libass. Reserve the maximum entry excursion as well, so the first moving
@@ -257,13 +280,18 @@ class TextPlacementDirector:
         # synthetic pixel made Windows-shaped Arabic boxes cross otherwise exact
         # negative-space boundaries.
         entry_y = 17.0
+        target = active_target()
+        canvas_width = target.width if canvas_width is None else canvas_width
+        canvas_height = target.height if canvas_height is None else canvas_height
         width = (pixel_width + entry_x) / max(1, canvas_width)
         height = (pixel_height + entry_y * 2.0) / max(1, canvas_height)
-        safe_width = 1.0 - TextPlacementDirector._SAFE_MARGIN_X * 2.0
-        safe_height = 1.0 - TextPlacementDirector._SAFE_MARGIN_Y * 2.0
+        margins = target.safe_zones.text_margins
+        safe_width = 1.0 - (margins.left + margins.right)
+        safe_height = 1.0 - (margins.top + margins.bottom)
+        # Minimum label boxes are reference-pixel sizes (346 x 119 px) on every target.
         return (
-            max(0.18, min(safe_width, width)),
-            max(0.11, min(safe_height, height)),
+            max(0.18 * target.x_scale(), min(safe_width, width)),
+            max(0.11 * target.y_scale(), min(safe_height, height)),
         )
 
     @staticmethod
@@ -285,10 +313,13 @@ class TextPlacementDirector:
         height: float,
         anchor: LayoutItem | None,
     ) -> list[_Candidate]:
-        x_low = self._SAFE_MARGIN_X + width / 2
-        x_high = 1.0 - self._SAFE_MARGIN_X - width / 2
-        y_low = self._SAFE_MARGIN_Y + height / 2
-        y_high = 1.0 - self._SAFE_MARGIN_Y - height / 2
+        left, top, right, bottom = self._safe()
+        x_low = left + width / 2
+        x_high = right - width / 2
+        y_low = top + height / 2
+        y_high = bottom - height / 2
+        sx, sy = self._px_scale()
+        step_x, step_y = self._GRID_STEP_X * sx, self._GRID_STEP_Y * sy
 
         candidates: list[_Candidate] = []
         y = y_low
@@ -297,8 +328,8 @@ class TextPlacementDirector:
             while x <= x_high + 1e-9:
                 zone = self._zone_for(x, y)
                 candidates.append(_Candidate(x=x, y=y, zone=zone, prior=self._human_prior(x, y)))
-                x += self._GRID_STEP_X
-            y += self._GRID_STEP_Y
+                x += step_x
+            y += step_y
 
         if anchor is not None:
             candidates.extend(self._anchor_candidates(anchor, width, height, x_low, x_high, y_low, y_high))
@@ -322,7 +353,7 @@ class TextPlacementDirector:
         concurrent_text: list[PlacedTextRegion],
         assets_by_id: dict[str, VisualAsset],
         connectors: list[tuple[tuple[float, float], tuple[float, float]]],
-        canvas: tuple[int, int] = (1920, 1080),
+        canvas: tuple[int, int] | None = None,
     ) -> tuple[PlacementResult | None, dict]:
         """Move an already legal label beside its authored owner, or keep it (None).
 
@@ -332,6 +363,7 @@ class TextPlacementDirector:
         owner or a limb), stay clear of other text and authored connectors, and sit
         inside the safe frame. Typography is never changed here.
         """
+        canvas = canvas or active_target().frame
         scale = current.item.font_scale
         width, height = self.estimated_box(cue, scale=scale)
         owner_box = self.footprints.resolve(owner, assets_by_id.get(owner.asset_id)).box
@@ -343,10 +375,11 @@ class TextPlacementDirector:
             return None, {**audit, "decision": "kept", "reason": "already_attached"}
         regions = self._visual_regions(beat, visual, assets_by_id)
         occupancy = self.occupancy.build(list(visual.items), assets_by_id) if visual.items else None
-        x_low = self._SAFE_MARGIN_X + width / 2
-        x_high = 1.0 - self._SAFE_MARGIN_X - width / 2
-        y_low = self._SAFE_MARGIN_Y + height / 2
-        y_high = 1.0 - self._SAFE_MARGIN_Y - height / 2
+        left, top, right, bottom = self._safe()
+        x_low = left + width / 2
+        x_high = right - width / 2
+        y_low = top + height / 2
+        y_high = bottom - height / 2
         rows = []
         for candidate in self._anchor_candidates(owner, width, height, x_low, x_high, y_low, y_high):
             score, candidate, box, visual_overlap, text_overlap = self._score_candidate(
@@ -357,7 +390,7 @@ class TextPlacementDirector:
                 continue
             if text_overlap > 0.0 or self._edge_penalty(box) > 1e-9:
                 continue
-            padded = self._expand(box, *self._BASE_PROTECTED_PAD)
+            padded = self._expand(box, *self._base_pad())
             if occupancy is not None and self.occupancy.overlap(occupancy, padded).occupied_pixels > 0:
                 continue
             gap = self._pixel_gap(box, owner_box, canvas)
@@ -396,10 +429,11 @@ class TextPlacementDirector:
         y_low: float,
         y_high: float,
     ) -> list[_Candidate]:
-        v_gap = anchor.height / 2 + height / 2 + 0.035
-        h_gap = anchor.width / 2 + width / 2 + 0.035
-        d_x = anchor.width / 2 + width * 0.38 + 0.025
-        d_y = anchor.height / 2 + height * 0.38 + 0.025
+        sx, sy = self._px_scale()
+        v_gap = anchor.height / 2 + height / 2 + 0.035 * sy
+        h_gap = anchor.width / 2 + width / 2 + 0.035 * sx
+        d_x = anchor.width / 2 + width * 0.38 + 0.025 * sx
+        d_y = anchor.height / 2 + height * 0.38 + 0.025 * sy
         raw = [
             (anchor.x, anchor.y - v_gap, "anchor_top", -0.14),
             (anchor.x, anchor.y + v_gap, "anchor_bottom", -0.10),
@@ -487,17 +521,18 @@ class TextPlacementDirector:
             return []
         primary = set(beat.primary_asset_ids)
         support = set(beat.support_asset_ids)
+        sx, sy = self._px_scale()
         output: list[_VisualRegion] = []
         for item in visual.items:
             if item.asset_id in primary:
                 weight = 1.65
-                pad_x, pad_y = 0.030, 0.035
+                pad_x, pad_y = 0.030 * sx, 0.035 * sy
             elif item.asset_id in support:
                 weight = 1.25
-                pad_x, pad_y = 0.022, 0.027
+                pad_x, pad_y = 0.022 * sx, 0.027 * sy
             else:
                 weight = 1.0
-                pad_x, pad_y = self._BASE_PROTECTED_PAD
+                pad_x, pad_y = self._base_pad()
             footprint = self.footprints.resolve(item, assets_by_id.get(item.asset_id))
             box = footprint.box
             output.append(
@@ -554,11 +589,17 @@ class TextPlacementDirector:
         return min(TextPlacementDirector._box_distance(box, region.protected_box) for region in regions)
 
     def _edge_penalty(self, box: Box) -> float:
-        left = max(0.0, self._SAFE_MARGIN_X - box[0])
-        right = max(0.0, box[2] - (1.0 - self._SAFE_MARGIN_X))
-        top = max(0.0, self._SAFE_MARGIN_Y - box[1])
-        bottom = max(0.0, box[3] - (1.0 - self._SAFE_MARGIN_Y))
+        safe_left, safe_top, safe_right, safe_bottom = self._safe()
+        left = max(0.0, safe_left - box[0])
+        right = max(0.0, box[2] - safe_right)
+        top = max(0.0, safe_top - box[1])
+        bottom = max(0.0, box[3] - safe_bottom)
         return left + right + top + bottom
+
+    @classmethod
+    def _base_pad(cls) -> tuple[float, float]:
+        sx, sy = cls._px_scale()
+        return cls._BASE_PROTECTED_PAD[0] * sx, cls._BASE_PROTECTED_PAD[1] * sy
 
     @staticmethod
     def _visual_box(item: LayoutItem) -> Box:

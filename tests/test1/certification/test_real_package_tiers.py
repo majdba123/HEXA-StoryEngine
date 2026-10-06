@@ -102,9 +102,13 @@ def test_level_e_encoded_render(tmp_path: Path, filename: str) -> None:
         result = certify_real_package_to_render_plan(_corpus(), filename, workspace)
     except HexaError as exc:
         _level("C/D", filename, exc)
-    assert result.plan_path is not None and result.plan_path.is_file()
-    plan = RenderPlan.model_validate_json(result.plan_path.read_text(encoding="utf-8"))
-    video = tmp_path / "certified.mp4"
+    for plan_path in (result.plan_path, result.reels_plan_path):
+        assert plan_path is not None and plan_path.is_file()
+        plan = RenderPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+        _encode_and_verify(plan, tmp_path / f"certified-{plan.target_id}.mp4", filename)
+
+
+def _encode_and_verify(plan: RenderPlan, video: Path, filename: str) -> None:
     try:
         FFmpegRenderer("ffmpeg").render(plan, video)
     except HexaError as exc:
@@ -117,7 +121,7 @@ def test_level_e_encoded_render(tmp_path: Path, filename: str) -> None:
     ).stdout)
     stream = probe["streams"][0]
     assert stream["codec_name"] == "h264"
-    assert (stream["width"], stream["height"]) == (1920, 1080)
+    assert (stream["width"], stream["height"]) == (plan.width, plan.height)
     assert stream["r_frame_rate"] == "30/1" and stream["avg_frame_rate"] == "30/1"
     assert abs(int(stream["nb_read_frames"]) - round(plan.duration * plan.fps)) <= 1
     assert min(float(row["pts_time"]) for row in probe["packets"]) >= 0.0
@@ -127,4 +131,4 @@ def test_level_e_encoded_render(tmp_path: Path, filename: str) -> None:
     )
     assert decode.returncode == 0 and not decode.stderr.strip(), decode.stderr[:2000]
     report = EncodedMotionVerifier().inspect(video=video, plan=plan)
-    assert report.ok, f"LEVEL E FAILED for {filename}: {report.violations[:5]}"
+    assert report.ok, f"LEVEL E FAILED for {filename} {plan.target_id}: {report.violations[:5]}"

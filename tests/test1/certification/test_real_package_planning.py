@@ -11,9 +11,12 @@ from app.composition import CompositionPlanner
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final_package import FinalPackageLoader
 from app.motion import MotionPlanner
+from app.motion.semantic_reference import MotionSemanticReference
 from app.pipeline import StoryEnginePipeline
 from app.render import RenderPlanner
 from app.story import StoryPlanner
+from app.targets import REELS_9_16, visual_target
+from app.targets.parity import semantic_differences
 from app.text import TextPlanner
 from app.vision import VisionService
 from tests.test1.factory import deterministic_transcript
@@ -42,6 +45,8 @@ class RealPlanningResult:
     story_beats: int
     motion_cues: int
     plan_path: Path | None = None
+    # Roadmap V2 Sprint 1: the same generation authored for the 9:16 target.
+    reels_plan_path: Path | None = None
 
 
 _REAL_RESULT_CACHE: dict[tuple[str, str], RealPlanningResult] = {}
@@ -116,6 +121,24 @@ def certify_real_package_to_render_plan(
         text=text,
     )
 
+    # Every supported output format is planned from the same semantic result; only the
+    # spatial authoring differs, so semantics must be identical to the reference plan.
+    reels_workspace = workspace / "render-reels"
+    reels_workspace.mkdir(parents=True, exist_ok=True)
+    with visual_target(REELS_9_16):
+        reels_composition = CompositionPlanner().plan(story, assets, choreography)
+        reels_motion = MotionPlanner().plan(
+            story, reels_composition, choreography, assets,
+            reference=MotionSemanticReference.of(composition, motion),
+        )
+        reels_plan, reels_plan_path = RenderPlanner().compile(
+            transcript, assets, story, reels_composition, reels_motion, reels_workspace,
+            text=text, target=REELS_9_16,
+        )
+    assert (reels_plan.width, reels_plan.height) == (1080, 1920)
+    divergence = semantic_differences(plan, reels_plan)
+    assert divergence == [], f"{filename}: Reels diverged semantically: {divergence[:5]}"
+
     runtime_asset_ids = {asset.id for asset in assets}
     beat_ids = {beat.id for beat in story}
     assert plan_path.is_file()
@@ -143,6 +166,7 @@ def certify_real_package_to_render_plan(
         story_beats=len(story),
         motion_cues=len(motion),
         plan_path=plan_path,
+        reels_plan_path=reels_plan_path,
     )
     _REAL_RESULT_CACHE[key] = result
     return result

@@ -58,15 +58,17 @@ class GenerationWorker(QObject):
     def run(self) -> None:
         try:
             pipeline = StoryEnginePipeline(self.settings)
-            output = pipeline.generate(
+            bundle = pipeline.generate_bundle(
                 package_path=self.package_path,
                 audio_path=self.audio_path,
                 job_id=self.report.job_id,
                 progress=self._on_progress,
                 cancelled=self.cancel_event.is_set,
             )
-            self.report.complete(output)
-            self.finished.emit(str(output))
+            for output in bundle.outputs.values():
+                self.report.on_progress(Stage.final, 1.0, f"{output.target_id}: {output.path}")
+            self.report.complete(bundle.youtube.path)
+            self.finished.emit(str(bundle.youtube.path))
         except GenerationCancelledError:
             self.report.cancel()
             self.cancelled.emit()
