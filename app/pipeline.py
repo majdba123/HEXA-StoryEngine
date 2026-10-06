@@ -238,8 +238,13 @@ class StoryEnginePipeline:
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.input, 0.005, "Checking export root")
+        if self.settings.export_root is None:
+            raise StageFailedError(
+                "production export root is not configured",
+                details={"code": "EXPORT_ROOT_UNAVAILABLE"},
+            )
         export_root = ExportRoot(
-            self.settings.resolved_export_root, min_free_bytes=self.settings.export_min_free_bytes,
+            self.settings.export_root, min_free_bytes=self.settings.export_min_free_bytes,
         ).validate()
         self._preflight(workspace, audio_path, progress, cancelled)
         self._require_free_space(self.settings.work_root, self.settings.work_min_free_bytes)

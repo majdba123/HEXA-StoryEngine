@@ -62,7 +62,7 @@ class Settings:
     semantic_text_model: str | None = None
     require_semantic_model: bool = False
     render_resources: RenderResourceSettings = field(default_factory=RenderResourceSettings.from_env)
-    # Production export bundles: <export_root>/<PACKAGE>/vN/. None -> <output_root>/exports.
+    # Production export bundles require an explicit <export_root>/<PACKAGE>/vN/.
     export_root: Path | None = None
     # Free space required before expensive work: dual-format finals on the export root,
     # beat segments + intermediates on the work root.
@@ -70,8 +70,8 @@ class Settings:
     work_min_free_bytes: int = 3 * _GIB
 
     @property
-    def resolved_export_root(self) -> Path:
-        return self.export_root if self.export_root is not None else self.output_root / "exports"
+    def resolved_export_root(self) -> Path | None:
+        return self.export_root
 
     @classmethod
     def from_env(cls) -> "Settings":

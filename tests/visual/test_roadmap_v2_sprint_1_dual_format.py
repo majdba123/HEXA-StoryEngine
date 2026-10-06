@@ -485,6 +485,27 @@ def test_unavailable_export_root_fails_before_work(bundle_run, tmp_path: Path) -
     assert not (tmp_path / "work" / "no-root" / "render-plan.json").exists()
 
 
+def test_missing_export_root_fails_before_planning_without_fallback(tmp_path: Path, monkeypatch) -> None:
+    from dataclasses import replace
+
+    settings = replace(_settings(tmp_path, tmp_path / "configured"), export_root=None)
+    pipeline = StoryEnginePipeline(settings)
+
+    def unexpected_plan(**kwargs):
+        pytest.fail("semantic planning started without a production export root")
+
+    monkeypatch.setattr(pipeline, "_plan_shared", unexpected_plan)
+    with pytest.raises(StageFailedError) as error:
+        pipeline.generate_bundle(
+            package_path=tmp_path / "package", audio_path=tmp_path / "voice.wav",
+            job_id="missing-root",
+        )
+    assert error.value.effective_code == "EXPORT_ROOT_UNAVAILABLE"
+    assert "not configured" in str(error.value)
+    assert not (settings.output_root / "exports").exists()
+    assert not (settings.work_root / "missing-root").exists()
+
+
 # -- resource control --------------------------------------------------------------------
 @by_target
 def test_sprint_5_1_worker_policy_applies_per_target(target_id: str) -> None:

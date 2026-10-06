@@ -178,4 +178,5 @@ def test_settings_resolve_export_root(tmp_path: Path, monkeypatch) -> None:
     assert Settings.from_env().resolved_export_root == tmp_path / "from-env"
     monkeypatch.setenv("HEXA_SETTINGS_FILE", str(tmp_path / "absent.json"))
     monkeypatch.delenv("HEXA_EXPORT_ROOT")
-    assert Settings.from_env().resolved_export_root == (tmp_path / "out").resolve() / "exports"
+    assert Settings.from_env().resolved_export_root is None
+    assert not ((tmp_path / "out").resolve() / "exports").exists()
