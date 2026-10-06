@@ -1249,6 +1249,7 @@ def test_filter_file_transport_does_not_change_export_quality_contract(tmp_path:
         frame_count=30,
     )
 
+    assert args[args.index("-filter_complex_threads") + 1] == "1"
     assert args[args.index("-c:v") + 1] == "libx264"
     assert args[args.index("-crf") + 1] == "18"
     assert args[args.index("-pix_fmt") + 1] == "yuv420p"

@@ -1378,6 +1378,8 @@ class FFmpegRenderer:
         filter_script = target.parent / f"{target.stem}-filter-complex.ffgraph"
         filter_script.write_text(";\n".join(filters) + "\n", encoding="utf-8")
         return [
+            "-filter_complex_threads",
+            "1",
             self._filter_complex_file_option(target.parent),
             str(filter_script),
             "-map",
