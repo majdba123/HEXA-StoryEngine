@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import threading
 import uuid
-from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
@@ -34,7 +33,8 @@ from app.shared.errors import GenerationCancelledError
 
 class GenerationWorker(QObject):
     progress = Signal(str, int, str)
-    finished = Signal(str)
+    # bundle directory, YouTube output, Reels output
+    finished = Signal(str, str, str)
     failed = Signal(str)
     cancelled = Signal()
     done = Signal()
@@ -68,7 +68,11 @@ class GenerationWorker(QObject):
             for output in bundle.outputs.values():
                 self.report.on_progress(Stage.final, 1.0, f"{output.target_id}: {output.path}")
             self.report.complete(bundle.youtube.path)
-            self.finished.emit(str(bundle.youtube.path))
+            self.finished.emit(
+                str(bundle.directory),
+                str(bundle.youtube.path),
+                str(bundle.reels.path),
+            )
         except GenerationCancelledError:
             self.report.cancel()
             self.cancelled.emit()
@@ -94,12 +98,18 @@ class MainWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: GenerationWorker | None = None
         self._report: BuildReportSession | None = None
-        self._result_path: Path | None = None
+        self._bundle_path: Path | None = None
+        self._youtube_path: Path | None = None
+        self._reels_path: Path | None = None
 
+        settings = Settings.from_env()
         self.package_edit = QLineEdit()
         self.audio_edit = QLineEdit()
-        self.output_edit = QLineEdit(str(Settings.from_env().output_root))
-        for edit in (self.package_edit, self.audio_edit, self.output_edit):
+        self.export_root_edit = QLineEdit(
+            str(settings.export_root) if settings.export_root is not None else "غير مضبوط"
+        )
+        self.export_root_edit.setReadOnly(True)
+        for edit in (self.package_edit, self.audio_edit, self.export_root_edit):
             edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
         self.progress_bar = QProgressBar()
@@ -111,17 +121,20 @@ class MainWindow(QMainWindow):
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
 
-        self.generate_button = QPushButton("توليد الفيديو")
+        self.generate_button = QPushButton("توليد YouTube + Reels")
         self.cancel_button = QPushButton("إلغاء")
         self.report_button = QPushButton("استخراج تقرير التشخيص")
-        self.open_video_button = QPushButton("فتح الفيديو")
+        self.open_youtube_button = QPushButton("فتح YouTube")
+        self.open_reels_button = QPushButton("فتح Reels")
         self.open_folder_button = QPushButton("فتح مجلد النتيجة")
+        self.open_export_root_button = QPushButton("فتح")
         self.open_log_button = QPushButton("فتح ملف السجل")
         self.clear_log_button = QPushButton("مسح اللوحة")
 
         self.cancel_button.setEnabled(False)
         self.report_button.setEnabled(False)
-        self.open_video_button.setEnabled(False)
+        self.open_youtube_button.setEnabled(False)
+        self.open_reels_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
         self.open_log_button.setEnabled(False)
 
@@ -139,7 +152,7 @@ class MainWindow(QMainWindow):
 
         root.addLayout(self._package_row())
         root.addLayout(self._file_row("الصوت", self.audio_edit, self._browse_audio))
-        root.addLayout(self._file_row("مجلد الحفظ", self.output_edit, self._browse_output))
+        root.addLayout(self._export_root_row())
 
         actions = QHBoxLayout()
         actions.addWidget(self.generate_button)
@@ -160,7 +173,8 @@ class MainWindow(QMainWindow):
         root.addWidget(log_box, 1)
 
         result_actions = QHBoxLayout()
-        result_actions.addWidget(self.open_video_button)
+        result_actions.addWidget(self.open_youtube_button)
+        result_actions.addWidget(self.open_reels_button)
         result_actions.addWidget(self.open_folder_button)
         result_actions.addWidget(self.report_button)
         root.addLayout(result_actions)
@@ -172,8 +186,10 @@ class MainWindow(QMainWindow):
         self.generate_button.clicked.connect(self._start_generation)
         self.cancel_button.clicked.connect(self._cancel_generation)
         self.report_button.clicked.connect(self._export_report)
-        self.open_video_button.clicked.connect(self._open_video)
+        self.open_youtube_button.clicked.connect(self._open_youtube)
+        self.open_reels_button.clicked.connect(self._open_reels)
         self.open_folder_button.clicked.connect(self._open_folder)
+        self.open_export_root_button.clicked.connect(self._open_export_root)
         self.open_log_button.clicked.connect(self._open_log)
         self.clear_log_button.clicked.connect(self.log_view.clear)
 
@@ -200,6 +216,14 @@ class MainWindow(QMainWindow):
         row.addWidget(button)
         return row
 
+    def _export_root_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        label = QLabel("مجلد التصدير")
+        row.addWidget(label)
+        row.addWidget(self.export_root_edit, 1)
+        row.addWidget(self.open_export_root_button)
+        return row
+
     def _browse_package_zip(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "اختر Final Package", "", "ZIP (*.zip)")
         if path:
@@ -220,16 +244,12 @@ class MainWindow(QMainWindow):
         if path:
             self.audio_edit.setText(path)
 
-    def _browse_output(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "اختر مجلد الحفظ")
-        if path:
-            self.output_edit.setText(path)
-
     @Slot()
     def _start_generation(self) -> None:
         package = Path(self.package_edit.text().strip()).expanduser()
         audio = Path(self.audio_edit.text().strip()).expanduser()
-        output = Path(self.output_edit.text().strip()).expanduser()
+        settings = Settings.from_env()
+        self._refresh_export_root(settings)
 
         if not package.exists():
             QMessageBox.warning(self, "HEXA", "اختر Final Package صالح.")
@@ -237,12 +257,14 @@ class MainWindow(QMainWindow):
         if not audio.is_file():
             QMessageBox.warning(self, "HEXA", "اختر ملف صوت صالح.")
             return
-        if not self.output_edit.text().strip():
-            QMessageBox.warning(self, "HEXA", "اختر مجلد الحفظ.")
+        if settings.export_root is None:
+            QMessageBox.warning(
+                self,
+                "HEXA",
+                "مجلد التصدير غير مضبوط.\n"
+                "اضبط export_root في hexa.settings.json أو HEXA_EXPORT_ROOT ثم أعد المحاولة.",
+            )
             return
-
-        output.mkdir(parents=True, exist_ok=True)
-        settings = replace(Settings.from_env(), output_root=output.resolve())
         job_id = uuid.uuid4().hex
         report = BuildReportSession(
             job_id=job_id,
@@ -271,14 +293,17 @@ class MainWindow(QMainWindow):
         self._thread = thread
         self._worker = worker
         self._report = report
-        self._result_path = None
+        self._bundle_path = None
+        self._youtube_path = None
+        self._reels_path = None
         self.log_view.clear()
         self.progress_bar.setValue(0)
         self.status_label.setText("بدء المعالجة...")
         self.generate_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.report_button.setEnabled(False)
-        self.open_video_button.setEnabled(False)
+        self.open_youtube_button.setEnabled(False)
+        self.open_reels_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
         self.open_log_button.setEnabled(True)
         self.log_view.append(f"LOG: {report.log_path}")
@@ -290,13 +315,18 @@ class MainWindow(QMainWindow):
         self.status_label.setText(message)
         self.log_view.append(f"[{percent:>3}%] {stage}: {message}")
 
-    @Slot(str)
-    def _on_finished(self, output_path: str) -> None:
-        self._result_path = Path(output_path)
+    @Slot(str, str, str)
+    def _on_finished(self, bundle_path: str, youtube_path: str, reels_path: str) -> None:
+        self._bundle_path = Path(bundle_path)
+        self._youtube_path = Path(youtube_path)
+        self._reels_path = Path(reels_path)
         self.progress_bar.setValue(100)
-        self.status_label.setText("تم توليد الفيديو بنجاح")
-        self.log_view.append(f"DONE: {output_path}")
-        self.open_video_button.setEnabled(True)
+        self.status_label.setText("تم توليد نسختي YouTube وReels بنجاح")
+        self.log_view.append(f"DONE YOUTUBE: {youtube_path}")
+        self.log_view.append(f"DONE REELS: {reels_path}")
+        self.log_view.append(f"BUNDLE: {bundle_path}")
+        self.open_youtube_button.setEnabled(True)
+        self.open_reels_button.setEnabled(True)
         self.open_folder_button.setEnabled(True)
         self.report_button.setEnabled(True)
 
@@ -336,7 +366,9 @@ class MainWindow(QMainWindow):
         if self._report is None:
             return
         default_name = f"HEXA-diagnostic-{self._report.job_id[:8]}.zip"
-        initial = Path(self.output_edit.text().strip() or ".") / default_name
+        settings = Settings.from_env()
+        initial_dir = self._bundle_path or settings.export_root or settings.output_root
+        initial = initial_dir / default_name
         path, _ = QFileDialog.getSaveFileName(
             self,
             "حفظ تقرير التشخيص",
@@ -354,15 +386,41 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "HEXA", f"تم حفظ التقرير:\n{exported}")
 
     @Slot()
-    def _open_video(self) -> None:
-        if self._result_path and self._result_path.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._result_path)))
+    def _open_youtube(self) -> None:
+        if self._youtube_path and self._youtube_path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._youtube_path)))
+
+    @Slot()
+    def _open_reels(self) -> None:
+        if self._reels_path and self._reels_path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._reels_path)))
 
     @Slot()
     def _open_folder(self) -> None:
-        target = self._result_path.parent if self._result_path else Path(self.output_edit.text().strip())
-        if target.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+        if self._bundle_path and self._bundle_path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._bundle_path)))
+
+    @Slot()
+    def _open_export_root(self) -> None:
+        settings = Settings.from_env()
+        self._refresh_export_root(settings)
+        if settings.export_root is None:
+            QMessageBox.warning(self, "HEXA", "مجلد التصدير غير مضبوط.")
+            return
+        target = settings.export_root.expanduser()
+        if not target.exists():
+            QMessageBox.information(
+                self,
+                "HEXA",
+                "مجلد التصدير لم يُنشأ بعد. سيتم إنشاؤه عند أول توليد ناجح.",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target.resolve())))
+
+    def _refresh_export_root(self, settings: Settings) -> None:
+        self.export_root_edit.setText(
+            str(settings.export_root) if settings.export_root is not None else "غير مضبوط"
+        )
 
     @Slot()
     def _open_log(self) -> None:
