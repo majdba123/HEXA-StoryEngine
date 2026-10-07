@@ -102,15 +102,35 @@ class TextRenderer:
             style = style_by_id.get(cue.style_id)
             style_name = self._ass_style_name(style.id if style else cue.semantic_type)
             rtl = self._contains_arabic(cue.text)
+            projection = plan.projection
+            geometry_plan = plan
+            geometry_item = item
+            if projection is not None:
+                geometry_plan = plan.model_copy(update={
+                    "width": projection.reference_width,
+                    "height": projection.reference_height,
+                    "projection": None,
+                })
+                geometry_item = item.model_copy(update={
+                    "x": (item.x * plan.width - projection.offset_x)
+                         / (projection.reference_width * projection.scale),
+                    "y": (item.y * plan.height - projection.offset_y)
+                         / (projection.reference_height * projection.scale),
+                    "max_width": item.max_width * plan.width
+                                 / (projection.reference_width * projection.scale),
+                })
             x, y, safe_scale = self._safe_text_geometry(
-                plan=plan,
+                plan=geometry_plan,
                 cue_text=cue.text,
                 semantic_type=cue.semantic_type,
                 style_id=style.id if style else cue.style_id,
-                item=item,
+                item=geometry_item,
                 rtl=rtl,
                 entry_strength=float(motion.params.get("entry_strength", 0.0)),
             )
+            if projection is not None:
+                x = round(projection.offset_x + x * projection.scale)
+                y = round(projection.offset_y + y * projection.scale)
             events.extend(self._cue_events(
                 cue_text=cue.text,
                 motion=motion,
@@ -120,6 +140,7 @@ class TextRenderer:
                 y=y,
                 rtl=rtl,
                 font_scale=safe_scale,
+                pixel_scale=projection.scale if projection else 1.0,
                 segment_start=segment_start,
                 duration=duration,
             ))
@@ -136,6 +157,7 @@ class TextRenderer:
         y: int,
         rtl: bool,
         font_scale: float,
+        pixel_scale: float = 1.0,
         segment_start: float,
         duration: float,
     ) -> list[str]:
@@ -157,6 +179,7 @@ class TextRenderer:
                 rtl=rtl,
                 first=True,
                 font_scale=font_scale,
+                pixel_scale=pixel_scale,
                 entry_strength=float(motion.params.get("entry_strength", 0.0)),
                 entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
             )
@@ -186,6 +209,7 @@ class TextRenderer:
                 rtl=rtl,
                 first=index == 0,
                 font_scale=font_scale,
+                pixel_scale=pixel_scale,
                 entry_strength=float(motion.params.get("entry_strength", 0.0)),
                 entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
             )
@@ -274,6 +298,7 @@ class TextRenderer:
         rtl: bool,
         first: bool,
         font_scale: float = 1.0,
+        pixel_scale: float = 1.0,
         entry_strength: float = 0.0,
         entry_duration_ms: int = 165,
     ) -> str:
@@ -285,45 +310,36 @@ class TextRenderer:
             # gesture more decisive, but the final anchor/font/style stay unchanged and
             # there is never a post-arrival bounce.
             strength = max(0.0, min(1.0, float(entry_strength)))
-            horizontal = 14 + round(10 * strength)
-            vertical = 10 + round(5 * strength)
+            horizontal = round((14 + round(10 * strength)) * pixel_scale)
+            vertical = round((10 + round(5 * strength)) * pixel_scale)
             direction = horizontal if rtl else -horizontal
             duration = max(130, min(240, int(entry_duration_ms)))
             fade = max(45, min(65, round(65 - 15 * strength)))
             return (
                 f"\\an{alignment}{size_tag}\\move("
                 f"{x + direction},{y + vertical},{x},{y},0,{duration})"
-                f"\\fad({fade},0)\\blur0.35"
+                f"\\fad({fade},0)\\blur{0.35 if pixel_scale == 1.0 else round(0.35 * pixel_scale, 3)}"
             )
-        return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur0.25"
+        blur = 0.25 if pixel_scale == 1.0 else round(0.25 * pixel_scale, 3)
+        return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur{blur}"
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme
+        pixel_scale = plan.projection.scale if plan.projection else 1.0
+        def style(name: str, color: str, size: int, outline: float) -> str:
+            return self._style_line(
+                name, color, max(1, round(size * pixel_scale)),
+                outline_color=theme.dark_outline,
+                outline=outline * pixel_scale,
+                shadow=1.2 * pixel_scale,
+            )
         styles = [
-            self._style_line(
-                "Keyword", theme.primary, 158, outline_color=theme.dark_outline,
-                outline=8.0, shadow=1.2,
-            ),
-            self._style_line(
-                "Number", theme.gold, 188, outline_color=theme.dark_outline,
-                outline=9.5, shadow=1.2,
-            ),
-            self._style_line(
-                "Amount", theme.accent, 188, outline_color=theme.dark_outline,
-                outline=9.5, shadow=1.2,
-            ),
-            self._style_line(
-                "WarningAmount", theme.warning, 194, outline_color=theme.dark_outline,
-                outline=9.8, shadow=1.2,
-            ),
-            self._style_line(
-                "Warning", theme.warning, 188, outline_color=theme.dark_outline,
-                outline=9.5, shadow=1.2,
-            ),
-            self._style_line(
-                "Emphasis", theme.accent, 178, outline_color=theme.dark_outline,
-                outline=9.0, shadow=1.2,
-            ),
+            style("Keyword", theme.primary, 158, 8.0),
+            style("Number", theme.gold, 188, 9.5),
+            style("Amount", theme.accent, 188, 9.5),
+            style("WarningAmount", theme.warning, 194, 9.8),
+            style("Warning", theme.warning, 188, 9.5),
+            style("Emphasis", theme.accent, 178, 9.0),
         ]
         return "\n".join([
             "[Script Info]",

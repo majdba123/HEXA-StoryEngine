@@ -1,6 +1,7 @@
 """Output-format targets of the single shared visual engine.
 
-A target owns frame facts (size, fps, safe zones) and its spatial projection policy.
+A target owns frame facts (size, fps, safe zones). Production Reels projects the
+finished YouTube visual plan with one uniform transform.
 Story, Choreography, Motion grammar, Text selection and the renderer stay shared.
 """
 

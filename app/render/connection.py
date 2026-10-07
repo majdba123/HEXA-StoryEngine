@@ -36,6 +36,7 @@ def connection_specs(
     cues: dict[str, MotionCue],
     segment_start: float,
     duration: float,
+    spatial_scale: float = 1.0,
 ) -> list[ConnectionSpec]:
     """Plan visible connections from Motion segments that carry an authored relation.
 
@@ -70,7 +71,8 @@ def connection_specs(
                 rect for asset_id, rect in items.items()
                 if asset_id not in {source_id, target_id}
             ]
-            points = _endpoints(items[source_id], items[target_id], others)
+            points = _endpoints(items[source_id], items[target_id], others,
+                                spatial_scale=spatial_scale)
             if points is None:
                 continue
             seen.add((source_id, target_id))
@@ -78,20 +80,22 @@ def connection_specs(
     return specs
 
 
-def draw_connection(spec: ConnectionSpec, size: tuple[int, int], path: Path) -> Path:
+def draw_connection(spec: ConnectionSpec, size: tuple[int, int], path: Path, *,
+                    spatial_scale: float = 1.0) -> Path:
     """Write one transparent full-frame PNG holding the arrow (supersampled for AA)."""
     scale = _SUPERSAMPLE
     canvas = Image.new("RGBA", (size[0] * scale, size[1] * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     (x0, y0), (x1, y1) = spec.p0, spec.p1
     angle = atan2(y1 - y0, x1 - x0)
-    base = (x1 - cos(angle) * _HEAD_LENGTH_PX, y1 - sin(angle) * _HEAD_LENGTH_PX)
+    base = (x1 - cos(angle) * _HEAD_LENGTH_PX * spatial_scale,
+            y1 - sin(angle) * _HEAD_LENGTH_PX * spatial_scale)
     draw.line(
         [(x0 * scale, y0 * scale), (base[0] * scale, base[1] * scale)],
-        fill=_INK, width=_LINE_PX * scale,
+        fill=_INK, width=max(1, round(_LINE_PX * spatial_scale * scale)),
     )
     for cx, cy in ((x0, y0), base):
-        radius = _LINE_PX * scale / 2.0
+        radius = _LINE_PX * spatial_scale * scale / 2.0
         draw.ellipse(
             [cx * scale - radius, cy * scale - radius, cx * scale + radius, cy * scale + radius],
             fill=_INK,
@@ -99,8 +103,10 @@ def draw_connection(spec: ConnectionSpec, size: tuple[int, int], path: Path) -> 
     nx, ny = -sin(angle), cos(angle)
     head = [
         (x1 * scale, y1 * scale),
-        ((base[0] + nx * _HEAD_HALF_WIDTH_PX) * scale, (base[1] + ny * _HEAD_HALF_WIDTH_PX) * scale),
-        ((base[0] - nx * _HEAD_HALF_WIDTH_PX) * scale, (base[1] - ny * _HEAD_HALF_WIDTH_PX) * scale),
+        ((base[0] + nx * _HEAD_HALF_WIDTH_PX * spatial_scale) * scale,
+         (base[1] + ny * _HEAD_HALF_WIDTH_PX * spatial_scale) * scale),
+        ((base[0] - nx * _HEAD_HALF_WIDTH_PX * spatial_scale) * scale,
+         (base[1] - ny * _HEAD_HALF_WIDTH_PX * spatial_scale) * scale),
     ]
     draw.polygon(head, fill=_INK)
     path.parent.mkdir(parents=True, exist_ok=True)

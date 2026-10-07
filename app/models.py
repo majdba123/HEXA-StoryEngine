@@ -443,6 +443,14 @@ class SceneBoundaryRelease(BaseModel):
     audit: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlanProjection(BaseModel):
+    reference_width: int
+    reference_height: int
+    scale: float
+    offset_x: float
+    offset_y: float
+
+
 class RenderPlan(BaseModel):
     # Output format this plan was authored for (app.targets registry id).
     target_id: str = "YOUTUBE_16_9"
@@ -458,6 +466,7 @@ class RenderPlan(BaseModel):
     text_composition: list[TextCompositionBeat] = Field(default_factory=list)
     text_motion: list[TextMotionCue] = Field(default_factory=list)
     scene_boundaries: list[SceneBoundaryRelease] = Field(default_factory=list)
+    projection: PlanProjection | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class JobRequest(BaseModel):

@@ -373,12 +373,14 @@ class FFmpegRenderer:
             },
             segment_start=segment_start,
             duration=duration,
+            spatial_scale=plan.projection.scale if plan.projection else 1.0,
         )
         connection_inputs = len(ordered_items) + len(outgoing_items)
         for connection_index, connection in enumerate(connections):
             png = draw_connection(
                 connection, (plan.width, plan.height),
                 target.parent / f"{target.stem}-connection-{connection_index}.png",
+                spatial_scale=plan.projection.scale if plan.projection else 1.0,
             )
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(png)])
 
@@ -441,7 +443,9 @@ class FFmpegRenderer:
             if transition.mode == SceneTransitionMode.BLUR_BRIDGE:
                 filters.append(f"[{old_label}]split=2[oldcrisp][oldblurbase]")
                 filters.append(
-                    f"[oldblurbase]gblur=sigma={transition.blur_sigma:.3f}:steps=2[oldfx]"
+                    f"[oldblurbase]gblur=sigma="
+                    f"{transition.blur_sigma * (plan.projection.scale if plan.projection else 1.0):.3f}:"
+                    "steps=2[oldfx]"
                 )
                 filters.append(
                     f"[{composite_label}][oldcrisp]overlay=x=0:y=0:"
@@ -588,17 +592,29 @@ class FFmpegRenderer:
                     x_expr = f"({x_expr})+({box_w}-overlay_w)/2"
                     y_expr = f"({y_expr})+({box_h}-overlay_h)/2"
             elif kind == "handoff_in":
-                x_expr = self._entry_expression(target_x, start, end, offset=58)
+                x_expr = self._entry_expression(
+                    target_x, start, end,
+                    offset=round(58 * (plan.projection.scale if plan.projection else 1.0)),
+                )
                 y_expr = str(target_y)
             elif kind == "emphasis_in":
                 x_expr = str(target_x)
-                y_expr = self._entry_expression(target_y, start, end, offset=20)
+                y_expr = self._entry_expression(
+                    target_y, start, end,
+                    offset=round(20 * (plan.projection.scale if plan.projection else 1.0)),
+                )
             elif kind == "soft_in":
                 x_expr = str(target_x)
-                y_expr = self._entry_expression(target_y, start, end, offset=12)
+                y_expr = self._entry_expression(
+                    target_y, start, end,
+                    offset=round(12 * (plan.projection.scale if plan.projection else 1.0)),
+                )
             else:
                 x_expr = str(target_x)
-                y_expr = self._entry_expression(target_y, start, end, offset=30)
+                y_expr = self._entry_expression(
+                    target_y, start, end,
+                    offset=round(30 * (plan.projection.scale if plan.projection else 1.0)),
+                )
 
             next_label = f"mix{layer_index}"
             # Semantic visibility is authoritative: every non-persistent asset stays
@@ -714,6 +730,26 @@ class FFmpegRenderer:
         target_item=None,
     ) -> tuple[int, int]:
         """Give outgoing artwork a readable directional exit before scene replacement."""
+        if plan.projection is not None:
+            projection = plan.projection
+            def inverse(row):
+                if row is None:
+                    return None
+                return row.model_copy(update={
+                    "x": (row.x * plan.width - projection.offset_x)
+                         / (projection.reference_width * projection.scale),
+                    "y": (row.y * plan.height - projection.offset_y)
+                         / (projection.reference_height * projection.scale),
+                })
+            reference = plan.model_copy(update={
+                "width": projection.reference_width,
+                "height": projection.reference_height,
+                "projection": None,
+            })
+            dx, dy = FFmpegRenderer._bridge_exit_offset(
+                plan=reference, item=inverse(item), mode=mode, target_item=inverse(target_item),
+            )
+            return round(dx * projection.scale), round(dy * projection.scale)
         if mode == SceneTransitionMode.OBJECT_HANDOFF and target_item is not None:
             raw_dx = round((float(target_item.x) - float(item.x)) * plan.width * 0.55)
             raw_dy = round((float(target_item.y) - float(item.y)) * plan.height * 0.55)

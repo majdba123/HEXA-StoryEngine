@@ -23,7 +23,7 @@ def target_by_id(target_id: str) -> VisualTargetProfile:
 
 
 def composition_policy(target: VisualTargetProfile) -> TargetCompositionPolicy:
-    """The spatial authoring policy of one target (the only target-specific Composition)."""
+    """Legacy spatial authoring policy; projected targets use ReferencePlanProjector."""
     if target.layout_policy == "authored_reference":
         from app.targets.youtube.composition import YouTubeCompositionPolicy
 

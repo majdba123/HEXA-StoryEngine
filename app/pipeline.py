@@ -47,6 +47,7 @@ from app.targets import (
     visual_target,
 )
 from app.targets.parity import fingerprint, plan_fingerprint, semantic_differences
+from app.targets.projection import ReferencePlanProjector
 from app.text import TextPlanner
 from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
@@ -163,6 +164,7 @@ class StoryEnginePipeline:
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
         self.render_planner = RenderPlanner()
+        self.reference_projector = ReferencePlanProjector()
         self.renderer = FFmpegRenderer(
             self.settings.ffmpeg_bin, resources=self.settings.render_resources,
             defer_cleanup=True,
@@ -221,7 +223,8 @@ class StoryEnginePipeline:
         """One Final Package -> every supported format, published as ``<root>/<PKG>/vN``.
 
         Expensive semantic stages (alignment, Vision, Pass1/Pass2, Story, Choreography,
-        Text selection) run once. Each target then authors its own geometry through the
+        Text selection) run once. The reference target authors the visual edit; other
+        targets project its completed RenderPlan through one geometric transform.
         same Composition/Motion/Text/Boundary engines and renders its own RenderPlan
         sequentially. The bundle is published only after every output rendered and
         passed encoded-motion and final-media verification and the manifest is written.
@@ -265,13 +268,13 @@ class StoryEnginePipeline:
             target_ws = self._target_workspace(workspace, target)
             workspaces[target.target_id] = target_ws
             reference = plans.get(REFERENCE_TARGET.target_id)
-            plans[target.target_id] = self._plan_target(
-                shared, target, target_ws, progress=progress, cancelled=cancelled,
-                span=(0.46 + 0.04 * index, 0.50 + 0.04 * index),
-                semantic_reference=(
-                    MotionSemanticReference.from_plan(reference) if reference is not None else None
-                ),
-            )
+            if reference is None:
+                plans[target.target_id] = self._plan_target(
+                    shared, target, target_ws, progress=progress, cancelled=cancelled,
+                    span=(0.46 + 0.04 * index, 0.50 + 0.04 * index),
+                )
+            else:
+                plans[target.target_id] = self.reference_projector.project(reference, target, target_ws)
             plan_seconds[target.target_id] = time.perf_counter() - begin
         reference_plan = plans[REFERENCE_TARGET.target_id]
         for target in targets[1:]:

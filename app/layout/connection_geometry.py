@@ -12,7 +12,7 @@ def center(rect: Rect) -> tuple[float, float]:
     return (rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0
 
 
-def exit_point(rect: Rect, origin: tuple[float, float], direction: tuple[float, float]):
+def exit_point(rect: Rect, origin: tuple[float, float], direction: tuple[float, float], *, gap_px: float = GAP_PX):
     """Where a ray from the rect centre leaves the rect, pushed out by the gap."""
     half_w, half_h = (rect[2] - rect[0]) / 2.0, (rect[3] - rect[1]) / 2.0
     dx, dy = direction
@@ -20,10 +20,11 @@ def exit_point(rect: Rect, origin: tuple[float, float], direction: tuple[float, 
         half_w / abs(dx) if abs(dx) > 1e-9 else float("inf"),
         half_h / abs(dy) if abs(dy) > 1e-9 else float("inf"),
     )
-    return origin[0] + dx * (scale + GAP_PX), origin[1] + dy * (scale + GAP_PX)
+    return origin[0] + dx * (scale + gap_px), origin[1] + dy * (scale + gap_px)
 
 
-def connector_endpoints(source: Rect, target: Rect, others: list[Rect]):
+def connector_endpoints(source: Rect, target: Rect, others: list[Rect], *,
+                        spatial_scale: float = 1.0):
     """Arrow endpoints between two boxes, or None when too short, inverted or crossing."""
     sx, sy = center(source)
     tx, ty = center(target)
@@ -31,9 +32,9 @@ def connector_endpoints(source: Rect, target: Rect, others: list[Rect]):
     if length < 1e-6:
         return None
     ux, uy = (tx - sx) / length, (ty - sy) / length
-    p0 = exit_point(source, (sx, sy), (ux, uy))
-    p1 = exit_point(target, (tx, ty), (-ux, -uy))
-    if hypot(p1[0] - p0[0], p1[1] - p0[1]) < MIN_LENGTH_PX:
+    p0 = exit_point(source, (sx, sy), (ux, uy), gap_px=GAP_PX * spatial_scale)
+    p1 = exit_point(target, (tx, ty), (-ux, -uy), gap_px=GAP_PX * spatial_scale)
+    if hypot(p1[0] - p0[0], p1[1] - p0[1]) < MIN_LENGTH_PX * spatial_scale:
         return None
     # The segment must leave source and enter target in order (no overlap inversion).
     if (p1[0] - p0[0]) * ux + (p1[1] - p0[1]) * uy <= 0.0:

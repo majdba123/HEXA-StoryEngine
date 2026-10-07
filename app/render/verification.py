@@ -136,6 +136,25 @@ class EncodedMotionVerifier:
                 if segment.phase not in self._PHASES:
                     continue
                 duration = max(1e-6, float(segment.end) - float(segment.start))
+                # A projected target deliberately shrinks the complete reference edit.
+                # Authoring floors and comfort limits still belong to the reference
+                # coordinate system; encoded evidence is inspected in target pixels.
+                reference_segment = segment
+                reference_width, reference_height = plan.width, plan.height
+                reference_item_width, reference_item_height = item.width, item.height
+                projection_scale = 1.0
+                if plan.projection is not None:
+                    projection = plan.projection
+                    projection_scale = projection.scale
+                    x_factor = projection.reference_width * projection.scale / plan.width
+                    y_factor = projection.reference_height * projection.scale / plan.height
+                    reference_width, reference_height = projection.reference_width, projection.reference_height
+                    reference_item_width = item.width / x_factor
+                    reference_item_height = item.height / y_factor
+                    reference_segment = segment.model_copy(deep=True)
+                    for frame in reference_segment.program.get("keyframes", []):
+                        frame["dx"] = float(frame.get("dx", 0.0)) / x_factor
+                        frame["dy"] = float(frame.get("dy", 0.0)) / y_factor
                 expected_px, peak_progress = self._expected_activity_px(
                     segment,
                     width=plan.width,
@@ -184,14 +203,14 @@ class EncodedMotionVerifier:
 
                 if enforce_floor and segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
                     normalized_activity = self._expected_activity_normalized(
-                        segment,
-                        item_width=item.width,
-                        item_height=item.height,
+                        reference_segment,
+                        item_width=reference_item_width,
+                        item_height=reference_item_height,
                     )
                     normalized_floor = semantic_readability_floor(
                         segment.phase,
-                        item_width=item.width,
-                        item_height=item.height,
+                        item_width=reference_item_width,
+                        item_height=reference_item_height,
                         duration=readability_duration,
                     )
                     if normalized_activity + 1e-9 < normalized_floor:
@@ -209,12 +228,12 @@ class EncodedMotionVerifier:
                 elif enforce_floor:
                     floor_px = self._perceptual_floor_px(
                         phase=segment.phase,
-                        width=plan.width,
-                        item_width=item.width,
-                        item_height=item.height,
-                        height=plan.height,
+                        width=reference_width,
+                        item_width=reference_item_width,
+                        item_height=reference_item_height,
+                        height=reference_height,
                         duration=readability_duration,
-                    )
+                    ) * projection_scale
                     if expected_px + 1e-6 < floor_px:
                         violations.append(RenderedMotionViolation(
                             code="MOTION_BELOW_PERCEPTUAL_FLOOR",
@@ -230,10 +249,10 @@ class EncodedMotionVerifier:
 
                 if enforce_speed:
                     normalized_speed = self._max_normalized_keyframe_speed(
-                        segment,
+                        reference_segment,
                         duration=duration,
-                        item_width=item.width,
-                        item_height=item.height,
+                        item_width=reference_item_width,
+                        item_height=reference_item_height,
                     )
                     speed_limit = motion_comfort(segment.phase).max_normalized_speed * 1.08
                     if normalized_speed > speed_limit + 1e-6:
@@ -250,7 +269,7 @@ class EncodedMotionVerifier:
                         continue
 
                 if qa_base_entry and expected_px > 1e-6:
-                    floor_px = encoded_motion_renderability_floor_px()
+                    floor_px = encoded_motion_renderability_floor_px() * projection_scale
                     if expected_px + 1e-6 < floor_px:
                         violations.append(RenderedMotionViolation(
                             code="MOTION_BELOW_RENDERABLE_FLOOR",

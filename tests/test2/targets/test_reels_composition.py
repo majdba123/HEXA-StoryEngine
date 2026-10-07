@@ -1,6 +1,7 @@
-"""Reels responsive projection: reflow, never crop, stretch or reinterpret semantics."""
+"""Retained legacy reflow policy; production Reels uses reference projection."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,11 @@ from app.targets.reels.composition import REFLOW_PLACEMENT_SOURCE
 from app.targets.reels.safe_zones import REELS_ART_REGION
 
 W, H = REELS_9_16.frame
+LEGACY_REFLOW = replace(
+    REELS_9_16, layout_policy="responsive_portrait",
+    layout_options={"contact_px": 0.0, "gap_px": 64.0,
+                    "related_gap_px": 120.0, "max_scale": 1.0},
+)
 
 
 def _asset(tmp: Path, asset_id: str, *, family: str | None = None) -> VisualAsset:
@@ -66,7 +72,7 @@ def test_youtube_projection_is_identity(scene) -> None:
 
 def test_reels_reflow_keeps_aspect_scale_order_and_safety(scene) -> None:
     assets, items = scene
-    out = composition_policy(REELS_9_16).project(items, assets, [])
+    out = composition_policy(LEGACY_REFLOW).project(items, assets, [])
     assert [row.asset_id for row in out.items] == ["a", "b", "c"]
     by_id = {row.asset_id: row for row in out.items}
     scales = []
@@ -96,13 +102,13 @@ def test_reels_reflow_keeps_aspect_scale_order_and_safety(scene) -> None:
 
 def test_reflow_is_deterministic(scene) -> None:
     assets, items = scene
-    policy = composition_policy(REELS_9_16)
+    policy = composition_policy(LEGACY_REFLOW)
     assert policy.project(items, assets, []).items == policy.project(list(items), assets, []).items
 
 
 def test_relation_topology_orders_source_before_target(scene) -> None:
     assets, items = scene
-    out = composition_policy(REELS_9_16).project(items, assets, [_relation("c", "a")])
+    out = composition_policy(LEGACY_REFLOW).project(items, assets, [_relation("c", "a")])
     by_id = {row.asset_id: row for row in out.items}
     # The authored source is never placed below its target in the portrait stack.
     assert by_id["c"].y <= by_id["a"].y + 1e-9
@@ -121,7 +127,7 @@ def test_pass2_family_and_contact_cluster_move_rigidly(tmp_path: Path) -> None:
         _item("hand", 0.43, 0.60, 0.10, 0.12),
         _item("far", 0.80, 0.50, 0.15, 0.30),
     ]
-    out = {row.asset_id: row for row in composition_policy(REELS_9_16).project(items, assets, []).items}
+    out = {row.asset_id: row for row in composition_policy(LEGACY_REFLOW).project(items, assets, []).items}
     ref = {row.asset_id: row for row in items}
 
     def offset(a: str, b: str, src: dict) -> tuple[float, float]:
@@ -146,7 +152,7 @@ def test_composition_planner_projects_on_the_active_target(scene) -> None:
                      primary_asset_ids=["a"], support_asset_ids=["b", "c"])
     planner = CompositionPlanner()
     youtube = planner.plan([beat], assets)
-    with visual_target(REELS_9_16):
+    with visual_target(LEGACY_REFLOW):
         reels = planner.plan([beat], assets)
     assert {i.asset_id for i in youtube[0].items} == {i.asset_id for i in reels[0].items}
     assert all(i.placement_source == "authored_scene_geometry" for i in youtube[0].items)

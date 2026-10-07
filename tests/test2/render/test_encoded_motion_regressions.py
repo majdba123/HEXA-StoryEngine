@@ -31,6 +31,8 @@ from app.motion.timing import (
 )
 from app.render.verification import EncodedMotionVerifier as RenderedMotionQA
 from app.render.renderer import FFmpegRenderer
+from app.targets.projection import ReferencePlanProjector
+from app.targets.reels.profile import REELS_9_16
 
 
 def _asset(path: Path) -> None:
@@ -127,6 +129,34 @@ def test_rendered_motion_qa_proves_encoded_semantic_segment_is_active(tmp_path: 
 
     assert report.ok, report.violations
     assert report.checked_segments == 1
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_projected_motion_uses_reference_floor_and_checks_encoded_activity(tmp_path: Path) -> None:
+    asset = tmp_path / "asset.png"
+    _asset(asset)
+    reference = _plan(asset, rendered_segment=True).model_copy(update={"width": 1920, "height": 1080})
+    projected = ReferencePlanProjector().project(reference, REELS_9_16, tmp_path / "projected")
+    video = tmp_path / "projected.mp4"
+    FFmpegRenderer("ffmpeg").render(projected, video)
+
+    report = RenderedMotionQA().inspect(video=video, plan=projected)
+
+    assert report.ok, report.violations
+    assert report.checked_segments == 1
+
+    cue = reference.motion[0]
+    weak = cue.segments[0].model_copy(update={"program": _program(dx=0.005)})
+    weak_reference = reference.model_copy(update={
+        "motion": [cue.model_copy(update={"segments": [weak]})],
+    })
+    weak_projected = ReferencePlanProjector().project(
+        weak_reference, REELS_9_16, tmp_path / "weak-projected",
+    )
+    weak_video = tmp_path / "weak-projected.mp4"
+    FFmpegRenderer("ffmpeg").render(weak_projected, weak_video)
+    weak_report = RenderedMotionQA().inspect(video=weak_video, plan=weak_projected)
+    assert any(row.code == "MOTION_BELOW_PERCEPTUAL_FLOOR" for row in weak_report.violations)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")

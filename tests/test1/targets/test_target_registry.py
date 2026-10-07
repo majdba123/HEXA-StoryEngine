@@ -101,8 +101,7 @@ def test_active_target_scope_defaults_to_reference_and_restores() -> None:
     assert active_target() is YOUTUBE_16_9
 
 
-@pytest.mark.parametrize("target", SUPPORTED_VISUAL_TARGETS, ids=lambda t: t.target_id)
-def test_every_target_has_a_composition_policy(target: VisualTargetProfile) -> None:
-    policy = composition_policy(target)
-    assert hasattr(policy, "project")
-    assert policy.project([], [], []).items == []
+def test_reference_has_a_composition_policy_and_reels_requires_projection() -> None:
+    assert composition_policy(YOUTUBE_16_9).project([], [], []).items == []
+    with pytest.raises(ValueError, match="unsupported layout policy"):
+        composition_policy(REELS_9_16)

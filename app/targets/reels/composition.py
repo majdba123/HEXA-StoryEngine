@@ -31,6 +31,7 @@ class _Arrangement:
 
 
 class ReelsCompositionPolicy:
+    """Legacy responsive reflow, retained for historical tests; never used by production Reels."""
     """Responsive 9:16 projection of one authored scene; no new semantics, no cropping.
 
     The authored 16:9 layout (Final Package geometry, already contain-fit by the shared

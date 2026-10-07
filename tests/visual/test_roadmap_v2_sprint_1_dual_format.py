@@ -1,10 +1,9 @@
-"""Roadmap V2 Sprint 1 - one visual engine, two output formats (permanent gate).
+"""Roadmap V2 Sprint 1.1 - one YouTube edit, uniformly projected to Reels.
 
 One Final Package generation produces YOUTUBE_16_9 (1920x1080) and REELS_9_16
 (1080x1920) through the same Story, Choreography, Composition, Motion, Text, Boundary
-and Render engines. Only spatial geometry may differ: the target profile owns frame
-size and safe zones, and Composition projects the authored scene onto the target
-(identity for YouTube, responsive reflow for Reels). Semantics, narration timing, text
+and Render engines. Reels projects the finished reference RenderPlan with one affine
+transform. Semantics, narration timing, text
 wording/timing/ownership and Motion grammar are identical. Every target-sensitive check
 here parameterizes over ``SUPPORTED_VISUAL_TARGETS`` so a future change to any shared
 visual layer is exercised against every format automatically.
@@ -26,6 +25,7 @@ from PIL import Image, ImageDraw
 from app.config import RenderResourceSettings, Settings
 from app.final.bundle import INCOMPLETE_MARKER, ExportBundleWriter
 from app.layout.footprint import AlphaFootprintResolver
+from app.render.connection import connection_specs
 from app.models import RenderPlan
 from app.pipeline import StoryEnginePipeline
 from app.render.renderer import FFmpegRenderer
@@ -33,6 +33,7 @@ from app.render.resources import RenderConcurrencyPolicy
 from app.shared.errors import GenerationCancelledError, StageFailedError
 from app.targets import (
     REFERENCE_TARGET,
+    REELS_9_16,
     SUPPORTED_VISUAL_TARGETS,
     YOUTUBE_16_9,
     VisualTargetProfile,
@@ -261,19 +262,115 @@ def test_target_geometry_is_valid(bundle_run, target_id: str) -> None:
 
 
 @needs_ffmpeg
-def test_reels_is_a_reflow_not_a_crop_or_letterbox(bundle_run) -> None:
+def test_reels_is_exact_uniform_reference_projection(bundle_run) -> None:
     youtube, reels = bundle_run["plans"]["YOUTUBE_16_9"], bundle_run["plans"]["REELS_9_16"]
-    scene_one = next(b for b in reels.composition if b.items and b.items[0].asset_id.startswith("s1"))
-    ys = sorted(item.y for item in scene_one.items)
-    assert ys[-1] - ys[0] > 0.12  # the horizontal authored row became a vertical stack
-    yt_layout = next(b for b in youtube.composition if b.beat_id == scene_one.beat_id)
-    for item in scene_one.items:
-        ref = next(i for i in yt_layout.items if i.asset_id == item.asset_id)
-        assert (item.width * 1080) / (item.height * 1920) == pytest.approx(
-            (ref.width * 1920) / (ref.height * 1080), rel=1e-9)
-        assert item.placement_source == "authored_target_reflow"
+    projection = reels.projection
+    assert youtube.projection is None and projection is not None
+    safe = REELS_9_16.safe_zones.content
+    expected_scale = min(safe.width * 1080 / 1920, safe.height * 1920 / 1080)
+    assert projection.scale == pytest.approx(expected_scale, abs=1e-12)
+    assert projection.offset_x == pytest.approx(
+        safe.left * 1080 + (safe.width * 1080 - 1920 * expected_scale) / 2, abs=1e-9)
+    assert projection.offset_y == pytest.approx(
+        safe.top * 1920 + (safe.height * 1920 - 1080 * expected_scale) / 2, abs=1e-9)
+    for reference_beat, target_beat in zip(youtube.composition, reels.composition):
+        assert reference_beat.beat_id == target_beat.beat_id
+        assert reference_beat.semantic_focus_asset_id == target_beat.semantic_focus_asset_id
+        assert [item.asset_id for item in reference_beat.items] == [item.asset_id for item in target_beat.items]
+        for ref, item in zip(reference_beat.items, target_beat.items):
+            assert item.x * 1080 == pytest.approx(projection.offset_x + ref.x * 1920 * expected_scale, abs=1e-7)
+            assert item.y * 1920 == pytest.approx(projection.offset_y + ref.y * 1080 * expected_scale, abs=1e-7)
+            assert item.width * 1080 == pytest.approx(ref.width * 1920 * expected_scale, abs=1e-7)
+            assert item.height * 1920 == pytest.approx(ref.height * 1080 * expected_scale, abs=1e-7)
+            assert item.z == ref.z and item.placement_source == "projected_reference"
+        for index, a in enumerate(reference_beat.items):
+            for j, b in enumerate(reference_beat.items[index + 1:], start=index + 1):
+                ra, rb = target_beat.items[index], target_beat.items[j]
+                for axis in ("x", "y"):
+                    delta = getattr(a, axis) - getattr(b, axis)
+                    projected_delta = getattr(ra, axis) - getattr(rb, axis)
+                    assert np.sign(delta) == np.sign(projected_delta)
+                source_distance = np.hypot((a.x - b.x) * 1920, (a.y - b.y) * 1080)
+                target_distance = np.hypot((ra.x - rb.x) * 1080, (ra.y - rb.y) * 1920)
+                assert target_distance == pytest.approx(source_distance * expected_scale, abs=1e-7)
+                assert (ra.width / rb.width) == pytest.approx(a.width / b.width, abs=1e-9)
+    assert reels.scene_boundaries == youtube.scene_boundaries
+    assert reels.text == youtube.text and reels.text_motion == youtube.text_motion
+    for reference_beat, target_beat in zip(youtube.text_composition, reels.text_composition):
+        assert reference_beat.beat_id == target_beat.beat_id
+        for ref, item in zip(reference_beat.items, target_beat.items):
+            assert item.text_cue_id == ref.text_cue_id and item.anchor_asset_id == ref.anchor_asset_id
+            assert item.x * 1080 == pytest.approx(projection.offset_x + ref.x * 1920 * expected_scale, abs=1e-7)
+            assert item.y * 1920 == pytest.approx(projection.offset_y + ref.y * 1080 * expected_scale, abs=1e-7)
+            assert item.max_width * 1080 == pytest.approx(ref.max_width * 1920 * expected_scale, abs=1e-7)
+            assert item.font_scale == ref.font_scale and item.z == ref.z
+    for ref, cue in zip(youtube.motion, reels.motion):
+        assert (ref.beat_id, ref.asset_id, ref.kind, ref.start, ref.end) == (
+            cue.beat_id, cue.asset_id, cue.kind, cue.start, cue.end)
+        for ref_program, target_program in zip(_programs(ref), _programs(cue)):
+            for a, b in zip(ref_program.get("keyframes", []), target_program.get("keyframes", [])):
+                assert b["dx"] * 1080 == pytest.approx(a["dx"] * 1920 * expected_scale, abs=1e-7)
+                assert b["dy"] * 1920 == pytest.approx(a["dy"] * 1080 * expected_scale, abs=1e-7)
+                assert {k: v for k, v in b.items() if k not in {"dx", "dy"}} == {
+                    k: v for k, v in a.items() if k not in {"dx", "dy"}}
     assert all(i.placement_source.startswith("authored_scene") or i.placement_source.startswith("authored_semantic")
                for b in youtube.composition for i in b.items)
+
+
+@needs_ffmpeg
+def test_connectors_are_projected_without_rerouting(bundle_run) -> None:
+    youtube, reels = bundle_run["plans"]["YOUTUBE_16_9"], bundle_run["plans"]["REELS_9_16"]
+    scale = reels.projection.scale
+    for ref_beat, target_beat, ref_layout, target_layout in zip(
+        youtube.story, reels.story, youtube.composition, reels.composition,
+    ):
+        def specs(beat, layout, plan):
+            items = {
+                item.asset_id: (
+                    (item.x - item.width / 2) * plan.width,
+                    (item.y - item.height / 2) * plan.height,
+                    (item.x + item.width / 2) * plan.width,
+                    (item.y + item.height / 2) * plan.height,
+                ) for item in layout.items
+            }
+            cues = {cue.asset_id: cue for cue in plan.motion if cue.beat_id == beat.id}
+            return connection_specs(
+                beat=beat, items=items, cues=cues, segment_start=beat.start,
+                duration=beat.end - beat.start,
+                spatial_scale=plan.projection.scale if plan.projection else 1.0,
+            )
+        source = specs(ref_beat, ref_layout, youtube)
+        projected = specs(target_beat, target_layout, reels)
+        assert len(source) == len(projected), ref_beat.id
+        for a, b in zip(source, projected):
+            assert (a.start, a.end) == (b.start, b.end)
+            for p, q in ((a.p0, b.p0), (a.p1, b.p1)):
+                assert q[0] == pytest.approx(reels.projection.offset_x + p[0] * scale, abs=1e-6)
+                assert q[1] == pytest.approx(reels.projection.offset_y + p[1] * scale, abs=1e-6)
+
+
+@needs_ffmpeg
+def test_production_reels_never_invokes_reflow_or_second_visual_authoring(bundle_run, tmp_path, monkeypatch) -> None:
+    from app.targets.reels.composition import ReelsCompositionPolicy
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("responsive Reels policy entered production")
+
+    monkeypatch.setattr(ReelsCompositionPolicy, "project", forbidden)
+    pipeline = StoryEnginePipeline(_settings(tmp_path, tmp_path / "exports"))
+    counts = {name: 0 for name in ("composition", "motion", "text_composition", "boundary")}
+    for name, owner in (("composition", pipeline.composition), ("motion", pipeline.motion),
+                        ("text_composition", pipeline.text_composition),
+                        ("boundary", pipeline.scene_boundaries)):
+        original = owner.plan
+        def counted(*args, _name=name, _original=original, **kwargs):
+            counts[_name] += 1
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(owner, "plan", counted)
+    pipeline.generate_bundle(
+        package_path=bundle_run["package"], audio_path=bundle_run["audio"], job_id="no-relayout",
+    )
+    assert counts == {name: 1 for name in counts}
 
 
 @needs_ffmpeg
@@ -285,12 +382,16 @@ def test_text_stays_in_text_safe_frame(bundle_run, target_id: str) -> None:
     plan = bundle_run["plans"][target_id]
     target = target_by_id(target_id)
     cues = {c.id: c for c in plan.text.cues}
-    with visual_target(target):
+    with visual_target(REFERENCE_TARGET if plan.projection else target):
         for beat in plan.text_composition:
             for item in beat.items:
                 w, h = TextPlacementDirector.estimated_box(cues[item.text_cue_id], scale=item.font_scale)
+                if plan.projection:
+                    w *= plan.projection.reference_width * plan.projection.scale / plan.width
+                    h *= plan.projection.reference_height * plan.projection.scale / plan.height
                 box = (item.x - w / 2, item.y - h / 2, item.x + w / 2, item.y + h / 2)
-                assert target.safe_zones.text.contains(box, tolerance=0.002)
+                text_safe = target.safe_zones.text if not plan.projection else target.safe_zones.content
+                assert text_safe.contains(box, tolerance=0.002)
                 assert not any(r.intersects(box) for r in target.safe_zones.reserved)
 
 
