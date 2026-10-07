@@ -438,6 +438,20 @@ class StoryEnginePipeline:
         )
         directions = self.director.plan(package, story, assets)
         choreography = self.choreography.plan(package, story, assets)
+        (workspace / "semantic-authority-diagnostics.json").write_text(
+            json.dumps(
+                [
+                    row.model_dump(mode="json")
+                    for row in (
+                        *self.story.semantic_diagnostics,
+                        *self.choreography.semantic_diagnostics,
+                    )
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         self.handoff_contracts.require_choreography_for_composition(
             story=story, assets=assets, choreography=choreography
         )

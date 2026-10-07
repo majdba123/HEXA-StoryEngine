@@ -245,6 +245,42 @@ class SemanticEventProxy(BaseModel):
         return self
 
 
+class StoryEventAuthority(BaseModel):
+    """Authored event evidence scoped to Story-proven runtime carriers."""
+
+    event_id: str
+    sequence_order: int | None = None
+    leader_asset_ids: list[str] = Field(default_factory=list)
+    participant_asset_ids: list[str] = Field(default_factory=list)
+    result_asset_ids: list[str] = Field(default_factory=list)
+    context_asset_ids: list[str] = Field(default_factory=list)
+    text_anchor_asset_ids: list[str] = Field(default_factory=list)
+    dependency_ids: list[str] = Field(default_factory=list)
+    script_char_start: int | None = None
+    script_char_end: int | None = None
+    spoken_start: float | None = None
+    spoken_end: float | None = None
+    confidence: float = 1.0
+    needs_review: bool = False
+    ambiguity_reason: str | None = None
+    relation_kinds: list[str] = Field(default_factory=list)
+    authority: str = "FINAL_PACKAGE_SEMANTIC_EVENT"
+
+
+class StorySemanticDiagnostic(BaseModel):
+    scene_id: str
+    beat_id: str
+    event_id: str | None = None
+    asset_ids: list[str] = Field(default_factory=list)
+    conflict_type: str
+    authority_sources: list[str]
+    chosen_authority: str
+    source_values: dict[str, str | float | bool | None] = Field(default_factory=dict)
+    fallback: str | None = None
+    continued: bool = True
+    abstained: bool = False
+
+
 class StoryBeat(BaseModel):
     """One Story beat.
 
@@ -271,6 +307,7 @@ class StoryBeat(BaseModel):
     semantic_context: StorySemanticContext | None = None
     asset_activations: list[AssetActivation] = Field(default_factory=list)
     semantic_event_proxies: list[SemanticEventProxy] = Field(default_factory=list)
+    event_authorities: list[StoryEventAuthority] = Field(default_factory=list)
     active_visual_semantic_state: dict[str, str] | None = None
 
 

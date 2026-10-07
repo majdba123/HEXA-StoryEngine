@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 from app.canonical import CanonicalScene
-from app.models import StoryBeat
+from app.models import StoryBeat, StorySemanticDiagnostic
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +16,7 @@ class ActionDecision:
     relationship: str | None
     pacing_bias: float = 1.0
     authority: str = "FALLBACK"
+    diagnostics: tuple[StorySemanticDiagnostic, ...] = ()
 
 
 class SemanticActionResolver:
@@ -116,17 +117,28 @@ class SemanticActionResolver:
         primary_parts: list[str] = [beat.action]
         secondary_parts: list[str] = []
         context = beat.semantic_context
+        contradictory_ids: set[str] = set()
+        if scene is not None and not scene.semantic_events and not scene.relations:
+            for unit in scene.units:
+                if unit.priority_role_conflict:
+                    contradictory_ids.add(unit.unit_id)
 
         if context is not None:
             primary_entities = [
                 entity
                 for entity in context.entities
                 if str(entity.role or "").upper() == "PRIMARY"
+                and entity.unit_id not in contradictory_ids
             ]
             if not primary_entities and context.entities:
-                primary_entities = [context.entities[0]]
+                primary_entities = [
+                    next((entity for entity in context.entities
+                          if entity.unit_id not in contradictory_ids), context.entities[0])
+                ]
             primary_ids = {entity.unit_id for entity in primary_entities}
             for entity in context.entities:
+                if entity.unit_id in contradictory_ids:
+                    continue
                 values = (
                     entity.semantic_name,
                     entity.narrative_function,
@@ -139,11 +151,17 @@ class SemanticActionResolver:
             relationships.extend(relation.kind for relation in context.relations if relation.kind)
 
         if scene is not None:
+            relationships.extend(
+                relation.relation_type for relation in scene.relations
+                if relation.relation_type and relation.relation_type not in relationships
+            )
             primary_parts.extend([scene.purpose or "", scene.visual_concept or ""])
             has_declared_primary = any(
                 str(unit.role or "").upper() == "PRIMARY" for unit in scene.units
             )
             for unit in scene.units:
+                if unit.unit_id in contradictory_ids:
+                    continue
                 values = [
                     str(value or "")
                     for value in (
@@ -168,6 +186,12 @@ class SemanticActionResolver:
                 if semantic_name and semantic_name not in labels:
                     labels.append(semantic_name)
 
+        primary_corpus = self._normalize(" ".join(primary_parts))
+        text_action = next((
+            action for action, needles in self._INTENT_ACTIONS
+            if any(needle in primary_corpus for needle in needles)
+        ), None)
+
         # Only meaning-bearing/causal relationships may directly override the primary
         # concept. Descriptive relations such as EXPLAINS or CONTEXT_FOR remain useful
         # interaction evidence, but must not let a supporting character's generic
@@ -176,9 +200,26 @@ class SemanticActionResolver:
             canonical = self._normalize(relationship).strip("_")
             action = self._RELATION_ACTIONS.get(canonical)
             if action:
-                return self._decision(action, labels, relationship, "FINAL_PACKAGE_RELATION")
+                diagnostics: tuple[StorySemanticDiagnostic, ...] = ()
+                if text_action and text_action != action:
+                    matching_events = [
+                        row.event_id for row in beat.event_authorities
+                        if relationship in row.relation_kinds
+                    ]
+                    diagnostics = (StorySemanticDiagnostic(
+                        scene_id=beat.scene_id, beat_id=beat.id,
+                        event_id=matching_events[0] if len(matching_events) == 1 else None,
+                        conflict_type="RELATION_TEXT_ACTION_CONFLICT",
+                        authority_sources=["FINAL_PACKAGE_RELATION", "TEXT_INFERENCE"],
+                        chosen_authority="FINAL_PACKAGE_RELATION",
+                        source_values={"relation": relationship, "typed_action": action,
+                                       "text_action": text_action},
+                    ),)
+                return self._decision(
+                    action, labels, relationship, "FINAL_PACKAGE_RELATION",
+                    diagnostics=diagnostics,
+                )
 
-        primary_corpus = self._normalize(" ".join(primary_parts))
         for action, needles in self._INTENT_ACTIONS:
             if any(needle in primary_corpus for needle in needles):
                 return self._decision(
@@ -242,6 +283,7 @@ class SemanticActionResolver:
         labels: list[str],
         relationship: str | None,
         authority: str,
+        diagnostics: tuple[StorySemanticDiagnostic, ...] = (),
     ) -> ActionDecision:
         tension, energy, pacing_bias = self._ACTION_PROFILE[action]
         return ActionDecision(
@@ -252,6 +294,7 @@ class SemanticActionResolver:
             relationship=relationship,
             pacing_bias=pacing_bias,
             authority=authority,
+            diagnostics=diagnostics,
         )
 
     @staticmethod

@@ -8,10 +8,11 @@ from app.canonical import (
     CanonicalVisualProgression,
     ensure_canonical_package,
 )
-from app.models import StoryBeat, StorySemanticContext, Transcript, VisualAsset
+from app.models import StoryBeat, StorySemanticContext, StorySemanticDiagnostic, Transcript, VisualAsset
 from app.shared.errors import StageFailedError
 
 from .activation import SemanticActivationPlanner
+from .event_authority import event_authority
 from .carriers import SemanticCarrierAuditor
 from .graph import StoryGraph, StoryGraphBuilder
 from .semantic import PackageStoryInterpreter
@@ -41,6 +42,7 @@ class StoryPlanner:
         self.semantic_carrier_audit: list[dict] = []
         self.hidden_content_audit: list[dict] = []
         self.carrier_resolution_report: list[dict] = []
+        self.semantic_diagnostics: list[StorySemanticDiagnostic] = []
         self.activation = SemanticActivationPlanner(
             semantic_model_name=semantic_model_name,
             semantic_model_required=semantic_model_required,
@@ -57,6 +59,7 @@ class StoryPlanner:
     ) -> list[StoryBeat]:
         package = ensure_canonical_package(package)
         self.carrier_resolution_report = []
+        self.semantic_diagnostics = []
         assets_by_scene: dict[str, list[VisualAsset]] = defaultdict(list)
         for asset in assets:
             assets_by_scene[asset.scene_id].append(asset)
@@ -146,6 +149,14 @@ class StoryPlanner:
             preserve_spoken_completion=package.has_authoritative_semantics,
         )
         planned = self.activation.enrich(package, transcript, assets, beats)
+        scene_by_id = {scene.id: scene for scene in package.scenes}
+        with_authority: list[StoryBeat] = []
+        for beat in planned:
+            scene = scene_by_id[beat.scene_id]
+            authorities, diagnostics = event_authority(scene, beat)
+            self.semantic_diagnostics.extend(diagnostics)
+            with_authority.append(beat.model_copy(update={"event_authorities": authorities}))
+        planned = with_authority
         self.semantic_carrier_audit = []
         self.hidden_content_audit = []
         self.carrier_resolution_report = [

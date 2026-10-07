@@ -120,6 +120,16 @@ class CanonicalAsset(CanonicalRecord):
     visual_locator: CanonicalVisualLocator | None = None
     extension_metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @property
+    def priority_role_conflict(self) -> bool:
+        """Only compare role values when both describe presentation priority."""
+        presentation = (self.role or "").casefold()
+        semantic = (self.semantic_role or "").casefold()
+        return (
+            (presentation == "primary" and semantic in {"support", "supporting", "decorative"})
+            or (presentation in {"support", "supporting", "decorative"} and semantic == "primary")
+        )
+
 
 class CanonicalSemanticGroup(CanonicalRecord):
     semantic_group_id: str

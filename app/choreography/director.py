@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.canonical import CanonicalPackage, ensure_canonical_package
-from app.models import StoryBeat, VisualAsset
+from app.models import StoryBeat, StorySemanticDiagnostic, VisualAsset
 from app.shared.errors import StageFailedError
 from app.story.binding import AssetBinding, SemanticAssetBinder
 
@@ -53,6 +53,7 @@ class ChoreographyDirector:
         self.grammar = ReferenceGrammarPlanner()
         self.requirements = AssetRequirementCompiler()
         self.continuity = ContinuityResolver()
+        self.semantic_diagnostics: list[StorySemanticDiagnostic] = []
 
     def plan(
         self,
@@ -61,6 +62,7 @@ class ChoreographyDirector:
         assets: list[VisualAsset],
     ) -> ChoreographyPlan:
         package = ensure_canonical_package(package)
+        self.semantic_diagnostics = []
         if not beats:
             return ChoreographyPlan()
 
@@ -80,6 +82,7 @@ class ChoreographyDirector:
         for beat in beats:
             scene = scene_by_id.get(beat.scene_id)
             decision = self.actions.resolve(scene, beat)
+            self.semantic_diagnostics.extend(decision.diagnostics)
             binding = self.binding.bind(
                 scene=scene,
                 assets=assets_by_scene.get(beat.scene_id, []),
