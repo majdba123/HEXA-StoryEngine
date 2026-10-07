@@ -90,8 +90,13 @@ jobs:
           cache: pip
       - name: Install FFmpeg and StoryEngine
         if: ${{ inputs.level_e }}
+        timeout-minutes: 10
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 install -y ffmpeg
           python -m pip install -e ".[dev]"
       - name: Provision and verify corpus (fails if unavailable or incomplete)
         if: ${{ inputs.level_e }}
