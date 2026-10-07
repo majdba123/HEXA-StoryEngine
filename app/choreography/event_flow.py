@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from math import inf
 
-from app.models import AssetActivation, SemanticEventProxy, StoryBeat
+from app.models import AssetActivation, SemanticEventProxy, StoryBeat, StoryEventAuthority
 
 from .relation_contract import SEMANTIC_PROXY_AUTHORITIES, relation_requires_reaction
 from .models import (
@@ -71,9 +71,10 @@ class SemanticEventFlowPlanner:
         if not groups:
             return ()
 
+        authorities = {row.event_id: row for row in beat.event_authorities}
         ordered_groups = sorted(
             groups.items(),
-            key=lambda item: self._event_sort_key(item[0], item[1]),
+            key=lambda item: self._event_sort_key(item[0], item[1], authorities.get(item[0])),
         )
         event_assets = {
             event_id: {row.asset_id for row in rows}
@@ -83,6 +84,8 @@ class SemanticEventFlowPlanner:
             ordered_groups,
             event_assets,
             interactions,
+            authorities,
+            renderable_ids,
         )
         result_interactions_by_event = self._assign_result_interactions(
             ordered_groups,
@@ -98,18 +101,28 @@ class SemanticEventFlowPlanner:
 
         metadata: list[dict[str, object]] = []
         for event_id, rows in ordered_groups:
-            leader_units = self._role_units(rows, "LEADER")
-            participant_units = self._role_units(rows, "PARTICIPANT")
-            context_units = self._role_units(rows, "CONTEXT")
-            authored_result_units = self._role_units(rows, "RESULT")
+            authority = authorities.get(event_id)
+            leader_units = self._role_units(rows, "LEADER", authority.leader_asset_ids if authority else None)
+            participant_units = self._role_units(rows, "PARTICIPANT", authority.participant_asset_ids if authority else None)
+            context_units = self._role_units(rows, "CONTEXT", authority.context_asset_ids if authority else None)
+            authored_result_units = self._role_units(rows, "RESULT", authority.result_asset_ids if authority else None)
             result_interactions = result_interactions_by_event.get(event_id, ())
             result_units = self._relation_result_units(
                 authored_result_units,
                 result_interactions,
             )
-            text_anchor_units = self._role_units(rows, "TEXT_ANCHOR")
+            text_anchor_units = self._role_units(rows, "TEXT_ANCHOR", authority.text_anchor_asset_ids if authority else None)
+            dependencies = (
+                authority.dependency_ids if authority is not None
+                else (
+                    dependency
+                    for row in rows
+                    for dependency in row.semantic_event_dependency_ids
+                )
+            )
             metadata.append({
                 "event_id": event_id,
+                "authority": authority,
                 "rows": rows,
                 "interactions": interactions_by_event.get(event_id, ()),
                 "result_interactions": result_interactions,
@@ -124,9 +137,7 @@ class SemanticEventFlowPlanner:
                 "results": self._flatten_units(result_units),
                 "text_anchors": self._flatten_units(text_anchor_units),
                 "dependency_ids": self._unique(
-                    dependency
-                    for row in rows
-                    for dependency in row.semantic_event_dependency_ids
+                    dependency for dependency in dependencies
                     if dependency and dependency != event_id
                 ),
             })
@@ -196,7 +207,7 @@ class SemanticEventFlowPlanner:
             flows.append(
                 SemanticEventFlow(
                     event_id=event_id,
-                    order=self._event_order(rows),
+                    order=self._event_order(rows, authorities.get(event_id)),
                     dependency_ids=dependency_ids,
                     leader_asset_ids=leader_ids,
                     participant_asset_ids=participant_ids,
@@ -215,8 +226,10 @@ class SemanticEventFlowPlanner:
                     confidence=max((row.confidence for row in rows), default=0.0),
                     authority="FINAL_PACKAGE_SEMANTIC_EVENT",
                     evidence=self._evidence(
-                        rows,
                         tuple(dict.fromkeys((*event_interactions, *payoff_interactions))),
+                        leader_ids,
+                        result_ids,
+                        dependency_ids,
                     ),
                 )
             )
@@ -226,11 +239,14 @@ class SemanticEventFlowPlanner:
     def _event_sort_key(
         event_id: str,
         rows: list[AssetActivation],
+        authority: StoryEventAuthority | None = None,
     ) -> tuple[float, float, str]:
         order = min(
             (float(row.semantic_event_order) for row in rows if row.semantic_event_order is not None),
             default=inf,
         )
+        if authority is not None and authority.sequence_order is not None:
+            order = float(authority.sequence_order)
         spoken = min(
             (float(row.spoken_start) for row in rows if row.spoken_start is not None),
             default=inf,
@@ -238,7 +254,11 @@ class SemanticEventFlowPlanner:
         return order, spoken, event_id
 
     @staticmethod
-    def _event_order(rows: list[AssetActivation]) -> int | None:
+    def _event_order(
+        rows: list[AssetActivation], authority: StoryEventAuthority | None = None,
+    ) -> int | None:
+        if authority is not None and authority.sequence_order is not None:
+            return authority.sequence_order
         values = [row.semantic_event_order for row in rows if row.semantic_event_order is not None]
         return min(values) if values else None
 
@@ -248,6 +268,8 @@ class SemanticEventFlowPlanner:
         ordered_groups: list[tuple[str, list[AssetActivation]]],
         event_assets: dict[str, set[str]],
         interactions: tuple[InteractionIntent, ...],
+        authorities: dict[str, StoryEventAuthority] | None = None,
+        renderable_ids: set[str] | None = None,
     ) -> dict[str, tuple[InteractionIntent, ...]]:
         assigned: dict[str, list[InteractionIntent]] = defaultdict(list)
         order_index = {event_id: index for index, (event_id, _rows) in enumerate(ordered_groups)}
@@ -261,6 +283,26 @@ class SemanticEventFlowPlanner:
                 "FINAL_PACKAGE_INTERACTION_TARGET",
             }:
                 continue
+            if renderable_ids is not None and (
+                not interaction.subject_asset_id
+                or not interaction.object_asset_id
+                or interaction.subject_asset_id not in renderable_ids
+                or interaction.object_asset_id not in renderable_ids
+            ):
+                continue
+            # A result narrated before its source must not make the result event
+            # the owner of the source's relation treatment. Story's event-local
+            # proven leaders are stronger evidence than raw asset overlap.
+            if authorities and interaction.subject_asset_id:
+                source_events = [
+                    event_id for event_id, _ in ordered_groups
+                    if event_id in authorities
+                    and interaction.subject_asset_id in event_assets[event_id]
+                    and interaction.subject_asset_id in authorities[event_id].leader_asset_ids
+                ]
+                if len(source_events) == 1:
+                    assigned[source_events[0]].append(interaction)
+                    continue
             best_event: str | None = None
             best_score = 0
             for event_id, assets in event_assets.items():
@@ -637,7 +679,8 @@ class SemanticEventFlowPlanner:
         if not isinstance(rows, list):
             return inf, inf, str(item.get("event_id") or "")
         return SemanticEventFlowPlanner._event_sort_key(
-            str(item.get("event_id") or ""), rows
+            str(item.get("event_id") or ""), rows,
+            item.get("authority") if isinstance(item.get("authority"), StoryEventAuthority) else None,
         )
 
     @staticmethod
@@ -667,11 +710,14 @@ class SemanticEventFlowPlanner:
         cls,
         rows: list[AssetActivation],
         role: str,
+        authoritative_ids: list[str] | None = None,
     ) -> tuple[tuple[str, ...], ...]:
         role = role.upper()
+        allowed = set(authoritative_ids) if authoritative_ids is not None else None
         selected = [
             row for row in rows
-            if role in {value.upper() for value in row.semantic_event_roles}
+            if (row.asset_id in allowed if allowed is not None
+                else role in {value.upper() for value in row.semantic_event_roles})
         ]
         selected.sort(key=cls._activation_sort_key)
         grouped: dict[str, list[str]] = {}
@@ -702,17 +748,19 @@ class SemanticEventFlowPlanner:
 
     @staticmethod
     def _evidence(
-        rows: list[AssetActivation],
         interactions: tuple[InteractionIntent, ...],
+        leader_ids: tuple[str, ...],
+        result_ids: tuple[str, ...],
+        dependency_ids: tuple[str, ...],
     ) -> tuple[str, ...]:
         evidence = ["final_package_semantic_event"]
-        if any("LEADER" in {role.upper() for role in row.semantic_event_roles} for row in rows):
+        if leader_ids:
             evidence.append("final_package_event_leader")
-        if any("RESULT" in {role.upper() for role in row.semantic_event_roles} for row in rows):
+        if result_ids:
             evidence.append("final_package_event_result")
         if interactions:
             evidence.append("final_package_event_relation")
-        if any(row.semantic_event_dependency_ids for row in rows):
+        if dependency_ids:
             evidence.append("final_package_event_dependency")
         return tuple(evidence)
 
