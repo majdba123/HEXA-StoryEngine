@@ -11,12 +11,12 @@ from app.composition import CompositionPlanner
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final_package import FinalPackageLoader
 from app.motion import MotionPlanner
-from app.motion.semantic_reference import MotionSemanticReference
 from app.pipeline import StoryEnginePipeline
 from app.render import RenderPlanner
 from app.story import StoryPlanner
-from app.targets import REELS_9_16, visual_target
+from app.targets import REELS_9_16
 from app.targets.parity import semantic_differences
+from app.targets.projection import ReferencePlanProjector
 from app.text import TextPlanner
 from app.vision import VisionService
 from tests.test1.factory import deterministic_transcript
@@ -121,21 +121,13 @@ def certify_real_package_to_render_plan(
         text=text,
     )
 
-    # Every supported output format is planned from the same semantic result; only the
-    # spatial authoring differs, so semantics must be identical to the reference plan.
+    # Level D certifies the production architecture: one finished reference visual
+    # plan, then one uniform geometric projection with no second visual authoring.
     reels_workspace = workspace / "render-reels"
-    reels_workspace.mkdir(parents=True, exist_ok=True)
-    with visual_target(REELS_9_16):
-        reels_composition = CompositionPlanner().plan(story, assets, choreography)
-        reels_motion = MotionPlanner().plan(
-            story, reels_composition, choreography, assets,
-            reference=MotionSemanticReference.of(composition, motion),
-        )
-        reels_plan, reels_plan_path = RenderPlanner().compile(
-            transcript, assets, story, reels_composition, reels_motion, reels_workspace,
-            text=text, target=REELS_9_16,
-        )
+    reels_plan = ReferencePlanProjector().project(plan, REELS_9_16, reels_workspace)
+    reels_plan_path = reels_workspace / "render-plan.json"
     assert (reels_plan.width, reels_plan.height) == (1080, 1920)
+    assert reels_plan.projection is not None
     divergence = semantic_differences(plan, reels_plan)
     assert divergence == [], f"{filename}: Reels diverged semantically: {divergence[:5]}"
 
