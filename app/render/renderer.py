@@ -458,7 +458,7 @@ class FFmpegRenderer:
                     f"eof_action=pass:shortest=0[bridgebase]"
                 )
             else:
-                if release is not None:
+                if release is not None and release[1] > 0:
                     # One opacity clock for the whole outgoing scene, so every layer of
                     # every Pass2 family leaves together.
                     filters.append(
@@ -707,6 +707,12 @@ class FFmpegRenderer:
         opener, start, zero = frames
         if opener != cls._first_visible_frame(incoming_start, fps):
             return None
+        if row.mode == "HOLD_TO_OPENER":
+            if start != opener or zero != opener or opener <= 0 or opener >= frame_count:
+                return None
+            # Cover the last frame before the opener; the outgoing scene has no fade
+            # or exit drift, and the next opener keeps its original frame.
+            return 0.0, 0.0, (opener - 0.25) / fps
         if start < 0 or zero - start < 2 or zero > frame_count:
             return None
         if (row.mode == "EXACT_END" and zero != opener) or (row.mode == "OVERLAP" and zero <= opener):

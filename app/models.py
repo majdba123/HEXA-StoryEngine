@@ -463,15 +463,15 @@ class SceneBoundaryRelease(BaseModel):
     """How the outgoing scene is released at one scene boundary (planned above the renderer).
 
     ``HARD_CUT`` means the release abstains and the certified boundary behaviour runs
-    unchanged. The other modes fade the whole outgoing scene on one opacity clock:
-    ``EXACT_END`` reaches zero on the incoming opener frame, ``OVERLAP`` a few frames
-    after it. Times are absolute seconds on the encoded frame grid. Nothing here carries
-    cross-scene meaning: collisions only ever downgrade the mode.
+    unchanged. ``EXACT_END`` fades to the incoming opener, and ``OVERLAP`` finishes a
+    few frames after it. ``HOLD_TO_OPENER`` keeps a completed semantic state crisp until
+    the already scheduled opener, then cuts without exit drift. Times are absolute
+    seconds on the encoded frame grid. Nothing here carries cross-scene meaning.
     """
 
     beat_id: str
     from_beat_id: str
-    mode: Literal["HARD_CUT", "EXACT_END", "OVERLAP"] = "HARD_CUT"
+    mode: Literal["HARD_CUT", "EXACT_END", "OVERLAP", "HOLD_TO_OPENER"] = "HARD_CUT"
     opener_at: float | None = None
     release_start: float | None = None
     release_end: float | None = None

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import ceil, isfinite
+
 from app.assets import AssetManager
 from app.composition.text_director import TextPlacementDirector
 from app.layout.footprint import AlphaFootprintResolver
@@ -38,8 +40,10 @@ class SceneBoundaryPlanner:
     change with no authored continuity and nothing persistent. Every other boundary
     abstains and keeps its certified behaviour. For eligible boundaries the requested
     mode is the reference one (a short overlap) and safety checks on final geometry,
-    text and timing may only downgrade it: OVERLAP -> EXACT_END -> HARD_CUT. A collision
-    is a safety fact, never evidence that two scenes are related.
+    text and timing may downgrade it: OVERLAP -> EXACT_END -> HARD_CUT. An eligible
+    exact-end release may instead hold an already completed, proven semantic state
+    until the unchanged opener when Motion's existing rhythm requires that interval.
+    A collision is a safety fact, never evidence that two scenes are related.
     """
 
     def __init__(self) -> None:
@@ -183,11 +187,87 @@ class SceneBoundaryPlanner:
             return result("HARD_CUT", "release_window_too_short", blocker, **audit)
         if outgoing_done > at(k_open - release_frames) + _EPS:
             return result("HARD_CUT", "outgoing_action_incomplete", blocker, **audit)
+        hold = self._hold_to_opener(
+            previous=previous, outgoing=outgoing, cues=cues, text_boxes=text_boxes,
+            incoming=incoming, beat=beat, opener_frame=k_open,
+            release_start_frame=k_open - release_frames, segment=segment, fps=fps,
+        )
+        if hold is not None:
+            return result(
+                "HOLD_TO_OPENER", "protected_completed_state", blocker,
+                opener_at=at(k_open), release_start=at(k_open), release_end=at(k_open),
+                **audit, **hold,
+            )
         return result(
             "EXACT_END", "exact_end_release", blocker,
             opener_at=at(k_open), release_start=at(k_open - release_frames), release_end=at(k_open),
             release_frames=release_frames, overlap_frames=0, **audit,
         )
+
+    @classmethod
+    def _hold_to_opener(
+        cls, *, previous: StoryBeat, outgoing: list[LayoutItem],
+        cues: dict[tuple[str, str], MotionCue], text_boxes: list[tuple[float, float, Box]],
+        incoming: list[LayoutItem], beat: StoryBeat, opener_frame: int,
+        release_start_frame: int, segment: BeatSegment, fps: int,
+    ) -> dict[str, object] | None:
+        """Keep a proven completed state crisp when a release would consume its read window.
+
+        This uses Motion's existing rhythm decision. Story/cue times and the incoming
+        opener never move; only the outgoing release mode changes on the frame grid.
+        """
+        if opener_frame <= release_start_frame:
+            return None
+        segment_start = segment.start_frame / fps
+        for item in incoming:
+            cue = cues.get((beat.id, item.asset_id))
+            for action in cue.segments if cue is not None else ():
+                protected = (
+                    action.phase in _PROTECTED_PHASES or action.connection
+                    or action.semantic_action is not None
+                )
+                if protected and first_visible_frame(action.start - segment_start, fps) < opener_frame:
+                    return None
+        if any(
+            first_visible_frame(start - segment_start, fps) < opener_frame
+            for start, _end, _box in text_boxes
+        ):
+            return None
+        active: list[tuple[float, MotionCue, float]] = []
+        for item in outgoing:
+            cue = cues.get((previous.id, item.asset_id))
+            focus = cue.params.get("semantic_focus") if cue and isinstance(cue.params, dict) else None
+            if not isinstance(focus, dict) or focus.get("active") is not True:
+                continue
+            rhythm = focus.get("rhythm")
+            hold_ms = rhythm.get("minimum_read_hold_ms") if isinstance(rhythm, dict) else None
+            if type(hold_ms) not in (int, float):
+                continue
+            try:
+                hold = float(hold_ms) / 1000
+            except OverflowError:
+                continue
+            if not isfinite(hold) or hold <= 0:
+                continue
+            active.append((cls._motion_end(cue), cue, hold))
+        if not active:
+            return None
+        settled, cue, hold = max(active, key=lambda row: (row[0], row[1].asset_id))
+        stable_frame = ceil(settled * fps - _EPS)
+        release_frame = segment.start_frame + release_start_frame
+        open_frame = segment.start_frame + opener_frame
+        required = max(1, round(hold * fps))
+        if release_frame - stable_frame >= required or open_frame - stable_frame < required:
+            return None
+        return {
+            "protected_asset_id": cue.asset_id,
+            "semantic_event_id": (cue.params.get("semantic_focus") or {}).get("semantic_event_id"),
+            "settled_at": settled,
+            "minimum_read_hold_ms": round(hold * 1000),
+            "stable_frames_before_release": release_frame - stable_frame,
+            "stable_frames_to_opener": open_frame - stable_frame,
+            "required_stable_frames": required,
+        }
 
     @staticmethod
     def _active_items(beat: StoryBeat, layout: CompositionBeat | None) -> list[LayoutItem]:
