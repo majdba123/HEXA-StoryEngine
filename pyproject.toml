@@ -15,6 +15,10 @@ dependencies = [
   "numpy>=1.26,<3",
   "Pillow>=10.4,<12",
   "opencv-python-headless>=4.10,<5",
+  # Text measurement shapes the vendored production font exactly as libass does.
+  # HarfBuzz is pinned so planning geometry is identical on every machine.
+  "uharfbuzz==0.56.3",
+  "fonttools>=4.50,<5",
 ]
 
 [project.optional-dependencies]

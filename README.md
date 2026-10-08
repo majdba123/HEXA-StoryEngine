@@ -65,6 +65,13 @@ Optional environment variables:
 - `HEXA_WHISPER_MODEL` — Faster Whisper model/path
 - `HEXA_FFMPEG` / `HEXA_FFPROBE` — media tool overrides
 
+## Third-party font
+
+Editorial text is rendered with **Noto Kufi Arabic ExtraBold** (v2.110, The Noto Project
+Authors), vendored at `app/text/fonts/NotoKufiArabic-ExtraBold.ttf` and licensed under the
+SIL Open Font License 1.1 (`app/text/fonts/OFL.txt`, shipped with the font). Planning
+measures and libass renders this exact file; no system font is used for text.
+
 ## Legacy reference
 
 `majdba123/Montagetools` remains the official legacy/provenance/reference repository. V2 may reuse proven runtime/model/FFmpeg/Premiere ideas, but the old V31 planner/finalizer/recovery chain is not the V2 architecture.

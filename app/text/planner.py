@@ -8,7 +8,7 @@ from app.canonical import CanonicalPackage, ensure_canonical_package
 from app.models import StoryBeat, TextCue, TextPlan, TextStyle, TextTokenCue, Transcript, VisualAsset
 from app.text.semantic import KeywordCandidate, TextSemanticSelector
 from app.text.style import TextStyleResolver
-from app.text.timing import TextTimingPlanner
+from app.text.timing import TextTimingPlanner, TextVisibilityPolicy
 
 
 class TextPlanner:
@@ -28,6 +28,8 @@ class TextPlanner:
         self.semantic = semantic or TextSemanticSelector()
         self.timing = timing or TextTimingPlanner()
         self.style = style or TextStyleResolver()
+        # Cues withheld by the last plan() call and why (structured diagnostics).
+        self.abstentions: list[dict] = []
 
     def plan(
         self,
@@ -40,6 +42,7 @@ class TextPlanner:
     ) -> TextPlan:
         package = ensure_canonical_package(package) if package is not None else None
         del assets
+        self.abstentions = []
         scene_by_id = {scene.id: scene for scene in package.scenes} if package else {}
         cues: list[TextCue] = []
         styles: dict[str, TextStyle] = {}
@@ -62,6 +65,8 @@ class TextPlanner:
                     directive=directive,
                 )
                 package_evidence = list(context.evidence) if context else []
+                if candidate.provenance:
+                    package_evidence.append(f"text_selection:{candidate.provenance}")
                 if scene and scene.relation_to_previous:
                     package_evidence.append(f"scene_relation:{scene.relation_to_previous}")
                 if anchor_asset_id:
@@ -115,8 +120,13 @@ class TextPlanner:
                 ))
                 cue_number += 1
 
-        if package is not None and package.has_authoritative_semantics:
-            cues = self._apply_editorial_density(cues)
+        beat_by_id = {beat.id: beat for beat in story}
+        cues = self._apply_editorial_density(
+            cues,
+            beat_by_id,
+            bounded=package is not None and package.has_authoritative_semantics,
+            abstentions=self.abstentions,
+        )
 
         return TextPlan(
             cues=sorted(cues, key=lambda cue: (cue.spoken_start, -cue.priority, cue.id)),
@@ -124,49 +134,115 @@ class TextPlanner:
         )
 
     @classmethod
-    def _apply_editorial_density(cls, cues: list[TextCue]) -> list[TextCue]:
-        """Keep semantic typography sparse instead of approaching subtitle coverage.
+    def _apply_editorial_density(
+        cls,
+        cues: list[TextCue],
+        beat_by_id: dict[str, StoryBeat] | None = None,
+        *,
+        bounded: bool = True,
+        abstentions: list[dict] | None = None,
+    ) -> list[TextCue]:
+        """Keep semantic typography sparse and readable instead of subtitle-like.
 
-        Every beat with useful text may keep one editorial cue.  A bounded global
-        25% accent budget can add a second cue to the strongest beats, but never a
-        third.  The extra cue must represent a distinct spoken moment.  This keeps
-        Final Package text anchors useful while preventing dense packages from turning
-        every valid semantic span into on-screen narration.
+        Every beat with useful text may keep one editorial cue: its strongest cue that
+        can actually be read before the beat (or a stronger sibling) takes it away. A
+        bounded global 25% accent budget can add a second cue to the strongest beats,
+        but never a third; the extra cue must be a distinct spoken moment of a different
+        Final Package semantic event, backed by phrase-level or numeric evidence, and must
+        leave every kept cue of its beat readable. ``bounded`` is False only for packages
+        without authoritative semantics, whose selector budget already bounds density.
         """
-        if len(cues) <= 2:
-            return list(cues)
+        beat_by_id = beat_by_id or {}
+        visibility = TextVisibilityPolicy()
+
+        def readable(kept: list[TextCue]) -> bool:
+            beat = beat_by_id.get(kept[0].beat_id)
+            if beat is None:
+                return True
+            return all(visibility.is_readable(row, beat, kept) for row in kept)
+
+        def withhold(cue: TextCue, reason: str) -> None:
+            if abstentions is not None:
+                abstentions.append({
+                    "beat_id": cue.beat_id, "text_cue_id": cue.id, "text": cue.text,
+                    "reason": reason,
+                })
 
         by_beat: dict[str, list[TextCue]] = defaultdict(list)
         for cue in cues:
             by_beat[cue.beat_id].append(cue)
-        if not by_beat:
-            return []
 
-        retained: list[TextCue] = []
+        retained: dict[str, list[TextCue]] = {}
         extras: list[TextCue] = []
-        per_beat_count: dict[str, int] = {}
         for beat_id, rows in by_beat.items():
             ranked = sorted(rows, key=cls._editorial_rank, reverse=True)
-            primary = ranked[0]
-            retained.append(primary)
-            per_beat_count[beat_id] = 1
-            for candidate in ranked[1:]:
-                if abs(float(candidate.spoken_start) - float(primary.spoken_start)) < 0.45:
+            primary = next((row for row in ranked if readable([row])), None)
+            if primary is None:
+                for row in ranked:
+                    withhold(row, "unreadable_window")
+                continue
+            for row in ranked[:ranked.index(primary)]:
+                withhold(row, "unreadable_window")
+            retained[beat_id] = [primary]
+            for candidate in ranked[ranked.index(primary) + 1:]:
+                if bounded and abs(float(candidate.spoken_start) - float(primary.spoken_start)) < 0.45:
+                    withhold(candidate, "same_spoken_moment")
                     continue
                 extras.append(candidate)
 
         # One cue per covered beat is the base contract. A quarter of the beats may
         # receive one additional accent when semantic evidence makes it worthwhile.
-        max_total = max(len(retained), math.ceil(len(by_beat) * 1.25))
+        # The accent budget is a quarter of the beats that actually show text.
+        total = len(retained)
+        max_total = math.ceil(total * 1.25) if bounded else None
         for candidate in sorted(extras, key=cls._editorial_rank, reverse=True):
-            if len(retained) >= max_total:
-                break
-            if per_beat_count.get(candidate.beat_id, 0) >= 2:
+            kept = retained[candidate.beat_id]
+            if bounded and (total >= max_total or len(kept) >= 2):
+                withhold(candidate, "editorial_density")
                 continue
-            retained.append(candidate)
-            per_beat_count[candidate.beat_id] = per_beat_count.get(candidate.beat_id, 0) + 1
+            if bounded and not cls._is_accent_evidence(candidate):
+                # A single appearance word may be a beat's only label, never its accent.
+                withhold(candidate, "accent_needs_phrase_evidence")
+                continue
+            if bounded and cls._semantic_event(candidate) is not None and any(
+                cls._semantic_event(row) == cls._semantic_event(candidate) for row in kept
+            ):
+                # One editorial label per Final Package semantic event: a second label on
+                # the same event repeats it instead of marking a distinct moment.
+                withhold(candidate, "same_semantic_event")
+                continue
+            if not readable([*kept, candidate]):
+                withhold(candidate, "unreadable_window")
+                continue
+            kept.append(candidate)
+            total += 1
 
-        return retained
+        return [cue for rows in retained.values() for cue in rows]
+
+    @staticmethod
+    def _semantic_event(cue: TextCue) -> str | None:
+        return next(
+            (row.split(":", 1)[1] for row in cue.package_evidence if row.startswith("semantic_event:")),
+            None,
+        )
+
+    @staticmethod
+    def _is_accent_evidence(cue: TextCue) -> bool:
+        """Guard: a single appearance word is never a beat's second (accent) cue.
+
+        Rejects only on positive evidence - one displayed word selected from a
+        single-word visual trigger span or a lexical phrase window. Numbers and
+        phrase-level evidence stay eligible.
+        """
+        if cue.semantic_type in {"warning_amount", "warning", "amount", "number"}:
+            return True
+        if len(cue.text.split()) > 1:
+            return True
+        evidence = set(cue.package_evidence)
+        return not (
+            "text_selection:exact_asset_span:EXACT_WORD" in evidence
+            or "text_selection:semantic_phrase_window" in evidence
+        )
 
     @staticmethod
     def _editorial_rank(cue: TextCue) -> tuple[int, int, float, str]:

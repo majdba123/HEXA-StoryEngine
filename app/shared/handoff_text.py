@@ -10,8 +10,11 @@ from app.models import (
     Transcript,
     VisualAsset,
 )
+from app.text.metrics import TextTypographyMetrics
 
 from .handoff_core import _EPS, _HandoffCore
+
+_PRODUCTION_TYPOGRAPHY = TextTypographyMetrics()
 
 
 class TextHandoffMixin(_HandoffCore):
@@ -203,6 +206,14 @@ class TextHandoffMixin(_HandoffCore):
                         beat_id=layout.beat_id,
                         text_cue_id=cue.id,
                         cue_beat_id=cue.beat_id,
+                    )
+                if not _PRODUCTION_TYPOGRAPHY.covers(cue.text):
+                    # libass would substitute a machine-local font for missing glyphs.
+                    cls._add(
+                        violations,
+                        "text_glyphs_outside_production_font",
+                        beat_id=layout.beat_id,
+                        text_cue_id=cue.id,
                     )
                 layout_values = (item.x, item.y, item.max_width, item.font_scale)
                 if not all(isfinite(value) for value in layout_values):

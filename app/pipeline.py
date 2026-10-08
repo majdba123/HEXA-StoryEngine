@@ -580,6 +580,17 @@ class StoryEnginePipeline:
                 json.dumps(self.text_composition.owner_coupling, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            (diagnostics / "text-editorial.json").write_text(
+                json.dumps(
+                    {
+                        "planning_abstentions": self.text.abstentions,
+                        "composition_abstentions": self.text_composition.abstentions,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
             (diagnostics / "target-composition.json").write_text(
                 json.dumps(
                     {"target_id": target.target_id, "scenes": self.composition.target_evidence},

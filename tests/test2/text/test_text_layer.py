@@ -24,12 +24,14 @@ from app.motion import TextMotionPlanner
 from app.text import TextPlanner
 
 
-def _transcript(script: str, *, timing_source: str = "forced_alignment") -> Transcript:
+def _transcript(
+    script: str, *, timing_source: str = "forced_alignment", step: float = 0.45,
+) -> Transcript:
     matches = list(re.finditer(r"\S+", script))
     words = [
         TranscriptWord(
-            start=index * 0.45,
-            end=index * 0.45 + 0.32,
+            start=index * step,
+            end=index * step + 0.32,
             text=match.group(),
             char_start=match.start(),
             char_end=match.end(),
@@ -498,9 +500,9 @@ def test_text_prefers_action_and_object_precise_spans_over_character_phrase() ->
     assert keyboard.spoken_start < monitor.spoken_start
 
 
-def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
+def _company_discovery_plan(step: float):
     script = "قبل ما الشركة تكتشفها"
-    transcript = _transcript(script)
+    transcript = _transcript(script, step=step)
     beat = StoryBeat(
         id="beat-001",
         scene_id="scene-001",
@@ -555,11 +557,19 @@ def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
         ],
     )
 
-    plan = TextPlanner().plan(
+    planner = TextPlanner()
+    plan = planner.plan(
         transcript=transcript,
         story=[beat],
         package=package,
     )
+    return plan, planner
+
+
+def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
+    # Sprint 6: narration paced so the concept cue can be read before the result cue
+    # replaces it (the 0.45 s pacing case is covered by the readability test below).
+    plan, _ = _company_discovery_plan(step=0.70)
     texts = [cue.text for cue in plan.cues]
 
     assert "الشركة" in texts
@@ -568,6 +578,19 @@ def test_text_company_scene_prefers_concept_then_discovery_result() -> None:
     company = next(cue for cue in plan.cues if cue.text == "الشركة")
     discovery = next(cue for cue in plan.cues if cue.text == "تكتشفها")
     assert discovery.priority > company.priority
+
+
+def test_text_withholds_concept_cue_that_its_result_would_cut_to_a_flash() -> None:
+    # Spoken 0.45 s apart, "الشركة" could only be visible 0.37 s before the stronger
+    # result cue replaces it: shorter than its entrance plus one reading fixation.
+    plan, planner = _company_discovery_plan(step=0.45)
+    texts = [cue.text for cue in plan.cues]
+
+    assert texts == ["تكتشفها"]
+    assert any(
+        row["text"] == "الشركة" and row["reason"] == "unreadable_window"
+        for row in planner.abstentions
+    )
 
 
 

@@ -43,7 +43,6 @@ class FFmpegRenderer:
         self,
         ffmpeg_bin: str = "ffmpeg",
         *,
-        text_font_family: str = "Noto Kufi Arabic",
         resources: RenderResourceSettings | None = None,
         defer_cleanup: bool = False,
     ) -> None:
@@ -53,7 +52,7 @@ class FFmpegRenderer:
         self.defer_cleanup = defer_cleanup
         self.last_worker_count: int | None = None
         self._filter_complex_file_option_cache: str | None = None
-        self.text_renderer = TextRenderer(font_family=text_font_family)
+        self.text_renderer = TextRenderer()
         self.transition_policy = VisualTransitionPolicy()
         self.lifecycle = ContinuityContract()
         self.motion_adapter = FFmpegMotionAdapter()

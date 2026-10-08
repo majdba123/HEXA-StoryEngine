@@ -17,6 +17,8 @@ class TextCompositionPlanner:
         self.visibility = TextVisibilityPolicy()
         # One audit row per cue from the last plan() call (Sprint 4.5 owner coupling).
         self.owner_coupling: list[dict] = []
+        # Cues withheld from the last plan() call and why (Sprint 6 visible context).
+        self.abstentions: list[dict] = []
 
     def plan(
         self,
@@ -39,6 +41,7 @@ class TextCompositionPlanner:
         preferred_zone_by_scene: dict[str, str] = {}
         output: list[TextCompositionBeat] = []
         self.owner_coupling = []
+        self.abstentions = []
 
         for beat in beats:
             cues = sorted(
@@ -51,8 +54,20 @@ class TextCompositionPlanner:
             visual = visual_by_beat.get(beat.id)
             placed: list[PlacedTextRegion] = []
             items = []
+            opener = self._scene_opener(beat, motion_by_key)
 
             for cue in cues:
+                if opener is not None and float(cue.spoken_start) < opener - 1e-6:
+                    # The cue is spoken while the previous scene is still the picture: its
+                    # own visual context is not open yet, so it would sit on foreign
+                    # artwork. Timing stays narration-locked; the cue abstains.
+                    self.abstentions.append({
+                        "beat_id": beat.id, "text_cue_id": cue.id,
+                        "reason": "before_scene_opener",
+                        "spoken_start": round(float(cue.spoken_start), 3),
+                        "scene_opener": round(opener, 3),
+                    })
+                    continue
                 visible_end = self.visibility.visible_end(cue, beat, cues)
                 concurrent = [
                     row
@@ -177,17 +192,11 @@ class TextCompositionPlanner:
         ):
             return "owner_not_in_scene"
 
-        def visible_start(motion_cue: MotionCue) -> float:
-            starts = [float(segment.start) for segment in motion_cue.segments if segment.phase != "EXIT"]
-            return min([float(motion_cue.start), *starts])
-
         owner_cue = motion_by_key.get((beat.id, cue.anchor_asset_id))
         if owner_cue is None:
             return "final_visual_timing_unknown"
-        owner_start = visible_start(owner_cue)
-        scene_start = min(
-            visible_start(row) for (beat_id, _), row in motion_by_key.items() if beat_id == beat.id
-        )
+        owner_start = TextCompositionPlanner._visible_start(owner_cue)
+        scene_start = TextCompositionPlanner._scene_opener(beat, motion_by_key)
         if owner_start >= visible_end:
             return "future_owner"  # the owner appears only after the text is gone
         if float(cue.spoken_start) < scene_start - 1e-6:
@@ -197,6 +206,24 @@ class TextCompositionPlanner:
         if visible_end > float(beat.end) + 1e-6:
             return "owner_not_present_through_text"
         return None
+
+    @staticmethod
+    def _visible_start(motion_cue: MotionCue) -> float:
+        starts = [float(segment.start) for segment in motion_cue.segments if segment.phase != "EXIT"]
+        return min([float(motion_cue.start), *starts])
+
+    @staticmethod
+    def _scene_opener(
+        beat: StoryBeat,
+        motion_by_key: dict[tuple[str, str], MotionCue],
+    ) -> float | None:
+        """First instant any of this beat's own artwork is on screen (final Motion)."""
+        starts = [
+            TextCompositionPlanner._visible_start(row)
+            for (beat_id, _), row in motion_by_key.items()
+            if beat_id == beat.id
+        ]
+        return min(starts) if starts else None
 
     @staticmethod
     def _connectors(

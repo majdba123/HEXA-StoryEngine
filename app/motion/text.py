@@ -9,7 +9,7 @@ from app.models import (
     TextMotionCue,
     TextMotionToken,
 )
-from app.text.timing.visibility import TextVisibilityPolicy
+from app.text.timing.visibility import TEXT_ENTRY_MAX_SECONDS, TextVisibilityPolicy
 
 
 class TextMotionPlanner:
@@ -230,7 +230,7 @@ class TextMotionPlanner:
                 # The reference style is decisive rather than sluggish: use the anchor
                 # settle as a synchronization target, but bound the text gesture so a
                 # long spoken phrase never turns one keyword into a slow subtitle move.
-                duration = max(0.13, min(0.24, delta))
+                duration = max(0.13, min(TEXT_ENTRY_MAX_SECONDS, delta))
         return {
             "available": True,
             "entry_strength": max(0.0, min(1.0, strength)),

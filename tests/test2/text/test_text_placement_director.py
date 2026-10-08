@@ -192,11 +192,21 @@ def test_authoring_qa_checks_text_against_locked_visual_geometry(tmp_path) -> No
 
 
 def test_arabic_kufi_measurement_reserves_real_glyph_width_and_entry_motion() -> None:
+    # Sprint 6: the box is the vendored-font HarfBuzz ink (libass-equivalent, verified
+    # against encoded frames in tests/test2/render) plus the full entry excursion. The
+    # previous `width > 0.55` encoded a character-count fallback ~2x wider than the
+    # glyphs libass draws, which shrank half of all real cues for no reason.
+    from app.text.metrics import TextTypographyMetrics
+
     cue = _cue("text-wide", "يكتب وبسرعة", 0.2, 0.8)
     width, height = TextPlacementDirector.estimated_box(cue, scale=1.0)
+    ink = TextTypographyMetrics().layout(cue.text, style_id=cue.style_id, font_scale=1.0)
 
-    assert width > 0.55
-    assert height > 0.14
+    assert abs(width - (ink.width + 28.0) / 1920) < 1e-9
+    assert abs(height - (ink.height + 34.0) / 1080) < 1e-9
+    # Real shaped Kufi ink for this phrase at the Amount size is ~600 px wide.
+    assert 540 < ink.width < 660
+    assert 95 < ink.height < 140
 
 def test_director_ignores_later_semantic_visual_until_text_disappears(tmp_path) -> None:
     from PIL import Image, ImageDraw

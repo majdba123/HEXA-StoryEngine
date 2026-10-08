@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue
-from app.text.metrics import TextTypographyMetrics
+from app.text.metrics import PRODUCTION_FONT_DIR, PRODUCTION_FONT_FAMILY, TEXT_SHADOW_PX, TextTypographyMetrics
 
 
 _RLI = "\u2067"
@@ -15,7 +15,7 @@ _PDI = "\u2069"
 class TextRenderTheme:
     """Premium high-contrast tokens for sparse keyword storytelling."""
 
-    font_family: str = "Noto Kufi Arabic Extra Bold"
+    font_family: str = PRODUCTION_FONT_FAMILY
     primary: str = "&H00FFFFFF"       # white fill
     accent: str = "&H00FFFFFF"
     gold: str = "&H00FFFFFF"
@@ -34,9 +34,11 @@ class TextRenderer:
     line grows into its final footprint without re-centering or reversing earlier words.
     """
 
-    def __init__(self, *, font_family: str = "Noto Kufi Arabic Extra Bold") -> None:
-        self.theme = TextRenderTheme(font_family=font_family)
-        self.metrics = TextTypographyMetrics(font_family=font_family)
+    def __init__(self) -> None:
+        # Vendored production faces only: the same files are measured during planning and
+        # handed to libass, so no machine-local substitute can change the typography.
+        self.theme = TextRenderTheme()
+        self.metrics = TextTypographyMetrics()
 
     def write_beat_ass(
         self,
@@ -119,25 +121,58 @@ class TextRenderer:
                     "max_width": item.max_width * plan.width
                                  / (projection.reference_width * projection.scale),
                 })
-            x, y, safe_scale = self._safe_text_geometry(
+            style_id = style.id if style else cue.style_id
+            face = self.metrics.face_for(cue.text)
+            if face is None:
+                # Never let libass substitute an OS font (render handoff fails closed first).
+                continue
+            face_tags = ""
+            if face.family != self.theme.font_family:
+                base_size = self.metrics.style_spec(style_id, cue.semantic_type)[0]
+                pixel = projection.scale if projection else 1.0
+                size = max(1, round(self.metrics.font_size(face, base_size) * pixel))
+                face_tags = f"\\fn{face.family}\\fs{size}"
+            edge_x, ink_center_y, safe_scale = self._safe_text_geometry(
                 plan=geometry_plan,
                 cue_text=cue.text,
                 semantic_type=cue.semantic_type,
-                style_id=style.id if style else cue.style_id,
+                style_id=style_id,
                 item=geometry_item,
                 rtl=rtl,
                 entry_strength=float(motion.params.get("entry_strength", 0.0)),
             )
-            if projection is not None:
-                x = round(projection.offset_x + x * projection.scale)
-                y = round(projection.offset_y + y * projection.scale)
+
+            def anchor(
+                state_text: str,
+                *,
+                edge_x: float = edge_x,
+                ink_center_y: float = ink_center_y,
+                scale: float = safe_scale,
+                semantic_type: str = cue.semantic_type,
+                style_id: str = style_id,
+                rtl: bool = rtl,
+            ) -> tuple[int, int]:
+                # Left-anchored (an4) lines place shaped ink exactly where HarfBuzz
+                # does, so each reveal state is positioned from its own measurement and
+                # the reading-start edge (right for RTL) never moves between states.
+                layout = self.metrics.layout(
+                    state_text, style_id=style_id, semantic_type=semantic_type,
+                    font_scale=scale,
+                )
+                x = edge_x - (layout.ink_right if rtl else layout.ink_left)
+                y = ink_center_y - (layout.ink_top + layout.ink_bottom) / 2.0
+                if projection is not None:
+                    x = projection.offset_x + x * projection.scale
+                    y = projection.offset_y + y * projection.scale
+                return round(x), round(y)
+
             events.extend(self._cue_events(
                 cue_text=cue.text,
                 motion=motion,
                 item=item,
                 style_name=style_name,
-                x=x,
-                y=y,
+                anchor=anchor,
+                face_tags=face_tags,
                 rtl=rtl,
                 font_scale=safe_scale,
                 pixel_scale=projection.scale if projection else 1.0,
@@ -153,9 +188,9 @@ class TextRenderer:
         motion: TextMotionCue,
         item: TextLayoutItem,
         style_name: str,
-        x: int,
-        y: int,
+        anchor,
         rtl: bool,
+        face_tags: str = "",
         font_scale: float,
         pixel_scale: float = 1.0,
         segment_start: float,
@@ -173,6 +208,7 @@ class TextRenderer:
             start = max(0.0, event_global_start - segment_start)
             if local_end <= start + 0.04:
                 return []
+            x, y = anchor(cue_text)
             tags = self._line_tags(
                 x=x,
                 y=y,
@@ -182,6 +218,7 @@ class TextRenderer:
                 pixel_scale=pixel_scale,
                 entry_strength=float(motion.params.get("entry_strength", 0.0)),
                 entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
+                face_tags=face_tags,
             )
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
@@ -203,6 +240,7 @@ class TextRenderer:
             state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
             if not state_text:
                 continue
+            x, y = anchor(state_text)
             tags = self._line_tags(
                 x=x,
                 y=y,
@@ -212,6 +250,7 @@ class TextRenderer:
                 pixel_scale=pixel_scale,
                 entry_strength=float(motion.params.get("entry_strength", 0.0)),
                 entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
+                face_tags=face_tags,
             )
             events.append(self._dialogue(
                 start,
@@ -232,13 +271,17 @@ class TextRenderer:
         item: TextLayoutItem,
         rtl: bool,
         entry_strength: float,
-    ) -> tuple[int, int, float]:
-        """Clamp the actual shaped glyph footprint, including its entry excursion.
+    ) -> tuple[float, float, float]:
+        """Place the shaped ink, including its entry path, inside the planned text box.
 
-        TextComposition chooses negative space, but the renderer is the last authority
-        on real glyph dimensions. This guard uses the production font metrics and cannot
-        move Final Package artwork; it only nudges/shrinks the text enough to keep every
-        rendered pixel inside the title-safe area.
+        Returns the resting ink's reading-start edge (right edge for RTL, left for LTR),
+        its vertical centre, and the font scale.
+
+        TextComposition reserves a box of ink plus entry excursion. The line is anchored
+        on its reading-start edge (right for RTL) so progressive reveal never re-centers,
+        and the whole ``\\move`` path - not only the resting frame - stays in that box.
+        The title-safe clamp remains the last guard; it may nudge or shrink text but
+        never moves Final Package artwork.
         """
         width = max(1, int(plan.width))
         height = max(1, int(plan.height))
@@ -250,45 +293,36 @@ class TextRenderer:
         scale = max(0.40, min(1.0, float(item.font_scale)))
         available_width = max(1.0, width - margin_x * 2.0 - entry_x)
 
-        for _ in range(3):
-            text_width, text_height = self.metrics.measure(
-                cue_text,
-                style_id=style_id,
-                semantic_type=semantic_type,
-                font_scale=scale,
+        def layout_at(value: float):
+            return self.metrics.layout(
+                cue_text, style_id=style_id, semantic_type=semantic_type, font_scale=value,
             )
-            if text_width <= available_width + 0.5:
+
+        layout = layout_at(scale)
+        for _ in range(3):
+            if layout is None or layout.width <= available_width + 0.5:
                 break
-            ratio = available_width / max(1.0, text_width)
-            scale = max(0.40, scale * ratio * 0.985)
+            scale = max(0.40, scale * available_width / max(1.0, layout.width) * 0.985)
+            layout = layout_at(scale)
+        if layout is None:
+            return width * item.x, height * item.y, scale
 
-        text_width, text_height = self.metrics.measure(
-            cue_text,
-            style_id=style_id,
-            semantic_type=semantic_type,
-            font_scale=scale,
-        )
-        preferred_y = height * item.y
-        y_low = margin_y + text_height / 2.0
-        y_high = height - margin_y - text_height / 2.0 - entry_y
-        if y_high < y_low:
-            y = height / 2.0
-        else:
-            y = max(y_low, min(y_high, preferred_y))
+        # Vertical: centre the resting ink plus the downward entry offset on the box.
+        path_height = layout.height + entry_y
+        top = height * item.y - path_height / 2.0
+        top = max(margin_y, min(height - margin_y - path_height, top))
+        ink_center_y = top + layout.height / 2.0
 
+        # Horizontal: the entry starts outward of the reading-start edge by ``entry_x``.
+        box_left = width * (item.x - item.max_width / 2.0)
+        box_right = width * (item.x + item.max_width / 2.0)
         if rtl:
-            preferred_x = width * min(0.97, item.x + item.max_width / 2.0)
-            x_low = margin_x + text_width
-            x_high = width - margin_x - entry_x
+            edge_x = box_right - entry_x
+            edge_x = max(margin_x + layout.width, min(width - margin_x - entry_x, edge_x))
         else:
-            preferred_x = width * max(0.03, item.x - item.max_width / 2.0)
-            x_low = margin_x + entry_x
-            x_high = width - margin_x - text_width
-        if x_high < x_low:
-            x = width / 2.0
-        else:
-            x = max(x_low, min(x_high, preferred_x))
-        return round(x), round(y), scale
+            edge_x = box_left + entry_x
+            edge_x = max(margin_x + entry_x, min(width - margin_x - layout.width, edge_x))
+        return edge_x, ink_center_y, scale
 
     @staticmethod
     def _line_tags(
@@ -301,8 +335,9 @@ class TextRenderer:
         pixel_scale: float = 1.0,
         entry_strength: float = 0.0,
         entry_duration_ms: int = 165,
+        face_tags: str = "",
     ) -> str:
-        alignment = 6 if rtl else 4  # middle-right for RTL, middle-left for LTR
+        alignment = 4  # middle-left: ink lands exactly where the shared measurement puts it
         scale = max(40, min(100, round(font_scale * 100)))
         size_tag = f"\\fscx{scale}\\fscy{scale}"
         if first:
@@ -316,12 +351,12 @@ class TextRenderer:
             duration = max(130, min(240, int(entry_duration_ms)))
             fade = max(45, min(65, round(65 - 15 * strength)))
             return (
-                f"\\an{alignment}{size_tag}\\move("
+                f"\\an{alignment}{face_tags}{size_tag}\\move("
                 f"{x + direction},{y + vertical},{x},{y},0,{duration})"
                 f"\\fad({fade},0)\\blur{0.35 if pixel_scale == 1.0 else round(0.35 * pixel_scale, 3)}"
             )
         blur = 0.25 if pixel_scale == 1.0 else round(0.25 * pixel_scale, 3)
-        return f"\\an{alignment}{size_tag}\\pos({x},{y})\\blur{blur}"
+        return f"\\an{alignment}{face_tags}{size_tag}\\pos({x},{y})\\blur{blur}"
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme
@@ -331,7 +366,7 @@ class TextRenderer:
                 name, color, max(1, round(size * pixel_scale)),
                 outline_color=theme.dark_outline,
                 outline=outline * pixel_scale,
-                shadow=1.2 * pixel_scale,
+                shadow=TEXT_SHADOW_PX * pixel_scale,
             )
         styles = [
             style("Keyword", theme.primary, 158, 8.0),
@@ -428,5 +463,10 @@ class TextRenderer:
 
     @staticmethod
     def ass_filter(path: Path, input_label: str, output_label: str) -> str:
-        escaped = str(path.resolve()).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
-        return f"[{input_label}]ass=filename='{escaped}'[{output_label}]"
+        def escape(value: Path) -> str:
+            return str(value.resolve()).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
+
+        return (
+            f"[{input_label}]ass=filename='{escape(path)}'"
+            f":fontsdir='{escape(PRODUCTION_FONT_DIR)}'[{output_label}]"
+        )

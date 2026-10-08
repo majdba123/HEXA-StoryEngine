@@ -33,7 +33,9 @@ def build_handoff_case(tmp_path: Path, *, namespace: str = "HANDOFF"):
             progression=True,
             group_count=2,
             reuse_first_asset=True,
-            script_style="numbers",
+            # Sprint 6: every displayed line must be drawable by one vendored face; the
+            # synthetic "numbers" tokens mix Arabic, digits and Latin "x" in one word.
+            script_style="arabic",
             namespace=namespace,
         ),
     )

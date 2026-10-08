@@ -126,3 +126,4 @@ jobs:
           tests/test2/render/test_encoded_motion_regressions.py
           tests/test2/render/test_package_shaped_encoded_render.py
           tests/test2/integration/test_layer_handoff_motion_contracts.py
+          tests/test2/text/test_text_v2.py

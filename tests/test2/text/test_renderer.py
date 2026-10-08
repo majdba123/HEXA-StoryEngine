@@ -150,8 +150,11 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     visible_text = re.sub(r"\{[^}]*\}", "", payload)
     assert "1000 ريال" in visible_text
     assert "لاير" not in visible_text
-    assert "Noto Kufi Arabic Extra Bold" in payload
-    assert "\\an6\\fscx100\\fscy100\\move(" in payload
+    assert "Noto Kufi Arabic ExtraBold" in payload
+    # Sprint 6: lines are left-anchored (\an4), where libass places shaped ink exactly as
+    # the shared HarfBuzz measurement does; each reveal state is positioned from its own
+    # measurement so the RTL reading edge stays fixed (see test_text_v2).
+    assert "\\an4\\fscx100\\fscy100\\move(" in payload
     assert "\\pos(" in payload
     # Each reveal state is a complete logical phrase shaped as one bidi run. This avoids
     # the temporary word reversal caused by inline override spans inside Arabic text.
@@ -160,7 +163,7 @@ def test_text_renderer_writes_native_arabic_ass_without_string_reversal(tmp_path
     assert "1000 ريال" in payload
     assert "&H00FFFFFF" in payload
     assert "&H00000000" in payload
-    assert "Style: Amount,Noto Kufi Arabic Extra Bold,188" in payload
+    assert "Style: Amount,Noto Kufi Arabic ExtraBold,188" in payload
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
@@ -197,7 +200,7 @@ def test_text_renderer_semantic_entry_strength_changes_motion_only(tmp_path: Pat
     assert path is not None
     payload = path.read_text(encoding="utf-8")
     assert ",0,210)\\fad(50,0)" in payload
-    assert "Style: Amount,Noto Kufi Arabic Extra Bold,188" in payload
+    assert "Style: Amount,Noto Kufi Arabic ExtraBold,188" in payload
     assert "&H00FFFFFF" in payload
     assert "&H00000000" in payload
 

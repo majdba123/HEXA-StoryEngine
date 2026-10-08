@@ -7,9 +7,16 @@ from difflib import SequenceMatcher
 
 from app.canonical import CanonicalAsset, CanonicalPackage, CanonicalScene
 from app.models import StoryBeat, Transcript, TranscriptWord
+from app.text.metrics import TextTypographyMetrics
 
+_PRODUCTION_TYPOGRAPHY = TextTypographyMetrics()
 _TOKEN_EDGE_RE = re.compile(r"^[\W_]+|[\W_]+$", re.UNICODE)
 _DIGIT_RE = re.compile(r"[0-9٠-٩]")
+_TERM_RE = re.compile(r"[\w؀-ۿ]+", re.UNICODE)
+_LATIN_RE = re.compile(r"[A-Za-z]")
+# Arabic vocalisation marks; only used to read word morphology, never to edit display text.
+_HARAKAT_RE = re.compile("[\u064b-\u065f\u0670]")
+_TANWEEN = frozenset({"\u064b", "\u064c", "\u064d"})
 
 _ARABIC_STOPWORDS = frozenset({
     "في", "من", "على", "إلى", "الى", "عن", "مع", "هذا", "هذه", "ذلك", "تلك",
@@ -65,6 +72,7 @@ _WARNING_TERMS = frozenset({
     "rejected", "declined", "warning", "error",
 })
 _NEGATION_MODIFIERS = frozenset({"غير", "بدون", "دون"})
+_NEGATION_PARTICLES = frozenset({"ما", "لا", "لم", "لن", "ولا", "مو", "مش", "غير", "بدون", "دون"})
 _SEMANTIC_COMPANIONS = frozenset({
     "عدد", "موقع", "الشراء", "شراء", "الحقيقي", "حقيقي", "المسموح", "مسموح", "الأساسي", "أساسي",
     "الاساسي", "اساسي", "اليومي", "يومي", "باليوم", "تشتغل", "عام", "عامة",
@@ -83,6 +91,40 @@ _WEAK_EDITORIAL_TERMS = frozenset({
     # Editorial text is allowed to omit them even when the visual binding is authoritative.
     "جداً", "جدًا", "جدا", "أصلًا", "اصلا", "لو", "وصل",
 })
+# Closed grammatical classes of (Modern Standard and Gulf/Levantine spoken) Arabic:
+# personal/reflexive pronouns, interrogatives, discourse markers, modal particles,
+# quantifiers, frequency/degree adverbs, "other/one" determiners and generic placeholder
+# nouns. These classes are finite and carry no visual concept of their own, so they never
+# become editorial text on their own and never open or close a displayed phrase.
+_PRONOUN_TERMS = frozenset({
+    "أنا", "انا", "أنت", "انت", "إنت", "أنتي", "انتي", "نحن", "احنا", "إحنا", "أنتم", "انتم",
+    "هن", "نفسه", "نفسها", "نفسهم", "نفسك", "نفسي", "أنفسهم", "انفسهم",
+    "عنده", "عندها", "عندهم", "عندي", "عندك", "عندنا", "لهم", "لي", "لنا", "عليهم",
+})
+_INTERROGATIVE_TERMS = frozenset({
+    "هل", "كيف", "ماذا", "لماذا", "ليش", "ليه", "وش", "ايش", "إيش", "مين", "متى", "وين",
+    "أين", "اين", "كم", "شو",
+})
+_DISCOURSE_TERMS = frozenset({
+    "يعني", "وهنا", "هناك", "الآن", "الان", "طيب", "بس", "كمان", "أيضا", "أيضًا", "ايضا",
+    "كذلك", "بالعكس", "مثلا", "مثلًا", "مثلاً", "ممكن", "يمكن", "لازم", "بدل", "بدلا",
+    "بدلًا", "بدلاً", "صار", "صارت", "صاروا", "كانوا", "وفي", "وكمان", "لأن", "لان", "بل",
+    "وكيف", "وبعد", "ولازم", "إنه", "انه", "إنها", "انها", "لأنه", "لانه", "لأنك", "لانك",
+    "لأنها", "لانها", "لأنهم", "لانهم",
+})
+_QUANTIFIER_ADVERB_TERMS = frozenset({
+    "البعض", "بعض", "كثير", "كثيرة", "أكثر", "اكثر", "أقل", "اقل", "أحيانا", "أحيانًا",
+    "أحياناً", "احيانا", "وأحيانًا", "وأحيانا", "دائما", "دائمًا", "دائماً", "تماما", "تمامًا",
+    "تماماً", "عادة", "عادةً", "عادي", "عادية", "ثاني", "ثانية", "الثاني", "الثانية", "آخر",
+    "اخر", "أخرى", "اخرى", "واحد", "واحدة", "الشيء", "الشي", "هالشيء", "هالشي", "وهالشيء",
+    "أشياء", "اشياء",
+})
+_CLOSED_CLASS_TERMS = (
+    _PRONOUN_TERMS | _INTERROGATIVE_TERMS | _DISCOURSE_TERMS | _QUANTIFIER_ADVERB_TERMS
+)
+# Words that may not open or close a displayed phrase (a question/discourse fragment is
+# not a label); comparatives/quantifiers may still complete a phrase ("أقل خطورة").
+_PHRASE_EDGE_TERMS = _PRONOUN_TERMS | _INTERROGATIVE_TERMS | _DISCOURSE_TERMS
 _IMPORTANCE_TERMS = frozenset({
     "الرصيد", "المتاح", "متاح", "فعليًا", "فعليا", "محجوز", "محجوزة", "الحد", "حد",
     "اليومي", "رفض", "مرفوض", "تنرفض", "رفضها", "البنك", "بنك", "البطاقة", "البطاقات",
@@ -111,6 +153,8 @@ class KeywordCandidate:
     score: float
     tokens: tuple[KeywordToken, ...] = ()
     authority_rank: int = 0
+    # Which selection path produced the candidate (structured diagnostics/provenance).
+    provenance: str = ""
 
 
 class TextSemanticSelector:
@@ -150,7 +194,7 @@ class TextSemanticSelector:
             # A semantic Final Package is authoritative for topic wording. Do not fill
             # unused text budget with unrelated generic speech merely to increase count.
             candidates.extend(package_candidates)
-        else:
+        elif package is None or not package.has_authoritative_semantics:
             # Topic-agnostic fallback when the unified package has no usable semantic
             # candidate for this beat. This path does not depend on a specific business domain.
             candidates.extend(self._generic_semantic_candidates(words, beat, package))
@@ -161,6 +205,10 @@ class TextSemanticSelector:
             if candidate.score < self.min_candidate_score:
                 continue
             if not self._has_editorial_content(candidate.display_text.split()):
+                continue
+            if not _PRODUCTION_TYPOGRAPHY.covers(candidate.display_text):
+                # No single vendored production face can draw it; never fall back to
+                # an OS font, abstain instead.
                 continue
             key = self._normalize(candidate.display_text)
             if not key:
@@ -229,6 +277,9 @@ class TextSemanticSelector:
             number_display = normalized_number or " ".join(number_words)
             if word.char_start is None or last.char_end is None:
                 continue
+            spelled_one = normalized_number == "1" and not any(
+                _DIGIT_RE.search(token) for token in number_words
+            )
             display_parts = [number_display]
             token_parts = [KeywordToken(
                 display_text=number_display,
@@ -271,6 +322,9 @@ class TextSemanticSelector:
 
             if word.char_start is None or last.char_end is None:
                 continue
+            if spelled_one and len(display_parts) == 1:
+                # A spelled "واحد/واحدة" without unit is the indefinite "one/a", not a value.
+                continue
             display = " ".join(display_parts)
             if len(display) > self.max_display_chars:
                 continue
@@ -283,6 +337,7 @@ class TextSemanticSelector:
                 score=1.22 if reserved is not None else 1.10,
                 tokens=tuple(token_parts),
                 authority_rank=4,
+                provenance="number_amount",
             ))
         return output
 
@@ -373,7 +428,6 @@ class TextSemanticSelector:
                 )
             )
 
-            produced = False
             for semantic_asset in semantic_assets:
                 binding_type = str(semantic_asset.binding_type or "").upper()
                 if binding_type in {"SUPPORT", "PARENT", "AMBIGUOUS"}:
@@ -389,9 +443,7 @@ class TextSemanticSelector:
                     require_semantic_match=True,
                     require_full_semantic_coverage=False,
                 )
-                if rows:
-                    produced = True
-                    output.extend(rows)
+                output.extend(rows)
 
             aggregate_terms, aggregate_explicit = self._semantic_evidence_terms(semantic_assets)
             output.extend(self._semantic_phrase_windows(
@@ -404,17 +456,8 @@ class TextSemanticSelector:
                 require_semantic_match=True,
                 require_full_semantic_coverage=True,
             ))
-            if not produced:
-                output.extend(self._semantic_phrase_windows(
-                    phrase_words,
-                    semantic_assets=semantic_assets,
-                    semantic_terms=aggregate_terms,
-                    explicit_terms=aggregate_explicit,
-                    corpus_frequency=corpus_frequency,
-                    action=beat.action,
-                    require_semantic_match=False,
-                    require_full_semantic_coverage=False,
-                ))
+            # No unmatched lexical mining here: a phrase window with no structured
+            # semantic support is a guess, and Text abstains instead (Sprint 6).
         return output
 
     def _precise_asset_candidates(
@@ -459,10 +502,24 @@ class TextSemanticSelector:
             ]
             if not matched or len(matched) > 3:
                 continue
-            cleaned = [self._clean(row.text) for row in matched]
+            ordered = sorted(matched, key=lambda row: row.char_start)
+            cleaned = self._display_tokens([row.text for row in ordered])
             if any(not token for token in cleaned):
                 continue
             if not self._has_editorial_content(cleaned):
+                continue
+            if not self._has_label_edges(cleaned):
+                continue
+            granularity = str(asset.anchor_granularity or "").upper()
+            if (
+                len(cleaned) == 1
+                and granularity == "EXACT_WORD"
+                and not self._is_number_token(cleaned[0])
+                and _PRODUCTION_TYPOGRAPHY.contains_arabic(cleaned[0])
+                and not self._is_nominal(ordered[0].text)
+            ):
+                # A single-word span is the moment the visual appears. Unless the word is
+                # itself a nominal concept, it times the visual but does not label it.
                 continue
             display = " ".join(cleaned).strip()
             if not display or len(display) > self.max_display_chars:
@@ -524,6 +581,7 @@ class TextSemanticSelector:
                 "emphasis",
                 score,
                 authority_rank=authority_rank,
+                provenance=f"exact_asset_span:{granularity or 'UNSPECIFIED'}",
             )
             if candidate is not None:
                 output.append(candidate)
@@ -551,7 +609,9 @@ class TextSemanticSelector:
             score = 0.70 + min(0.10, rarity * 0.06) + action_bonus
             if len(cleaned) >= 5:
                 score += 0.03
-            candidate = self._candidate_from_words([word], "keyword", score)
+            candidate = self._candidate_from_words(
+                [word], "keyword", score, provenance="generic_salience",
+            )
             if candidate:
                 output.append(candidate)
 
@@ -563,6 +623,7 @@ class TextSemanticSelector:
                     if len(combined) <= self.max_display_chars:
                         pair = self._candidate_from_words(
                             [word, neighbor], "keyword", score + 0.045,
+                            provenance="generic_salience",
                         )
                         if pair:
                             output.append(pair)
@@ -602,6 +663,8 @@ class TextSemanticSelector:
                 window = words[start:start + size]
                 if self._crosses_clause_boundary(window):
                     continue
+                if self._splits_latin_term(words, start, start + size):
+                    continue
                 cleaned = [self._clean(row.text) for row in window]
                 if not cleaned or any(not token for token in cleaned):
                     continue
@@ -614,6 +677,14 @@ class TextSemanticSelector:
                 if not content:
                     continue
                 if size == 1 and cleaned[0].lower() in _WEAK_STANDALONE_TERMS:
+                    continue
+                if (
+                    size == 1
+                    and _PRODUCTION_TYPOGRAPHY.contains_arabic(cleaned[0])
+                    and not self._is_nominal(window[0].text)
+                ):
+                    # A lone fuzzy term match is not label evidence unless the word is
+                    # itself a nominal concept (same guard as single-word trigger spans).
                     continue
                 strong_content = [
                     token for token in content
@@ -657,10 +728,31 @@ class TextSemanticSelector:
                     semantic_type,
                     score,
                     authority_rank=2,
+                    provenance=(
+                        "semantic_phrase_window"
+                        if semantic_matches + explicit_matches
+                        else "unmatched_phrase_window"
+                    ),
                 )
                 if candidate:
                     output.append(candidate)
         return output
+
+    @classmethod
+    def _splits_latin_term(cls, words: list[TranscriptWord], start: int, end: int) -> bool:
+        """True when the window cuts a run of Latin-script words (e.g. "Bug Bounty").
+
+        A foreign term is indivisible on screen: showing half of it breaks its meaning.
+        """
+        def latin(index: int) -> bool:
+            return 0 <= index < len(words) and bool(_LATIN_RE.search(words[index].text))
+
+        def joined(left: int, right: int) -> bool:
+            return latin(left) and latin(right) and not cls._crosses_clause_boundary(
+                words[left:right + 1]
+            )
+
+        return joined(start - 1, start) or joined(end - 1, end)
 
     @staticmethod
     def _crosses_clause_boundary(words: list[TranscriptWord]) -> bool:
@@ -681,7 +773,7 @@ class TextSemanticSelector:
                 asset.semantic_role,
             ):
                 text = str(value or "")
-                for raw in re.findall(r"[w؀-ۿ]+", text, flags=re.UNICODE):
+                for raw in _TERM_RE.findall(text):
                     term = cls._semantic_lexeme(raw)
                     if term:
                         row_terms.add(term)
@@ -693,7 +785,7 @@ class TextSemanticSelector:
     @classmethod
     def _content_frequency(cls, text: str) -> Counter[str]:
         output: Counter[str] = Counter()
-        for raw in re.findall(r"[w؀-ۿ]+", text, flags=re.UNICODE):
+        for raw in _TERM_RE.findall(text):
             cleaned = cls._clean(raw)
             if not cls._is_content_word(cleaned):
                 continue
@@ -839,7 +931,9 @@ class TextSemanticSelector:
                                     score += 0.04
 
             semantic_type = "warning" if normalized in _WARNING_TERMS else "emphasis"
-            candidate = self._candidate_from_words(phrase, semantic_type, score)
+            candidate = self._candidate_from_words(
+                phrase, semantic_type, score, provenance="importance_lexicon",
+            )
             if candidate:
                 output.append(candidate)
         return output
@@ -876,6 +970,7 @@ class TextSemanticSelector:
         score: float,
         *,
         authority_rank: int = 0,
+        provenance: str = "",
     ) -> KeywordCandidate | None:
         if not words:
             return None
@@ -884,17 +979,20 @@ class TextSemanticSelector:
         last = ordered[-1]
         if first.char_start is None or last.char_end is None:
             return None
-        display = " ".join(self._clean(word.text) for word in ordered).strip()
+        shown = self._display_tokens([word.text for word in ordered])
+        display = " ".join(token for token in shown if token).strip()
         if not display or len(display) > self.max_display_chars:
+            return None
+        if not self._has_label_edges([token for token in shown if token]):
             return None
         tokens = tuple(
             KeywordToken(
-                display_text=self._clean(word.text),
+                display_text=token,
                 source_char_start=int(word.char_start),
                 source_char_end=int(word.char_end),
             )
-            for word in ordered
-            if word.char_start is not None and word.char_end is not None and self._clean(word.text)
+            for word, token in zip(ordered, shown)
+            if word.char_start is not None and word.char_end is not None and token
         )
         return KeywordCandidate(
             display_text=display,
@@ -904,6 +1002,7 @@ class TextSemanticSelector:
             score=score,
             tokens=tokens,
             authority_rank=max(0, int(authority_rank)),
+            provenance=provenance,
         )
 
     @staticmethod
@@ -998,9 +1097,67 @@ class TextSemanticSelector:
                 continue
             if normalized in _WEAK_STANDALONE_TERMS or normalized in _WEAK_EDITORIAL_TERMS:
                 continue
+            if normalized in _CLOSED_CLASS_TERMS:
+                continue
             if cls._is_number_token(normalized) or cls._is_content_word(normalized):
                 return True
         return False
+
+    @classmethod
+    def _has_label_edges(cls, tokens: list[str]) -> bool:
+        """A displayed phrase is a label, not a clause fragment.
+
+        It may not open or close on a function word (preposition, conjunction, pronoun,
+        question or discourse word). It may open on a negation, which belongs to the
+        predicate it negates ("غير قانوني", "ما يكتشفه"), but never end on one.
+        """
+        if not tokens:
+            return False
+        first = cls._clean(tokens[0]).lower()
+        last = cls._clean(tokens[-1]).lower()
+        if first in _PHRASE_EDGE_TERMS or last in _PHRASE_EDGE_TERMS or last in _NEGATION_PARTICLES:
+            return False
+        if len(tokens) > 1:
+            if first in _ARABIC_STOPWORDS and first not in _NEGATION_PARTICLES:
+                return False
+            if last in _ARABIC_STOPWORDS:
+                return False
+        return True
+
+    @staticmethod
+    def _is_nominal(raw: str) -> bool:
+        """True for orthographically marked Arabic nominals (never verbs in Arabic).
+
+        Only meaningful for Arabic script; callers apply it to Arabic words only.
+
+        Definite article, tanween, taa marbuta and the sound feminine plural only occur
+        on nouns/adjectives, so this is a high-precision noun test that needs no lexicon.
+        """
+        token = _TOKEN_EDGE_RE.sub("", str(raw or "").strip())
+        if any(char in _TANWEEN for char in token):
+            return True
+        bare = _HARAKAT_RE.sub("", token)
+        for prefix in ("وال", "فال", "بال", "كال", "لل", "ال"):
+            if bare.startswith(prefix) and len(bare) - len(prefix) >= 2:
+                return True
+        return len(bare) >= 4 and bare.endswith(("ة", "ات"))
+
+    @classmethod
+    def _display_tokens(cls, raw_tokens: list[str]) -> list[str]:
+        """Display form of an ordered phrase.
+
+        Only the phrase-initial word loses a leading conjunction/preposition clitic
+        ("والمستخدم" -> "المستخدم"). Inner words keep theirs, so a coordination such as
+        "الاسم والشعار" is never collapsed into "الاسم الشعار".
+        """
+        return [
+            cls._clean(token) if index == 0 else cls._strip(token)
+            for index, token in enumerate(raw_tokens)
+        ]
+
+    @staticmethod
+    def _strip(value: str) -> str:
+        return _TOKEN_EDGE_RE.sub("", value.strip())
 
     @staticmethod
     def _is_content_word(value: str) -> bool:
@@ -1008,6 +1165,8 @@ class TextSemanticSelector:
         if not normalized or len(normalized) < 3 or _DIGIT_RE.search(normalized):
             return False
         if normalized in _ARABIC_STOPWORDS or normalized in _ENGLISH_STOPWORDS:
+            return False
+        if normalized in _CLOSED_CLASS_TERMS:
             return False
         return any(char.isalpha() for char in normalized)
 
