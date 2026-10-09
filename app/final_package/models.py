@@ -69,6 +69,10 @@ class UnifiedObjectPayload(StrictModel):
     needs_review: bool
     ambiguity_reason: str | None
     visual_locator: VisualLocatorPayload
+    # Optional additive Final Package 2.0 field: an authored, opaque identifier asserting
+    # that objects in different scenes depict the SAME semantic referent. Identity only -
+    # never a motion/persistence instruction. Absent/null means "not authored".
+    referent_id: str | None = None
 
 
 class VisualProgressionPayload(StrictModel):

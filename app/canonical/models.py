@@ -88,6 +88,10 @@ class CanonicalAsset(CanonicalRecord):
     scene_id: str
     type: str = "VISUAL_ASSET_INTENT"
     source_asset_id: str | None = None
+    # Authored cross-scene referent identity (Final Package ``referent_id``). Distinct
+    # from unit_id (scene-local slot), source_asset_id (library/template key) and
+    # asset_id (package object identity). Dormant until a runtime layer consumes it.
+    referent_id: str | None = None
     semantic_name: str | None = None
     visual_concept: str | None = None
     semantic_meaning: str | None = None

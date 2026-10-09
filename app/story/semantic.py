@@ -20,6 +20,12 @@ from app.models import (
 )
 
 
+# Canonical fields held at Final Package / Canonical authority only until a runtime layer
+# explicitly consumes them. Copying them into Story metadata would change serialized
+# plans without any consumer (Sprint 7A: authored referent identity stays dormant).
+_DORMANT_CANONICAL_FIELDS = frozenset({"referent_id"})
+
+
 class PackageStoryInterpreter:
     """Compile Final Package metadata into conservative story semantics.
 
@@ -689,6 +695,7 @@ class PackageStoryInterpreter:
         return {
             name: getattr(record, name)
             for name in type(record).model_fields
+            if name not in _DORMANT_CANONICAL_FIELDS
         }
 
     @staticmethod

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -43,6 +44,8 @@ from .models import (
 )
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+# Opaque ASCII machine identifier; compared byte-for-byte, never normalized.
+_REFERENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 
 
 class FinalPackageLoader:
@@ -239,6 +242,7 @@ class FinalPackageLoader:
                 obj.asset_id,
             )
             self._validate_continuity(obj.continuity, scene.scene_id, obj.asset_id)
+            self._validate_referent_id(obj.referent_id, scene.scene_id, obj.asset_id)
 
         for group in scene.semantic_groups:
             if group.semantic_group_id in group_ids:
@@ -316,6 +320,7 @@ class FinalPackageLoader:
                     f"continuity target is missing: {scene.scene_id}:{obj.asset_id}:{obj.continuity.target_asset_id}"
                 )
         self._require_parent_children_consistency(scene)
+        self._require_single_referent_carrier(scene)
         self._require_group_membership_consistency(scene)
         self._require_event_membership_consistency(scene)
 
@@ -458,6 +463,53 @@ class FinalPackageLoader:
             if obj.asset_id not in children_by_parent and obj.children_asset_ids:
                 raise InvalidPackageError(
                     f"parent/children mismatch: {scene.scene_id}:{obj.asset_id}"
+                )
+
+    @staticmethod
+    def _validate_referent_id(value: str | None, scene_id: str, asset_id: str) -> None:
+        """``referent_id`` is optional; when present it is an exact opaque machine id."""
+        if value is None:
+            return
+        if not _REFERENT_ID.fullmatch(value):
+            raise InvalidPackageError(
+                f"invalid referent_id: {scene_id}:{asset_id}: must match "
+                f"{_REFERENT_ID.pattern} (no normalization is applied)"
+            )
+
+    @staticmethod
+    def _require_single_referent_carrier(scene: UnifiedScenePayload) -> None:
+        """One referent resolves to one carrier per scene.
+
+        Several objects may share a referent_id inside one scene only when they form one
+        authored compound: exactly one root among them and every other one descending
+        from it through parent_asset_id inside that same set. Anything else is ambiguous
+        and fails closed - no "first wins" choice is ever made.
+        """
+        members: dict[str, list[UnifiedObjectPayload]] = {}
+        for obj in scene.objects:
+            if obj.referent_id is not None:
+                members.setdefault(obj.referent_id, []).append(obj)
+        for referent_id in sorted(members):
+            rows = members[referent_id]
+            if len(rows) == 1:
+                continue
+            ids = {row.asset_id for row in rows}
+            parent = {row.asset_id: row.parent_asset_id for row in rows}
+            roots = sorted(asset_id for asset_id in ids if parent[asset_id] not in ids)
+
+            def reaches_root(asset_id: str) -> bool:
+                seen: set[str] = set()
+                while asset_id in ids and asset_id not in seen:
+                    seen.add(asset_id)
+                    if asset_id == roots[0]:
+                        return True
+                    asset_id = parent[asset_id] or ""
+                return False
+
+            if len(roots) != 1 or not all(reaches_root(asset_id) for asset_id in ids):
+                raise InvalidPackageError(
+                    "ambiguous referent carriers in scene: "
+                    f"{scene.scene_id}:{referent_id}:{','.join(sorted(ids))}"
                 )
 
     @staticmethod
@@ -635,6 +687,7 @@ class FinalPackageLoader:
             scene_id=row.scene_id,
             type=row.object_type,
             source_asset_id=row.source_asset_id,
+            referent_id=row.referent_id,
             semantic_name=row.semantic_name,
             visual_concept=row.visual_concept,
             semantic_meaning=row.semantic_meaning,

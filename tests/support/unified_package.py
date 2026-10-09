@@ -46,7 +46,7 @@ def _object(scene_id: str, row: Mapping[str, Any], script: str) -> dict[str, Any
     exit_trigger = _span(row.get("exit_trigger"), script)
     visual_state = row.get("visual_state") if isinstance(row.get("visual_state"), Mapping) else {}
     continuity = row.get("continuity") if isinstance(row.get("continuity"), Mapping) else {}
-    return {
+    payload = {
         "unit_id": str(row.get("unit_id") or asset_id),
         "asset_id": asset_id,
         "scene_id": scene_id,
@@ -83,6 +83,9 @@ def _object(scene_id: str, row: Mapping[str, Any], script: str) -> dict[str, Any
         "ambiguity_reason": row.get("ambiguity_reason"),
         "visual_locator": _locator(row.get("visual_locator")),
     }
+    if "referent_id" in row:  # optional 2.0 field: written only when the test authors it
+        payload["referent_id"] = row["referent_id"]
+    return payload
 
 
 def _event(scene_id: str, row: Mapping[str, Any], script: str) -> dict[str, Any]:
