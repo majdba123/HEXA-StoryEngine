@@ -30,10 +30,14 @@ class ProductionFace:
 
 
 # Ordered: a line uses the first face that can draw every character of it (per line,
-# never per glyph). The primary face also defines the shared em size.
+# never per glyph). The primary face also defines the shared em size. Mono-script lines
+# keep their own Noto face; a line mixing Arabic with Latin/symbols uses the derived
+# coverage merge of both (tools/build_mixed_text_font.py), because libass reorders
+# segments when the font is switched inside a line.
 PRODUCTION_FACES = (
     ProductionFace("Noto Kufi Arabic ExtraBold", PRODUCTION_FONT_DIR / "NotoKufiArabic-ExtraBold.ttf"),
     ProductionFace("Noto Sans ExtraBold", PRODUCTION_FONT_DIR / "NotoSans-ExtraBold.ttf"),
+    ProductionFace("HEXA Mixed ExtraBold", PRODUCTION_FONT_DIR / "HEXAMixed-ExtraBold.ttf"),
 )
 PRODUCTION_FONT_FILE = PRODUCTION_FACES[0].file
 PRODUCTION_FONT_FAMILY = PRODUCTION_FACES[0].family
@@ -142,9 +146,17 @@ class TextTypographyMetrics:
         semantic_type: str | None = None,
         font_scale: float = 1.0,
         pixel_scale: float = 1.0,
+        rtl: bool | None = None,
+        face: ProductionFace | None = None,
     ) -> TextInkLayout | None:
+        """Ink footprint as rendered.
+
+        ``rtl`` is the paragraph direction the renderer uses (an RLI isolate for any cue
+        containing Arabic) and ``face`` the face of the whole cue (a reveal state is drawn
+        with its cue's face); both default to the rules applied to ``text`` itself.
+        """
         value = "".join(char for char in str(text or "").strip() if char not in _ISOLATES)
-        face = self.face_for(value)
+        face = face or self.face_for(value)
         if not value or face is None:
             return None
         base_size, outline = self.style_spec(style_id, semantic_type)
@@ -156,7 +168,8 @@ class TextTypographyMetrics:
         # libass: Fontsize is the OS/2 win ascent+descent height; \fscx/\fscy scale glyphs
         # only, while the outline width stays in script pixels.
         unit = size * scale / float(win_ascent + win_descent)
-        shaped = _shape(str(face.file), value)
+        paragraph_rtl = self.contains_arabic(value) if rtl is None else bool(rtl)
+        shaped = _shape(str(face.file), value, paragraph_rtl)
         baseline = (win_ascent - win_descent) / 2.0 * unit
         return TextInkLayout(
             ink_left=shaped.xmin * unit - border,
@@ -191,66 +204,135 @@ def _hb_font(font_file: str) -> hb.Font:
     return hb.Font(hb.Face(hb.Blob.from_file_path(font_file)))
 
 
-def _bidi_runs(text: str) -> list[tuple[str, bool]]:
-    """Split into (run, is_rtl) in visual order, for an RTL or LTR base paragraph.
+_OPENING_BRACKETS = {"(": ")", "[": "]", "{": "}"}
+_CLOSING_BRACKETS = {value: key for key, value in _OPENING_BRACKETS.items()}
+_NEUTRALS = frozenset({"B", "S", "WS", "ON"})
+_EXPLICIT = frozenset({"LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI", "BN"})
 
-    Covers what editorial text contains: Arabic letters, European/Arabic-Indic digits
-    with their separators, Latin and neutral whitespace/punctuation (UBA W4/N1/N2 subset).
+
+def _bidi_runs(text: str, rtl_paragraph: bool) -> list[tuple[str, bool]]:
+    """Unicode BiDi (UAX #9) for one isolated paragraph -> (run, is_rtl) in visual order.
+
+    Implements what FriBidi applies inside libass for editorial lines without explicit
+    embeddings: W1-W7, N0 for paired ASCII brackets, N1-N2, I1-I2 and L2 reordering.
+    Each run keeps logical order; HarfBuzz shapes it in its direction (mirroring
+    brackets in RTL runs) exactly as libass does.
     """
-    classes = [unicodedata.bidirectional(char) for char in text]
-    rtl_paragraph = next(
-        (cls in {"R", "AL"} for cls in classes if cls in {"R", "AL", "L"}), False,
-    )
-    number_level = 2 if rtl_paragraph else 0
-    levels: list[int] = []
-    for index, cls in enumerate(classes):
-        if cls in {"R", "AL"}:
-            levels.append(1)
-        elif cls in {"EN", "AN", "L"}:
-            levels.append(number_level)
-        elif cls in {"ES", "CS", "ET"} and 0 < index < len(text) - 1 and (
-            classes[index - 1] in {"EN", "AN"} and classes[index + 1] in {"EN", "AN"}
-        ):
-            levels.append(number_level)
-        else:
-            levels.append(-1)  # neutral, resolved below
+    if not text:
+        return []
     base = 1 if rtl_paragraph else 0
-    # N1/N2: numbers act as R; a neutral between two strong types of the same direction
-    # takes that direction, otherwise the paragraph (embedding) direction.
-    strong = [
-        None if levels[i] == -1 else ("L" if classes[i] == "L" else "R")
-        for i in range(len(text))
-    ]
-    paragraph_dir = "R" if rtl_paragraph else "L"
-    level_for = {"R": 1, "L": 2 if rtl_paragraph else 0}
-    for index, level in enumerate(levels):
-        if level != -1:
+    edge = "R" if base else "L"
+    types = ["ON" if kind in _EXPLICIT or not kind else kind
+             for kind in (unicodedata.bidirectional(char) for char in text)]
+    count = len(types)
+
+    def last_strong(index: int, kinds: tuple[str, ...]) -> str:
+        for position in range(index - 1, -1, -1):
+            if types[position] in kinds:
+                return types[position]
+        return edge
+
+    for index in range(count):  # W1: marks take the type of their base
+        if types[index] == "NSM":
+            types[index] = types[index - 1] if index else edge
+    for index in range(count):  # W2
+        if types[index] == "EN" and last_strong(index, ("R", "L", "AL")) == "AL":
+            types[index] = "AN"
+    types = ["R" if kind == "AL" else kind for kind in types]  # W3
+    for index in range(1, count - 1):  # W4
+        left, right = types[index - 1], types[index + 1]
+        if types[index] == "ES" and left == right == "EN":
+            types[index] = "EN"
+        elif types[index] == "CS" and left == right and left in {"EN", "AN"}:
+            types[index] = left
+    index = 0
+    while index < count:  # W5
+        if types[index] != "ET":
+            index += 1
             continue
-        before = next(
-            (strong[i] for i in range(index - 1, -1, -1) if strong[i] is not None), paragraph_dir,
-        )
-        after = next(
-            (strong[i] for i in range(index + 1, len(text)) if strong[i] is not None), paragraph_dir,
-        )
-        levels[index] = level_for[before] if before == after else base
+        end = index
+        while end < count and types[end] == "ET":
+            end += 1
+        if (index > 0 and types[index - 1] == "EN") or (end < count and types[end] == "EN"):
+            types[index:end] = ["EN"] * (end - index)
+        index = end
+    types = ["ON" if kind in {"ES", "ET", "CS"} else kind for kind in types]  # W6
+    for index in range(count):  # W7
+        if types[index] == "EN" and last_strong(index, ("R", "L")) == "L":
+            types[index] = "L"
+
+    def strength(kind: str) -> str | None:
+        return "L" if kind == "L" else "R" if kind in {"R", "EN", "AN"} else None
+
+    stack: list[int] = []  # N0: bracket pairs, resolved in order of their opening bracket
+    pairs: list[tuple[int, int]] = []
+    for index, char in enumerate(text):
+        if types[index] != "ON":
+            continue
+        if char in _OPENING_BRACKETS:
+            stack.append(index)
+        elif char in _CLOSING_BRACKETS:
+            for depth in range(len(stack) - 1, -1, -1):
+                if text[stack[depth]] == _CLOSING_BRACKETS[char]:
+                    pairs.append((stack[depth], index))
+                    del stack[depth:]
+                    break
+    for opening, closing in sorted(pairs):
+        inside = {strength(types[i]) for i in range(opening + 1, closing)} - {None}
+        if not inside:
+            continue
+        if edge in inside:
+            resolved = edge
+        else:
+            before = next((strength(types[i]) for i in range(opening - 1, -1, -1)
+                           if strength(types[i]) is not None), edge)
+            resolved = before
+        types[opening] = types[closing] = resolved
+    index = 0
+    while index < count:  # N1/N2
+        if types[index] not in _NEUTRALS:
+            index += 1
+            continue
+        end = index
+        while end < count and types[end] in _NEUTRALS:
+            end += 1
+        before = strength(types[index - 1]) if index else edge
+        after = strength(types[end]) if end < count else edge
+        types[index:end] = [before if before == after else edge] * (end - index)
+        index = end
+
+    if base == 0:  # I1/I2
+        levels = [1 if kind == "R" else 2 if kind in {"AN", "EN"} else 0 for kind in types]
+    else:
+        levels = [2 if kind in {"L", "EN", "AN"} else 1 for kind in types]
     runs: list[tuple[str, int]] = []
     for char, level in zip(text, levels):
         if runs and runs[-1][1] == level:
             runs[-1] = (runs[-1][0] + char, level)
         else:
             runs.append((char, level))
-    if rtl_paragraph:
-        runs.reverse()
+    lowest_odd = min(level for _, level in runs) | 1  # L2
+    for level in range(max(level for _, level in runs), lowest_odd - 1, -1):
+        index = 0
+        while index < len(runs):
+            if runs[index][1] < level:
+                index += 1
+                continue
+            end = index
+            while end < len(runs) and runs[end][1] >= level:
+                end += 1
+            runs[index:end] = runs[index:end][::-1]
+            index = end
     return [(run, level % 2 == 1) for run, level in runs]
 
 
 @lru_cache(maxsize=4096)
-def _shape(font_file: str, text: str) -> _Shaped:
+def _shape(font_file: str, text: str, rtl_paragraph: bool) -> _Shaped:
     font = _hb_font(font_file)
     pen = 0.0
     xmin = ymin = float("inf")
     xmax = ymax = float("-inf")
-    for run, rtl in _bidi_runs(text):
+    for run, rtl in _bidi_runs(text, rtl_paragraph):
         buffer = hb.Buffer()
         buffer.add_str(run)
         buffer.guess_segment_properties()

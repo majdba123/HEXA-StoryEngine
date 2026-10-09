@@ -151,13 +151,14 @@ class TextRenderer:
                 semantic_type: str = cue.semantic_type,
                 style_id: str = style_id,
                 rtl: bool = rtl,
+                face=face,
             ) -> tuple[int, int]:
                 # Left-anchored (an4) lines place shaped ink exactly where HarfBuzz
                 # does, so each reveal state is positioned from its own measurement and
                 # the reading-start edge (right for RTL) never moves between states.
                 layout = self.metrics.layout(
                     state_text, style_id=style_id, semantic_type=semantic_type,
-                    font_scale=scale,
+                    font_scale=scale, rtl=rtl, face=face,
                 )
                 x = edge_x - (layout.ink_right if rtl else layout.ink_left)
                 y = ink_center_y - (layout.ink_top + layout.ink_bottom) / 2.0

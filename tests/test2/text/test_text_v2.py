@@ -244,11 +244,20 @@ def test_half_of_a_latin_term_is_never_shown() -> None:
     assert "Bounty" not in texts and "Bug" not in texts
 
 
-def test_line_mixing_arabic_and_latin_abstains_instead_of_glyph_fallback() -> None:
+def test_line_mixing_arabic_and_latin_uses_the_vendored_mixed_face() -> None:
+    # Sprint 6.1: such lines were withheld (no single vendored face); the derived
+    # vendored mixed face now draws them as one run, still without any OS fallback.
     script = "برنامج مكافآت Bug يدفع للباحثين"
     picked = _select(script, [_asset("bb", script, "مكافآت Bug", granularity="EXACT_PHRASE")])
-    assert all("Bug" not in row.display_text for row in picked)
-    assert TextTypographyMetrics().face_for("مكافآت Bug") is None
+    assert any(row.display_text == "مكافآت Bug" for row in picked)
+    assert TextTypographyMetrics().face_for("مكافآت Bug").family == "HEXA Mixed ExtraBold"
+
+
+def test_line_no_vendored_face_can_draw_still_abstains() -> None:
+    script = "برنامج مكافآت 🔒 يدفع للباحثين"
+    picked = _select(script, [_asset("bb", script, "مكافآت 🔒", granularity="EXACT_PHRASE")])
+    assert all("🔒" not in row.display_text for row in picked)
+    assert TextTypographyMetrics().face_for("مكافآت 🔒") is None
 
 
 def _three_phrase_plan(step: float):
@@ -346,8 +355,10 @@ def test_face_selection_is_per_line_and_never_falls_back_to_the_os() -> None:
     assert metrics.face_for("ضبط ١٠ أجهزة 2024").family == "Noto Kufi Arabic ExtraBold"
     assert metrics.face_for("Bug Bounty").family == "Noto Sans ExtraBold"
     assert metrics.face_for("50% (fee)").family == "Noto Sans ExtraBold"
-    assert metrics.face_for("خصم 50%") is None  # % is not in the Arabic face
-    assert not metrics.covers("خصم 50%")
+    # Sprint 6.1: % is not in the Arabic face, so the line uses the vendored mixed face.
+    assert metrics.face_for("خصم 50%").family == "HEXA Mixed ExtraBold"
+    assert metrics.covers("خصم 50%")
+    assert metrics.face_for("خصم 🔒") is None and not metrics.covers("خصم 🔒")
     latin = metrics.face_for("Bug Bounty")
     # Same em size as the Arabic face: Fontsize scales by the win-metric ratio.
     assert metrics.font_size(latin, 178) == round(178 * (1124 + 395) / (1507 + 650))

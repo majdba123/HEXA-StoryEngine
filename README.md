@@ -67,10 +67,13 @@ Optional environment variables:
 
 ## Third-party font
 
-Editorial text is rendered with **Noto Kufi Arabic ExtraBold** (v2.110, The Noto Project
-Authors), vendored at `app/text/fonts/NotoKufiArabic-ExtraBold.ttf` and licensed under the
-SIL Open Font License 1.1 (`app/text/fonts/OFL.txt`, shipped with the font). Planning
-measures and libass renders this exact file; no system font is used for text.
+Editorial text is rendered with **Noto Kufi Arabic ExtraBold** (v2.110) and **Noto Sans
+ExtraBold** (v2.015), The Noto Project Authors, plus **HEXA Mixed ExtraBold**, a coverage
+merge of both for mixed Arabic/Latin lines (rebuilt and checked by
+`tools/build_mixed_text_font.py`). All are vendored in `app/text/fonts/` under the SIL Open
+Font License 1.1 (`app/text/fonts/OFL.txt`, shipped with the fonts; details in
+`app/text/fonts/README.md`). Planning measures and libass renders these exact files; no
+system font is used for text.
 
 ## Legacy reference
 
