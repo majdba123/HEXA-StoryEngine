@@ -190,14 +190,19 @@ def test_persist_and_transform_to_validation_unchanged(tmp_path: Path) -> None:
         _load(tmp_path / "bad", _scenes([_asset("A01", "the attacker", continuity={"mode": "TRANSFORM_TO"})]))
 
 
-# Dormancy: identity metadata does not change planning ----------------------------------------
-def test_referent_id_is_not_consumed_by_story_or_motion() -> None:
+# Ownership: identity is consumed by exactly one runtime layer -------------------------------
+def test_referent_id_consumers_are_exactly_the_contract_owners() -> None:
     hits = subprocess.run(["git", "grep", "-n", "referent_id", "--", "app"], cwd=ROOT,
                           capture_output=True, text=True).stdout.splitlines()
     owners = {line.split(":", 1)[0] for line in hits}
-    # semantic.py only lists it as a dormant canonical field that Story must NOT copy.
+    # semantic.py only lists it as a canonical field that Story must NOT copy (Story stays
+    # unchanged). Sprint 7: the cross-scene continuity planner (Motion owner) is the single
+    # runtime consumer; Choreography, Composition, Text, Boundary and Render never read it.
     assert owners <= {"app/final_package/models.py", "app/final_package/loader.py",
-                      "app/canonical/models.py", "app/story/semantic.py"}
+                      "app/canonical/models.py", "app/story/semantic.py",
+                      "app/motion/cross_scene.py"}
+    assert not any(owner.startswith(("app/render/", "app/targets/", "app/text/", "app/boundary/",
+                                     "app/composition/", "app/choreography/")) for owner in owners)
 
 
 def test_story_metadata_is_identical_with_and_without_authored_referent_ids(tmp_path: Path) -> None:

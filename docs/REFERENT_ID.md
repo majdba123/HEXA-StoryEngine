@@ -16,6 +16,18 @@ Final Package 2.0 additive field (Roadmap V2 Sprint 7A). Optional on every objec
 ## What it is not
 
 * **Not a motion or visual instruction.** It answers *who/what*, never *how*. It does not request persistence, inherited position, a transition, a fade or a morph. A later runtime decides whether identity can safely become visual continuity.
+
+## Runtime consumer (Roadmap V2 Sprint 7)
+
+The only runtime consumer is `app/motion/cross_scene.py` (Motion owner). For two **adjacent**
+scenes whose root carriers share a `referent_id` it may hand the visual over without the old
+LEAVE → gap → re-entry: the outgoing carrier stays still and opaque until the incoming carrier's own
+unchanged first visible frame, then ownership swaps on one frame. When geometry and timing allow it
+the incoming carrier may start from the outgoing pose and settle on its Composition pose; otherwise
+it swaps in place, or the link abstains and the certified boundary runs unchanged. The decision is
+kept only if Text and Boundary re-authored against it are identical to the baseline. Non-adjacent
+recurrence stays identity only. Story, Choreography, Composition, Text, Boundary and the renderer
+never read `referent_id` (the renderer receives runtime asset ids only).
 * **Not `unit_id`.** `unit_id` is a scene-local semantic slot (`UNIT_001` recurs in every scene with different referents).
 * **Not `source_asset_id`.** `source_asset_id` is a source/library/template key (`hexa_presenter`, `security_researcher`). Equal keys never prove the same referent.
 * **Not `asset_id`.** `asset_id` is package object identity and is unique per package.

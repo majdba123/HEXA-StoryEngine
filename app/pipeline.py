@@ -27,6 +27,7 @@ from app.canonical import CanonicalPackage
 from app.final_package import FinalPackageLoader
 from app.models import RenderPlan, Stage, StoryBeat, TextPlan, Transcript, VisualAsset
 from app.motion import EntryMotionGrammar, MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
+from app.motion.cross_scene import CrossSceneContinuityPlanner
 from app.motion.semantic_reference import MotionSemanticReference
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
@@ -160,6 +161,7 @@ class StoryEnginePipeline:
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.entry_grammar = EntryMotionGrammar()
         self.scene_boundaries = SceneBoundaryPlanner()
+        self.cross_scene = CrossSceneContinuityPlanner()
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
@@ -625,6 +627,24 @@ class StoryEnginePipeline:
                 text_motion=text_motion,
             )
 
+            # Sprint 7: authored cross-scene referent continuity, as one bounded transaction.
+            # Without authored referent identity the planner returns Motion unchanged.
+            motion = self._cross_scene_transaction(
+                shared=shared,
+                target=target,
+                composition=composition,
+                motion=motion,
+                text=text,
+                text_composition=text_composition,
+                text_motion=text_motion,
+                scene_boundaries=scene_boundaries,
+            )
+            if self.cross_scene.decisions:
+                (diagnostics / "cross-scene-continuity.json").write_text(
+                    json.dumps([row.to_payload() for row in self.cross_scene.decisions], indent=2),
+                    encoding="utf-8",
+                )
+
             self._check_cancel(cancelled)
             self._progress(progress, Stage.render, at(0.69), f"{prefix}Compiling render plan")
             plan, _ = self.render_planner.compile(
@@ -641,6 +661,84 @@ class StoryEnginePipeline:
                 target=target,
             )
         return plan
+
+    def _cross_scene_transaction(
+        self,
+        *,
+        shared: SharedSemanticPlan,
+        target: VisualTargetProfile,
+        composition,
+        motion,
+        text,
+        text_composition,
+        text_motion,
+        scene_boundaries,
+    ):
+        """Apply referent continuity only if the plan stays transactionally consistent.
+
+        Text is composed against final visual Motion and Boundary is planned on Motion +
+        Text. A continuity candidate is therefore re-checked by re-authoring Text and
+        Boundary against the candidate Motion; it is kept only where they come out exactly
+        as the certified baseline. Links into a beat whose Text, or whose incoming/outgoing
+        Boundary, would change are revoked (baseline cue restored). One verification pass
+        follows; if anything still differs, the whole baseline is kept. No search loop.
+        """
+        story, assets, choreography = shared.story, shared.assets, shared.choreography
+        candidate = self.cross_scene.plan(
+            package=shared.package, story=story, composition=composition, motion=motion,
+            assets=assets, duration=shared.transcript.duration, fps=target.fps, text=text,
+            text_composition=text_composition, text_motion=text_motion,
+            scene_boundaries=scene_boundaries, frame_width=target.width, frame_height=target.height,
+        )
+        if not any(decision.accepted for decision in self.cross_scene.decisions):
+            return motion
+
+        def dump(rows) -> list:
+            return [row.model_dump(mode="json") for row in rows]
+
+        def changed_beats(candidate_motion) -> set[str]:
+            self.handoff_contracts.require_motion_for_text_and_render(
+                story=story, assets=assets, composition=composition,
+                choreography=choreography, motion=candidate_motion,
+            )
+            new_text, new_text_composition, new_text_motion = self._compose_text_against_visual_motion(
+                story=story, composition=composition, motion=candidate_motion, text=shared.text,
+                assets=assets, choreography=choreography,
+            )
+            new_boundaries = self.scene_boundaries.plan(
+                story=story, composition=composition, motion=candidate_motion, assets=assets,
+                duration=shared.transcript.duration, text=new_text,
+                text_composition=new_text_composition, text_motion=new_text_motion,
+            )
+            beats: set[str] = set()
+            for old_rows, new_rows, key in (
+                (text.cues, new_text.cues, "beat_id"),
+                (text_composition, new_text_composition, "beat_id"),
+                (text_motion, new_text_motion, "beat_id"),
+            ):
+                old_by, new_by = {}, {}
+                for row in dump(old_rows):
+                    old_by.setdefault(row[key], []).append(row)
+                for row in dump(new_rows):
+                    new_by.setdefault(row[key], []).append(row)
+                beats |= {beat for beat in set(old_by) | set(new_by) if old_by.get(beat) != new_by.get(beat)}
+            old_bounds = {row["beat_id"]: row for row in dump(scene_boundaries)}
+            for row in dump(new_boundaries):
+                if old_bounds.get(row["beat_id"]) != row:
+                    beats |= {row["beat_id"], row["from_beat_id"]}  # incoming and outgoing side
+            if len(new_boundaries) != len(scene_boundaries):
+                beats |= set(old_bounds)
+            return beats
+
+        changed = changed_beats(candidate)
+        if changed:
+            candidate = self.cross_scene.revoke(
+                candidate, changed, "transaction:text_or_boundary_would_change")
+            if any(decision.accepted for decision in self.cross_scene.decisions) and changed_beats(candidate):
+                candidate = self.cross_scene.revoke(
+                    candidate, {row.beat_id for row in story},
+                    "transaction:verification_pass_not_identical")
+        return candidate
 
     # -- per-target render, verification and mux ------------------------------------------
     def _render_target(

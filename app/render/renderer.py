@@ -268,11 +268,19 @@ class FFmpegRenderer:
         persistent_ids = transition.persistent_asset_ids
         object_target_by_outgoing = dict(transition.object_handoff_pairs)
         current_items_by_id = {item.asset_id: item for item in ordered_items}
+        handoffs = self._handoff_sources(
+            beat=beat,
+            previous_beat=previous_beat,
+            previous_layout=previous_layout,
+            ordered_items=ordered_items,
+            motion=motion,
+        )
         outgoing_items = (
             sorted(
                 (
                     item for item in previous_layout.items
                     if item.asset_id in transition.carry_outgoing_asset_ids
+                    and item.asset_id not in handoffs
                 ),
                 key=lambda row: row.z,
             )
@@ -332,7 +340,7 @@ class FFmpegRenderer:
             is_opening=previous_beat is None,
             ordered_items=ordered_items,
             persistent_ids=persistent_ids,
-            covered=bridge_duration > 0 or visual_carrier_id is not None,
+            covered=bridge_duration > 0 or visual_carrier_id is not None or bool(handoffs),
             incoming_start=incoming_start,
             fps=plan.fps,
         )
@@ -354,6 +362,12 @@ class FFmpegRenderer:
                     details={"asset_id": item.asset_id, "beat_id": beat.id},
                 )
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(asset.image_path)])
+        handoff_items = [
+            next(row for row in previous_layout.items if row.asset_id == source_id)
+            for source_id in sorted(handoffs)
+        ] if previous_layout is not None else []
+        for item in handoff_items:
+            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(assets[item.asset_id].image_path)])
         # Authored directional relations become one visible connection each (Composition
         # boxes only; Motion segments carry the relation, the renderer only draws it).
         connections = connection_specs(
@@ -374,7 +388,7 @@ class FFmpegRenderer:
             duration=duration,
             spatial_scale=plan.projection.scale if plan.projection else 1.0,
         )
-        connection_inputs = len(ordered_items) + len(outgoing_items)
+        connection_inputs = len(ordered_items) + len(outgoing_items) + len(handoff_items)
         for connection_index, connection in enumerate(connections):
             png = draw_connection(
                 connection, (plan.width, plan.height),
@@ -497,6 +511,35 @@ class FFmpegRenderer:
             duration=duration,
         )
 
+        # Planned handoff (Sprint 7): the outgoing representation stays on its final pose,
+        # opaque and still, through the frame before its successor's first visible frame,
+        # then leaves on exactly that frame: no exit drift, no fade, no overlap, no gap.
+        handoff_offset = len(ordered_items) + len(outgoing_items)
+        for handoff_index, item in enumerate(handoff_items):
+            successor = handoffs[item.asset_id]
+            successor_start = frame_safe_reveal_starts.get(
+                successor,
+                self._cue_window(
+                    beat=beat, cue=motion.get((beat.id, successor)),
+                    segment_start=segment_start, duration=duration,
+                )[0],
+            )
+            # Successor on frame 0: the source input is still consumed, never enabled.
+            last = (first_visible_frame(successor_start, plan.fps) - 0.5) / plan.fps
+            box_w, box_h, target_x, target_y = self._geometry(plan, item)
+            label = f"handoff{handoff_index}"
+            filters.append(
+                f"[{handoff_offset + handoff_index}:v]format=rgba,setsar=1,"
+                f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
+            )
+            filters.append(
+                f"[{composite_label}][{label}]overlay=x={target_x}:y={target_y}:"
+                f"enable='between(t,0,{last:.6f})':eof_action=pass:shortest=0[{label}mix]"
+            )
+            composite_label = f"{label}mix"
+
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
@@ -533,7 +576,7 @@ class FFmpegRenderer:
             # the element centre without changing semantic placement.
             entry_fade = (
                 ""
-                if persistent or visual_carrier
+                if persistent or visual_carrier or item.asset_id in handoffs.values()
                 else self._entry_opacity_filter(
                     cue,
                     segment_start=segment_start,
@@ -998,6 +1041,51 @@ class FFmpegRenderer:
             )
 
         return str(min(cohort, key=safety_rank)["asset_id"])
+
+    @staticmethod
+    def _handoff_sources(
+        *,
+        beat: StoryBeat,
+        previous_beat: StoryBeat | None,
+        previous_layout,
+        ordered_items: list,
+        motion: dict[tuple[str, str], MotionCue],
+    ) -> dict[str, str]:
+        """Outgoing runtime asset -> incoming runtime asset for planned handoffs.
+
+        Executes the plan's explicit ``handoff_from`` instruction only; the renderer never
+        decides which assets continue. An instruction that does not resolve to exactly one
+        visible asset of the immediately previous beat fails closed.
+        """
+        output: dict[str, str] = {}
+        for item in ordered_items:
+            cue = motion.get((beat.id, item.asset_id))
+            spec = cue.params.get("handoff_from") if cue is not None and isinstance(cue.params, dict) else None
+            if spec is None:
+                continue
+            source = spec.get("asset_id") if isinstance(spec, dict) else None
+            visible = (
+                previous_layout is not None
+                and any(row.asset_id == source for row in previous_layout.items)
+                and (
+                    previous_beat.active_visual_semantic_state is None
+                    or source in previous_beat.active_visual_semantic_state
+                )
+            ) if previous_beat is not None else False
+            if (
+                not isinstance(spec, dict)
+                or previous_beat is None
+                or spec.get("beat_id") != previous_beat.id
+                or not visible
+                or source in output
+            ):
+                raise StageFailedError(
+                    "planned handoff does not resolve to one visible previous asset",
+                    details={"code": "HANDOFF_SOURCE_INVALID", "beat_id": beat.id,
+                             "asset_id": item.asset_id, "handoff_from": spec},
+                )
+            output[str(source)] = item.asset_id
+        return output
 
     @classmethod
     def _require_handoff_coverage(
