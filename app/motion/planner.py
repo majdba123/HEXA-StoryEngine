@@ -477,6 +477,12 @@ class MotionPlanner:
                     visual_unit_index=slot.internal_index,
                     visual_unit_count=slot.internal_count,
                 )
+                # Rhythm owns a per-beat minimum read hold; reserve it before the scene
+                # changes so the last reveal is not still moving at the cut. Comfort and
+                # renderability below then re-fit the gesture to the (shorter) window.
+                window = self.timing.reserve_read_hold(
+                    window, beat=beat, hold=rhythm.minimum_read_hold,
+                )
                 if not family_secondary and not compound_unit_locked:
                     # Base ENTRY programs used to bypass the same comfort-speed cap
                     # already applied to explicit ENTRY segments. On dense/fast beats

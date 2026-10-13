@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import hypot, isfinite
 from typing import TYPE_CHECKING
 
@@ -745,6 +745,34 @@ class MotionTimingPolicy:
             ),
             story_v2=window.story_v2,
             sequence_staggered=True,
+        )
+
+    @staticmethod
+    def reserve_read_hold(window: MotionWindow, *, beat: StoryBeat, hold: float) -> MotionWindow:
+        """Finish entry motion before the beat's last ``hold`` seconds when it can.
+
+        The rhythm decision already defines a minimum read hold per beat; without this a
+        window that runs to ``beat.end`` leaves the visual still moving when the scene
+        changes. Only the end moves earlier: the start (the narration-aligned reveal) and
+        Story timing are unchanged, and the window never drops below the certified ENTRY
+        comfort minimum. If even that minimum cannot fit, the window is left as authored.
+        """
+        deadline = float(beat.end) - max(0.0, float(hold))
+        if window.end <= deadline + 1e-9:
+            return window
+        minimum = min(window.end - window.start, motion_comfort("ENTRY").minimum_seconds)
+        end = max(window.start + minimum, deadline)
+        if end >= window.end - 1e-9:
+            return window
+        # The peak keeps its relative place in the gesture (clamping it onto the new end
+        # would collide with the final keyframe); settle may land on the new end.
+        ratio = (end - window.start) / max(1e-9, window.end - window.start)
+        return replace(
+            window,
+            end=end,
+            semantic_settle=max(window.start, min(window.semantic_settle, end)),
+            semantic_peak=(None if window.semantic_peak is None
+                           else window.start + (window.semantic_peak - window.start) * ratio),
         )
 
     def pace_tier_for_beat(
