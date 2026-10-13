@@ -16,6 +16,7 @@ from app.models import (
     TextPlan,
     VisualAsset,
 )
+from app.motion.timing import motion_comfort
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
 
@@ -25,6 +26,8 @@ from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_fram
 RELEASE_FRAMES = 6
 MIN_RELEASE_FRAMES = 5
 OVERLAP_FRAMES = 4
+# A staggered exit never gives its last (leading) visual fewer frames than this.
+_MIN_EXIT_ASSET_FRAMES = 6
 _EPS = 1e-6
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
@@ -97,6 +100,7 @@ class SceneBoundaryPlanner:
                 opener_at=audit.pop("opener_at", None),
                 release_start=audit.pop("release_start", None),
                 release_end=audit.pop("release_end", None),
+                exit_starts=audit.pop("exit_starts", None) or {},
                 audit=audit,
             )
 
@@ -210,16 +214,84 @@ class SceneBoundaryPlanner:
             and not any(first_visible_frame(start - start_time, fps) < k_open
                         for start, _end, _box in text_boxes)
         ):
+            exits = self._exit_schedule(
+                previous=previous, outgoing=outgoing, cues=cues, assets=assets,
+                outgoing_done=outgoing_done, segment=segment, opener_frame=k_open, fps=fps,
+            )
+            audit["exit"] = exits.pop("audit")
             return result(
                 "CRISP_HANDOFF", "ordinary_scene_owner_until_opener", blocker,
                 opener_at=at(k_open), release_start=at(k_open), release_end=at(k_open),
-                **audit,
+                exit_starts=exits["starts"], **audit,
             )
         return result(
             "EXACT_END", "exact_end_release", blocker,
             opener_at=at(k_open), release_start=at(k_open - release_frames), release_end=at(k_open),
             release_frames=release_frames, overlap_frames=0, **audit,
         )
+
+    @classmethod
+    def _exit_schedule(
+        cls, *, previous: StoryBeat, outgoing: list[LayoutItem],
+        cues: dict[tuple[str, str], MotionCue], assets: dict[str, VisualAsset],
+        outgoing_done: float, segment: BeatSegment, opener_frame: int, fps: int,
+    ) -> dict[str, object]:
+        """Restrained outgoing exit inside the pre-opener interval, or none (clean cut).
+
+        The exit may only use time the outgoing scene no longer needs: it starts after the
+        last outgoing motion has settled plus Motion's own minimum read hold, lasts the
+        certified EXIT comfort duration (never shorter than its minimum) and ends on the
+        unchanged opener frame. Supporting visuals yield first and the semantic result
+        last; a Pass2 family leaves as one unit. Without enough time, or without Motion's
+        rhythm authority, it abstains and the handoff stays a clean crisp cut.
+        """
+        comfort = motion_comfort("EXIT")
+        min_frames = ceil(comfort.minimum_seconds * fps - _EPS)
+        target_frames = max(min_frames, round(comfort.target_seconds * fps))
+        holds = []
+        for item in outgoing:
+            cue = cues.get((previous.id, item.asset_id))
+            focus = cue.params.get("semantic_focus") if cue and isinstance(cue.params, dict) else None
+            rhythm = focus.get("rhythm") if isinstance(focus, dict) else None
+            hold_ms = rhythm.get("minimum_read_hold_ms") if isinstance(rhythm, dict) else None
+            if type(hold_ms) in (int, float) and isfinite(hold_ms) and hold_ms > 0:
+                holds.append(float(hold_ms) / 1000)
+        if not holds:
+            return {"starts": {}, "audit": {"decision": "abstain:no_motion_read_hold_authority"}}
+        ready_frame = max(0, ceil((outgoing_done + max(holds)) * fps - _EPS) - segment.start_frame)
+        window = opener_frame - ready_frame
+        if window < min_frames:
+            return {"starts": {}, "audit": {"decision": "clean_cut:insufficient_time_after_read_hold",
+                                            "ready_frame": ready_frame, "window_frames": window}}
+        exit_frames = min(target_frames, window)
+
+        def rank(item: LayoutItem) -> int:
+            cue = cues.get((previous.id, item.asset_id))
+            focus = cue.params.get("semantic_focus") if cue and isinstance(cue.params, dict) else None
+            focus = focus if isinstance(focus, dict) else {}
+            roles = {str(focus.get(key) or "").upper() for key in ("visual_focus", "role", "semantic_role")}
+            if roles & {"RESULT"}:
+                return 2
+            if roles & {"SUPPORT", "CONTEXT", "ACTION"} and not roles & {"PRIMARY", "SUBJECT"}:
+                return 0
+            return 1
+
+        families: dict[str, list[LayoutItem]] = {}
+        for item in outgoing:
+            asset = assets.get(item.asset_id)
+            families.setdefault(AssetManager.family_id(asset) if asset else item.asset_id, []).append(item)
+        groups = sorted(families.values(), key=lambda members: (
+            min(rank(m) for m in members), min(m.z for m in members), min(m.asset_id for m in members)))
+        step = 0 if len(groups) == 1 else min(2, (exit_frames - _MIN_EXIT_ASSET_FRAMES) // (len(groups) - 1))
+        step = max(0, step)
+        first = opener_frame - exit_frames
+        starts = {
+            member.asset_id: (segment.start_frame + first + step * index) / fps
+            for index, members in enumerate(groups) for member in members
+        }
+        return {"starts": starts, "audit": {"decision": "restrained_exit", "ready_frame": ready_frame,
+                                            "exit_frames": exit_frames, "stagger_frames": step,
+                                            "order": [sorted(m.asset_id for m in members) for members in groups]}}
 
     @classmethod
     def _hold_to_opener(

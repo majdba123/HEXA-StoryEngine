@@ -477,6 +477,9 @@ class SceneBoundaryRelease(BaseModel):
     opener_at: float | None = None
     release_start: float | None = None
     release_end: float | None = None
+    # CRISP_HANDOFF only: outgoing runtime asset id -> absolute time its restrained opaque
+    # exit begins; every exit ends on the opener frame. Empty means a clean cut.
+    exit_starts: dict[str, float] = Field(default_factory=dict, exclude_if=lambda value: not value)
     reason: str
     downgrade_reason: str | None = None
     audit: dict[str, Any] = Field(default_factory=dict)

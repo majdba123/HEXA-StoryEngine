@@ -10,7 +10,7 @@ from pathlib import Path
 from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
-from app.motion.timing import GOLDEN_MINOR
+from app.motion.timing import GOLDEN_MINOR, max_comfort_displacement
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.connection import connection_specs, draw_connection, fade_seconds
@@ -324,6 +324,7 @@ class FFmpegRenderer:
         if release is not None:
             bridge_start, bridge_end = release[0], release[2]
         bridge_duration = max(0.0, bridge_end - bridge_start)
+        planned_exits = self._planned_exit_starts(plan, beat, previous_beat) if release is not None else {}
         visual_carrier_id = (
             None
             if bridge_duration > 0 or previous_beat is None
@@ -443,6 +444,19 @@ class FFmpegRenderer:
                     start=bridge_start,
                     duration=bridge_duration,
                 )
+                exit_start = planned_exits.get(item.asset_id)
+                if release is not None and exit_start is not None:
+                    # A planned restrained exit: opaque, from the planned start to the
+                    # last frame before the opener, which removes the outgoing scene.
+                    exit_begin = max(0.0, float(exit_start) - segment_start)
+                    exit_end = release[2] - 0.75 / plan.fps
+                    if exit_end > exit_begin + 0.5 / plan.fps:
+                        horizontal, vertical = self._restrained_exit_offset(
+                            plan=plan, item=item, seconds=exit_end - exit_begin,
+                        )
+                        progress_expr = self._bridge_progress_expression(
+                            start=exit_begin, duration=exit_end - exit_begin,
+                        )
                 next_old = f"oldmix{bridge_index}"
                 filters.append(
                     f"[{old_label}][{source_label}]overlay="
@@ -826,6 +840,40 @@ class FFmpegRenderer:
         dy = -vertical if item.y <= 0.5 else vertical
         return dx, dy
 
+
+    @staticmethod
+    def _planned_exit_starts(
+        plan: RenderPlan, beat: StoryBeat, previous_beat: StoryBeat | None,
+    ) -> dict[str, float]:
+        """Exit starts of the planned CRISP_HANDOFF for this boundary (empty otherwise)."""
+        if previous_beat is None:
+            return {}
+        row = next((r for r in plan.scene_boundaries
+                    if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
+        if row is None or row.mode != "CRISP_HANDOFF":
+            return {}
+        return dict(row.exit_starts)
+
+    @classmethod
+    def _restrained_exit_offset(cls, *, plan: RenderPlan, item, seconds: float) -> tuple[int, int]:
+        """Directional exit offset limited by the EXIT comfort speed and the frame edges.
+
+        Direction is the existing geometric bridge rule. Magnitude never exceeds what the
+        certified EXIT comfort profile allows in ``seconds``, and the cutout box never
+        leaves the canvas (no clipping); an axis left with a negligible move stays still.
+        """
+        dx, dy = cls._bridge_exit_offset(plan=plan, item=item, mode=SceneTransitionMode.MOTION_HANDOFF)
+        scale = plan.projection.scale if plan.projection else 1.0
+        reference_w = plan.projection.reference_width * scale if plan.projection else plan.width
+        reference_h = plan.projection.reference_height * scale if plan.projection else plan.height
+        budget = max_comfort_displacement("EXIT", seconds)
+        dx = max(-budget * reference_w, min(budget * reference_w, dx))
+        dy = max(-budget * reference_h, min(budget * reference_h, dy))
+        box_w, box_h, target_x, target_y = cls._geometry(plan, item)
+        dx = max(-max(0, target_x), min(max(0, plan.width - target_x - box_w), dx))
+        dy = max(-max(0, target_y), min(max(0, plan.height - target_y - box_h), dy))
+        floor = 6 * scale
+        return (round(dx) if abs(dx) >= floor else 0, round(dy) if abs(dy) >= floor else 0)
 
     @staticmethod
     def _bridge_progress_expression(*, start: float, duration: float) -> str:
