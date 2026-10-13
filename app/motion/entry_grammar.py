@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.assets import AssetManager
 from app.choreography import ChoreographyDirective, ChoreographyPlan
-from app.models import CompositionBeat, LayoutItem, MotionCue, VisualAsset
+from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 
 from .timing import encoded_motion_renderability_floor_px, motion_comfort, projected_motion_activity_px
 
@@ -33,8 +33,10 @@ class EntryMotionGrammar:
         composition: list[CompositionBeat],
         choreography: ChoreographyPlan | None,
         assets: list[VisualAsset] | None,
+        story: list[StoryBeat] | None = None,
     ) -> list[MotionCue]:
         assets_by_id = {asset.id: asset for asset in assets or []}
+        beat_ends = {beat.id: float(beat.end) for beat in story or []}
         layouts = {layout.beat_id: {item.asset_id: item for item in layout.items}
                    for layout in composition}
         by_beat: dict[str, list[int]] = {}
@@ -58,6 +60,7 @@ class EntryMotionGrammar:
                     family_mismatch=self._family(cues[i], assets_by_id) in mismatched,
                     opens_scene=self._family(cues[i], assets_by_id) in openers
                     and self._in_opening_frame(cues[i], beat_cues),
+                    beat_end=beat_ends.get(beat_id),
                 )
         return output
 
@@ -71,6 +74,7 @@ class EntryMotionGrammar:
         family_size: int,
         family_mismatch: bool,
         opens_scene: bool,
+        beat_end: float | None,
     ) -> MotionCue:
         params = dict(cue.params) if isinstance(cue.params, dict) else {}
         reason = self._opacity_blocker(cue, params, family_mismatch, opens_scene)
@@ -86,6 +90,7 @@ class EntryMotionGrammar:
         }
         scale_in = (
             is_leader and family_size == 1 and item is not None and asset is not None
+            and self._has_read_hold(cue, params, beat_end)
             and self._scale_in_allowed(cue, params, item, asset)
         )
         if scale_in:
@@ -100,6 +105,18 @@ class EntryMotionGrammar:
             params["program"] = program
         params["entry_grammar"] = {"opacity": True, "scale_in": scale_in}
         return cue.model_copy(update={"params": params})
+
+    @staticmethod
+    def _has_read_hold(cue: MotionCue, params: dict, beat_end: float | None) -> bool:
+        """Omit optional scale when its settled result cannot be read before the cut."""
+        if beat_end is None:
+            return True  # Standalone callers without Story keep their existing contract.
+        focus = params.get("semantic_focus") or {}
+        rhythm = focus.get("rhythm") if isinstance(focus, dict) else None
+        hold_ms = rhythm.get("minimum_read_hold_ms") if isinstance(rhythm, dict) else None
+        if not isinstance(hold_ms, (int, float)) or hold_ms <= 0:
+            return True  # No Rhythm authority to suppress the existing gesture.
+        return beat_end - float(cue.end) + _EPS >= float(hold_ms) / 1000
 
     @staticmethod
     def _opacity_blocker(

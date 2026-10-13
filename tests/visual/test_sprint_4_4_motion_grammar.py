@@ -161,6 +161,30 @@ def test_leader_gets_restrained_scale_in_ending_on_identity() -> None:
     assert (frames[-1]["dx"], frames[-1]["dy"], frames[-1]["scale"]) == (0.0, 0.0, 1.0)
 
 
+def test_leader_scale_abstains_when_story_has_no_read_hold() -> None:
+    from app.models import CompositionBeat, StoryBeat
+
+    cue = _cue("lead", start=1.0, duration=0.2)
+    cue.params["semantic_focus"] = {"rhythm": {"minimum_read_hold_ms": 300}}
+    opener = _cue("opener", start=0.0, duration=0.2)
+    layout = CompositionBeat(beat_id="b", items=[
+        LayoutItem(asset_id="opener", x=0.2, y=0.5, width=0.2, height=0.3),
+        LayoutItem(asset_id="lead", x=0.5, y=0.5, width=0.2, height=0.3)])
+    beat = StoryBeat(id="b", scene_id="s", start=0.0, end=1.2,
+                     narration="short", action="REVEAL")
+    args = dict(composition=[layout], choreography=ChoreographyPlan(
+        directives=(_directive(leader="lead"),)), assets=[_asset("opener"), _asset("lead")])
+
+    short = EntryMotionGrammar().apply([opener, cue], story=[beat], **args)[1]
+    assert short.params["entry_grammar"]["scale_in"] is False
+    assert short.params["program"] == cue.params["program"]
+    assert (short.start, short.end) == (cue.start, cue.end)
+
+    roomy = EntryMotionGrammar().apply(
+        [opener, cue], story=[beat.model_copy(update={"end": 1.6})], **args)[1]
+    assert roomy.params["entry_grammar"]["scale_in"] is True
+
+
 # RESULT / protected motion: never a stacked scale --------------------------------------------
 def test_result_and_protected_motion_get_opacity_without_stacked_scale() -> None:
     payoff = MotionSegment(phase="PAYOFF", start=1.0, end=1.25, program=dict(_DIRECTIONAL))

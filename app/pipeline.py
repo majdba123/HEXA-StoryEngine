@@ -542,6 +542,7 @@ class StoryEnginePipeline:
             # window). Runs after the Reference contract; certified planning is untouched.
             motion = self.entry_grammar.apply(
                 motion, composition=composition, choreography=choreography, assets=assets,
+                story=story,
             )
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,
