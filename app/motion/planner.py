@@ -26,6 +26,7 @@ from app.motion.order import MotionOrderResolver
 from app.motion.semantic_reference import MotionSemanticReference
 from app.targets import frame_size
 from app.motion.attention import arbitrate_simultaneous_peaks
+from app.motion.read_hold import reserve_scene_read_hold
 from app.motion.rhythm import (
     MIN_FOCUS_OVERLAP_SECONDS,
     ReferenceRhythmPolicy,
@@ -778,6 +779,12 @@ class MotionPlanner:
                 # with a higher-authority peak (only where semantic authority ranks them).
                 cues[beat_cue_start:] = arbitrate_simultaneous_peaks(
                     cues[beat_cue_start:], items=items_by_id,
+                )
+                # Every semantic segment, not only the entry window, finishes before the
+                # beat's Rhythm read hold when it can do so above comfort and readability.
+                cues[beat_cue_start:] = reserve_scene_read_hold(
+                    cues[beat_cue_start:], beat=beat, hold=rhythm_by_beat[beat.id].minimum_read_hold,
+                    items=items_by_id,
                 )
                 if directive is not None:
                     self._assert_authored_relation_contract(
