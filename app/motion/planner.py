@@ -25,6 +25,7 @@ from app.motion.models import MotionKeyframe, MotionProgram
 from app.motion.order import MotionOrderResolver
 from app.motion.semantic_reference import MotionSemanticReference
 from app.targets import frame_size
+from app.motion.attention import arbitrate_simultaneous_peaks
 from app.motion.rhythm import (
     MIN_FOCUS_OVERLAP_SECONDS,
     ReferenceRhythmPolicy,
@@ -773,6 +774,11 @@ class MotionPlanner:
                             if reference else None
                         ),
                     )
+                # One emphasis owner per instant: soften a subordinate peak that coincides
+                # with a higher-authority peak (only where semantic authority ranks them).
+                cues[beat_cue_start:] = arbitrate_simultaneous_peaks(
+                    cues[beat_cue_start:], items=items_by_id,
+                )
                 if directive is not None:
                     self._assert_authored_relation_contract(
                         cues[beat_cue_start:],
