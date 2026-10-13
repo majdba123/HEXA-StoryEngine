@@ -19,9 +19,12 @@ def test_desktop_source_remains_valid_python() -> None:
 def test_desktop_uses_production_export_root_not_legacy_save_picker() -> None:
     source = _source()
 
-    assert 'QLabel("مجلد التصدير")' in source
-    assert "self.export_root_edit.setReadOnly(True)" in source
+    # Desktop Export UX: the export root is configuration (HEXA_EXPORT_ROOT / hexa.settings.json),
+    # never a GUI row; it is still required and validated before any work starts.
+    assert 'QLabel("مجلد التصدير")' not in source
+    assert "export_root_edit" not in source
     assert "settings.export_root is None" in source
+    assert "export_root_problem(settings)" in source
     assert "مجلد الحفظ" not in source
     assert "_browse_output" not in source
     assert "replace(Settings.from_env()" not in source

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app import __version__
 from app.config import Settings
+from app.desktop.export_preflight import export_root_problem
 from app.diagnostics import BuildReportSession
 from app.models import Stage
 from app.pipeline import StoryEnginePipeline
@@ -102,14 +103,9 @@ class MainWindow(QMainWindow):
         self._youtube_path: Path | None = None
         self._reels_path: Path | None = None
 
-        settings = Settings.from_env()
         self.package_edit = QLineEdit()
         self.audio_edit = QLineEdit()
-        self.export_root_edit = QLineEdit(
-            str(settings.export_root) if settings.export_root is not None else "غير مضبوط"
-        )
-        self.export_root_edit.setReadOnly(True)
-        for edit in (self.package_edit, self.audio_edit, self.export_root_edit):
+        for edit in (self.package_edit, self.audio_edit):
             edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
         self.progress_bar = QProgressBar()
@@ -127,7 +123,6 @@ class MainWindow(QMainWindow):
         self.open_youtube_button = QPushButton("فتح YouTube")
         self.open_reels_button = QPushButton("فتح Reels")
         self.open_folder_button = QPushButton("فتح مجلد النتيجة")
-        self.open_export_root_button = QPushButton("فتح")
         self.open_log_button = QPushButton("فتح ملف السجل")
         self.clear_log_button = QPushButton("مسح اللوحة")
 
@@ -152,7 +147,6 @@ class MainWindow(QMainWindow):
 
         root.addLayout(self._package_row())
         root.addLayout(self._file_row("الصوت", self.audio_edit, self._browse_audio))
-        root.addLayout(self._export_root_row())
 
         actions = QHBoxLayout()
         actions.addWidget(self.generate_button)
@@ -189,7 +183,6 @@ class MainWindow(QMainWindow):
         self.open_youtube_button.clicked.connect(self._open_youtube)
         self.open_reels_button.clicked.connect(self._open_reels)
         self.open_folder_button.clicked.connect(self._open_folder)
-        self.open_export_root_button.clicked.connect(self._open_export_root)
         self.open_log_button.clicked.connect(self._open_log)
         self.clear_log_button.clicked.connect(self.log_view.clear)
 
@@ -214,14 +207,6 @@ class MainWindow(QMainWindow):
         row.addWidget(label)
         row.addWidget(edit, 1)
         row.addWidget(button)
-        return row
-
-    def _export_root_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        label = QLabel("مجلد التصدير")
-        row.addWidget(label)
-        row.addWidget(self.export_root_edit, 1)
-        row.addWidget(self.open_export_root_button)
         return row
 
     def _browse_package_zip(self) -> None:
@@ -249,7 +234,6 @@ class MainWindow(QMainWindow):
         package = Path(self.package_edit.text().strip()).expanduser()
         audio = Path(self.audio_edit.text().strip()).expanduser()
         settings = Settings.from_env()
-        self._refresh_export_root(settings)
 
         if not package.exists():
             QMessageBox.warning(self, "HEXA", "اختر Final Package صالح.")
@@ -264,6 +248,12 @@ class MainWindow(QMainWindow):
                 "مجلد التصدير غير مضبوط.\n"
                 "اضبط export_root في hexa.settings.json أو HEXA_EXPORT_ROOT ثم أعد المحاولة.",
             )
+            return
+        # The destination is configuration, not a GUI choice. Validate it before any work
+        # so a missing, unwritable or full drive is reported up front; never fall back.
+        problem = export_root_problem(settings)
+        if problem is not None:
+            QMessageBox.warning(self, "HEXA", problem)
             return
         job_id = uuid.uuid4().hex
         report = BuildReportSession(
@@ -307,6 +297,7 @@ class MainWindow(QMainWindow):
         self.open_folder_button.setEnabled(False)
         self.open_log_button.setEnabled(True)
         self.log_view.append(f"LOG: {report.log_path}")
+        self.log_view.append(f"EXPORT ROOT: {settings.export_root}")
         thread.start()
 
     @Slot(str, int, str)
@@ -399,28 +390,6 @@ class MainWindow(QMainWindow):
     def _open_folder(self) -> None:
         if self._bundle_path and self._bundle_path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._bundle_path)))
-
-    @Slot()
-    def _open_export_root(self) -> None:
-        settings = Settings.from_env()
-        self._refresh_export_root(settings)
-        if settings.export_root is None:
-            QMessageBox.warning(self, "HEXA", "مجلد التصدير غير مضبوط.")
-            return
-        target = settings.export_root.expanduser()
-        if not target.exists():
-            QMessageBox.information(
-                self,
-                "HEXA",
-                "مجلد التصدير لم يُنشأ بعد. سيتم إنشاؤه عند أول توليد ناجح.",
-            )
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target.resolve())))
-
-    def _refresh_export_root(self, settings: Settings) -> None:
-        self.export_root_edit.setText(
-            str(settings.export_root) if settings.export_root is not None else "غير مضبوط"
-        )
 
     @Slot()
     def _open_log(self) -> None:
