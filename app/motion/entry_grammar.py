@@ -6,7 +6,7 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, TextPl
 from app.motion.timing import story_activation_window
 from app.text.timing.visibility import TextVisibilityPolicy
 
-from .collision import authored_overlap_ratio, box, overlap_ratio
+from .collision import authored_overlap_ratio, box
 from .timing import encoded_motion_renderability_floor_px, motion_comfort, projected_motion_activity_px
 
 # Sprint 4.4: reference-derived entry motion. Measured reference entries ramp opacity over
@@ -171,21 +171,26 @@ class EntryMotionGrammar:
         for dx, mode in candidates:
             if abs(dx) < 0.01:
                 continue
+            start = box(item, (dx, 0.0, ENTRY_SCALE_IN))
+            finish = box(item, (0.0, 0.0, 1.0))
+            # Every edge is linear in progress; smoothstep changes only the rate.
+            # The union of the endpoint boxes encloses the entire continuous path.
+            sweep = (min(start[0], finish[0]), min(start[1], finish[1]),
+                     max(start[2], finish[2]), max(start[3], finish[3]))
+            if mode == "in_frame" and (sweep[0] < 0 or sweep[2] > 1):
+                continue
+            smallest_area = (start[2] - start[0]) * (start[3] - start[1])
             safe = True
-            for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
-                transformed = box(item, (dx * (1.0 - fraction), 0.0,
-                                         ENTRY_SCALE_IN + (1.0 - ENTRY_SCALE_IN) * fraction))
-                if mode == "in_frame" and (transformed[0] < 0 or transformed[2] > 1):
+            for other in layout_items:
+                if other.asset_id == item.asset_id:
+                    continue
+                target = box(other, (0.0, 0.0, 1.0))
+                target_area = (target[2] - target[0]) * (target[3] - target[1])
+                intersection = max(0.0, min(sweep[2], target[2]) - max(sweep[0], target[0])) * (
+                    max(0.0, min(sweep[3], target[3]) - max(sweep[1], target[1])))
+                upper_overlap = intersection / max(1e-9, min(smallest_area, target_area))
+                if upper_overlap > authored_overlap_ratio(item, other) + 0.02:
                     safe = False
-                    break
-                for other in layout_items:
-                    if other.asset_id == item.asset_id:
-                        continue
-                    allowed = authored_overlap_ratio(item, other) + 0.02
-                    if overlap_ratio(transformed, box(other, (0.0, 0.0, 1.0))) > allowed:
-                        safe = False
-                        break
-                if not safe:
                     break
             if safe:
                 return dx, mode

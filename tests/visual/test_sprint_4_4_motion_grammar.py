@@ -205,6 +205,17 @@ def test_authoritative_leader_gets_eased_offscreen_path_only_when_safe() -> None
     assert frames[0]["easing"] == "smoothstep"
     assert result.params["entry_opacity"]["settle"] == leader.end
 
+    # An authored item in the departure corridor blocks the full off-screen
+    # sweep, while a shorter in-frame path can still fit safely.
+    blocked_layout = CompositionBeat(beat_id="b", items=[
+        *layout.items,
+        LayoutItem(asset_id="corridor", x=0.95, y=0.5, width=0.06, height=0.3),
+    ])
+    shorter = EntryMotionGrammar().apply(
+        [opener, leader], text=TextPlan(), **{**args, "composition": [blocked_layout]},
+    )[1]
+    assert shorter.params["hero_entry"]["mode"] == "in_frame"
+
     # Without a Text plan the path is unknown, so the existing scale-only grammar stays.
     unknown = EntryMotionGrammar().apply([opener, leader], **args)[1]
     assert "hero_entry" not in unknown.params
