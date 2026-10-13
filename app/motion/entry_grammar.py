@@ -142,7 +142,42 @@ class EntryMotionGrammar:
             if spatial_mode:
                 params["hero_entry"] = {"mode": spatial_mode, "start_dx": round(dx, 6)}
         params["entry_grammar"] = {"opacity": True, "scale_in": scale_in}
+        settle = self._opacity_read_hold_settle(cue, params, beat_end, scale_in=scale_in)
+        if settle is not None:
+            # The ramp is the only change on this asset, so it may finish at the read-hold
+            # deadline with its own 3-frame minimum instead of the spatial ENTRY minimum.
+            params["entry_opacity"] = {**params["entry_opacity"], "settle": settle}
+            params["entry_grammar"]["read_hold_settle"] = {"from": round(float(cue.end), 6),
+                                                           "to": round(settle, 6)}
+            return cue.model_copy(update={"params": params, "end": settle})
         return cue.model_copy(update={"params": params})
+
+    @staticmethod
+    def _opacity_read_hold_settle(
+        cue: MotionCue, params: dict, beat_end: float | None, *, scale_in: bool,
+    ) -> float | None:
+        """Earlier opacity settle that leaves Rhythm's read hold before the cut, or None.
+
+        Only a static entry (no transform, no semantic segment) qualifies: its window is
+        just the opacity ramp. Story reveal, semantic settle/peak params (Text's sync
+        anchor) and every moving entry are untouched.
+        """
+        if scale_in or beat_end is None or cue.segments:
+            return None
+        frames = (params.get("program") or {}).get("keyframes") or []
+        if any(abs(float(f.get("dx", 0.0))) > 1e-9 or abs(float(f.get("dy", 0.0))) > 1e-9
+               or abs(float(f.get("scale", 1.0)) - 1.0) > 1e-9 for f in frames):
+            return None
+        rhythm = (params.get("semantic_focus") or {}).get("rhythm")
+        hold_ms = rhythm.get("minimum_read_hold_ms") if isinstance(rhythm, dict) else None
+        if not isinstance(hold_ms, (int, float)) or hold_ms <= 0:
+            return None
+        deadline = float(beat_end) - float(hold_ms) / 1000
+        if float(cue.end) <= deadline + _EPS:
+            return None
+        if deadline - float(cue.start) + _EPS < ENTRY_OPACITY_MIN_SECONDS:
+            return None  # not even the 3-frame ramp fits: Story's reveal is too late
+        return deadline
 
     @staticmethod
     def _hero_entry_offset(
