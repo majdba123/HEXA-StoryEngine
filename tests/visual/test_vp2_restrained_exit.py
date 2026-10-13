@@ -98,6 +98,14 @@ def test_exit_offset_is_comfort_bounded_and_never_clips() -> None:
     assert dx == 0
 
 
+def test_unreadable_exit_offset_yields_to_clean_cut() -> None:
+    scene = _scene(16)
+    plan = scene.render_plan()
+    item = scene.composition[0].items[1].model_copy(update={
+        "x": 0.895, "y": 0.895, "width": 0.2, "height": 0.2})
+    assert FFmpegRenderer._restrained_exit_offset(plan=plan, item=item, seconds=0.40) == (0, 0)
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 def test_encoded_exit_is_opaque_moves_out_and_ends_on_the_opener(tmp_path) -> None:
     scene = _scene(16, root=tmp_path)

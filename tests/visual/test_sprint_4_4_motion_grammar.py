@@ -185,6 +185,83 @@ def test_leader_scale_abstains_when_story_has_no_read_hold() -> None:
     assert roomy.params["entry_grammar"]["scale_in"] is True
 
 
+def test_authoritative_leader_gets_eased_offscreen_path_only_when_safe() -> None:
+    from app.models import CompositionBeat, TextPlan
+
+    opener = _cue("opener", start=0.0, duration=0.2)
+    leader = _cue("leader", start=0.5, duration=5.0)
+    layout = CompositionBeat(beat_id="b", items=[
+        LayoutItem(asset_id="opener", x=0.2, y=0.5, width=0.2, height=0.3),
+        LayoutItem(asset_id="leader", x=0.75, y=0.5, width=0.2, height=0.3)])
+    args = dict(composition=[layout], choreography=ChoreographyPlan(
+        directives=(_directive(leader="leader"),)),
+        assets=[_asset("opener"), _asset("leader")])
+
+    result = EntryMotionGrammar().apply([opener, leader], text=TextPlan(), **args)[1]
+    frames = result.params["program"]["keyframes"]
+    assert result.params["hero_entry"]["mode"] == "offscreen"
+    assert frames[0]["dx"] > 0.35 and frames[0]["scale"] == ENTRY_SCALE_IN
+    assert frames[-1]["dx"] == 0.0 and frames[-1]["scale"] == 1.0
+    assert frames[0]["easing"] == "smoothstep"
+    assert result.params["entry_opacity"]["settle"] == leader.end
+
+    # Without a Text plan the path is unknown, so the existing scale-only grammar stays.
+    unknown = EntryMotionGrammar().apply([opener, leader], **args)[1]
+    assert "hero_entry" not in unknown.params
+    assert unknown.params["program"]["keyframes"][0]["dx"] == 0.0
+
+
+def test_shorter_safe_hero_path_stays_inside_frame() -> None:
+    from app.models import CompositionBeat, TextPlan
+
+    opener = _cue("opener", start=0.0, duration=0.2)
+    leader = _cue("leader", start=0.5, duration=0.4)
+    layout = CompositionBeat(beat_id="b", items=[
+        LayoutItem(asset_id="opener", x=0.2, y=0.5, width=0.2, height=0.3),
+        LayoutItem(asset_id="leader", x=0.75, y=0.5, width=0.2, height=0.3)])
+    result = EntryMotionGrammar().apply(
+        [opener, leader], composition=[layout],
+        choreography=ChoreographyPlan(directives=(_directive(leader="leader"),)),
+        assets=[_asset("opener"), _asset("leader")], text=TextPlan(),
+    )[1]
+    assert result.params["hero_entry"]["mode"] == "in_frame"
+    assert 0.01 <= result.params["hero_entry"]["start_dx"] <= 0.04
+
+
+def test_optional_entry_uses_authored_settle_when_it_is_later_than_motion_settle() -> None:
+    cue = _cue("leader", start=0.5, duration=0.28)
+    params = {"semantic_focus": {"rhythm": {"minimum_read_hold_ms": 300}}}
+    assert EntryMotionGrammar._has_read_hold(cue, params, 1.08)
+    assert not EntryMotionGrammar._has_read_hold(cue, params, 1.08, settle_override=0.82)
+
+
+def test_spatial_entry_waits_for_text_visibility_window_to_clear() -> None:
+    from app.models import CompositionBeat, StoryBeat, TextCue, TextPlan
+
+    opener = _cue("opener", start=0.0, duration=0.2)
+    leader = _cue("leader", start=0.6, duration=0.4)
+    layout = CompositionBeat(beat_id="b", items=[
+        LayoutItem(asset_id="opener", x=0.2, y=0.5, width=0.2, height=0.3),
+        LayoutItem(asset_id="leader", x=0.75, y=0.5, width=0.2, height=0.3)])
+    beat = StoryBeat(id="b", scene_id="s", start=0.0, end=2.0,
+                     narration="some spoken words", action="REVEAL")
+    text = TextCue(id="text", beat_id="b", text="word", semantic_type="keyword",
+                   source_char_start=0, source_char_end=4, spoken_start=1.4,
+                   spoken_end=1.7, emphasis_time=1.4, style_id="keyword")
+    args = dict(composition=[layout], choreography=ChoreographyPlan(
+        directives=(_directive(leader="leader"),)),
+        assets=[_asset("opener"), _asset("leader")], story=[beat])
+    late = EntryMotionGrammar().apply([opener, leader], text=TextPlan(cues=[text]), **args)[1]
+    assert late.params["hero_entry"]["mode"] == "in_frame"
+
+    concurrent = text.model_copy(update={"spoken_start": 0.8, "spoken_end": 1.1,
+                                         "emphasis_time": 0.8})
+    blocked = EntryMotionGrammar().apply(
+        [opener, leader], text=TextPlan(cues=[concurrent]), **args,
+    )[1]
+    assert "hero_entry" not in blocked.params
+
+
 # RESULT / protected motion: never a stacked scale --------------------------------------------
 def test_result_and_protected_motion_get_opacity_without_stacked_scale() -> None:
     payoff = MotionSegment(phase="PAYOFF", start=1.0, end=1.25, program=dict(_DIRECTIONAL))

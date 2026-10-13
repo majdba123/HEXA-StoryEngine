@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from app.assets import AssetManager
 from app.choreography import ChoreographyDirective, ChoreographyPlan
-from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
+from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, TextPlan, VisualAsset
+from app.motion.timing import story_activation_window
+from app.text.timing.visibility import TextVisibilityPolicy
 
+from .collision import authored_overlap_ratio, box, overlap_ratio
 from .timing import encoded_motion_renderability_floor_px, motion_comfort, projected_motion_activity_px
 
 # Sprint 4.4: reference-derived entry motion. Measured reference entries ramp opacity over
@@ -23,7 +26,9 @@ class EntryMotionGrammar:
     a separate cue parameter, and the only transform it adds is a restrained scale-in for
     the Choreography leader when nothing else moves that asset. Story timing is input
     only: the clock is exactly ``[cue.start, cue.end]`` (reveal -> settle). Existing
-    programs, segments and Sprint 4.1/4.2 motion are never rewritten.
+    programs, segments and Sprint 4.1/4.2 motion are never rewritten. An eligible
+    leader may also receive an eased spatial path when Story hold, visible text,
+    Composition geometry and motion comfort leave room for it.
     """
 
     def apply(
@@ -34,11 +39,26 @@ class EntryMotionGrammar:
         choreography: ChoreographyPlan | None,
         assets: list[VisualAsset] | None,
         story: list[StoryBeat] | None = None,
+        text: TextPlan | None = None,
     ) -> list[MotionCue]:
         assets_by_id = {asset.id: asset for asset in assets or []}
         beat_ends = {beat.id: float(beat.end) for beat in story or []}
+        activation_settles = {}
+        for beat in story or []:
+            for activation in beat.asset_activations:
+                _has_v2, window = story_activation_window(activation, beat)
+                if window is not None:
+                    activation_settles[(beat.id, activation.asset_id)] = float(window.settle_at)
         layouts = {layout.beat_id: {item.asset_id: item for item in layout.items}
                    for layout in composition}
+        text_windows: dict[str, list[tuple[float, float]]] = {}
+        if text is not None:
+            for beat in story or []:
+                siblings = [row for row in text.cues if row.beat_id == beat.id]
+                text_windows[beat.id] = [
+                    (float(row.spoken_start), TextVisibilityPolicy.visible_end(row, beat, siblings))
+                    for row in siblings
+                ]
         by_beat: dict[str, list[int]] = {}
         for index, cue in enumerate(cues):
             by_beat.setdefault(cue.beat_id, []).append(index)
@@ -61,6 +81,13 @@ class EntryMotionGrammar:
                     opens_scene=self._family(cues[i], assets_by_id) in openers
                     and self._in_opening_frame(cues[i], beat_cues),
                     beat_end=beat_ends.get(beat_id),
+                    authored_settle=activation_settles.get((beat_id, cues[i].asset_id)),
+                    layout_items=list(layouts.get(beat_id, {}).values()),
+                    text_clear=text is not None and (not text.cues or beat_id in text_windows) and not any(
+                        TextVisibilityPolicy.overlaps(
+                            float(cues[i].start), float(cues[i].end), start, end,
+                        ) for start, end in text_windows.get(beat_id, [])
+                    ),
                 )
         return output
 
@@ -75,6 +102,9 @@ class EntryMotionGrammar:
         family_mismatch: bool,
         opens_scene: bool,
         beat_end: float | None,
+        authored_settle: float | None,
+        layout_items: list[LayoutItem],
+        text_clear: bool,
     ) -> MotionCue:
         params = dict(cue.params) if isinstance(cue.params, dict) else {}
         reason = self._opacity_blocker(cue, params, family_mismatch, opens_scene)
@@ -90,24 +120,81 @@ class EntryMotionGrammar:
         }
         scale_in = (
             is_leader and family_size == 1 and item is not None and asset is not None
-            and self._has_read_hold(cue, params, beat_end)
+            and self._has_read_hold(cue, params, beat_end, settle_override=authored_settle)
             and self._scale_in_allowed(cue, params, item, asset)
         )
         if scale_in:
+            dx, spatial_mode = self._hero_entry_offset(
+                cue, item=item, layout_items=layout_items, text_clear=text_clear,
+            )
             program = dict(params["program"])
-            program["name"] = "reference_entry_scale_in"
+            program["name"] = (
+                "reference_hero_spatial_scale_in" if spatial_mode else "reference_entry_scale_in"
+            )
             program["settle_progress"] = 1.0
             program["keyframes"] = [
-                {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": ENTRY_SCALE_IN,
-                 "easing": "ease_out_cubic"},
-                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "ease_out_cubic"},
+                {"progress": 0.0, "dx": dx, "dy": 0.0, "scale": ENTRY_SCALE_IN,
+                 "easing": "smoothstep" if spatial_mode else "ease_out_cubic"},
+                {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0,
+                 "easing": "smoothstep" if spatial_mode else "ease_out_cubic"},
             ]
             params["program"] = program
+            if spatial_mode:
+                params["hero_entry"] = {"mode": spatial_mode, "start_dx": round(dx, 6)}
         params["entry_grammar"] = {"opacity": True, "scale_in": scale_in}
         return cue.model_copy(update={"params": params})
 
     @staticmethod
-    def _has_read_hold(cue: MotionCue, params: dict, beat_end: float | None) -> bool:
+    def _hero_entry_offset(
+        cue: MotionCue, *, item: LayoutItem, layout_items: list[LayoutItem], text_clear: bool,
+    ) -> tuple[float, str | None]:
+        """Fit one eased spatial path without changing Composition or authored collisions."""
+        if not text_clear:
+            return 0.0, None  # Text geometry is resolved later; do not move through visible text.
+        duration = float(cue.end) - float(cue.start)
+        extent = min(float(item.width), float(item.height))
+        # smoothstep's peak derivative is 1.5. Position and scale share one speed budget.
+        budget = motion_comfort("ENTRY").max_normalized_speed * duration / 1.5
+        scale_activity = (1.0 - ENTRY_SCALE_IN) * extent
+        if budget <= scale_activity:
+            return 0.0, None
+        spatial_budget = max(0.0, (budget * budget - scale_activity * scale_activity) ** 0.5)
+        sign = -1.0 if float(item.x) < 0.5 else 1.0
+        edge_distance = (
+            float(item.x) + float(item.width) / 2.0 + 0.01
+            if sign < 0 else 1.0 - float(item.x) + float(item.width) / 2.0 + 0.01
+        )
+        candidates = []
+        if edge_distance <= spatial_budget:
+            candidates.append((sign * edge_distance, "offscreen"))
+        candidates.append((sign * min(0.04, spatial_budget * 0.85), "in_frame"))
+        for dx, mode in candidates:
+            if abs(dx) < 0.01:
+                continue
+            safe = True
+            for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
+                transformed = box(item, (dx * (1.0 - fraction), 0.0,
+                                         ENTRY_SCALE_IN + (1.0 - ENTRY_SCALE_IN) * fraction))
+                if mode == "in_frame" and (transformed[0] < 0 or transformed[2] > 1):
+                    safe = False
+                    break
+                for other in layout_items:
+                    if other.asset_id == item.asset_id:
+                        continue
+                    allowed = authored_overlap_ratio(item, other) + 0.02
+                    if overlap_ratio(transformed, box(other, (0.0, 0.0, 1.0))) > allowed:
+                        safe = False
+                        break
+                if not safe:
+                    break
+            if safe:
+                return dx, mode
+        return 0.0, None
+
+    @staticmethod
+    def _has_read_hold(
+        cue: MotionCue, params: dict, beat_end: float | None, *, settle_override: float | None = None,
+    ) -> bool:
         """Omit optional scale when its settled result cannot be read before the cut."""
         if beat_end is None:
             return True  # Standalone callers without Story keep their existing contract.
@@ -116,7 +203,8 @@ class EntryMotionGrammar:
         hold_ms = rhythm.get("minimum_read_hold_ms") if isinstance(rhythm, dict) else None
         if not isinstance(hold_ms, (int, float)) or hold_ms <= 0:
             return True  # No Rhythm authority to suppress the existing gesture.
-        return beat_end - float(cue.end) + _EPS >= float(hold_ms) / 1000
+        settle = float(cue.end) if settle_override is None else max(float(cue.end), settle_override)
+        return beat_end - settle + _EPS >= float(hold_ms) / 1000
 
     @staticmethod
     def _opacity_blocker(

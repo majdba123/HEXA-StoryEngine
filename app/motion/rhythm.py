@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.models import StoryBeat
-from app.motion.timing import GOLDEN_MINOR, MotionTimingPolicy
+from app.motion.timing import GOLDEN_MINOR, MotionTimingPolicy, story_activation_window
 
 if TYPE_CHECKING:
     from app.choreography import ChoreographyPlan
@@ -162,3 +162,48 @@ class ReferenceRhythmPolicy:
     @staticmethod
     def tier_distance(left: str, right: str) -> int:
         return abs(_PACE_INDEX[str(left)] - _PACE_INDEX[str(right)])
+
+
+def audit_leader_read_holds(
+    beats: list[StoryBeat], decisions: dict[str, RhythmDecision],
+) -> list[dict[str, object]]:
+    """Report authored leaders that cannot settle and be read inside their Story beat.
+
+    This is a pre-Motion feasibility audit. It never changes Story timing, authored
+    sequence order, or a cross-scene identity decision. A later Boundary may still
+    preserve a referent; the reported hold is explicitly scene-local.
+    """
+    rows: list[dict[str, object]] = []
+    for beat in beats:
+        decision = decisions.get(beat.id)
+        if decision is None:
+            continue
+        activations = {activation.asset_id: activation for activation in beat.asset_activations}
+        for event in beat.event_authorities:
+            leaders = set(event.result_asset_ids or event.leader_asset_ids)
+            if len(leaders) != 1:
+                continue  # No unique authored visual leader to audit.
+            asset_id = next(iter(leaders))
+            _has_v2, window = story_activation_window(activations.get(asset_id), beat)
+            if window is None:
+                continue
+            available = max(0.0, float(beat.end) - float(window.settle_at))
+            required = decision.minimum_read_hold
+            if available + 1e-6 >= required:
+                continue
+            rows.append({
+                "beat_id": beat.id,
+                "scene_id": beat.scene_id,
+                "event_id": event.event_id,
+                "leader_asset_id": asset_id,
+                "reveal_start": round(float(window.reveal_start), 6),
+                "settle_at": round(float(window.settle_at), 6),
+                "scene_end": round(float(beat.end), 6),
+                "available_scene_local_hold_ms": round(available * 1000),
+                "required_read_hold_ms": round(required * 1000),
+                "shortfall_ms": round((required - available) * 1000),
+                "sequence_order": window.sequence_order,
+                "group_animation_policy": window.group_animation_policy,
+                "diagnosis": "AUTHORED_LEADER_READ_HOLD_INFEASIBLE",
+            })
+    return rows

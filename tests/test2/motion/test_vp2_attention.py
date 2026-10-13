@@ -75,3 +75,24 @@ def test_scale_led_establish_is_floored_in_the_encoded_pixel_measure() -> None:
                for f in out[1].segments[0].program["keyframes"])
     assert out[1].params["attention_arbitration"]  # it did yield, but only down to the QA floor
     assert kept >= semantic_readability_floor_px("ESTABLISH", item_width=0.4, item_height=0.2, duration=0.4)
+
+
+def test_unique_result_quiets_different_event_entry_across_payoff_window() -> None:
+    def event(cue: MotionCue, event_id: str) -> MotionCue:
+        segment = cue.segments[0].model_copy(update={"semantic_event_id": event_id})
+        return cue.model_copy(update={"segments": [segment]})
+
+    result = event(_cue("lead", start=1.0, focus=RESULT, phase="PAYOFF"), "result_event")
+    entry = event(_cue("support", start=0.82, focus=SUPPORT), "next_event")
+    # Motion peaks are 180 ms apart, beyond the 100 ms accent gap, but the
+    # different event's ENTRY remains active for 220 ms of the PAYOFF.
+    out = arbitrate_simultaneous_peaks([result, entry], items=ITEMS)
+    assert out[0] == result
+    assert _peak(out[1]) < _peak(entry)
+    assert out[1].params["attention_arbitration"][0]["yielded_to"] == "lead"
+    assert (out[1].start, out[1].end) == (entry.start, entry.end)
+
+    same_event = event(entry, "result_event")
+    assert arbitrate_simultaneous_peaks([result, same_event], items=ITEMS) == [result, same_event]
+    peer = event(_cue("peer", start=1.1, focus=RESULT, phase="PAYOFF"), "peer_event")
+    assert arbitrate_simultaneous_peaks([result, entry, peer], items=ITEMS) == [result, entry, peer]

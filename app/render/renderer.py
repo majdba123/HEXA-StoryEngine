@@ -10,7 +10,7 @@ from pathlib import Path
 from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
-from app.motion.timing import GOLDEN_MINOR, max_comfort_displacement
+from app.motion.timing import GOLDEN_MINOR, max_comfort_displacement, semantic_readability_floor_px
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.connection import connection_specs, draw_connection, fade_seconds
@@ -872,8 +872,14 @@ class FFmpegRenderer:
         box_w, box_h, target_x, target_y = cls._geometry(plan, item)
         dx = max(-max(0, target_x), min(max(0, plan.width - target_x - box_w), dx))
         dy = max(-max(0, target_y), min(max(0, plan.height - target_y - box_h), dy))
-        floor = 6 * scale
-        return (round(dx) if abs(dx) >= floor else 0, round(dy) if abs(dy) >= floor else 0)
+        dx, dy = round(dx), round(dy)
+        readable = semantic_readability_floor_px(
+            "EXIT", item_width=item.width, item_height=item.height, duration=seconds,
+            frame_width=plan.width, frame_height=plan.height,
+        )
+        if math.hypot(dx, dy) < readable:
+            return 0, 0  # A microscopic drift followed by a cut reads worse than a clean cut.
+        return dx, dy
 
     @staticmethod
     def _bridge_progress_expression(*, start: float, duration: float) -> str:

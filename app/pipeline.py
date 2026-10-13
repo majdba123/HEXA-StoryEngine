@@ -457,6 +457,13 @@ class StoryEnginePipeline:
         self.handoff_contracts.require_choreography_for_composition(
             story=story, assets=assets, choreography=choreography
         )
+        from app.motion.rhythm import audit_leader_read_holds
+
+        rhythm_decisions = self.motion.rhythm.plan(story, choreography, self.motion.timing)
+        (workspace / "visual-timeline-feasibility.json").write_text(
+            json.dumps(audit_leader_read_holds(story, rhythm_decisions), indent=2),
+            encoding="utf-8",
+        )
         max_scene_assets = max(
             (sum(1 for asset in assets if asset.scene_id == scene.id) for scene in package.scenes),
             default=0,
@@ -542,7 +549,7 @@ class StoryEnginePipeline:
             # window). Runs after the Reference contract; certified planning is untouched.
             motion = self.entry_grammar.apply(
                 motion, composition=composition, choreography=choreography, assets=assets,
-                story=story,
+                story=story, text=shared.text,
             )
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,

@@ -1,13 +1,14 @@
-"""One emphasis owner per instant when motion peaks coincide (Visual Polish VP2-B).
+"""Coordinate motion emphasis around authored visual payoffs (Visual Polish VP2-B).
 
 The cohort attention budget groups assets by Story reveal instant. Assets revealed at
 different instants can still reach their motion peak together (different durations), and
-then two visual units emphasise at once. This pass only looks at actual peak times: when
+then two visual units emphasise at once. When
 peaks of different visual units fall within the beat's rhythm accent gap and existing
 semantic authority clearly ranks them (RESULT > PRIMARY > other), the subordinate peak is
 softened to the existing participant gain — never below the shared readability floor.
-Equal authority, missing authority, already-arbitrated cohort members and geometry-locked
-family members are left untouched. Timing, settle and final Composition never change.
+An entry from a different event also yields when it overlaps a unique result's PAYOFF
+window. Equal authority, missing authority, already-arbitrated cohort members and
+geometry-locked family members are left untouched. Timing and Composition never change.
 """
 from __future__ import annotations
 
@@ -101,10 +102,14 @@ def arbitrate_simultaneous_peaks(cues: list[MotionCue], *, items: dict[str, Layo
         for key, phase, start, end, program in _programs(cue):
             activity, progress = _activity(program, extent)
             if activity > 1e-9 and end > start:
+                event_id = (
+                    cue.segments[key].semantic_event_id if isinstance(key, int)
+                    else _focus(cue).get("semantic_event_id")
+                )
                 peaks.append({"position": position, "key": key, "phase": phase, "start": start, "end": end,
                               "time": start + (end - start) * progress, "activity": activity,
                               "tier": _tier(cue), "unit": _unit(cue), "gap": _gap(cue), "item": item,
-                              "program": program})
+                              "program": program, "event_id": event_id})
     peaks.sort(key=lambda row: (row["time"], row["position"], str(row["key"])))
     softened: dict[tuple[int, str | int], tuple[float, str]] = {}
     for index, left in enumerate(peaks):
@@ -123,6 +128,33 @@ def arbitrate_simultaneous_peaks(cues: list[MotionCue], *, items: dict[str, Layo
             gain = max(SUBORDINATE_GAIN, min(1.0, keep * 1.02))
             if gain < 1.0:
                 softened[(low["position"], low["key"])] = (gain, cues[high["position"]].asset_id)
+    # A different event can start a vigorous entry while the result is still in its
+    # PAYOFF window even when their peak instants are farther apart than accent_gap.
+    # Only one authored result may lead this beat; same-event causal action and peers
+    # retain their authored energy. This changes amplitude, never narration timing.
+    results = {row["unit"] for row in peaks if row["phase"] == "PAYOFF" and row["tier"] == 2}
+    if len(results) == 1:
+        for high in peaks:
+            if high["phase"] != "PAYOFF" or high["tier"] != 2 or not high["event_id"]:
+                continue
+            for low in peaks:
+                if low["tier"] >= 2 or low["unit"] == high["unit"]:
+                    continue
+                if low["phase"] not in {"ENTRY", "ESTABLISH"}:
+                    continue
+                if not low["event_id"] or low["event_id"] == high["event_id"]:
+                    continue
+                if min(low["end"], high["end"]) - max(low["start"], high["start"]) < 2 / 30:
+                    continue
+                cue = cues[low["position"]]
+                if str(_focus(cue).get("cohort_role") or "") in _ARBITRATED_ROLES:
+                    continue
+                keep = _minimum_gain(low["phase"], low["program"], low["item"],
+                                     low["end"] - low["start"], low["activity"])
+                gain = max(SUBORDINATE_GAIN, min(1.0, keep * 1.02))
+                key = (low["position"], low["key"])
+                if gain < 1.0 and (key not in softened or gain < softened[key][0]):
+                    softened[key] = (gain, cues[high["position"]].asset_id)
     if not softened:
         return cues
     output = list(cues)
