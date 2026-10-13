@@ -11,7 +11,7 @@ import pytest
 
 from app.config import Settings
 from app.desktop.export_preflight import NOT_CONFIGURED, export_root_problem
-from app.final.bundle import ExportBundleWriter
+from app.final.bundle import ExportBundleWriter, _foreign_windows_drive_path
 
 ROOT = Path(__file__).resolve().parents[3]
 DESKTOP = ROOT / "app" / "desktop" / "main.py"
@@ -90,6 +90,13 @@ def test_missing_drive_fails_clearly_without_fallback(tmp_path: Path) -> None:
     message = export_root_problem(_settings(missing))
     assert message is not None and str(missing) in message and "القرص غير موجود" in message
     assert not missing.exists()
+
+
+def test_windows_drive_configuration_is_foreign_on_posix() -> None:
+    assert _foreign_windows_drive_path(Path(r"Z:\HEXA_Exports"), platform="posix")
+    assert _foreign_windows_drive_path(Path("Z:/HEXA_Exports"), platform="posix")
+    assert not _foreign_windows_drive_path(Path(r"Z:\HEXA_Exports"), platform="nt")
+    assert not _foreign_windows_drive_path(Path("/tmp/HEXA_Exports"), platform="posix")
 
 
 def test_unwritable_root_fails_clearly(tmp_path: Path, monkeypatch) -> None:

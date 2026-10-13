@@ -23,6 +23,11 @@ _WINDOWS_RESERVED = {
 }
 
 
+def _foreign_windows_drive_path(root: Path, *, platform: str = os.name) -> bool:
+    """Detect drive-absolute Windows configuration before POSIX pathlib treats it as relative."""
+    return platform != "nt" and re.match(r"^[A-Za-z]:[\\/]", str(root)) is not None
+
+
 def export_slug(raw: str | None) -> str:
     """Filesystem-safe, stable bundle identity (uppercase ``A-Z0-9_-``, max 80 chars).
 
@@ -54,6 +59,10 @@ class ExportRoot:
 
     def validate(self) -> ExportRootStatus:
         root = self.configured.expanduser()
+        # A Windows drive path is relative to pathlib on POSIX. Reject it as an
+        # unavailable configured drive before any mkdir or fallback can occur.
+        if _foreign_windows_drive_path(root):
+            raise self._unavailable("export drive is not available", root)
         if not root.is_absolute():
             raise self._unavailable("export root must be an absolute path", root)
         anchor = Path(root.anchor)
