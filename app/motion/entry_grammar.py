@@ -24,7 +24,9 @@ class EntryMotionGrammar:
 
     Runs after the Reference contract, so it never competes with it: the opacity clock is
     a separate cue parameter, and the only transform it adds is a restrained scale-in for
-    the Choreography leader when nothing else moves that asset. Story timing is input
+    the Choreography leader, or for a Story event's unique authored owner (its RESULT, else
+    its LEADER), when nothing else moves that asset; owners whose entries overlap keep one
+    accent, by authority. Supporting assets keep the opacity entry. Story timing is input
     only: the clock is exactly ``[cue.start, cue.end]`` (reveal -> settle). Existing
     programs, segments and Sprint 4.1/4.2 motion are never rewritten. An eligible
     leader may also receive an eased spatial path when Story hold, visible text,
@@ -43,6 +45,7 @@ class EntryMotionGrammar:
     ) -> list[MotionCue]:
         assets_by_id = {asset.id: asset for asset in assets or []}
         beat_ends = {beat.id: float(beat.end) for beat in story or []}
+        event_owners = {beat.id: self._event_owners(beat) for beat in story or []}
         activation_settles = {}
         for beat in story or []:
             for activation in beat.asset_activations:
@@ -70,12 +73,28 @@ class EntryMotionGrammar:
             families = self._family_sizes(beat_cues, assets_by_id)
             mismatched = self._mismatched_families(beat_cues, assets_by_id)
             openers = self._scene_opening_families(beat_cues, directive, assets_by_id)
-            for i in indices:
+            owners = event_owners.get(beat_id, {})
+            accented: list[tuple[float, float]] = []
+
+            def authority(i: int) -> tuple[int, float, str]:
+                asset_id = cues[i].asset_id
+                rank = 0 if asset_id == leader else {"RESULT": 1, "LEADER": 2}.get(owners.get(asset_id, ""), 3)
+                return rank, float(cues[i].start), asset_id
+
+            # Owners are visited in authority order so a lower owner never takes the
+            # accent from a higher one whose entry overlaps it; others keep plain order.
+            for i in sorted(indices, key=authority):
+                candidate = cues[i].asset_id == leader or cues[i].asset_id in owners
+                if candidate and any(
+                    min(float(cues[i].end), end) - max(float(cues[i].start), start) > _FRAME - _EPS
+                    for start, end in accented
+                ):
+                    candidate = False  # one restrained accent at a time inside a beat
                 output[i] = self._apply_one(
                     cues[i],
                     item=layouts.get(beat_id, {}).get(cues[i].asset_id),
                     asset=assets_by_id.get(cues[i].asset_id),
-                    is_leader=cues[i].asset_id == leader,
+                    is_leader=candidate,
                     family_size=families.get(self._family(cues[i], assets_by_id), 1),
                     family_mismatch=self._family(cues[i], assets_by_id) in mismatched,
                     opens_scene=self._family(cues[i], assets_by_id) in openers
@@ -89,7 +108,22 @@ class EntryMotionGrammar:
                         ) for start, end in text_windows.get(beat_id, [])
                     ),
                 )
+                if (output[i].params.get("entry_grammar") or {}).get("scale_in"):
+                    accented.append((float(output[i].start), float(output[i].end)))
         return output
+
+    @staticmethod
+    def _event_owners(beat: StoryBeat) -> dict[str, str]:
+        """Unique authored owner of each confident Story event: its RESULT, else its LEADER."""
+        owners: dict[str, str] = {}
+        for event in beat.event_authorities:
+            if event.needs_review:
+                continue
+            ids, kind = ((event.result_asset_ids, "RESULT") if event.result_asset_ids
+                         else (event.leader_asset_ids, "LEADER"))
+            if len(ids) == 1:
+                owners.setdefault(ids[0], kind)
+        return owners
 
     def _apply_one(
         self,
