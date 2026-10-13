@@ -198,6 +198,23 @@ class SceneBoundaryPlanner:
                 opener_at=at(k_open), release_start=at(k_open), release_end=at(k_open),
                 **audit, **hold,
             )
+        # An ordinary completed scene with explicit Story visibility can retain
+        # ownership until the legal opener. Text and protected incoming action
+        # that precede the opener keep the certified exact-end release instead.
+        if (
+            previous.active_visual_semantic_state is not None
+            and not self._protected_motion_visible_before(
+                beat=beat, incoming=incoming, cues=cues,
+                segment_start=start_time, opener_frame=k_open, fps=fps,
+            )
+            and not any(first_visible_frame(start - start_time, fps) < k_open
+                        for start, _end, _box in text_boxes)
+        ):
+            return result(
+                "CRISP_HANDOFF", "ordinary_scene_owner_until_opener", blocker,
+                opener_at=at(k_open), release_start=at(k_open), release_end=at(k_open),
+                **audit,
+            )
         return result(
             "EXACT_END", "exact_end_release", blocker,
             opener_at=at(k_open), release_start=at(k_open - release_frames), release_end=at(k_open),
@@ -219,15 +236,11 @@ class SceneBoundaryPlanner:
         if opener_frame <= release_start_frame:
             return None
         segment_start = segment.start_frame / fps
-        for item in incoming:
-            cue = cues.get((beat.id, item.asset_id))
-            for action in cue.segments if cue is not None else ():
-                protected = (
-                    action.phase in _PROTECTED_PHASES or action.connection
-                    or action.semantic_action is not None
-                )
-                if protected and first_visible_frame(action.start - segment_start, fps) < opener_frame:
-                    return None
+        if cls._protected_motion_visible_before(
+            beat=beat, incoming=incoming, cues=cues,
+            segment_start=segment_start, opener_frame=opener_frame, fps=fps,
+        ):
+            return None
         if any(
             first_visible_frame(start - segment_start, fps) < opener_frame
             for start, _end, _box in text_boxes
@@ -313,6 +326,26 @@ class SceneBoundaryPlanner:
                     or segment.semantic_action is not None
                 )
                 if protected and float(segment.start) < limit - _EPS:
+                    return True
+        return False
+
+    @staticmethod
+    def _protected_motion_visible_before(
+        *, beat: StoryBeat, incoming: list[LayoutItem],
+        cues: dict[tuple[str, str], MotionCue], segment_start: float,
+        opener_frame: int, fps: int,
+    ) -> bool:
+        """Use encoded visibility, so subframe action starts on the opener are legal."""
+        for item in incoming:
+            cue = cues.get((beat.id, item.asset_id))
+            for action in cue.segments if cue is not None else ():
+                protected = (
+                    action.phase in _PROTECTED_PHASES or action.connection
+                    or action.semantic_action is not None
+                )
+                if protected and first_visible_frame(
+                    action.start - segment_start, fps,
+                ) < opener_frame:
                     return True
         return False
 

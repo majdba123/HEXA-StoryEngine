@@ -84,11 +84,19 @@ def _plan(tmp_path: Path, *, handoff: bool = True, dx: float = -0.05, reveal: fl
 def _frames(video: Path, width: int, height: int) -> np.ndarray:
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          capture_output=True, check=True).stdout
-    return np.frombuffer(raw, np.uint8).reshape(-1, height, width, 3).astype(int)
+    return np.frombuffer(raw, np.uint8).reshape(-1, height, width, 3)
 
 
 def _mask(frames: np.ndarray, colour) -> np.ndarray:
-    return (np.abs(frames - np.array(colour)).sum(axis=3) < 90)
+    # The exact RGB distance fits in int16 (maximum 765). Process one frame at a
+    # time so this 1080p encoded assertion does not allocate multi-GiB int64 arrays.
+    mask = np.empty(frames.shape[:-1], dtype=bool)
+    for index, frame in enumerate(frames):
+        distance = np.zeros(frame.shape[:2], dtype=np.int16)
+        for channel, value in enumerate(colour):
+            distance += np.abs(frame[:, :, channel].astype(np.int16) - int(value))
+        mask[index] = distance < 90
+    return mask
 
 
 def _centre_x(mask: np.ndarray) -> float | None:

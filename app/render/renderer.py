@@ -749,7 +749,7 @@ class FFmpegRenderer:
         opener, start, zero = frames
         if opener != cls._first_visible_frame(incoming_start, fps):
             return None
-        if row.mode == "HOLD_TO_OPENER":
+        if row.mode in {"HOLD_TO_OPENER", "CRISP_HANDOFF"}:
             if start != opener or zero != opener or opener <= 0 or opener >= frame_count:
                 return None
             # Cover the last frame before the opener; the outgoing scene has no fade

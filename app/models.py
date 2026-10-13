@@ -465,13 +465,15 @@ class SceneBoundaryRelease(BaseModel):
     ``HARD_CUT`` means the release abstains and the certified boundary behaviour runs
     unchanged. ``EXACT_END`` fades to the incoming opener, and ``OVERLAP`` finishes a
     few frames after it. ``HOLD_TO_OPENER`` keeps a completed semantic state crisp until
-    the already scheduled opener, then cuts without exit drift. Times are absolute
+    the already scheduled opener, then cuts without exit drift. ``CRISP_HANDOFF``
+    makes the same visual cut for an ordinary unrelated replacement, without
+    claiming the semantic read-window protection of ``HOLD_TO_OPENER``. Times are absolute
     seconds on the encoded frame grid. Nothing here carries cross-scene meaning.
     """
 
     beat_id: str
     from_beat_id: str
-    mode: Literal["HARD_CUT", "EXACT_END", "OVERLAP", "HOLD_TO_OPENER"] = "HARD_CUT"
+    mode: Literal["HARD_CUT", "EXACT_END", "OVERLAP", "HOLD_TO_OPENER", "CRISP_HANDOFF"] = "HARD_CUT"
     opener_at: float | None = None
     release_start: float | None = None
     release_end: float | None = None
