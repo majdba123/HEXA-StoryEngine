@@ -636,10 +636,21 @@ class MotionTimingPolicy:
                 semantic_peak=story_window.semantic_peak,
                 story_v2=True,
             )
+            established = (
+                story_window.phrase_start is not None
+                and story_window.reveal_start < story_window.phrase_start - 1e-9
+            )
             return self._stagger_visual_unit_window(
                 base,
                 index=visual_unit_index,
                 count=visual_unit_count,
+                # Opening establishment (Story): the unit builds right at its early reveal,
+                # inside the length of its phrase window; every member keeps Story's
+                # semantic peak and settle on the spoken word.
+                build_span=(
+                    float(story_window.settle_at) - float(story_window.phrase_start)
+                    if established else None
+                ),
             )
         if (
             activation is None
@@ -686,15 +697,28 @@ class MotionTimingPolicy:
         *,
         index: int,
         count: int,
+        build_span: float | None = None,
     ) -> MotionWindow:
         """Subdivide one Story-owned window for locator-backed multi-cutout units.
 
         Final Package/Story still own the outer semantic window. Motion only determines
         the ordered reveal choreography inside that window. The first member starts at
         the Story reveal boundary and the final member completes at Story settle.
+        With ``build_span`` (an opening-established unit) only the member starts are
+        ordered, inside that span after the reveal; every member keeps the outer
+        window's end, settle and semantic peak.
         """
         if count <= 1:
             return window
+        if build_span is not None:
+            index = max(0, min(count - 1, int(index)))
+            span = max(0.0, min(float(build_span), window.end - window.start))
+            slots = min(count, int(span / encoded_motion_temporal_floor_seconds() + 1e-9) + 1)
+            if slots <= 1:
+                return window
+            start = window.start + span / (slots - 1) * (index * slots // count)
+            return replace(window, start=min(start, window.end - cls._MIN_EXECUTABLE_DURATION),
+                           sequence_staggered=True)
         index = max(0, min(count - 1, int(index)))
         span = max(0.0, window.end - window.start)
         if span <= cls._MIN_EXECUTABLE_DURATION + 1e-9:

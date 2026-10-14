@@ -283,8 +283,11 @@ class SemanticActivationPlanner:
             assets_by_scene.setdefault(asset.scene_id, []).append(asset)
 
         output: list[StoryBeat] = []
-        opening_pending = True
+        opened_scenes: set[str] = set()
         for beat in beats:
+            # Each scene's first beat is an opening: its narration may start before the
+            # scene's first authored trigger, and the same fail-closed authorities decide.
+            opening_pending = beat.scene_id not in opened_scenes
             scene = scene_by_id.get(beat.scene_id)
             scene_assets = assets_by_scene.get(beat.scene_id, [])
             if scene is None or not scene_assets:
@@ -313,7 +316,7 @@ class SemanticActivationPlanner:
                     else None
                 ),
             )
-            opening_pending = False
+            opened_scenes.add(beat.scene_id)
             compound_proxies = self._compound_semantic_event_proxies(
                 package=package,
                 transcript=transcript,

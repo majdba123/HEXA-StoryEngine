@@ -403,11 +403,16 @@ def _enforce_final_semantic_handoffs(
             settle_at = next_reveal
         if settle_at <= float(row.reveal_start) + 1e-9:
             continue
+        # An established opening carrier reveals before its own phrase; its phrase anchor
+        # is authored and may never be cut by a cap that falls before that phrase.
+        anchor = float(row.phrase_start) if row.phrase_start is not None else float(row.reveal_start)
+        if settle_at < anchor - 1e-9:
+            continue
 
         peak = float(row.semantic_peak) if row.semantic_peak is not None else float(row.reveal_start)
         if peak > settle_at:
-            peak = float(row.reveal_start) + (settle_at - float(row.reveal_start)) * 0.55
-        peak = max(float(row.reveal_start), min(peak, settle_at))
+            peak = anchor + (settle_at - anchor) * 0.55
+        peak = max(anchor, min(peak, settle_at))
         evidence = [
             *row.evidence,
             f"final_handoff_cap={next_reveal:.6f}",
@@ -432,9 +437,10 @@ def _establish_opening_visual(
 ) -> list[StoryAssetActivation]:
     """Cover narration start with the first safe authored visual, without future reveals.
 
-    Unified 2.0 exact bindings normally reveal on their precise spoken phrase. At the
-    video opening that can leave narration playing over a white canvas when the first
-    authored visual phrase starts later. Only the first dependency-free, non-RESULT
+    Unified 2.0 exact bindings normally reveal on their precise spoken phrase. At a
+    scene opening that can leave the new narration playing over a white canvas or over
+    the previous scene's artwork when the scene's first authored visual phrase starts
+    later. Only the first dependency-free, non-RESULT
     reveal cohort of event order 1 may establish one legal carrier at the first spoken
     instant, and only with an explicit authority for the lead:
 
@@ -527,19 +533,27 @@ def _establish_opening_visual(
     if safety_rank((candidate_index, candidate))[0] >= 99:
         return activations
 
-    data = candidate.model_dump()
-    data.update(
-        reveal_start=audio_start,
-        evidence=[
-            *candidate.evidence,
-            "opening_spoken_coverage",
-            "opening_establishment_first_semantic_cohort",
-            f"opening_establish_lead={lead:.6f}",
-            f"opening_establish_authority={lead_authority(candidate)}",
-        ],
-    )
+    # One authored visual may be cut into several runtime pieces (same semantic unit, same
+    # trigger). They are one carrier: establish them together, never one piece alone.
+    unit = candidate.semantic_unit_id
+    members = [
+        (index, row) for index, row in cohort
+        if index == candidate_index or (unit and row.semantic_unit_id == unit)
+    ]
     output = list(activations)
-    output[candidate_index] = StoryAssetActivation.model_validate(data).with_legacy_evidence()
+    for member_index, member in members:
+        data = member.model_dump()
+        data.update(
+            reveal_start=audio_start,
+            evidence=[
+                *member.evidence,
+                "opening_spoken_coverage",
+                "opening_establishment_first_semantic_cohort",
+                f"opening_establish_lead={lead:.6f}",
+                f"opening_establish_authority={lead_authority(candidate)}",
+            ],
+        )
+        output[member_index] = StoryAssetActivation.model_validate(data).with_legacy_evidence()
     return output
 
 def schedule_windows(
