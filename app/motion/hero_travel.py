@@ -113,7 +113,13 @@ class HeroTravelPlanner:
             for cue in motion
             if isinstance(spec := cue.params.get("handoff_from"), dict)
         } | set(referent_carriers or ())  # authored referent carriers belong to Sprint 7
-        output = list(motion)
+        output = [
+            # Boundary must see authored referent carriers whether or not Sprint 7 has
+            # attached its handoff yet (it may hold them into the next scene).
+            cue.model_copy(update={"params": {**cue.params, "referent_carrier": True}})
+            if (cue.beat_id, cue.asset_id) in (referent_carriers or ()) else cue
+            for cue in motion
+        ]
         emphasized_previous = False
         for beat in story:
             cues = [cue for cue in motion if cue.beat_id == beat.id]

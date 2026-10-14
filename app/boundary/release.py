@@ -150,6 +150,17 @@ class SceneBoundaryPlanner:
         first = {it.asset_id: first_visible_frame(self._visible_start(beat, cues.get((beat.id, it.asset_id)))
                                                    - start_time, fps) for it in incoming}
         footprints = {it.asset_id: self.footprints.resolve(it, assets.get(it.asset_id)).box for it in incoming}
+        # Outgoing artwork that may stay on screen in the new segment - an authored referent
+        # carrier (Sprint 7 can hold it until its successor) or persistent artwork - is an
+        # obstacle for the whole exit; the hero never slides behind or over it.
+        held = [
+            self.footprints.resolve(row_item, assets.get(row_item.asset_id)).box
+            for row_item in previous_layout.items
+            if family_of(row_item.asset_id) != family_of(hero.asset_id) and (
+                row_item.asset_id in legacy.persistent_asset_ids
+                or (cues.get((previous.id, row_item.asset_id)) is not None
+                    and cues[(previous.id, row_item.asset_id)].params.get("referent_carrier")))
+        ]
         opener = int(row.audit.get("opener_frame", min(first.values())))
         start = (segment.start_frame + opener) / fps
         reasons = []
@@ -172,6 +183,9 @@ class SceneBoundaryPlanner:
                 if any(first[key] <= frame and self._intersects(moved, footprint)
                        for key, footprint in footprints.items()):
                     blocker = "path_crosses_incoming_artwork"
+                    break
+                if any(self._intersects(moved, footprint) for footprint in held):
+                    blocker = "path_crosses_held_outgoing_artwork"
                     break
                 now = (segment.start_frame + frame) / fps
                 if any(t0 <= now + _EPS and t1 > now and self._intersects(moved, box)

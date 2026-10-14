@@ -70,3 +70,19 @@ def test_encoded_hero_stays_until_the_opener_then_leaves_the_canvas_completely(t
     mid = b + (start + end) // 2
     along_path = _darkness(frames, (0.95, OLD_RIGHT[1], 0.1, OLD_RIGHT[3]), pad=0.0)
     assert along_path[mid] > 0.05 and along_path[b + start] < 0.02      # visibly travelling there
+
+
+def test_exit_never_slides_past_a_held_referent_carrier() -> None:
+    """Sprint 7 may hold an authored referent carrier into the next scene: it is an obstacle."""
+    scene = Scene(lead=16, opener=NEW_ON_OLD, later=None,
+                  old={"old_a": (0.2, 0.3, 0.2, 0.3), "old_b": (0.6, 0.3, 0.2, 0.3), "keep": (0.88, 0.3, 0.15, 0.3)})
+    scene.story[0] = scene.story[0].model_copy(update={
+        "active_visual_semantic_state": {"old_a": "old_a", "old_b": "old_b", "keep": "keep"}})
+    scene.motion = [
+        c.model_copy(update={"params": {**c.params, "scene_hero": True}}) if (c.beat_id, c.asset_id) == ("b1", "old_b")
+        else c.model_copy(update={"params": {**c.params, "referent_carrier": True}})
+        if (c.beat_id, c.asset_id) in {("b1", "keep"), ("b1", "old_a")} else c
+        for c in scene.motion]
+    row = scene.plan()
+    assert row.overlap_exits == {}
+    assert "path_crosses_held_outgoing_artwork" in row.audit["hero_exit"]
