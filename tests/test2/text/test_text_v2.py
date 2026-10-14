@@ -215,6 +215,37 @@ def test_inner_conjunction_is_preserved_in_display() -> None:
     assert [row.display_text for row in picked] == ["الاسم والشعار"]
 
 
+def test_weak_auxiliary_is_evidence_only_on_its_own_visual_words() -> None:
+    # "يحاول" (tries) also appears in the eye's description ("عين تحاول ملاحظته"). That
+    # coincidence must not turn a fragment that splits "الهاكر الأسود" into a label; the
+    # erasing hacker's own authored span is the scene's text.
+    script = "الهاكر الأسود غالبًا يحاول يقلل أي أثر يدل عليه"
+    hacker = _asset("hacker", script, "يقلل أي أثر", granularity="EXACT_PHRASE", role="CHARACTER",
+                    concept="مهاجم يخفي أثره")
+    eye = {**_asset("eye", script, "يدل عليه", granularity="EXACT_PHRASE", role="RESULT",
+                    concept="عين تحاول ملاحظته"), "binding_type": "SEMANTIC"}
+    texts = [row.display_text for row in _select(script, [hacker, eye])]
+    assert "الأسود غالبًا يحاول" not in texts
+    assert "يقلل أي أثر" in texts
+
+    transcript = _transcript(script)
+    selector = TextSemanticSelector()
+
+    def windows(span_phrase: str) -> set[str]:
+        package = _package(script, [{**_asset("eye", script, span_phrase, granularity="EXACT_PHRASE",
+                                              concept="عين تحاول ملاحظته"), "binding_type": "SEMANTIC"}])
+        asset = package.scene_by_id["scene-001"].assets[0]
+        terms, explicit = selector._semantic_evidence_terms([asset])
+        rows = selector._semantic_phrase_windows(
+            transcript.words, semantic_assets=[asset], semantic_terms=terms, explicit_terms=explicit,
+            corpus_frequency=selector._content_frequency(script), action="EXPLAIN",
+            require_semantic_match=True, require_full_semantic_coverage=False)
+        return {row.display_text for row in rows}
+
+    assert not any("يحاول" in text for text in windows("يدل عليه"))   # coincidence elsewhere
+    assert any("يحاول" in text for text in windows("غالبًا يحاول"))    # the visual's own words
+
+
 def test_displayed_text_keeps_source_diacritics() -> None:
     script = "البيانات تُستخدم بدون إذن"
     picked = _select(script, [_asset("use", script, "تُستخدم بدون إذن", granularity="EXACT_PHRASE")])

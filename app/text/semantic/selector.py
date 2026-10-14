@@ -656,6 +656,25 @@ class TextSemanticSelector:
         }
         role_bonus = 0.035 if roles & {"PRIMARY", "RESULT", "ACTION", "OBJECT"} else 0.0
         action_bonus = 0.035 if action in {"EMPHASIZE", "RESULT", "HANDOFF"} else 0.0
+        authored_spans = [
+            (int(span.global_char_start), int(span.global_char_end))
+            for span in (row.script_span for row in semantic_assets)
+            if span is not None
+            and span.global_char_start is not None
+            and span.global_char_end is not None
+        ]
+
+        def is_evidence(word: TranscriptWord, token: str) -> bool:
+            # A weak auxiliary ("tries", "uses") carries no visual concept of its own. It
+            # is semantic evidence only on words the Final Package bound to this visual,
+            # never through a coincidence with description vocabulary elsewhere.
+            if token.lower() not in _WEAK_STANDALONE_TERMS:
+                return True
+            return (
+                word.char_start is not None
+                and word.char_end is not None
+                and any(start <= word.char_start and word.char_end <= end for start, end in authored_spans)
+            )
 
         max_window = min(3, len(words))
         for size in range(1, max_window + 1):
@@ -694,12 +713,17 @@ class TextSemanticSelector:
                     continue
 
                 lexemes = [self._semantic_lexeme(token) for token in content]
+                evidence = [
+                    self._semantic_lexeme(token)
+                    for row, token in zip(window, cleaned)
+                    if self._is_content_word(token) and is_evidence(row, token)
+                ]
                 semantic_matches = sum(
-                    1 for token in lexemes
+                    1 for token in evidence
                     if token and any(self._terms_related(token, term) for term in semantic_terms)
                 )
                 explicit_matches = sum(
-                    1 for token in lexemes
+                    1 for token in evidence
                     if token and any(self._terms_related(token, term) for term in explicit_terms)
                 )
                 if require_semantic_match and semantic_matches + explicit_matches == 0:
