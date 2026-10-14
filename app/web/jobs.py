@@ -30,7 +30,7 @@ class Jobs:
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_web_job ON jobs "
                        "((1)) WHERE state IN ('queued','running','cancelling')")
             # A new server must not claim another live process's render has stopped.
-            # Recovery of an orphaned render is handled at startup below.
+            # Mark orphaned jobs failed at startup below.
             db.execute("CREATE TABLE IF NOT EXISTS owners (job_id TEXT PRIMARY KEY, pid INTEGER)")
             for row in db.execute("SELECT id FROM jobs WHERE state IN ('queued','running','cancelling')"):
                 owner = db.execute("SELECT pid FROM owners WHERE job_id=?", (row["id"],)).fetchone()
