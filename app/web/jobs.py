@@ -71,6 +71,13 @@ class Jobs:
             row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         return dict(row) if row else None
 
+    def active(self) -> dict | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM jobs WHERE state IN ('queued','running','cancelling') LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
     def cancel(self, job_id: str) -> bool:
         with self._lock:
             event = self._cancel.get(job_id)

@@ -4,6 +4,7 @@ import os
 import shutil
 import json
 import zipfile
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -42,16 +43,16 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
     def health():
         return {"ok": True}
 
-    async def save(upload: UploadFile, path: Path) -> None:
+    def save(upload: UploadFile, path: Path) -> None:
         size = 0
         with path.open("wb") as target:
-            while chunk := await upload.read(1024 * 1024):
+            while chunk := upload.file.read(1024 * 1024):
                 size += len(chunk)
                 if size > max_upload:
                     raise HTTPException(413, "Upload exceeds configured size limit")
                 target.write(chunk)
 
-    async def save_folder(files: list[UploadFile], paths_json: str, path: Path) -> None:
+    def save_folder(files: list[UploadFile], paths_json: str, path: Path) -> None:
         try:
             paths = json.loads(paths_json)
         except ValueError as exc:
@@ -72,7 +73,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
                     raise HTTPException(422, "Unsafe directory path")
                 names.add(name)
                 with archive.open(name, "w") as target:
-                    while chunk := await upload.read(1024 * 1024):
+                    while chunk := upload.file.read(1024 * 1024):
                         total += len(chunk)
                         if total > max_upload:
                             raise HTTPException(413, "Directory exceeds configured size limit")
@@ -82,7 +83,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
     async def create_job(audio: UploadFile = File(...), package: UploadFile | None = File(None),
                          folder_files: list[UploadFile] | None = File(None),
                          folder_paths: str | None = Form(None)):
-        problem = export_root_problem(settings)
+        problem = await asyncio.to_thread(export_root_problem, settings)
         if problem:
             raise HTTPException(422, problem)
         if bool(package) == bool(folder_files):
@@ -100,24 +101,31 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
         audio_path = directory / ("narration" + suffix)
         try:
             if package:
-                await save(package, package_path)
+                await asyncio.to_thread(save, package, package_path)
             else:
-                await save_folder(folder_files or [], folder_paths or "", package_path)
-            await save(audio, audio_path)
-            validate_zip(package_path)
-            validate_audio(audio_path, settings.ffprobe_bin)
-            FinalPackageLoader().load(package_path, directory / "validation")
-            shutil.rmtree(directory / "validation", ignore_errors=True)
+                await asyncio.to_thread(save_folder, folder_files or [], folder_paths or "", package_path)
+            await asyncio.to_thread(save, audio, audio_path)
+            await asyncio.to_thread(validate_zip, package_path)
+            await asyncio.to_thread(validate_audio, audio_path, settings.ffprobe_bin)
+            await asyncio.to_thread(FinalPackageLoader().load, package_path, directory / "validation")
+            await asyncio.to_thread(shutil.rmtree, directory / "validation", ignore_errors=True)
             jobs.start(job_id, package_path, audio_path)
         except InvalidPackageError as exc:
             jobs.update(job_id, state="failed", message="Input validation failed")
-            shutil.rmtree(directory, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, directory, ignore_errors=True)
             raise HTTPException(422, str(exc)) from exc
         except Exception:
             jobs.update(job_id, state="failed", message="Input validation failed")
-            shutil.rmtree(directory, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, directory, ignore_errors=True)
             raise
         return {"id": job_id, "state": "queued"}
+
+    @app.get("/api/jobs/active")
+    def active_job():
+        job = jobs.active()
+        if job is None:
+            return {"id": None}
+        return {key: job[key] for key in ("id", "state", "progress", "stage", "message")}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str):

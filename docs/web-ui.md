@@ -10,8 +10,12 @@ Use the project's existing Python 3.11 environment. In this isolated worktree, s
 
 `HEXA_WEB_PORT` defaults to 8787. `HEXA_WEB_STORAGE` defaults to `.hexa/web` and owns uploaded files and SQLite job metadata. `HEXA_WEB_MAX_UPLOAD_BYTES` defaults to 2 GiB per file. `HEXA_EXPORT_ROOT`, `HEXA_WORK_ROOT`, `HEXA_FFMPEG`, and `HEXA_FFPROBE` retain their engine meanings. Logs are written by `BuildReportSession` under the engine work root. Only one job is admitted at a time, including while cancellation is in progress. A restarted server marks orphaned jobs failed.
 
+Refreshing or reopening the page reconnects to the server's active job and restores its progress and log. The browser remembers the last job to restore completed results. The server rejects a second job while one is queued, running, or cancelling. Upload copying, ZIP checks, audio probing, package loading, and export root checks run outside the ASGI event loop so status and health requests remain responsive during validation.
+
 ## Server preparation
 
 The same ASGI application can be launched with `uvicorn app.web.server:app --host 127.0.0.1 --port 8787 --workers 1`. The current interface has no authentication. Before any public or VPS deployment, put it behind authenticated private access and a reverse proxy, configure server storage and retention, and verify resource limits. Never expose `app.api` as the public upload interface. Deployment automation and production rollout are separate work.
+
+Production blockers are: authentication and access control; retention and precise cleanup for uploads, diagnostics, and export bundles; measured CPU, RAM, disk, and worker limits for the target machine; and a reviewed deployment and rollback procedure. The web module does not implement those policies. Diagnostic ZIP downloads currently require the server process that generated the job.
 
 For integration, compare this branch against the recorded `origin/montage` baseline, then rebase or merge only after the engine developer has finished and the user authorizes integration. Resolve any conflicts in shared CI or docs without replacing newer engine files, rerun web tests and existing certification gates, and retain `HEXA.bat` for rollback.

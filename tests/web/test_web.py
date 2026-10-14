@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import asyncio
 import threading
 import time
 import zipfile
@@ -8,6 +9,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -153,3 +155,76 @@ def test_folder_upload_rejects_traversal(tmp_path, monkeypatch):
                                       ("audio", ("voice.wav", b"audio"))])
         assert response.status_code == 422
         assert not (tmp_path / "escape").exists()
+
+
+def test_active_job_survives_new_client_and_rejects_duplicate(tmp_path, monkeypatch):
+    settings = replace(Settings.from_env(), work_root=tmp_path / "work",
+                       export_root=tmp_path / "exports")
+    monkeypatch.setattr("app.web.server.export_root_problem", lambda _: None)
+    monkeypatch.setattr("app.web.server.validate_audio", lambda *_: None)
+    monkeypatch.setattr("app.web.server.FinalPackageLoader.load", lambda *_: None)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def generate(self, *, job_id, progress, **kwargs):
+        calls.append(job_id)
+        progress(Stage.render, 0.42, "Rendering after refresh")
+        entered.set()
+        assert release.wait(10)
+        raise RuntimeError("test stop")
+
+    monkeypatch.setattr("app.web.jobs.StoryEnginePipeline.generate_bundle", generate)
+    app = create_app(settings, tmp_path / "storage")
+    try:
+        with TestClient(app) as first:
+            response = first.post("/api/jobs", files={"package": ("test.zip", archive()),
+                                                       "audio": ("voice.wav", b"audio")})
+            assert response.status_code == 202
+            job_id = response.json()["id"]
+            assert entered.wait(10)
+            with TestClient(app) as reopened:
+                active = reopened.get("/api/jobs/active").json()
+                assert active["id"] == job_id
+                assert active["progress"] == 0.42
+                assert "Rendering after refresh" in str(
+                    reopened.get(f"/api/jobs/{job_id}/events").json())
+                duplicate = reopened.post("/api/jobs", files={"package": ("test.zip", archive()),
+                                                             "audio": ("voice.wav", b"audio")})
+                assert duplicate.status_code == 409
+            assert calls == [job_id]
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_large_validation_does_not_block_health(tmp_path, monkeypatch):
+    settings = replace(Settings.from_env(), work_root=tmp_path / "work",
+                       export_root=tmp_path / "exports")
+    monkeypatch.setattr("app.web.server.export_root_problem", lambda _: None)
+    monkeypatch.setattr("app.web.server.validate_audio", lambda *_: None)
+    monkeypatch.setattr("app.web.server.FinalPackageLoader.load", lambda *_: None)
+    monkeypatch.setattr("app.web.jobs.StoryEnginePipeline.generate_bundle",
+                        lambda *_, **__: (_ for _ in ()).throw(RuntimeError("test stop")))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_validation(path):
+        entered.set()
+        assert release.wait(10)
+
+    monkeypatch.setattr("app.web.server.validate_zip", slow_validation)
+    app = create_app(settings, tmp_path / "storage")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as client:
+        pending = asyncio.create_task(client.post(
+            "/api/jobs", files={"package": ("test.zip", archive()),
+                                 "audio": ("voice.wav", b"audio")}))
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            health = await asyncio.wait_for(client.get("/health"), timeout=2)
+            assert health.status_code == 200
+            assert not pending.done()
+        finally:
+            release.set()
+        await pending
