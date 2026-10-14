@@ -161,7 +161,8 @@ class StoryEnginePipeline:
         self.motion = MotionPlanner()
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.entry_grammar = EntryMotionGrammar()
-        self.scene_boundaries = SceneBoundaryPlanner()
+        self.scene_boundaries = SceneBoundaryPlanner(horizontal_padding=max(
+            ReferencePlanProjector.reference_padding(row)[0] for row in SUPPORTED_VISUAL_TARGETS))
         self.cross_scene = CrossSceneContinuityPlanner()
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()

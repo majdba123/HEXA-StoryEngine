@@ -275,12 +275,18 @@ class FFmpegRenderer:
             ordered_items=ordered_items,
             motion=motion,
         )
+        overlap_exits = self._planned_overlap_exits(plan, beat, previous_beat)
+        overlap_items = [
+            item for item in (previous_layout.items if previous_layout is not None else [])
+            if item.asset_id in overlap_exits and item.asset_id not in handoffs
+        ]
         outgoing_items = (
             sorted(
                 (
                     item for item in previous_layout.items
                     if item.asset_id in transition.carry_outgoing_asset_ids
                     and item.asset_id not in handoffs
+                    and item.asset_id not in overlap_exits  # leaves on its own planned path
                 ),
                 key=lambda row: row.z,
             )
@@ -398,6 +404,10 @@ class FFmpegRenderer:
             )
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(png)])
 
+        overlap_inputs = connection_inputs + len(connections)
+        for item in overlap_items:
+            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(assets[item.asset_id].image_path)])
+
         filters: list[str] = [
             f"color=c=white:s={plan.width}x{plan.height}:r={plan.fps}:d={duration:.6f},"
             "format=rgba[base0]"
@@ -499,6 +509,38 @@ class FFmpegRenderer:
                     f"eof_action=pass:shortest=0[bridgebase]"
                 )
             composite_label = "bridgebase"
+
+        # VP4 planned full-frame exit (Boundary-owned): the outgoing hero stays still until
+        # the planned start, then slides with smoothstep until it is outside the canvas.
+        # It sits under every incoming asset; the renderer only executes the plan.
+        unit_left = min((self._geometry(plan, row)[2] for row in overlap_items), default=0)
+        unit_right = max((self._geometry(plan, row)[2] + self._geometry(plan, row)[0] for row in overlap_items),
+                         default=0)
+        for exit_index, item in enumerate(overlap_items):
+            spec = overlap_exits[item.asset_id]
+            box_w, box_h, target_x, target_y = self._geometry(plan, item)
+            begin = max(0.0, float(spec["start"]) - segment_start)
+            finish = max(begin + 1.0 / plan.fps, float(spec["end"]) - segment_start)
+            margin = max(4, round(4 * (plan.projection.scale if plan.projection else 1.0)))
+            # One rigid offset for the whole leaving unit (a Pass2 family moves as one).
+            travel = (
+                -(unit_right + margin) if float(spec["direction"]) < 0
+                else plan.width - unit_left + margin
+            )
+            progress = f"clip((t-{begin:.6f})/{finish - begin:.6f},0,1)"
+            label = f"overlapexit{exit_index}"
+            filters.append(
+                f"[{overlap_inputs + exit_index}:v]format=rgba,setsar=1,"
+                f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
+            )
+            filters.append(
+                f"[{composite_label}][{label}]overlay="
+                f"x='{target_x}+({travel})*(3*pow({progress},2)-2*pow({progress},3))':y={target_y}:"
+                f"enable='between(t,0,{finish:.6f})':eof_action=pass:shortest=0[{label}mix]"
+            )
+            composite_label = f"{label}mix"
 
         frame_safe_reveal_starts = self._frame_safe_group_reveal_starts(
             rows=[
@@ -840,6 +882,17 @@ class FFmpegRenderer:
         dy = -vertical if item.y <= 0.5 else vertical
         return dx, dy
 
+
+    @staticmethod
+    def _planned_overlap_exits(
+        plan: RenderPlan, beat: StoryBeat, previous_beat: StoryBeat | None,
+    ) -> dict[str, dict[str, float]]:
+        """Boundary's planned full-frame exits into this segment (empty otherwise)."""
+        if previous_beat is None:
+            return {}
+        row = next((r for r in plan.scene_boundaries
+                    if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
+        return dict(row.overlap_exits) if row is not None else {}
 
     @staticmethod
     def _planned_exit_starts(

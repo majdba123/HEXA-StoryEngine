@@ -16,6 +16,7 @@ from app.models import (
     TextPlan,
     VisualAsset,
 )
+from app.motion.hero_travel import HERO_TRAVEL, SMOOTHSTEP_PEAK
 from app.motion.timing import motion_comfort
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
@@ -26,6 +27,7 @@ from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_fram
 RELEASE_FRAMES = 6
 MIN_RELEASE_FRAMES = 5
 OVERLAP_FRAMES = 4
+_OFFSCREEN_MARGIN = 0.01
 # A staggered exit never gives its last (leading) visual fewer frames than this.
 _MIN_EXIT_ASSET_FRAMES = 6
 _EPS = 1e-6
@@ -49,9 +51,11 @@ class SceneBoundaryPlanner:
     A collision is a safety fact, never evidence that two scenes are related.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, horizontal_padding: float = 0.0) -> None:
         self.classifier = VisualTransitionPolicy()
         self.footprints = AlphaFootprintResolver()
+        # Reference-frame padding so an exiting hero ends off-screen on every projection.
+        self.exit_margin = _OFFSCREEN_MARGIN + max(0.0, float(horizontal_padding))
 
     def plan(
         self,
@@ -74,11 +78,115 @@ class SceneBoundaryPlanner:
         for segment in beat_segments(story, duration=duration, fps=fps):
             if segment.previous_beat is None:
                 continue
-            output.append(self._plan_one(
+            row = self._plan_one(
                 segment, layouts=layouts, cues=cues, assets=assets_by_id,
+                text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
+            )
+            output.append(self._hero_overlap_exit(
+                row, segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
             ))
         return output
+
+    def _hero_overlap_exit(
+        self,
+        row: SceneBoundaryRelease,
+        segment: BeatSegment,
+        *,
+        layouts: dict[str, CompositionBeat],
+        cues: dict[tuple[str, str], MotionCue],
+        assets: dict[str, VisualAsset],
+        text_boxes: list[tuple[float, float, Box]],
+        fps: int,
+    ) -> SceneBoundaryRelease:
+        """VP4 full-frame exit of the outgoing scene's hero, inside the incoming segment.
+
+        Authorized contract (2026-10-14): only the hero Motion marked for the outgoing
+        scene, only on a planned crisp change (HARD_CUT / CRISP_HANDOFF / HOLD_TO_OPENER),
+        never a referent that continues, never a split Pass2 family. It stays still until
+        the unchanged incoming opener, then leaves along a smoothstep path with the
+        HERO_TRAVEL speed cap until it is outside the frame on every projection; the
+        incoming scene's timing, read holds and narration are unchanged. Any incoming
+        artwork or text on the path makes it a clean cut instead.
+        """
+        beat, previous = segment.beat, segment.previous_beat
+        assert previous is not None
+        hero = next((cue for (beat_id, _), cue in cues.items()
+                     if beat_id == previous.id and cue.params.get("scene_hero")), None)
+        if hero is None:
+            return row
+
+        def decided(decision: str, **update) -> SceneBoundaryRelease:
+            return row.model_copy(update={**update, "audit": {**row.audit, "hero_exit": decision}})
+
+        if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} or row.reason.startswith("abstain:"):
+            return decided(f"clean_cut:boundary_{row.mode.lower()}:{row.reason}")
+        layout, previous_layout = layouts.get(beat.id), layouts.get(previous.id)
+        item = next((row_item for row_item in (previous_layout.items if previous_layout else [])
+                     if row_item.asset_id == hero.asset_id), None)
+        incoming = self._active_items(beat, layout)
+        if item is None or not incoming:
+            return decided("clean_cut:no_outgoing_hero_or_incoming_artwork")
+        legacy = self.classifier.decide(previous, previous_layout, layout, current_beat=beat)
+        if hero.asset_id not in legacy.carry_outgoing_asset_ids or hero.asset_id in legacy.persistent_asset_ids:
+            return decided("clean_cut:hero_not_an_outgoing_carry")
+        if any(isinstance(spec := cue.params.get("handoff_from"), dict) and spec.get("asset_id") == hero.asset_id
+               for (beat_id, _), cue in cues.items() if beat_id == beat.id):
+            return decided("clean_cut:referent_continues")
+        def family_of(asset_id: str) -> str:
+            row_asset = assets.get(asset_id)
+            return AssetManager.family_id(row_asset) if row_asset is not None else asset_id
+
+        # A Pass2 family leaves rigidly as one unit: every layer, one path, one clock.
+        members = [row_item for row_item in previous_layout.items
+                   if family_of(row_item.asset_id) == family_of(hero.asset_id)]
+        if any(member.asset_id not in legacy.carry_outgoing_asset_ids for member in members):
+            return decided("clean_cut:family_layer_not_an_outgoing_carry")
+        unit = (min(float(m.x) - float(m.width) / 2 for m in members),
+                min(float(m.y) - float(m.height) / 2 for m in members),
+                max(float(m.x) + float(m.width) / 2 for m in members),
+                max(float(m.y) + float(m.height) / 2 for m in members))
+        start_time = segment.start_frame / fps
+        first = {it.asset_id: first_visible_frame(self._visible_start(beat, cues.get((beat.id, it.asset_id)))
+                                                   - start_time, fps) for it in incoming}
+        footprints = {it.asset_id: self.footprints.resolve(it, assets.get(it.asset_id)).box for it in incoming}
+        opener = int(row.audit.get("opener_frame", min(first.values())))
+        start = (segment.start_frame + opener) / fps
+        reasons = []
+        left = unit[2] + self.exit_margin            # move left until the right edge is past 0
+        right = 1.0 - unit[0] + self.exit_margin     # move right until the left edge is past 1
+        for direction, distance in sorted(((-1.0, left), (1.0, right)), key=lambda pair: pair[1]):
+            seconds = max(HERO_TRAVEL.minimum_seconds,
+                          SMOOTHSTEP_PEAK * distance / HERO_TRAVEL.max_normalized_speed)
+            frames = ceil(seconds * fps - _EPS)
+            end_frame = opener + frames
+            if end_frame >= segment.frame_count:
+                reasons.append("incoming_scene_too_short")
+                continue
+            end = (segment.start_frame + end_frame) / fps
+            blocker = None
+            for frame in range(opener, end_frame + 1):
+                progress = (frame - opener) / frames
+                shift = direction * distance * (3 * progress ** 2 - 2 * progress ** 3)
+                moved = (unit[0] + shift, unit[1], unit[2] + shift, unit[3])
+                if any(first[key] <= frame and self._intersects(moved, footprint)
+                       for key, footprint in footprints.items()):
+                    blocker = "path_crosses_incoming_artwork"
+                    break
+                now = (segment.start_frame + frame) / fps
+                if any(t0 <= now + _EPS and t1 > now and self._intersects(moved, box)
+                       for t0, t1, box in text_boxes):
+                    blocker = "path_crosses_incoming_text"
+                    break
+            if blocker is not None:
+                reasons.append(blocker)
+                continue
+            leaving = {member.asset_id for member in members}
+            exits = {key: value for key, value in row.exit_starts.items() if key not in leaving}
+            spec = {"start": round(start, 6), "end": round(end, 6), "direction": direction}
+            return decided("full_frame_exit", exit_starts=exits,
+                           overlap_exits={member.asset_id: dict(spec) for member in members})
+        return decided("clean_cut:" + ",".join(reasons))
 
     def _plan_one(
         self,

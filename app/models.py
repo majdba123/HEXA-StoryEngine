@@ -480,6 +480,12 @@ class SceneBoundaryRelease(BaseModel):
     # CRISP_HANDOFF only: outgoing runtime asset id -> absolute time its restrained opaque
     # exit begins; every exit ends on the opener frame. Empty means a clean cut.
     exit_starts: dict[str, float] = Field(default_factory=dict, exclude_if=lambda value: not value)
+    # VP4 full-frame exit of the outgoing scene's hero, executed inside the incoming
+    # segment: outgoing runtime asset id -> {"start", "end" (absolute seconds),
+    # "direction" (-1 left / +1 right)}. Still until "start", then it leaves the canvas.
+    overlap_exits: dict[str, dict[str, float]] = Field(
+        default_factory=dict, exclude_if=lambda value: not value,
+    )
     reason: str
     downgrade_reason: str | None = None
     audit: dict[str, Any] = Field(default_factory=dict)
