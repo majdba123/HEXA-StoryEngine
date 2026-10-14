@@ -53,6 +53,7 @@ _OVERLAP_SLACK = 0.02
 EMPHASIS_RANGE = (0.03, 0.06)
 EMPHASIS_SECONDS = 0.45
 _EMPHASIS_PAUSE = 2 / 30  # a visible rest between arrival and emphasis
+_HOLD_GRID_MARGIN = 2 / 30
 _YIELD_ACTIONS = {"DEEMPHASIZE", "FOCUS_HANDOFF"}
 _EPS = 1e-6
 
@@ -293,7 +294,9 @@ class HeroTravelPlanner:
             return None, "abstain:no_rhythm_read_hold_authority"
         start = settle + _EMPHASIS_PAUSE
         minimum = motion_comfort("ESTABLISH").minimum_seconds
-        end = min(start + EMPHASIS_SECONDS, float(beat.end) - float(hold_ms) / 1000)
+        # The read hold is measured on encoded frames: the pulse's last moving frame and
+        # the cut both land on the frame grid, so keep a 2-frame margin before the hold.
+        end = min(start + EMPHASIS_SECONDS, float(beat.end) - float(hold_ms) / 1000 - _HOLD_GRID_MARGIN)
         if end - start + _EPS < minimum:
             return None, f"abstain:no_time_after_settle({max(0.0, end - start):.3f}s)"
         duration = end - start

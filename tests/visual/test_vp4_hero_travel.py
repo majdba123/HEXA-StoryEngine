@@ -135,7 +135,7 @@ def test_emphasis_is_a_separate_pulse_after_settle_that_finishes_before_the_hold
     hero = out[("b", "hero")]
     pulse = next(s for s in hero.segments if s.semantic_action == "HERO_EMPHASIS")
     assert pulse.start >= hero.end + 1 / 30                              # strictly after arrival
-    assert pulse.end <= 3.0 - 0.25 + 1e-9                                # Rhythm read hold kept
+    assert pulse.end <= 3.0 - 0.25 - 2 / 30 + 1e-9                       # read hold kept on the frame grid
     scales = [f["scale"] for f in pulse.program["keyframes"]]
     assert scales[0] == scales[-1] == 1.0
     assert 1 + EMPHASIS_RANGE[0] - 1e-9 <= max(scales) <= 1 + EMPHASIS_RANGE[1] + 1e-9
