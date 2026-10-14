@@ -30,6 +30,7 @@ another asset makes an independent accent, never when the scaled box would colli
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 from app.assets import AssetManager
@@ -341,7 +342,7 @@ class HeroTravelPlanner:
             # Same convention as MotionPlanner._carried_entry_segment: the carried base entry
             # keeps its qa_base_entry verification class.
             segments.insert(0, MotionSegment(phase="ENTRY", start=float(cue.start), end=float(cue.end),
-                                             program={**(params.get("program") or {}), "qa_base_entry": True}))
+                                             program={**deepcopy(params.get("program") or {}), "qa_base_entry": True}))
         segments.append(MotionSegment(phase="ESTABLISH", start=start, end=end, program=program,
                                       semantic_action="HERO_EMPHASIS", involvement="FOCUS"))
         new_params = dict(params)
@@ -372,7 +373,9 @@ class HeroTravelPlanner:
             ],
         }
         params = {key: value for key, value in cue.params.items() if key not in ("entry_opacity", "hero_entry")}
-        params["program"] = program
+        # Independent copies: a projected target rescales every program in place, so a
+        # shared keyframe list would be scaled twice.
+        params["program"] = deepcopy(program)
         # A travelling hero enters fully opaque: it is off-screen until it crosses the edge.
         params["entry_grammar"] = {"opacity": False, "reason": "hero_travel"}
         params["hero_travel"] = {"start": round(start, 6), "settle": round(float(cue.end), 6),
@@ -380,7 +383,7 @@ class HeroTravelPlanner:
                                  "profile": "HERO_TRAVEL", "story_reveal": round(float(cue.start), 6)}
         settle = float(cue.end)
         segments = [
-            MotionSegment(phase="ENTRY", start=start, end=settle, program=program,
+            MotionSegment(phase="ENTRY", start=start, end=settle, program=deepcopy(program),
                           semantic_event_id=row.semantic_event_id, involvement=row.involvement)
             if row.phase == "ENTRY" else row
             for row in cue.segments
@@ -390,5 +393,5 @@ class HeroTravelPlanner:
             params["hero_travel"]["superseded"] = "result_arrival_pop"
         if segments and not any(row.phase == "ENTRY" for row in segments):
             # Segmented cues render their entry from an ENTRY segment only.
-            segments.insert(0, MotionSegment(phase="ENTRY", start=start, end=settle, program=program))
+            segments.insert(0, MotionSegment(phase="ENTRY", start=start, end=settle, program=deepcopy(program)))
         return cue.model_copy(update={"start": start, "params": params, "segments": segments})

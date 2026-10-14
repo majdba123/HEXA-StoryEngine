@@ -159,3 +159,18 @@ def test_emphasis_abstains_beside_a_competing_accent_or_without_time() -> None:
     assert next(d for d in planner.decisions).emphasis == "abstain:competing_accent_from_other_asset"
     planner, _ = _plan([_cue("support", 0.1, 0.35), _cue("hero", 2.4, 2.7)], [SUPPORT, HERO])
     assert next(d for d in planner.decisions).emphasis.startswith("abstain:no_time_after_settle")
+
+
+def test_programs_never_share_keyframes_so_projection_scales_each_once() -> None:
+    """A projected target rescales every program in place; shared keyframes would scale twice."""
+    pop = MotionSegment(phase="PAYOFF", start=2.5, end=2.6, involvement="RESULT",
+                        program={"keyframes": [{"progress": 0, "scale": 1.0}, {"progress": 1, "scale": 1.0}]})
+    for cues in ([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)],                 # travel + emphasis
+                 [_cue("hero", 0.1, 0.4), _cue("support", 1.0, 1.3)],                  # opener: emphasis only
+                 [_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3, segments=[pop])]):
+        _, out = _plan(cues, [SUPPORT, HERO])
+        hero = out[("b", "hero")]
+        programs = [hero.params.get("program")] + [row.program for row in hero.segments]
+        frames = [id(frame) for program in programs if program for frame in program.get("keyframes", [])]
+        lists = [id(program.get("keyframes")) for program in programs if program and program.get("keyframes")]
+        assert len(frames) == len(set(frames)) and len(lists) == len(set(lists))
