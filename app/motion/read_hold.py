@@ -16,12 +16,19 @@ pass applies the same rule to every motion segment of the beat:
 
 A segment that already starts inside the hold cannot be fixed by Motion (its onset is a
 Story fact) and is recorded as such. Story, Composition and cue windows never change.
+
+A short scene loses optional motion before it lets motion take the hold: an
+optional attention gesture that would still move inside the hold after the rules above
+yields (is removed) instead. Optional means the beat keeps its meaning without it: the
+recede of a previous focus (FOCUS_HANDOFF / DEEMPHASIZE), or a second PAYOFF pulse with
+no authored relation on an asset whose own ENTRY already revealed it. Reveals and
+authored relation gestures never yield.
 """
 from __future__ import annotations
 
 from math import hypot
 
-from app.models import LayoutItem, MotionCue, StoryBeat
+from app.models import LayoutItem, MotionCue, MotionSegment, StoryBeat
 from app.motion.timing import (
     motion_comfort,
     projected_motion_activity_px,
@@ -30,7 +37,18 @@ from app.motion.timing import (
 )
 
 _SEMANTIC_ACCENTS = {"INTERACT", "REACT", "PAYOFF"}
+_RECEDES = {"FOCUS_HANDOFF", "DEEMPHASIZE"}
 _EPS = 1e-6
+
+
+def _optional_gesture(segment: MotionSegment, segments: list[MotionSegment]) -> bool:
+    """True when the beat keeps its meaning without this attention gesture."""
+    if segment.phase == "ESTABLISH":
+        return segment.semantic_action in _RECEDES
+    if segment.phase == "PAYOFF" and segment.relationship is None:
+        return any(other.phase == "ENTRY" and float(other.end) <= float(segment.start) + _EPS
+                   for other in segments)
+    return False
 
 
 def _activity(program: dict, item: LayoutItem, phase: str) -> float:
@@ -99,7 +117,7 @@ def reserve_scene_read_hold(
         if constraints.get("geometry_lock"):
             continue  # family members share one authored footprint clock; never retime one piece
         segments = list(cue.segments)
-        notes = []
+        notes: list[tuple[int, dict]] = []
         for index, segment in enumerate(segments):
             start, end = float(segment.start), float(segment.end)
             if end <= deadline + _EPS:
@@ -108,17 +126,17 @@ def reserve_scene_read_hold(
             if _normalized_activity(program, item) <= 1e-9:
                 continue  # a static segment does not move the final state
             if (cue.asset_id, segment.semantic_event_id) in proxies:
-                notes.append({"phase": segment.phase, "decision": "story_proxy_window"})
+                notes.append((index, {"phase": segment.phase, "decision": "story_proxy_window"}))
                 continue
             if start >= deadline - _EPS:
-                notes.append({"phase": segment.phase, "decision": "starts_inside_read_hold",
-                              "start": round(start, 4), "deadline": round(deadline, 4)})
+                notes.append((index, {"phase": segment.phase, "decision": "starts_inside_read_hold",
+                                      "start": round(start, 4), "deadline": round(deadline, 4)}))
                 continue
             minimum = min(end - start, motion_comfort(segment.phase).minimum_seconds)
             new_end = max(start + minimum, deadline)
             if new_end >= end - _EPS:
-                notes.append({"phase": segment.phase, "decision": "comfort_minimum_reaches_hold",
-                              "shortfall_ms": round((new_end - deadline) * 1000)})
+                notes.append((index, {"phase": segment.phase, "decision": "comfort_minimum_reaches_hold",
+                                      "shortfall_ms": round((new_end - deadline) * 1000)}))
                 continue
             duration = new_end - start
             speed = _peak_leg_speed(program, item, duration)
@@ -126,7 +144,7 @@ def reserve_scene_read_hold(
             gain = min(1.0, limit / speed) if speed > 0 else 1.0
             candidate = _scaled(program, gain) if gain < 1.0 else dict(program)
             if _activity(candidate, item, segment.phase) + 1e-9 < _floor(segment.phase, item, duration):
-                notes.append({"phase": segment.phase, "decision": "readability_floor_conflict"})
+                notes.append((index, {"phase": segment.phase, "decision": "readability_floor_conflict"}))
                 continue
             active = candidate.get("semantic_active_duration")
             if isinstance(active, (int, float)) and active > duration:
@@ -140,9 +158,23 @@ def reserve_scene_read_hold(
             if new_end > deadline + _EPS:
                 note.update(decision="shortened_to_comfort_minimum",
                             shortfall_ms=round((new_end - deadline) * 1000))
-            notes.append(note)
+            notes.append((index, note))
+        # Optional gestures still moving inside the hold yield instead of taking it.
+        yielded = [
+            index for index, segment in enumerate(segments)
+            if float(segment.end) > deadline + _EPS
+            and _normalized_activity(segment.program or {}, item) > 1e-9
+            and (cue.asset_id, segment.semantic_event_id) not in proxies
+            and _optional_gesture(segment, segments)
+        ]
+        notes = [(index, note) for index, note in notes if index not in yielded]
+        notes.extend((index, {"phase": segments[index].phase, "decision": "yielded_to_read_hold",
+                              "start": round(float(segments[index].start), 4),
+                              "end": round(float(segments[index].end), 4), "deadline": round(deadline, 4)})
+                     for index in yielded)
+        segments = [segment for index, segment in enumerate(segments) if index not in yielded]
         if notes:
             params = dict(cue.params)
-            params["read_hold"] = notes
+            params["read_hold"] = [note for _index, note in sorted(notes, key=lambda row: row[0])]
             output[position] = cue.model_copy(update={"segments": segments, "params": params})
     return output

@@ -101,3 +101,40 @@ def test_story_semantic_proxy_window_is_never_retimed() -> None:
     out = reserve_scene_read_hold([cue], beat=beat, hold=0.30, items={"a": ITEM})[0]
     assert out.segments == cue.segments
     assert out.params["read_hold"][0]["decision"] == "story_proxy_window"
+
+
+# Short-scene recovery: optional gestures yield instead of taking the hold -----------------
+def _entered(phase: str, start: float, end: float, **fields) -> MotionCue:
+    cue = _accent(phase, start, end)
+    entry = MotionSegment(phase="ENTRY", start=0.5, end=0.8, program=dict(cue.segments[0].program))
+    accent = cue.segments[0].model_copy(update=fields)
+    return cue.model_copy(update={"segments": [entry, accent]})
+
+
+def test_second_payoff_pulse_after_the_reveal_yields_to_the_read_hold() -> None:
+    cue = _entered("PAYOFF", 1.80, 1.98)                       # starts inside the hold
+    out = reserve_scene_read_hold([cue], beat=BEAT, hold=0.30, items={"a": ITEM})[0]
+    assert [segment.phase for segment in out.segments] == ["ENTRY"]
+    assert out.params["read_hold"] == [{"phase": "PAYOFF", "decision": "yielded_to_read_hold",
+                                        "start": 1.8, "end": 1.98, "deadline": 1.7}]
+    assert (out.start, out.end, out.segments[0]) == (cue.start, cue.end, cue.segments[0])
+
+
+def test_focus_recede_that_cannot_finish_yields_but_one_that_can_is_kept() -> None:
+    late = _entered("ESTABLISH", 1.75, 1.98, semantic_action="FOCUS_HANDOFF")
+    out = reserve_scene_read_hold([late], beat=BEAT, hold=0.30, items={"a": ITEM})[0]
+    assert [segment.phase for segment in out.segments] == ["ENTRY"]
+    early = _entered("ESTABLISH", 1.20, 1.95, semantic_action="FOCUS_HANDOFF")
+    kept = reserve_scene_read_hold([early], beat=BEAT, hold=0.30, items={"a": ITEM})[0]
+    assert [segment.phase for segment in kept.segments] == ["ENTRY", "ESTABLISH"]
+    assert kept.segments[1].end <= 1.70 + 1e-9                  # finished before the hold instead
+
+
+def test_reveals_and_authored_relation_gestures_never_yield() -> None:
+    reveal = _accent("PAYOFF", 1.80, 1.98)                     # the PAYOFF is the reveal itself
+    related = _entered("PAYOFF", 1.80, 1.98, relationship="CAUSES")
+    interact = _entered("INTERACT", 1.80, 1.98, relationship="ENABLES")
+    for cue in (reveal, related, interact):
+        out = reserve_scene_read_hold([cue], beat=BEAT, hold=0.30, items={"a": ITEM})[0]
+        assert out.segments == cue.segments
+        assert out.params["read_hold"][-1]["decision"] == "starts_inside_read_hold"
