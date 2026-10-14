@@ -28,6 +28,7 @@ from app.final_package import FinalPackageLoader
 from app.models import RenderPlan, Stage, StoryBeat, TextPlan, Transcript, VisualAsset
 from app.motion import EntryMotionGrammar, MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.motion.cross_scene import CrossSceneContinuityPlanner
+from app.motion.hero_travel import HeroTravelPlanner
 from app.motion.semantic_reference import MotionSemanticReference
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
@@ -551,6 +552,16 @@ class StoryEnginePipeline:
                 motion, composition=composition, choreography=choreography, assets=assets,
                 story=story, text=shared.text,
             )
+            # VP4 (authorized HERO_TRAVEL contract): one authoritative hero per scene may
+            # travel in from off-frame and receive one post-settle emphasis. Text is then
+            # composed once against this Motion and Boundary planned once on the final one.
+            entry_motion = motion
+            self.hero_travel = HeroTravelPlanner(horizontal_padding=max(
+                ReferencePlanProjector.reference_padding(row)[0] for row in SUPPORTED_VISUAL_TARGETS))
+            motion = self.hero_travel.plan(
+                story=story, composition=composition, choreography=choreography, motion=motion,
+                assets=assets, referent_carriers=self._referent_carriers(shared),
+            )
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,
                 assets=assets,
@@ -577,6 +588,9 @@ class StoryEnginePipeline:
                     semantic_reference.text_cue_ids if semantic_reference is not None else None
                 ),
             )
+            motion = self.hero_travel.revoke_through_text(
+                motion, entry_motion, SceneBoundaryPlanner._text_boxes(text, text_composition, text_motion),
+            )
             self.handoff_contracts.require_text_render_contract(
                 story=story,
                 assets=assets,
@@ -586,6 +600,10 @@ class StoryEnginePipeline:
             )
             diagnostics = workspace / "diagnostics"
             diagnostics.mkdir(parents=True, exist_ok=True)
+            (diagnostics / "hero-travel.json").write_text(
+                json.dumps([row.to_payload() for row in self.hero_travel.decisions], indent=2),
+                encoding="utf-8",
+            )
             (diagnostics / "text-owner-coupling.json").write_text(
                 json.dumps(self.text_composition.owner_coupling, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -691,7 +709,7 @@ class StoryEnginePipeline:
         Boundary, would change are revoked (baseline cue restored). One verification pass
         follows; if anything still differs, the whole baseline is kept. No search loop.
         """
-        story, assets, choreography = shared.story, shared.assets, shared.choreography
+        story, assets = shared.story, shared.assets
         candidate = self.cross_scene.plan(
             package=shared.package, story=story, composition=composition, motion=motion,
             assets=assets, duration=shared.transcript.duration, fps=target.fps, text=text,
@@ -701,42 +719,12 @@ class StoryEnginePipeline:
         if not any(decision.accepted for decision in self.cross_scene.decisions):
             return motion
 
-        def dump(rows) -> list:
-            return [row.model_dump(mode="json") for row in rows]
-
         def changed_beats(candidate_motion) -> set[str]:
-            self.handoff_contracts.require_motion_for_text_and_render(
-                story=story, assets=assets, composition=composition,
-                choreography=choreography, motion=candidate_motion,
+            return self._text_or_boundary_changed_beats(
+                shared=shared, composition=composition, candidate_motion=candidate_motion, text=text,
+                text_composition=text_composition, text_motion=text_motion,
+                scene_boundaries=scene_boundaries,
             )
-            new_text, new_text_composition, new_text_motion = self._compose_text_against_visual_motion(
-                story=story, composition=composition, motion=candidate_motion, text=shared.text,
-                assets=assets, choreography=choreography,
-            )
-            new_boundaries = self.scene_boundaries.plan(
-                story=story, composition=composition, motion=candidate_motion, assets=assets,
-                duration=shared.transcript.duration, text=new_text,
-                text_composition=new_text_composition, text_motion=new_text_motion,
-            )
-            beats: set[str] = set()
-            for old_rows, new_rows, key in (
-                (text.cues, new_text.cues, "beat_id"),
-                (text_composition, new_text_composition, "beat_id"),
-                (text_motion, new_text_motion, "beat_id"),
-            ):
-                old_by, new_by = {}, {}
-                for row in dump(old_rows):
-                    old_by.setdefault(row[key], []).append(row)
-                for row in dump(new_rows):
-                    new_by.setdefault(row[key], []).append(row)
-                beats |= {beat for beat in set(old_by) | set(new_by) if old_by.get(beat) != new_by.get(beat)}
-            old_bounds = {row["beat_id"]: row for row in dump(scene_boundaries)}
-            for row in dump(new_boundaries):
-                if old_bounds.get(row["beat_id"]) != row:
-                    beats |= {row["beat_id"], row["from_beat_id"]}  # incoming and outgoing side
-            if len(new_boundaries) != len(scene_boundaries):
-                beats |= set(old_bounds)
-            return beats
 
         changed = changed_beats(candidate)
         if changed:
@@ -747,6 +735,60 @@ class StoryEnginePipeline:
                     candidate, {row.beat_id for row in story},
                     "transaction:verification_pass_not_identical")
         return candidate
+
+
+    def _text_or_boundary_changed_beats(
+        self, *, shared: SharedSemanticPlan, composition, candidate_motion, text, text_composition,
+        text_motion, scene_boundaries,
+    ) -> set[str]:
+        """Beats whose Text, or incoming/outgoing Boundary, would change against a Motion candidate."""
+        story, assets, choreography = shared.story, shared.assets, shared.choreography
+
+        def dump(rows) -> list:
+            return [row.model_dump(mode="json") for row in rows]
+
+        self.handoff_contracts.require_motion_for_text_and_render(
+            story=story, assets=assets, composition=composition,
+            choreography=choreography, motion=candidate_motion,
+        )
+        new_text, new_text_composition, new_text_motion = self._compose_text_against_visual_motion(
+            story=story, composition=composition, motion=candidate_motion, text=shared.text,
+            assets=assets, choreography=choreography,
+        )
+        new_boundaries = self.scene_boundaries.plan(
+            story=story, composition=composition, motion=candidate_motion, assets=assets,
+            duration=shared.transcript.duration, text=new_text,
+            text_composition=new_text_composition, text_motion=new_text_motion,
+        )
+        beats: set[str] = set()
+        for old_rows, new_rows, key in (
+            (text.cues, new_text.cues, "beat_id"),
+            (text_composition, new_text_composition, "beat_id"),
+            (text_motion, new_text_motion, "beat_id"),
+        ):
+            old_by, new_by = {}, {}
+            for row in dump(old_rows):
+                old_by.setdefault(row[key], []).append(row)
+            for row in dump(new_rows):
+                new_by.setdefault(row[key], []).append(row)
+            beats |= {beat for beat in set(old_by) | set(new_by) if old_by.get(beat) != new_by.get(beat)}
+        old_bounds = {row["beat_id"]: row for row in dump(scene_boundaries)}
+        for row in dump(new_boundaries):
+            if old_bounds.get(row["beat_id"]) != row:
+                beats |= {row["beat_id"], row["from_beat_id"]}  # incoming and outgoing side
+        if len(new_boundaries) != len(scene_boundaries):
+            beats |= set(old_bounds)
+        return beats
+
+    def _referent_carriers(self, shared: SharedSemanticPlan) -> set[tuple[str, str]]:
+        """(beat_id, runtime asset) of every authored referent carrier: Sprint 7 owns them."""
+        carriers = CrossSceneContinuityPlanner._authored_carriers(shared.package)
+        output: set[tuple[str, str]] = set()
+        for beat in shared.story:
+            for package_asset_id in carriers.get(beat.scene_id, {}).values():
+                output |= {(beat.id, asset_id)
+                           for asset_id in CrossSceneContinuityPlanner._runtime_carrier(beat, package_asset_id)}
+        return output
 
     # -- per-target render, verification and mux ------------------------------------------
     def _render_target(

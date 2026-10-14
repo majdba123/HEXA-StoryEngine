@@ -77,6 +77,24 @@ class ReferencePlanProjector:
         return plan
 
     @staticmethod
+    def reference_padding(target: VisualTargetProfile, reference_width: int = 1920,
+                          reference_height: int = 1080) -> tuple[float, float]:
+        """Target canvas visible beyond the projected reference frame, in reference units.
+
+        An element just outside the 16:9 reference frame is still on a projected canvas
+        when the projection letterboxes; motion that must start off-screen everywhere adds
+        this padding. Same geometry as ``project``.
+        """
+        if target.layout_policy != "reference_projection":
+            return 0.0, 0.0
+        safe = target.safe_zones.content
+        safe_width, safe_height = safe.width * target.width, safe.height * target.height
+        scale = min(safe_width / reference_width, safe_height / reference_height)
+        offset_x = safe.left * target.width + (safe_width - reference_width * scale) / 2
+        offset_y = safe.top * target.height + (safe_height - reference_height * scale) / 2
+        return offset_x / (reference_width * scale), offset_y / (reference_height * scale)
+
+    @staticmethod
     def _reject_unknown_spatial_fields(value: object) -> None:
         """New motion geometry must be explicitly added to this projector first."""
         forbidden = {"x", "y", "width", "height", "offset_x", "offset_y",

@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from app.models import LayoutItem, MotionSegment, RenderPlan
+from app.motion.hero_travel import HERO_TRAVEL
 from app.motion.timing import (
     GOLDEN_MINOR,
     encoded_motion_renderability_floor_px,
@@ -254,7 +255,11 @@ class EncodedMotionVerifier:
                         item_width=reference_item_width,
                         item_height=reference_item_height,
                     )
-                    speed_limit = motion_comfort(segment.phase).max_normalized_speed * 1.08
+                    profile = motion_comfort(segment.phase)
+                    if segment.phase == "ENTRY" and isinstance(cue.params, dict) and isinstance(
+                            cue.params.get("hero_travel"), dict):
+                        profile = HERO_TRAVEL  # authorized hero travel contract, ENTRY only
+                    speed_limit = profile.max_normalized_speed * 1.08
                     if normalized_speed > speed_limit + 1e-6:
                         violations.append(RenderedMotionViolation(
                             code="MOTION_TOO_FAST",
