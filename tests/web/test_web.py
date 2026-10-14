@@ -142,3 +142,14 @@ def test_invalid_upload_and_failed_worker(tmp_path, monkeypatch):
         assert state["state"] == "failed"
         assert "Engine error" in state["message"]
         assert client.get(f"/api/jobs/{job_id}/download/youtube").status_code == 404
+
+
+def test_folder_upload_rejects_traversal(tmp_path, monkeypatch):
+    settings = replace(Settings.from_env(), export_root=tmp_path / "exports")
+    monkeypatch.setattr("app.web.server.export_root_problem", lambda _: None)
+    with TestClient(create_app(settings, tmp_path / "storage")) as client:
+        response = client.post("/api/jobs", data={"folder_paths": '["root/../escape"]'},
+                               files=[("folder_files", ("escape", b"x")),
+                                      ("audio", ("voice.wav", b"audio"))])
+        assert response.status_code == 422
+        assert not (tmp_path / "escape").exists()

@@ -1,6 +1,6 @@
 # HEXA Web UI
 
-The web server accepts a Unified Final Package 2.0 ZIP and narration audio. It validates both uploads, stores them in a server owned job directory, and calls the unchanged `StoryEnginePipeline.generate_bundle()` with its progress and cancellation callbacks. The canonical export bundle remains under the configured `HEXA_EXPORT_ROOT` (or `export_root` in `hexa.settings.json`). Browser downloads use the resulting MP4 files and manifest.
+The web server accepts a Unified Final Package 2.0 ZIP or a browser selected directory and narration audio. It validates both uploads, stores them in a server owned job directory, and calls the unchanged `StoryEnginePipeline.generate_bundle()` with its progress and cancellation callbacks. Browser directory files are packed into a validated ZIP in that job directory. The canonical export bundle remains under the configured `HEXA_EXPORT_ROOT` (or `export_root` in `hexa.settings.json`). Browser downloads use the resulting MP4 files and manifest.
 
 ## Windows local start
 

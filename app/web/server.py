@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import json
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -49,12 +51,43 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
                     raise HTTPException(413, "Upload exceeds configured size limit")
                 target.write(chunk)
 
+    async def save_folder(files: list[UploadFile], paths_json: str, path: Path) -> None:
+        try:
+            paths = json.loads(paths_json)
+        except ValueError as exc:
+            raise HTTPException(422, "Invalid directory listing") from exc
+        if not isinstance(paths, list) or len(paths) != len(files) or not 0 < len(paths) <= 5000:
+            raise HTTPException(422, "Invalid directory file count")
+        names: set[str] = set()
+        total = 0
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for upload, raw in zip(files, paths):
+                if not isinstance(raw, str):
+                    raise HTTPException(422, "Invalid directory path")
+                name = raw.replace("\\", "/")
+                parts = name.split("/")
+                if (name.startswith("/") or len(parts) < 2 or
+                        any(p in ("", ".", "..") for p in parts) or ":" in parts[0] or
+                        name in names):
+                    raise HTTPException(422, "Unsafe directory path")
+                names.add(name)
+                with archive.open(name, "w") as target:
+                    while chunk := await upload.read(1024 * 1024):
+                        total += len(chunk)
+                        if total > max_upload:
+                            raise HTTPException(413, "Directory exceeds configured size limit")
+                        target.write(chunk)
+
     @app.post("/api/jobs", status_code=202)
-    async def create_job(package: UploadFile = File(...), audio: UploadFile = File(...)):
+    async def create_job(audio: UploadFile = File(...), package: UploadFile | None = File(None),
+                         folder_files: list[UploadFile] | None = File(None),
+                         folder_paths: str | None = Form(None)):
         problem = export_root_problem(settings)
         if problem:
             raise HTTPException(422, problem)
-        if not (package.filename or "").lower().endswith(".zip"):
+        if bool(package) == bool(folder_files):
+            raise HTTPException(422, "Select one ZIP or one folder")
+        if package and not (package.filename or "").lower().endswith(".zip"):
             raise HTTPException(422, "Final Package must be a ZIP")
         suffix = Path(audio.filename or "").suffix.lower()
         if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}:
@@ -66,7 +99,10 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
         package_path = directory / "package.zip"
         audio_path = directory / ("narration" + suffix)
         try:
-            await save(package, package_path)
+            if package:
+                await save(package, package_path)
+            else:
+                await save_folder(folder_files or [], folder_paths or "", package_path)
             await save(audio, audio_path)
             validate_zip(package_path)
             validate_audio(audio_path, settings.ffprobe_bin)
@@ -88,7 +124,10 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
         job = jobs.get(job_id)
         if job is None:
             raise HTTPException(404, "Job not found")
-        return {key: job[key] for key in ("id", "state", "progress", "stage", "message")}
+        result = {key: job[key] for key in ("id", "state", "progress", "stage", "message")}
+        if job["state"] == "completed":
+            result["export_directory"] = job["bundle"]
+        return result
 
     @app.get("/api/jobs/{job_id}/events")
     def events(job_id: str):
