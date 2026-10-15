@@ -14287,3 +14287,42 @@ the encoded verifier still rejects it. The fix belongs to event timing, not the 
 0/40 after. `tests/certification/render_handoff/`: frame-grid oracle (500 boundary, 600
 mode, 200 delayed, 200 threshold, 100 short-beat variants) and 41 real 320x180 encodes
 (32 of 35 fail on the pre-fix renderer).
+
+## CINEMATIC VNEXT2 MOTION CORRECTION CHECKPOINT — 2026-10-15
+
+Branch `cinematic/vnext2` (worktree `E:\hexa-vnext2-wt`), on top of `280ae40` plus the
+preserved hold-emphasis / sub-visible-nudge WIP. Full report:
+`docs/qa/CINEMATIC-VNEXT2-MOTION-CORRECTION.md`; evidence `E:\hexa-vnext2\motion-fix\`.
+
+### Root causes (user review of the Black Hat render)
+1. Abrupt disappearance: every ordinary scene change drew the legacy outgoing drift
+   (48-120 px in the last frames before the opener) and then removed the cutout fully
+   opaque on screen, although Boundary had planned a clean cut; CRISP_HANDOFF "restrained"
+   exits were capped below what could leave the frame. 1553 mid-motion vanishes in 10 packages.
+2. Cheap payoff: up to five independent sources grew cutouts above rest (event-chain
+   overshoots, relation accents, hero / secondary / opener pulses); no per-beat leader.
+   134 beats with several pulsing families, 73 with the same element pulsing twice.
+3. Rushed motion: VNext2 reference pops (0.62 size in <= 5 frames, up to 6.6 scale/s),
+   fast slides and hero travel above the authorized 1.0 w/s.
+4. A non-ENTRY segment starting on an encoded frame could lose that frame to 6-decimal
+   rounding (one frame drawn in the previous pose).
+
+### Contract now
+- An outgoing cutout either completes its exit off the frame (planned, HERO_TRAVEL cap,
+  the semantic result always covers until the opener) or stays still and leaves on the
+  opener frame. Authored object handoffs and authored blur keep their own bridge.
+- One emphasis leader per beat (`app/motion/emphasis_leader.py`): only one Pass2 family
+  grows above authored size, once; Sprint 4.1 character emphasis is never removed.
+- Settle emphasis: rest, rise, hold, release (0.60-0.90 s, 5 % -> 3 %, <= 6 % for the
+  readability floor) or none. Pops 0.84 / 6-9 frames / smoothstep / <= 1.0 scale/s;
+  slides 0.08 w / 8-12 frames / <= 0.6 w/s; HERO_TRAVEL 1.0 w/s / 0.40 s.
+- The outgoing hero's full-frame exit yields to competing incoming arrivals only when the
+  opener alone covers the frame (opaque, >= 2 % of the frame).
+
+### Not changed (decisions for the user)
+- Scene/narration sync: fixed for Black Hat by the opening establishment (0.23 s left);
+  in the other packages 22 boundaries > 300 ms remain because Story fails closed (15: first
+  visual's word > 0.42 s after the sentence start without authored evidence; 7: first visual
+  is a RESULT). Needs a new Story opening authority.
+- Sprint 4.1 character emphasis still peaks at 10-12 % without a hold.
+- Measurement note: cached shared plans hold an old Story; re-plan Story before measuring.

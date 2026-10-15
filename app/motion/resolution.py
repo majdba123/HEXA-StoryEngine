@@ -37,13 +37,16 @@ from .timing import projected_motion_activity_px
 _EPS = 1e-6
 _FRAME = 1 / 30
 
-# Reference-measured scale pop (style_probe on both approved references, SCALE entries
-# of <= 12 frames, n = 55): start size q25-q50 0.43-0.61, 4-5 frames, growth q90 0.85
-# frame heights per second. No overshoot (q75 1.00).
-POP_START_SCALE = 0.62
-POP_SECONDS = 5 / 30
-POP_MIN_SECONDS = 3 / 30
+# Scale pop. The references pop from 0.43-0.61 size in 4-5 frames (style_probe, n = 55),
+# but reviewed HEXA renders read that as rushed and cheap for an explainer: the pop now
+# grows from 84 % over up to 9 frames on a smoothstep (zero speed at both ends), and a
+# reveal -> settle window shorter than 6 frames keeps the calm opacity entry instead.
+# No overshoot.
+POP_START_SCALE = 0.84
+POP_SECONDS = 9 / 30
+POP_MIN_SECONDS = 6 / 30
 POP_MAX_GROWTH = 0.85  # frame heights per second
+POP_MAX_SCALE_RATE = 1.0  # peak relative growth per second (smoothstep peak = 1.5 x mean)
 POP_MIN_ACTIVITY_PX = 20.0
 
 # Backdrop wash (reference grey-wash runs: median luminance of the washed frame 168-212).
@@ -107,10 +110,17 @@ def _overlap(a: LayoutItem, b: LayoutItem) -> float:
     return inter / max(1e-9, area)
 
 
+def pop_start_scale(seconds: float, item_height: float) -> float:
+    """Start size of a pop that rests at 1.0 after ``seconds``: never below POP_START_SCALE,
+    never faster than POP_MAX_GROWTH frame heights nor POP_MAX_SCALE_RATE per second."""
+    return max(POP_START_SCALE, 1.0 - POP_MAX_GROWTH * seconds / max(float(item_height), 1e-6),
+               1.0 - POP_MAX_SCALE_RATE * seconds / 1.5)
+
+
 def _pop_frames(start_scale: float, settle: float) -> list[dict]:
     """Ease-out scale pop from ``start_scale`` that rests at 1.0 from ``settle`` on."""
     settle = max(0.0, min(1.0, settle))
-    frames = [{"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": round(start_scale, 5), "easing": "ease_out_cubic"},
+    frames = [{"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": round(start_scale, 5), "easing": "smoothstep"},
               {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]
     if settle < 1.0 - _EPS:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"})
@@ -184,6 +194,12 @@ class PayoffResolutionDirector:
                 cue = output[index[(decision.beat_id, subject)]]
                 if cue.params.get("scene_hero") or cue.params.get("hero_emphasis"):
                     self.decisions[position] = replace(decision, pulse="abstain:hero_owns_pulse")
+                    continue
+                if any(row.params.get("hero_emphasis") or any(seg.semantic_action == "EMPHASIZE"
+                                                              for seg in row.segments)
+                       for row in output if row.beat_id == decision.beat_id):
+                    # One emphasis leader per beat: another asset already owns it.
+                    self.decisions[position] = replace(decision, pulse="abstain:beat_has_emphasis_leader")
                     continue
                 layout = layouts.get(decision.beat_id, {})
                 pulsed, why = emphasize(beat=beats[decision.beat_id], cue=cue, item=layout.get(subject),
@@ -366,8 +382,8 @@ class PayoffResolutionDirector:
         seconds = min([POP_SECONDS, window] + [float(row.end) - float(row.start) for row in cue.segments
                                                if abs(float(row.start) - float(cue.start)) <= _EPS])
         if seconds + _EPS < POP_MIN_SECONDS:
-            return None, "window_below_three_frames"
-        start_scale = max(POP_START_SCALE, 1.0 - POP_MAX_GROWTH * seconds / max(float(item.height), 1e-6))
+            return None, "window_below_pop_minimum"
+        start_scale = pop_start_scale(seconds, item.height)
         if projected_motion_activity_px(dx=0.0, dy=0.0, scale=start_scale, item_width=item.width,
                                         item_height=item.height) < POP_MIN_ACTIVITY_PX:
             return None, "pop_below_visible_floor"

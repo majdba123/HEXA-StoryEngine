@@ -23,12 +23,16 @@ Authorized product contract (2026-10-14), deliberately narrow:
   the travel; any relation/interaction segment during the travel window makes it abstain.
 
 Post-settle hero emphasis (a separate animation, never the 0.94 entry scale): after the
-hero has fully settled, one 1.0 -> 1+d -> 1.0 scale pulse that finishes before Rhythm's
-read hold. d is the strongest of the reference-measured amplitudes (8 % down to 3 %; the
-approved references pulse large subjects 4-8 %, median ~5 %) that passes the readability
-floor, the ESTABLISH comfort speed, the frame and every authored neighbour; composed text
-later trims it again (``fit_emphasis_to_text``). Selective: the scene's hero only, never
-in two consecutive scenes, never while another asset makes an independent accent.
+hero has fully settled and rested long enough to be recognised, one restrained
+1.0 -> 1+d (rise) -> 1+d (held, so the viewer registers it) -> 1.0 (release) scale
+gesture that finishes before Rhythm's read hold. d is the strongest restrained amplitude
+(5 % down to 3 %, at most 6 % where the readability floor needs it; reviewed renders found
+the 7-8 % reference pulses aggressive) that passes the readability floor, the ESTABLISH
+comfort speed, the frame and every authored neighbour; composed text later trims it again
+(``fit_emphasis_to_text``). Without time for
+the whole held gesture there is no pulse. Selective: one emphasis leader per beat (see
+``emphasis_leader``), never in two consecutive scenes for the same subject, never while
+another asset makes an independent accent.
 """
 from __future__ import annotations
 
@@ -48,21 +52,25 @@ from .timing import (
     semantic_readability_floor_px,
 )
 
-# Cinematic VNext2: reference SLIDE entries (style_probe, n = 44) peak at 0.83 (q50) -
-# 1.22 (q75) frame widths/s over 8-13 frames (q25-q50); the VP4 cap of 1.0 w/s / 0.40 s
-# kept most heroes still (74 corpus abstentions on speed alone).
-HERO_TRAVEL = MotionComfortProfile(target_seconds=0.60, minimum_seconds=0.30, max_normalized_speed=1.25)
+# Authorized VP4 hero-travel contract (2026-10-14): at most 1.0 frame widths/s, at least
+# 0.40 s. VNext2 had raised it to 1.25 w/s / 0.30 s; reviewed renders found entries and
+# exits at that speed rushed, so travel (and the Boundary exits timed with it) is back
+# inside the authorized contract. A path that needs more speed keeps its fallback.
+HERO_TRAVEL = MotionComfortProfile(target_seconds=0.60, minimum_seconds=0.40, max_normalized_speed=1.0)
 SMOOTHSTEP_PEAK = 1.5  # peak derivative of 3p^2 - 2p^3
 _OFFSCREEN_MARGIN = 0.01
 _ANTICIPATION_GAP = 2 / 30  # never share a first frame with the earlier reveal
 _OVERLAP_SLACK = 0.02
-EMPHASIS_RANGE = (0.03, 0.08)
-# Reference-measured post-settle pulse amplitudes, strongest first.
-EMPHASIS_CANDIDATES = (0.08, 0.07, 0.06, 0.05, 0.04, 0.03)
-EMPHASIS_SECONDS = 0.45
+EMPHASIS_RANGE = (0.03, 0.06)  # 6 % only where the readability floor needs it
+# Restrained post-settle amplitudes, strongest first (a premium accent, not a bounce).
+EMPHASIS_CANDIDATES = (0.05, 0.045, 0.04, 0.035, 0.03)
+# The held gesture: rise over the first 35 %, hold to 65 %, release over the last 35 %.
+EMPHASIS_SECONDS = 0.90
+EMPHASIS_MIN_SECONDS = 0.60
+EMPHASIS_RISE, EMPHASIS_HOLD_END = 0.35, 0.65
 # A scene opener that holds the frame alone at least this long gets the reference pulse.
 HOLD_ALONE_SECONDS = 1.0
-_EMPHASIS_PAUSE = 2 / 30  # a visible rest between arrival and emphasis
+_EMPHASIS_PAUSE = 6 / 30  # the settled subject is recognised before it is emphasised
 _HOLD_GRID_MARGIN = 2 / 30
 _YIELD_ACTIONS = {"DEEMPHASIZE", "FOCUS_HANDOFF"}
 _EPS = 1e-6
@@ -228,6 +236,8 @@ class HeroTravelPlanner:
             reason = None
             if opener.params.get("hero_emphasis"):
                 reason = "opener_already_pulses"
+            elif pulsed or any(row.semantic_action == "EMPHASIZE" for cue in cues for row in cue.segments):
+                reason = "beat_already_has_emphasis_leader"  # one emphasis leader per beat
             elif (opener.params.get("render_constraints") or {}).get("geometry_lock"):
                 reason = "locked_layer"
             elif alone_until - settle < HOLD_ALONE_SECONDS - _EPS:
@@ -454,11 +464,12 @@ class HeroTravelPlanner:
         if not isinstance(hold_ms, (int, float)) or hold_ms <= 0:
             return None, "abstain:no_rhythm_read_hold_authority"
         start = settle + _EMPHASIS_PAUSE
-        minimum = motion_comfort("ESTABLISH").minimum_seconds
         # The read hold is measured on encoded frames: the pulse's last moving frame and
         # the cut both land on the frame grid, so keep a 2-frame margin before the hold.
         end = min(start + EMPHASIS_SECONDS, float(beat.end) - float(hold_ms) / 1000 - _HOLD_GRID_MARGIN)
-        if end - start + _EPS < minimum:
+        if end - start + _EPS < EMPHASIS_MIN_SECONDS:
+            # No room to rise, be registered and release calmly: a rushed pulse is worse
+            # than none, so the subject simply rests.
             return None, f"abstain:no_time_after_settle({max(0.0, end - start):.3f}s)"
         duration = end - start
         frame_w, frame_h = frame_size()
@@ -471,7 +482,7 @@ class HeroTravelPlanner:
         extent = min(float(item.width), float(item.height))
         delta, why = None, "abstain:no_safe_reference_amplitude"
         for candidate in _amplitudes(readable):
-            if candidate * extent / (0.45 * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
+            if candidate * extent / (EMPHASIS_RISE * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
                 why = "abstain:emphasis_exceeds_comfort_speed"
                 continue
             problem = HeroTravelPlanner._scaled_problem(item, cue.asset_id, layout, candidate)
@@ -497,7 +508,10 @@ class HeroTravelPlanner:
             "settle_progress": 1.0,
             "keyframes": [
                 {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
-                {"progress": 0.45, "dx": 0.0, "dy": 0.0, "scale": round(1.0 + delta, 5), "easing": "smoothstep"},
+                {"progress": EMPHASIS_RISE, "dx": 0.0, "dy": 0.0, "scale": round(1.0 + delta, 5),
+                 "easing": "smoothstep"},
+                {"progress": EMPHASIS_HOLD_END, "dx": 0.0, "dy": 0.0, "scale": round(1.0 + delta, 5),
+                 "easing": "smoothstep"},
                 {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
             ],
         }

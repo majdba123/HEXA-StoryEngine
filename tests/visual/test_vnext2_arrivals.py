@@ -110,7 +110,27 @@ def test_a_carried_entry_segment_draws_the_same_gesture() -> None:
     assert out["center"].segments[1] == pulse
 
 
-@pytest.mark.parametrize("window", [2 / 30, 0.05])
-def test_windows_below_three_frames_keep_the_certified_fade(window: float) -> None:
-    planner, _ = _run([_cue("center", 1.0, 1.0 + window)], [CENTER])
-    assert planner.decisions[0].reason == "window_below_three_frames"
+@pytest.mark.parametrize("window", [2 / 30, 0.05, 5 / 30])
+def test_windows_below_the_calm_pop_minimum_keep_the_certified_fade(window: float) -> None:
+    # A pop squeezed into fewer than 6 frames reads as rushed: the opacity entry stays.
+    planner, out = _run([_cue("center", 1.0, 1.0 + window)], [CENTER])
+    assert planner.decisions[0].reason == "window_below_pop_minimum"
+    assert out["center"].params["program"] == _STATIC
+
+
+def test_pops_and_slides_are_calm_smoothstep_gestures_without_overshoot() -> None:
+    from app.motion.arrivals import SLIDE_MIN_SECONDS
+    from app.motion.resolution import POP_MIN_SECONDS, POP_SECONDS
+
+    planner, out = _run([_cue("center", 1.0, 1.0 + POP_MIN_SECONDS), _cue("edge", 2.0, 2.0 + SLIDE_MIN_SECONDS)],
+                        [CENTER, EDGE])
+    assert {d.asset_id: d.gesture for d in planner.decisions} == {"center": "POP", "edge": "SLIDE"}
+    for cue in out.values():
+        frames = cue.params["program"]["keyframes"]
+        assert frames[0]["easing"] == "smoothstep"                      # zero speed at both ends
+        assert max(f["scale"] for f in frames) <= 1.0                     # never grows past rest
+    pop = out["center"].params["program"]["keyframes"]
+    seconds = out["center"].params["reference_pop"]["seconds"]
+    assert POP_MIN_SECONDS - 1e-9 <= seconds <= POP_SECONDS + 1e-9
+    assert SMOOTHSTEP_PEAK * (1.0 - pop[0]["scale"]) / seconds <= 1.0 + 1e-9  # peak scale rate per second
+    assert out["edge"].params["reference_slide"]["peak_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-9 <= 0.6 + 1e-9

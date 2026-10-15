@@ -28,17 +28,20 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, Visual
 
 from .collision import authored_overlap_ratio, box
 from .family import family_of, follow, rigid_followers
-from .resolution import POP_MAX_GROWTH, POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, POP_START_SCALE
+from .resolution import POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, pop_start_scale
 from .timing import projected_motion_activity_px
 
 _EPS = 1e-6
 _FRAME = 1 / 30
-SLIDE_DISTANCE = 0.12        # frame widths (reference median travel 0.15, q25 0.11)
-SLIDE_MIN_DISTANCE = 0.06
+# Edge slide. The references slide 0.10-0.15 frame widths in 4-13 frames at up to 1.2 w/s;
+# reviewed HEXA renders found that rushed, so a slide is a short calm settle into place:
+# at most 0.08 w, at most 0.6 w/s peak, never shorter than 8 frames (else a pop or fade).
+SLIDE_DISTANCE = 0.08        # frame widths
+SLIDE_MIN_DISTANCE = 0.04
 SLIDE_EDGE_REACH = 0.16      # an asset whose box is this close to a side edge slides
-SLIDE_SECONDS = 10 / 30
-SLIDE_MIN_SECONDS = 4 / 30   # the references contain 4-frame slides (style_probe)
-SLIDE_MAX_PEAK_SPEED = 1.25  # w/s (reference slide peak q50 0.83, q75 1.22)
+SLIDE_SECONDS = 12 / 30
+SLIDE_MIN_SECONDS = 8 / 30
+SLIDE_MAX_PEAK_SPEED = 0.6   # w/s
 SMOOTHSTEP_PEAK = 1.5
 _OVERLAP_SLACK = 0.02
 
@@ -92,7 +95,7 @@ def _is_nudge(program: dict | None, item: LayoutItem | None = None) -> bool:
 
 def pop_frames(start_scale: float, settle: float) -> list[dict]:
     settle = max(0.0, min(1.0, settle))
-    frames = [{"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": round(start_scale, 5), "easing": "ease_out_cubic"},
+    frames = [{"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": round(start_scale, 5), "easing": "smoothstep"},
               {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]
     if settle < 1.0 - _EPS:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"})
@@ -281,7 +284,7 @@ class SecondaryArrivalPlanner:
             return "FADE", "certified_gesture_owns_entry", None
         window = float(cue.end) - float(cue.start)
         if window + _EPS < POP_MIN_SECONDS:
-            return "FADE", "window_below_three_frames", None
+            return "FADE", "window_below_pop_minimum", None
         arrival_end = float(cue.start) + min(max(SLIDE_SECONDS, POP_SECONDS), window)
         for row in cue.segments:
             if row.phase == "ENTRY":
@@ -333,7 +336,7 @@ class SecondaryArrivalPlanner:
 
     def _pop(self, cue: MotionCue, *, item: LayoutItem, window: float) -> MotionCue | None:
         seconds = min(POP_SECONDS, window)
-        start_scale = max(POP_START_SCALE, 1.0 - POP_MAX_GROWTH * seconds / max(float(item.height), 1e-6))
+        start_scale = pop_start_scale(seconds, item.height)
         if projected_motion_activity_px(dx=0.0, dy=0.0, scale=start_scale, item_width=item.width,
                                         item_height=item.height) < POP_MIN_ACTIVITY_PX:
             return None

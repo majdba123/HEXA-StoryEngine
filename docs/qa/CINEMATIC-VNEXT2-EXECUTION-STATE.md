@@ -59,6 +59,8 @@ stays crisp (11-15 % of frames, one wash per 7-17 s).
 - [~] Phase 4 focus/HIGH-SCALE: same-subject rule, secondary focus pulse
 - [~] Phase 5 PAYOFF: `app/motion/resolution.py` + renderer backdrop wash (candidate B chosen over veil A)
 - [~] Phase 6 text: read window from display start; machine-readable justification per withheld cue
+- [x] Motion correction after the user's Black Hat review (exits finish or clean cut, one
+      emphasis leader per beat, calm pacing): `CINEMATIC-VNEXT2-MOTION-CORRECTION.md`
 - [ ] Phase 7 tests / differential harness
 - [ ] Phase 8 renders v7
 - [ ] Phase 9 all packages + holdouts encoded

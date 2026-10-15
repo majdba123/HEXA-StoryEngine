@@ -88,14 +88,17 @@ def test_scene_opener_never_travels_over_an_empty_canvas() -> None:
 
 
 def test_travel_never_exceeds_the_hero_speed_cap() -> None:
-    # Cinematic VNext2 replaced the VP4 cap (1.0 w/s, 0.40 s) with the references' measured
-    # slide speed (peak 1.25 w/s, 0.30 s minimum). The cap itself is still never exceeded.
+    # Reviewed VNext2 renders found 1.25 w/s / 0.30 s travel rushed: the authorized VP4
+    # contract (1.0 w/s, 0.40 s) is restored and never exceeded.
+    assert (HERO_TRAVEL.max_normalized_speed, HERO_TRAVEL.minimum_seconds) == (1.0, 0.40)
     planner, _ = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.05, 1.3)], [SUPPORT, HERO])
     reason = next(d for d in planner.decisions).reason
     assert reason.startswith("insufficient_time") or reason.startswith("no_safe_direction:speed")
-    planner, out = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.2, 1.5)], [SUPPORT, HERO])
+    planner, _ = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.2, 1.5)], [SUPPORT, HERO])
+    assert next(d for d in planner.decisions).reason.startswith("no_safe_direction:speed")  # 1.01 w/s
+    planner, out = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.2, 1.7)], [SUPPORT, HERO])
     decision = next(d for d in planner.decisions)
-    assert decision.decision == "TRAVEL"                                  # 1.01 w/s: inside the new cap
+    assert decision.decision == "TRAVEL"                                  # 0.74 w/s: inside the cap
     assert decision.peak_speed <= HERO_TRAVEL.max_normalized_speed
     hero = out[("b", "hero")]
     assert hero.end - hero.start >= HERO_TRAVEL.minimum_seconds - 1e-9
@@ -148,6 +151,10 @@ def test_emphasis_is_a_separate_pulse_after_settle_that_finishes_before_the_hold
     scales = [f["scale"] for f in pulse.program["keyframes"]]
     assert scales[0] == scales[-1] == 1.0
     assert 1 + EMPHASIS_RANGE[0] - 1e-9 <= max(scales) <= 1 + EMPHASIS_RANGE[1] + 1e-9
+    # Settle and be recognised, rise, hold so the viewer registers it, then a calm release.
+    assert pulse.start >= hero.end + 6 / 30 - 1e-9 and pulse.end - pulse.start >= 0.60 - 1e-9
+    peak = [f["progress"] for f in pulse.program["keyframes"] if f["scale"] == max(scales)]
+    assert len(peak) == 2 and (peak[1] - peak[0]) * (pulse.end - pulse.start) >= 0.18 - 1e-9
     entry = next(s for s in hero.segments if s.phase == "ENTRY")         # travel still renders
     assert entry.program["name"] == "hero_travel_entry"
 

@@ -17,7 +17,6 @@ from app.models import (
     VisualAsset,
 )
 from app.motion.hero_travel import HERO_TRAVEL, SMOOTHSTEP_PEAK
-from app.motion.timing import motion_comfort
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
 
@@ -28,8 +27,10 @@ RELEASE_FRAMES = 6
 MIN_RELEASE_FRAMES = 5
 OVERLAP_FRAMES = 4
 _OFFSCREEN_MARGIN = 0.01
-# A staggered exit never gives its last (leading) visual fewer frames than this.
-_MIN_EXIT_ASSET_FRAMES = 6
+# An opener cohort covers the frame on its own (no near-white frame after a clean cut) only
+# when one of its cutouts is drawn at full opacity from its first frame and its footprint
+# covers at least this share of the frame.
+_SOLID_OPENER_AREA = 0.02
 _EPS = 1e-6
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
@@ -107,7 +108,8 @@ class SceneBoundaryPlanner:
         the unchanged incoming opener, then leaves along a smoothstep path with the
         HERO_TRAVEL speed cap until it is outside the frame on every projection; the
         incoming scene's timing, read holds and narration are unchanged. Any incoming
-        artwork or text on the path makes it a clean cut instead.
+        artwork or text on the path, or any incoming reveal after the opener while it is
+        still leaving (competing motion), makes it a clean cut instead.
         """
         beat, previous = segment.beat, segment.previous_beat
         assert previous is not None
@@ -168,6 +170,10 @@ class SceneBoundaryPlanner:
         ]
         opener = int(row.audit.get("opener_frame", min(first.values())))
         start = (segment.start_frame + opener) / fps
+        solid_opener = any(
+            frame == opener and not self._has_entry_opacity(cues.get((beat.id, key)))
+            and _area(footprints[key]) >= _SOLID_OPENER_AREA
+            for key, frame in first.items())
         reasons = []
         left = unit[2] + self.exit_margin            # move left until the right edge is past 0
         right = 1.0 - unit[0] + self.exit_margin     # move right until the left edge is past 1
@@ -181,6 +187,12 @@ class SceneBoundaryPlanner:
                 continue
             end = (segment.start_frame + end_frame) / fps
             blocker = None
+            if solid_opener and any(opener < frame < end_frame for frame in first.values()):
+                # One leaving hero beside the arriving opener reads as a handoff; further
+                # incoming arrivals during the exit would make the opening busy and rushed.
+                # A faint or tiny opener needs the leaving hero as cover (else near-white).
+                reasons.append("incoming_arrivals_during_exit")
+                continue
             for frame in range(opener, end_frame + 1):
                 progress = (frame - opener) / frames
                 shift = direction * distance * (3 * progress ** 2 - 2 * progress ** 3)
@@ -344,6 +356,7 @@ class SceneBoundaryPlanner:
             exits = self._exit_schedule(
                 previous=previous, outgoing=outgoing, cues=cues, assets=assets,
                 outgoing_done=outgoing_done, segment=segment, opener_frame=k_open, fps=fps,
+                margin=self.exit_margin,
             )
             audit["exit"] = exits.pop("audit")
             return result(
@@ -362,19 +375,21 @@ class SceneBoundaryPlanner:
         cls, *, previous: StoryBeat, outgoing: list[LayoutItem],
         cues: dict[tuple[str, str], MotionCue], assets: dict[str, VisualAsset],
         outgoing_done: float, segment: BeatSegment, opener_frame: int, fps: int,
+        margin: float = _OFFSCREEN_MARGIN,
     ) -> dict[str, object]:
-        """Restrained outgoing exit inside the pre-opener interval, or none (clean cut).
+        """Complete outgoing exits inside the pre-opener interval, or none (clean cut).
 
-        The exit may only use time the outgoing scene no longer needs: it starts after the
-        last outgoing motion has settled plus Motion's own minimum read hold, lasts the
-        certified EXIT comfort duration (never shorter than its minimum) and ends on the
-        unchanged opener frame. Supporting visuals yield first and the semantic result
-        last; a Pass2 family leaves as one unit. Without enough time, or without Motion's
-        rhythm authority, it abstains and the handoff stays a clean crisp cut.
+        An exit may only use time the outgoing scene no longer needs: it starts after the
+        last outgoing motion has settled plus Motion's own minimum read hold, and ends on
+        the unchanged opener frame. The last unit in order (the semantic result) always
+        stays as cover until the opener. An exit is planned only when it can finish: the unit (a
+        Pass2 family leaves as one) slides out through its nearest side edge until it is
+        off the frame on every projection (``margin``), along a smoothstep path within the
+        HERO_TRAVEL speed cap and minimum duration. A unit that cannot leave in the
+        available time stays still and leaves with the opener (a clean cut), so nothing
+        vanishes halfway through an exit. Without Motion's rhythm authority it abstains.
         """
-        comfort = motion_comfort("EXIT")
-        min_frames = ceil(comfort.minimum_seconds * fps - _EPS)
-        target_frames = max(min_frames, round(comfort.target_seconds * fps))
+        min_frames = ceil(HERO_TRAVEL.minimum_seconds * fps - _EPS)
         holds = []
         for item in outgoing:
             cue = cues.get((previous.id, item.asset_id))
@@ -390,7 +405,6 @@ class SceneBoundaryPlanner:
         if window < min_frames:
             return {"starts": {}, "audit": {"decision": "clean_cut:insufficient_time_after_read_hold",
                                             "ready_frame": ready_frame, "window_frames": window}}
-        exit_frames = min(target_frames, window)
 
         def rank(item: LayoutItem) -> int:
             cue = cues.get((previous.id, item.asset_id))
@@ -409,16 +423,32 @@ class SceneBoundaryPlanner:
             families.setdefault(AssetManager.family_id(asset) if asset else item.asset_id, []).append(item)
         groups = sorted(families.values(), key=lambda members: (
             min(rank(m) for m in members), min(m.z for m in members), min(m.asset_id for m in members)))
-        step = 0 if len(groups) == 1 else min(2, (exit_frames - _MIN_EXIT_ASSET_FRAMES) // (len(groups) - 1))
-        step = max(0, step)
-        first = opener_frame - exit_frames
-        starts = {
-            member.asset_id: (segment.start_frame + first + step * index) / fps
-            for index, members in enumerate(groups) for member in members
-        }
-        return {"starts": starts, "audit": {"decision": "restrained_exit", "ready_frame": ready_frame,
-                                            "exit_frames": exit_frames, "stagger_frames": step,
-                                            "order": [sorted(m.asset_id for m in members) for members in groups]}}
+        starts: dict[str, float] = {}
+        leaving, staying = [], []
+        for index, members in enumerate(groups):
+            frames = cls._complete_exit_frames(members, fps=fps, margin=margin)
+            # The last unit (the semantic result) never leaves early: it covers the frame
+            # until the opener, so completed exits can never leave a near-white frame.
+            if index == len(groups) - 1 or frames > window:
+                staying.append(sorted(m.asset_id for m in members))
+                continue
+            leaving.append(sorted(m.asset_id for m in members))
+            begin = (segment.start_frame + opener_frame - frames) / fps
+            starts.update({member.asset_id: begin for member in members})
+        return {"starts": starts, "audit": {
+            "decision": "complete_exit" if leaving else (
+                "clean_cut:exit_cannot_leave_the_frame_in_time" if len(groups) > 1
+                else "clean_cut:single_unit_covers_until_opener"),
+            "ready_frame": ready_frame, "window_frames": window, "order": leaving, "clean_cut_units": staying}}
+
+    @staticmethod
+    def _complete_exit_frames(members: list[LayoutItem], *, fps: int, margin: float) -> int:
+        """Frames a unit needs to leave the frame through its nearest side edge."""
+        left = max(float(m.x) + float(m.width) / 2 for m in members) + margin
+        right = 1.0 - min(float(m.x) - float(m.width) / 2 for m in members) + margin
+        seconds = max(HERO_TRAVEL.minimum_seconds,
+                      SMOOTHSTEP_PEAK * min(left, right) / HERO_TRAVEL.max_normalized_speed)
+        return ceil(seconds * fps - _EPS)
 
     @classmethod
     def _hold_to_opener(
@@ -601,3 +631,7 @@ class SceneBoundaryPlanner:
                 end = max(float(cue.spoken_end), ends.get(cue.id, float(cue.spoken_end)))
                 output.setdefault(beat.beat_id, []).append((float(cue.spoken_start), end, box))
         return output
+
+
+def _area(box: Box) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])

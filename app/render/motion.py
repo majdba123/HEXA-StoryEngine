@@ -4,6 +4,8 @@ from typing import Any
 
 from app.models import MotionCue
 
+_START_TOLERANCE = 0.0005  # seconds; far below one encoded frame
+
 
 class FFmpegMotionAdapter:
     """Translate backend-neutral Motion V3 keyframes to FFmpeg overlay expressions."""
@@ -129,7 +131,12 @@ class FFmpegMotionAdapter:
                 keyframes=keyframes, axis=axis, scale=scale,
                 start=start, window=max(0.05, end - start), default=default,
             )
-            expression = f"if(between(t,{start:.6f},{end:.6f}),{active},{expression})"
+            # A segment that starts on an encoded frame owns that frame: the bound is written
+            # with six decimals and could round just past the frame timestamp, drawing one
+            # frame with the previous pose (e.g. a pop's first frame at full size). Half a
+            # millisecond is far below a frame; before ``start`` the segment holds its first
+            # keyframe, so nothing else changes.
+            expression = f"if(between(t,{max(0.0, start - _START_TOLERANCE):.6f},{end:.6f}),{active},{expression})"
         return expression
 
     def _axis_expression(

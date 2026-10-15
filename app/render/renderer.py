@@ -10,7 +10,7 @@ from pathlib import Path
 from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
-from app.motion.timing import GOLDEN_MINOR, max_comfort_displacement, semantic_readability_floor_px
+from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.connection import connection_specs, draw_connection, fade_seconds
@@ -470,27 +470,31 @@ class FFmpegRenderer:
                     object_target_by_outgoing.get(item.asset_id, "")
                 )
                 # The planned opacity release owns the boundary: the legacy exit drift
-                # is not stacked on top of it.
-                horizontal, vertical = (0, 0) if release is not None else self._bridge_exit_offset(
+                # is not stacked on top of it. Without a release only an authored blur
+                # bridge or an authored object handoff (target-seeking) may drift: an
+                # ordinary outgoing cutout never starts an exit it cannot finish before it
+                # is removed, so it stays still and leaves on the incoming opener frame.
+                drifts = release is None and (
+                    transition.mode == SceneTransitionMode.BLUR_BRIDGE or target_item is not None)
+                horizontal, vertical = self._bridge_exit_offset(
                     plan=plan,
                     item=item,
                     mode=transition.mode,
                     target_item=target_item,
-                )
+                ) if drifts else (0, 0)
                 progress_expr = self._bridge_progress_expression(
                     start=bridge_start,
                     duration=bridge_duration,
                 )
                 exit_start = planned_exits.get(item.asset_id)
                 if release is not None and exit_start is not None:
-                    # A planned restrained exit: opaque, from the planned start to the
-                    # last frame before the opener, which removes the outgoing scene.
+                    # A planned exit: opaque, from the planned start until the cutout is
+                    # completely off the canvas on the last frame before the opener, which
+                    # removes the outgoing scene. Boundary only plans exits that fit.
                     exit_begin = max(0.0, float(exit_start) - segment_start)
                     exit_end = release[2] - 0.75 / plan.fps
                     if exit_end > exit_begin + 0.5 / plan.fps:
-                        horizontal, vertical = self._restrained_exit_offset(
-                            plan=plan, item=item, seconds=exit_end - exit_begin,
-                        )
+                        horizontal, vertical = self._offcanvas_exit_offset(plan=plan, item=item), 0
                         progress_expr = self._bridge_progress_expression(
                             start=exit_begin, duration=exit_end - exit_begin,
                         )
@@ -1065,31 +1069,13 @@ class FFmpegRenderer:
         return dict(row.exit_starts)
 
     @classmethod
-    def _restrained_exit_offset(cls, *, plan: RenderPlan, item, seconds: float) -> tuple[int, int]:
-        """Directional exit offset limited by the EXIT comfort speed and the frame edges.
-
-        Direction is the existing geometric bridge rule. Magnitude never exceeds what the
-        certified EXIT comfort profile allows in ``seconds``, and the cutout box never
-        leaves the canvas (no clipping); an axis left with a negligible move stays still.
-        """
-        dx, dy = cls._bridge_exit_offset(plan=plan, item=item, mode=SceneTransitionMode.MOTION_HANDOFF)
-        scale = plan.projection.scale if plan.projection else 1.0
-        reference_w = plan.projection.reference_width * scale if plan.projection else plan.width
-        reference_h = plan.projection.reference_height * scale if plan.projection else plan.height
-        budget = max_comfort_displacement("EXIT", seconds)
-        dx = max(-budget * reference_w, min(budget * reference_w, dx))
-        dy = max(-budget * reference_h, min(budget * reference_h, dy))
-        box_w, box_h, target_x, target_y = cls._geometry(plan, item)
-        dx = max(-max(0, target_x), min(max(0, plan.width - target_x - box_w), dx))
-        dy = max(-max(0, target_y), min(max(0, plan.height - target_y - box_h), dy))
-        dx, dy = round(dx), round(dy)
-        readable = semantic_readability_floor_px(
-            "EXIT", item_width=item.width, item_height=item.height, duration=seconds,
-            frame_width=plan.width, frame_height=plan.height,
-        )
-        if math.hypot(dx, dy) < readable:
-            return 0, 0  # A microscopic drift followed by a cut reads worse than a clean cut.
-        return dx, dy
+    def _offcanvas_exit_offset(cls, *, plan: RenderPlan, item) -> int:
+        """Horizontal offset that takes the cutout box completely off the canvas through
+        its nearest side edge (the direction Boundary timed the exit for)."""
+        box_w, _box_h, target_x, _target_y = cls._geometry(plan, item)
+        margin = max(4, round(4 * (plan.projection.scale if plan.projection else 1.0)))
+        left, right = target_x + box_w + margin, plan.width - target_x + margin
+        return -left if left <= right else right
 
     @staticmethod
     def _bridge_progress_expression(*, start: float, duration: float) -> str:
