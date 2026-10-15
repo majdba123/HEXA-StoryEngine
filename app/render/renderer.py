@@ -192,7 +192,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text\.ass|-connection-\d+\.png)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under)?\.ass|-connection-\d+\.png)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -232,6 +232,18 @@ class FFmpegRenderer:
         if not ordered_items:
             self._render_color_segment(plan, duration, target, frame_count=frame_count)
             return
+        wash = self._focus_wash(
+            plan=plan, beat=beat, ordered_items=ordered_items, motion=motion,
+            segment_start=segment_start, duration=duration,
+        )
+        if wash is not None:
+            # The resolved focus is drawn above the receded backdrop: Motion planned it
+            # only where the focus overlaps no other asset, so this z move is invisible
+            # outside the wash.
+            ordered_items = (
+                [item for item in ordered_items if item.asset_id not in wash["focus"]]
+                + [item for item in ordered_items if item.asset_id in wash["focus"]]
+            )
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
         transition = self.transition_policy.decide(
             previous_beat,
@@ -293,6 +305,14 @@ class FFmpegRenderer:
             if previous_layout is not None
             else []
         )
+        carried_wash = self._carried_wash(
+            plan=plan, previous_beat=previous_beat, previous_layout=previous_layout, motion=motion,
+        )
+        if carried_wash is not None:
+            outgoing_items = (
+                [item for item in outgoing_items if item.asset_id not in carried_wash["focus"]]
+                + [item for item in outgoing_items if item.asset_id in carried_wash["focus"]]
+            )
         incoming_start, _incoming_reveal = self._incoming_handoff_window(
             beat=beat,
             ordered_items=ordered_items,
@@ -420,7 +440,9 @@ class FFmpegRenderer:
             # and optional blur; a narration gap must never become a long blurred hold.
             # A planned release fades the outgoing artwork only, never the background:
             # the group is composited on a transparent canvas.
-            old_canvas = "white@0.0" if release is not None else "white"
+            # A receded backdrop is held as one opaque picture (its grey wash included), so a
+            # planned release fades the whole washed frame instead of only its artwork.
+            old_canvas = "white@0.0" if release is not None and carried_wash is None else "white"
             filters.append(
                 f"color=c={old_canvas}:s={plan.width}x{plan.height}:r={plan.fps}:"
                 f"d={bridge_end:.6f},format=rgba[oldbase0]"
@@ -428,6 +450,11 @@ class FFmpegRenderer:
             old_label = "oldbase0"
             input_offset = len(ordered_items)
             for bridge_index, item in enumerate(outgoing_items):
+                if (carried_wash is not None and item.asset_id in carried_wash["focus"]
+                        and not carried_wash.get("applied")):
+                    filters.append(f"[{old_label}]{self._wash_chain(plan, carried_wash)},format=rgba[oldwashed]")
+                    old_label = "oldwashed"
+                    carried_wash["applied"] = True
                 input_index = input_offset + bridge_index
                 box_w, box_h, target_x, target_y = self._geometry(plan, item)
                 source_label = f"oldasset{bridge_index}"
@@ -477,6 +504,10 @@ class FFmpegRenderer:
                 )
                 old_label = next_old
 
+            if carried_wash is not None and not carried_wash.get("applied") and outgoing_items:
+                filters.append(f"[{old_label}]{self._wash_chain(plan, carried_wash)},format=rgba[oldwashed]")
+                old_label = "oldwashed"
+                carried_wash["applied"] = True
             if transition.mode == SceneTransitionMode.BLUR_BRIDGE:
                 filters.append(f"[{old_label}]split=2[oldcrisp][oldblurbase]")
                 filters.append(
@@ -596,8 +627,29 @@ class FFmpegRenderer:
             )
             composite_label = f"{label}mix"
 
+        text_under = None
+        if wash is not None:
+            focus_ids = wash["focus"]
+            text_under = self.text_renderer.write_beat_ass(
+                plan,
+                beat,
+                segment_start=segment_start,
+                duration=duration,
+                output=target.parent / f"{target.stem}-text-under.ass",
+                include=lambda cue: bool(cue.anchor_asset_id) and cue.anchor_asset_id not in focus_ids,
+            )
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
+            if wash is not None and item.asset_id in wash["focus"] and not wash.get("applied"):
+                # Backdrop recession (VNext2 PAYOFF): everything already composited, and
+                # the labels of receding assets, blur and wash toward grey on one clock
+                # while the resolved focus stays crisp above it.
+                if text_under is not None:
+                    filters.append(self.text_renderer.ass_filter(text_under, composite_label, "washtext"))
+                    composite_label = "washtext"
+                filters.extend(self._focus_wash_filters(plan, wash, composite_label, duration))
+                composite_label = "washed"
+                wash["applied"] = True
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
             start, end, _fade_duration = self._cue_window(
                 beat=beat,
@@ -755,6 +807,10 @@ class FFmpegRenderer:
             segment_start=segment_start,
             duration=duration,
             output=target.parent / f"{target.stem}-text.ass",
+            include=(
+                None if wash is None
+                else lambda cue: not cue.anchor_asset_id or cue.anchor_asset_id in wash["focus"]
+            ),
         )
         if ass_path is not None:
             text_label = "textmix"
@@ -766,6 +822,92 @@ class FFmpegRenderer:
         self._run(command, "render segment failed")
 
 
+
+    @staticmethod
+    def _focus_wash(
+        *,
+        plan: RenderPlan,
+        beat: StoryBeat,
+        ordered_items: list,
+        motion: dict[tuple[str, str], MotionCue],
+        segment_start: float,
+        duration: float,
+    ) -> dict | None:
+        """The beat's planned backdrop recession in segment-local seconds, or None.
+
+        Motion owns every decision (``params["focus_wash"]`` on the resolved focus); the
+        renderer only fails closed when the plan no longer matches what is on screen.
+        """
+        present = {item.asset_id for item in ordered_items}
+        for item in ordered_items:
+            cue = motion.get((beat.id, item.asset_id))
+            spec = cue.params.get("focus_wash") if cue is not None and isinstance(cue.params, dict) else None
+            if not isinstance(spec, dict):
+                continue
+            focus = {str(asset_id) for asset_id in spec.get("focus_asset_ids") or []} & present
+            if not focus or focus == present:
+                return None
+            start = float(spec["start"]) - segment_start
+            end = min(duration, float(spec.get("end", segment_start + duration)) - segment_start)
+            ramp = float(spec.get("ramp", 5 / plan.fps))
+            if start < 0.0 or end - start + 1e-6 < ramp:
+                return None
+            return {
+                "focus": focus, "start": start, "end": end, "ramp": ramp,
+                "blur": float(spec.get("blur_px", 0.0)),
+                "tint": str(spec.get("tint", "#FFFFFF")).lstrip("#"),
+                "tint_alpha": max(0.0, min(1.0, float(spec.get("tint_alpha", 0.5)))),
+            }
+        return None
+
+    @staticmethod
+    def _wash_chain(plan: RenderPlan, wash: dict) -> str:
+        """Blur and grey-tint filters for a receded backdrop (alpha is kept as composited)."""
+        sigma = wash["blur"] * (plan.projection.scale if plan.projection else 1.0)
+        tint, alpha = wash["tint"], wash["tint_alpha"]
+        red, green, blue = (int(tint[i:i + 2], 16) for i in (0, 2, 4))
+        keep = 1.0 - alpha
+        lut = (f"lutrgb=r='val*{keep:.4f}+{red * alpha:.3f}':g='val*{keep:.4f}+{green * alpha:.3f}':"
+               f"b='val*{keep:.4f}+{blue * alpha:.3f}'")
+        return (f"gblur=sigma={sigma:.3f}:steps=2," if sigma > 0.05 else "") + lut
+
+    @classmethod
+    def _focus_wash_filters(cls, plan: RenderPlan, wash: dict, source_label: str, duration: float) -> list[str]:
+        """Crossfade the composited backdrop into its receded copy on one clock."""
+        start, ramp, end = wash["start"], wash["ramp"], wash["end"]
+        release = (
+            f",fade=t=out:st={end - ramp:.6f}:d={ramp:.6f}:alpha=1"
+            if end < duration - 0.5 / plan.fps else ""
+        )
+        chain = cls._wash_chain(plan, wash).replace(
+            "steps=2,", f"steps=2:enable='gte(t,{max(0.0, start - 1.0 / plan.fps):.6f})',", 1)
+        return [
+            f"[{source_label}]split=2[washsharp][washsrc]",
+            f"[washsrc]{chain},format=rgba,settb=AVTB,"
+            f"fade=t=in:st={start:.6f}:d={ramp:.6f}:alpha=1{release}[washfx]",
+            "[washsharp][washfx]overlay=x=0:y=0:eof_action=pass:shortest=0[washed]",
+        ]
+
+    @classmethod
+    def _carried_wash(
+        cls,
+        *,
+        plan: RenderPlan,
+        previous_beat: StoryBeat | None,
+        previous_layout,
+        motion: dict[tuple[str, str], MotionCue],
+    ) -> dict | None:
+        """A backdrop wash still on at the previous beat's last frame: the held picture of
+        that scene keeps it until the incoming opener removes it."""
+        if previous_beat is None or previous_layout is None:
+            return None
+        wash = cls._focus_wash(
+            plan=plan, beat=previous_beat, ordered_items=list(previous_layout.items), motion=motion,
+            segment_start=float(previous_beat.start), duration=float(previous_beat.end) - float(previous_beat.start),
+        )
+        if wash is None or wash["end"] < float(previous_beat.end) - float(previous_beat.start) - 1.0 / plan.fps:
+            return None
+        return wash
 
     @classmethod
     def _scene_release_window(
