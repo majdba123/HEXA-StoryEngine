@@ -7,6 +7,7 @@ on:
       - bayer
       - majd
       - montage
+      - feature/web-ui
   pull_request:
 
 jobs:
@@ -32,6 +33,8 @@ jobs:
         run: python -m compileall -q app
       - name: Lint
         run: ruff check app tests
+      - name: Web UI and job API
+        run: pytest tests/web
       - name: Test1 canonical compatibility and Unified 2.0 contract lock
         run: pytest tests/test1
       - name: Test2 layer contracts, semantic carriers and encoded smoke
@@ -51,6 +54,7 @@ jobs:
             pyproject.toml
             README.md
             HEXA.bat
+            HEXA-WEB.bat
           if-no-files-found: error
           retention-days: 7
 
