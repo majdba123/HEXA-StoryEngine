@@ -23,10 +23,12 @@ Authorized product contract (2026-10-14), deliberately narrow:
   the travel; any relation/interaction segment during the travel window makes it abstain.
 
 Post-settle hero emphasis (a separate animation, never the 0.94 entry scale): after the
-hero has fully settled, one restrained 1.0 -> 1+d -> 1.0 scale pulse (d in 3-6 %, the
-smallest that passes the shared ESTABLISH readability floor) that finishes before Rhythm's
-read hold. Selective: the scene's hero only, never in two consecutive scenes, never while
-another asset makes an independent accent, never when the scaled box would collide.
+hero has fully settled, one 1.0 -> 1+d -> 1.0 scale pulse that finishes before Rhythm's
+read hold. d is the strongest of the reference-measured amplitudes (8 % down to 3 %; the
+approved references pulse large subjects 4-8 %, median ~5 %) that passes the readability
+floor, the ESTABLISH comfort speed, the frame and every authored neighbour; composed text
+later trims it again (``fit_emphasis_to_text``). Selective: the scene's hero only, never
+in two consecutive scenes, never while another asset makes an independent accent.
 """
 from __future__ import annotations
 
@@ -50,7 +52,9 @@ SMOOTHSTEP_PEAK = 1.5  # peak derivative of 3p^2 - 2p^3
 _OFFSCREEN_MARGIN = 0.01
 _ANTICIPATION_GAP = 2 / 30  # never share a first frame with the earlier reveal
 _OVERLAP_SLACK = 0.02
-EMPHASIS_RANGE = (0.03, 0.06)
+EMPHASIS_RANGE = (0.03, 0.08)
+# Reference-measured post-settle pulse amplitudes, strongest first.
+EMPHASIS_CANDIDATES = (0.08, 0.07, 0.06, 0.05, 0.04, 0.03)
 EMPHASIS_SECONDS = 0.45
 _EMPHASIS_PAUSE = 2 / 30  # a visible rest between arrival and emphasis
 _HOLD_GRID_MARGIN = 2 / 30
@@ -74,6 +78,12 @@ class HeroTravelDecision:
 
     def to_payload(self) -> dict[str, object]:
         return {name: getattr(self, name) for name in self.__slots__}
+
+
+def _amplitudes(readable: float) -> list[float]:
+    """Reference amplitudes from strongest to the smallest readable one (inclusive)."""
+    floor = max(EMPHASIS_RANGE[0], readable)
+    return sorted({c for c in EMPHASIS_CANDIDATES if c + _EPS >= floor} | {round(floor, 5)}, reverse=True)
 
 
 def _intersection(a: Box, b: Box) -> float:
@@ -107,6 +117,7 @@ class HeroTravelPlanner:
         text_boxes = text_boxes or {}
         self.decisions = []
         self._sweeps = {}
+        self._emphases: dict[tuple[str, str], tuple[LayoutItem, dict[str, LayoutItem]]] = {}
         assets_by_id = {asset.id: asset for asset in assets}
         layouts = {layout.beat_id: {item.asset_id: item for item in layout.items} for layout in composition}
         index = {(cue.beat_id, cue.asset_id): position for position, cue in enumerate(motion)}
@@ -165,6 +176,7 @@ class HeroTravelPlanner:
                 )
             if emphasis is not None:
                 output[position] = emphasis
+                self._emphases[(beat.id, hero_id)] = (item, layouts.get(beat.id, {}))
             emphasized_previous = emphasis is not None
             self.decisions.append(HeroTravelDecision(
                 row.beat_id, row.asset_id, row.decision, row.reason, row.start, row.settle, row.dx,
@@ -197,6 +209,69 @@ class HeroTravelPlanner:
             if (key := (cue.beat_id, cue.asset_id)) in revoked else cue
             for cue in motion
         ]
+
+    def fit_emphasis_to_text(
+        self, motion: list[MotionCue], text_boxes: dict[str, list[tuple[float, float, Box]]],
+    ) -> list[MotionCue]:
+        """After Text is composed: an emphasis never grows the hero into visible text.
+
+        The pulse steps down through the reference amplitudes until the scaled hero adds no
+        overlap with any text box visible during the pulse; below the readable amplitude
+        it is removed and the hero simply rests. Recorded on the hero's decision.
+        """
+        changes: dict[tuple[str, str], str] = {}
+        output = list(motion)
+        for position, cue in enumerate(motion):
+            key = (cue.beat_id, cue.asset_id)
+            pulse = (cue.params or {}).get("hero_emphasis") if isinstance(cue.params, dict) else None
+            if key not in self._emphases or not isinstance(pulse, dict):
+                continue
+            item, layout = self._emphases[key]
+            start, end, scale = float(pulse["start"]), float(pulse["end"]), float(pulse["scale"])
+            visible = [tb for t0, t1, tb in text_boxes.get(cue.beat_id, [])
+                       if t0 < end - _EPS and t1 > start + _EPS]
+            rest = box(item, (0.0, 0.0, 1.0))
+
+            def adds_overlap(delta: float) -> bool:
+                scaled = box(item, (0.0, 0.0, 1.0 + delta))
+                return any(_intersection(scaled, tb) > _intersection(rest, tb) + 1e-9 for tb in visible)
+
+            current = scale - 1.0
+            if not adds_overlap(current):
+                continue
+            frame_w, frame_h = frame_size()
+            asset_px = min(float(item.width) * frame_w, float(item.height) * frame_h)
+            readable = semantic_readability_floor_px("ESTABLISH", item_width=item.width, item_height=item.height,
+                                                     duration=end - start) * 1.05 / max(asset_px, 1.0)
+            delta = next((c for c in _amplitudes(readable)
+                          if c < current - _EPS
+                          and not adds_overlap(c)
+                          and self._scaled_problem(item, cue.asset_id, layout, c) is None), None)
+            segments = []
+            for row in cue.segments:
+                if row.semantic_action == "HERO_EMPHASIS":
+                    if delta is None:
+                        continue
+                    frames = [{**f, "scale": round(1.0 + delta, 5)} if abs(float(f.get("scale", 1.0)) - 1.0) > 1e-9
+                              else f for f in row.program.get("keyframes") or []]
+                    row = row.model_copy(update={"program": {**row.program, "keyframes": frames}})
+                segments.append(row)
+            params = dict(cue.params)
+            if delta is None:
+                params.pop("hero_emphasis", None)
+                changes[key] = "revoked:pulse_would_grow_into_composed_text"
+            else:
+                params["hero_emphasis"] = {**pulse, "scale": round(1.0 + delta, 5)}
+                changes[key] = f"applied:trimmed_for_text_{1.0 + delta:.2f}"
+            output[position] = cue.model_copy(update={"segments": segments, "params": params})
+        if changes:
+            self.decisions = [
+                HeroTravelDecision(row.beat_id, row.asset_id, row.decision, row.reason, row.start, row.settle,
+                                   row.dx, row.peak_speed, changes[(row.beat_id, row.asset_id)])
+                if (row.beat_id, row.asset_id) in changes else row
+                for row in self.decisions
+            ]
+        return output
 
     @staticmethod
     def _hero(beat: StoryBeat, choreography: ChoreographyPlan | None,
@@ -304,22 +379,23 @@ class HeroTravelPlanner:
         asset_px = min(float(item.width) * frame_w, float(item.height) * frame_h)
         floor = semantic_readability_floor_px("ESTABLISH", item_width=item.width, item_height=item.height,
                                               duration=duration)
-        delta = max(EMPHASIS_RANGE[0], floor * 1.05 / max(asset_px, 1.0))
-        if delta > EMPHASIS_RANGE[1] + _EPS:
-            return None, f"abstain:readable_emphasis_needs_{delta:.3f}_scale"
+        readable = floor * 1.05 / max(asset_px, 1.0)
+        if readable > EMPHASIS_RANGE[1] + _EPS:
+            return None, f"abstain:readable_emphasis_needs_{readable:.3f}_scale"
         extent = min(float(item.width), float(item.height))
-        if delta * extent / (0.45 * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
-            return None, "abstain:emphasis_exceeds_comfort_speed"
-        scaled = box(item, (0.0, 0.0, 1.0 + delta))
-        for other_id, other in layout.items():
-            if other_id == cue.asset_id:
+        delta, why = None, "abstain:no_safe_reference_amplitude"
+        for candidate in _amplitudes(readable):
+            if candidate * extent / (0.45 * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
+                why = "abstain:emphasis_exceeds_comfort_speed"
                 continue
-            allowed = authored_overlap_ratio(item, other) + _OVERLAP_SLACK
-            target = box(other, (0.0, 0.0, 1.0))
-            if _intersection(scaled, target) / max(1e-9, min(_area(scaled), _area(target))) > allowed:
-                return None, "abstain:scaled_hero_would_collide"
-        if scaled[0] < -_EPS or scaled[1] < -_EPS or scaled[2] > 1 + _EPS or scaled[3] > 1 + _EPS:
-            return None, "abstain:scaled_hero_would_clip"
+            problem = HeroTravelPlanner._scaled_problem(item, cue.asset_id, layout, candidate)
+            if problem is not None:
+                why = problem
+                continue
+            delta = candidate
+            break
+        if delta is None:
+            return None, why
         for other in cues:
             if other.asset_id == cue.asset_id:
                 continue
@@ -352,6 +428,21 @@ class HeroTravelPlanner:
         new_params["hero_emphasis"] = {"start": round(start, 6), "end": round(end, 6),
                                        "scale": round(1 + delta, 5)}
         return cue.model_copy(update={"segments": segments, "params": new_params}), "applied"
+
+    @staticmethod
+    def _scaled_problem(item: LayoutItem, asset_id: str, layout: dict[str, LayoutItem], delta: float) -> str | None:
+        """Why the hero scaled by ``1 + delta`` would be unsafe, or None."""
+        scaled = box(item, (0.0, 0.0, 1.0 + delta))
+        for other_id, other in layout.items():
+            if other_id == asset_id:
+                continue
+            allowed = authored_overlap_ratio(item, other) + _OVERLAP_SLACK
+            target = box(other, (0.0, 0.0, 1.0))
+            if _intersection(scaled, target) / max(1e-9, min(_area(scaled), _area(target))) > allowed:
+                return "abstain:scaled_hero_would_collide"
+        if scaled[0] < -_EPS or scaled[1] < -_EPS or scaled[2] > 1 + _EPS or scaled[3] > 1 + _EPS:
+            return "abstain:scaled_hero_would_clip"
+        return None
 
     @staticmethod
     def _moves(program: dict) -> bool:

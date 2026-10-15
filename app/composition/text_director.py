@@ -15,6 +15,13 @@ from app.targets import active_target
 Box = tuple[float, float, float, float]
 
 
+# The approved references draw labels large and close to their subject; below about
+# two thirds of the production size a label becomes hard to read on a small screen.
+READABLE_FONT_SCALE = 0.68
+# A legible label may move this far (normalized centre distance) from its subject.
+READABLE_ANCHOR_REACH = 0.30
+
+
 @dataclass(frozen=True, slots=True)
 class PlacedTextRegion:
     cue_id: str
@@ -156,20 +163,25 @@ class TextPlacementDirector:
         if not acceptable:
             return None
         # Preserve established typography/layout whenever the production scale ladder
-        # already has a legal placement. The 0.52/0.50 floor is a bounded fallback for
-        # otherwise unplaceable cues, not a competing visual style.
-        established = [row for row in acceptable if row[5] >= 0.56]
-        pool = established or acceptable
-        best = min(
-            pool,
-            key=lambda row: (
-                row[0],
-                -row[5],
-                row[1].prior,
-                row[1].y,
-                row[1].x,
-            ),
-        )
+        # already has a legal placement. Labels stay legible: a placement at or above
+        # READABLE_FONT_SCALE wins whenever the contract accepts one; the lower rungs
+        # (down to 0.50) are a bounded fallback for otherwise unplaceable cues.
+        def rank(row):
+            return row[0], -row[5], row[1].prior, row[1].y, row[1].x
+
+        def distance(row) -> float:
+            if anchor is None:
+                return 0.0
+            return self._center_distance(row[1].x, row[1].y, anchor.x, anchor.y)
+
+        established = [row for row in acceptable if row[5] >= 0.56] or acceptable
+        best = min(established, key=rank)
+        readable = [row for row in acceptable if row[5] >= READABLE_FONT_SCALE]
+        if readable and best[5] < READABLE_FONT_SCALE:
+            # A legible label wins unless it would leave its subject's neighbourhood.
+            larger = min(readable, key=rank)
+            if distance(larger) <= max(READABLE_ANCHOR_REACH, distance(best) + 0.12):
+                best = larger
         score, candidate, box, overlap, text_overlap, font_scale, width = best
         item = TextLayoutItem(
             text_cue_id=cue.id,

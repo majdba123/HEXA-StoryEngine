@@ -7,6 +7,8 @@ TEXT_ENTRY_MAX_SECONDS = 0.24
 # Mean fixation duration of skilled reading (~225-250 ms, Rayner 1998). A word that is
 # never at rest for one fixation after its entrance cannot be read, only glimpsed.
 READING_FIXATION_SECONDS = 0.25
+# A revealed visual is recognizable a few frames in (reference entry ramps: 3-13 frames).
+ANCHOR_RECOGNITION_SECONDS = 3 / 30
 
 
 class TextVisibilityPolicy:
@@ -29,6 +31,36 @@ class TextVisibilityPolicy:
         if later:
             target = min(target, max(cue.spoken_end, min(later) - 0.08))
         return min(beat.end, max(cue.spoken_end, target))
+
+    @staticmethod
+    def anchor_ready(cue: TextCue, beat: StoryBeat) -> float | None:
+        """When the text's own visual subject is recognizable on screen, or None.
+
+        Three frames after the subject's Story reveal (reference entry ramps reach about
+        half opacity there). Story owns the instant, so Motion details that keep the
+        subject visible (a continuity hand-off, an entry fade) never change the text.
+        """
+        if not cue.anchor_asset_id:
+            return None
+        activation = next((row for row in beat.asset_activations if row.asset_id == cue.anchor_asset_id), None)
+        if activation is None:
+            return None
+        from app.motion.timing import story_activation_window
+
+        _has_v2, window = story_activation_window(activation, beat)
+        if window is None or window.reveal_start is None:
+            return None
+        return float(window.reveal_start) + ANCHOR_RECOGNITION_SECONDS
+
+    @classmethod
+    def display_start(cls, cue: TextCue, beat: StoryBeat) -> float:
+        """Text never appears before its visual subject: spoken start, or the subject's
+        recognizable instant when that is later. Spoken timing itself is unchanged."""
+        ready = cls.anchor_ready(cue, beat)
+        spoken = float(cue.spoken_start)
+        if ready is None or ready - ANCHOR_RECOGNITION_SECONDS <= spoken + 1 / 30 + 1e-9:
+            return spoken  # the subject reveals with the words: both enter together
+        return ready
 
     @staticmethod
     def readable_floor(cue: TextCue) -> float:

@@ -61,25 +61,30 @@ class TextMotionPlanner:
                 beat,
                 cues_by_beat.get(cue.beat_id, []),
             )
+            # Never before its own visual subject is recognizable (spoken timing is kept).
+            display_start = self.visibility.display_start(cue, beat)
             tokens = self._token_motion(
                 cue,
                 visible_end,
                 action,
                 first_duration=sync["entry_duration"],
+                not_before=display_start,
             )
             entrance_end = tokens[0].end if tokens else min(
                 cue.spoken_end,
-                cue.spoken_start + self._entrance_duration(cue.semantic_type, 0),
+                display_start + self._entrance_duration(cue.semantic_type, 0),
             )
-            entrance_end = max(cue.spoken_start + 0.05, entrance_end)
+            entrance_end = max(display_start + 0.05, entrance_end)
             output.append(
                 TextMotionCue(
                     beat_id=cue.beat_id,
                     text_cue_id=cue.id,
                     kind=self._kind(cue.semantic_type, action),
-                    start=cue.spoken_start,
+                    start=display_start,
                     end=entrance_end,
                     params={
+                        **({"display_after_anchor": round(display_start, 6)}
+                           if display_start > float(cue.spoken_start) + 1e-6 else {}),
                         "emphasis_time": cue.emphasis_time,
                         "spoken_end": cue.spoken_end,
                         "visible_end": visible_end,
@@ -115,16 +120,18 @@ class TextMotionPlanner:
         action: str | None,
         *,
         first_duration: float | None = None,
+        not_before: float | None = None,
     ) -> list[TextMotionToken]:
         source_tokens = cue.tokens
+        floor = float(cue.spoken_start) if not_before is None else max(float(cue.spoken_start), not_before)
         if not source_tokens:
             return [
                 TextMotionToken(
                     text=cue.text,
-                    start=cue.spoken_start,
+                    start=floor,
                     end=max(
-                        cue.spoken_start + 0.05,
-                        min(cue.spoken_end, cue.spoken_start + 0.20),
+                        floor + 0.05,
+                        min(max(cue.spoken_end, floor + 0.05), floor + 0.20),
                     ),
                     visible_end=visible_end,
                     kind=self._token_kind(cue.semantic_type, 0, action),
@@ -138,14 +145,16 @@ class TextMotionPlanner:
                 if index == 0 and first_duration is not None
                 else self._entrance_duration(cue.semantic_type, index)
             )
+            # Words spoken before the subject is recognizable appear with it, together.
+            start = max(float(token.spoken_start), floor) if not_before is not None else token.spoken_start
             end = max(
-                token.spoken_start + 0.05,
-                min(token.spoken_start + duration, visible_end),
+                start + 0.05,
+                min(start + duration, visible_end),
             )
             output.append(
                 TextMotionToken(
                     text=token.text,
-                    start=token.spoken_start,
+                    start=start,
                     end=end,
                     visible_end=visible_end,
                     kind=self._token_kind(cue.semantic_type, index, action),

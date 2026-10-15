@@ -556,6 +556,81 @@ def _establish_opening_visual(
         output[member_index] = StoryAssetActivation.model_validate(data).with_legacy_evidence()
     return output
 
+# A RESULT that still needs this long after its reveal before the cut keeps its own
+# timing instead of moving after its cause (read time beats causal order).
+_RESULT_AFTER_CAUSE_HOLD_SECONDS = 0.30
+
+
+def _results_follow_their_cause(
+    activations: list[StoryAssetActivation],
+    beat: StoryBeat,
+    *,
+    visual_upper: float,
+) -> list[StoryAssetActivation]:
+    """A RESULT never appears before its own event leader is spoken inside its phrase.
+
+    When the authored RESULT phrase starts before, and still contains, the phrase of its
+    event's visual leader ("وصل إلى حساب موظف" around "حساب موظف"), Story's precise
+    spans revealed the consequence before its cause. The RESULT then reveals once the
+    leader has settled (or together with it when time is short), still inside its own
+    authored phrase; its gesture keeps its length. A RESULT authored entirely before its
+    leader (narration states the outcome first), a leader on the same span (authored
+    sequence order decides) and a RESULT with no read time left are unchanged.
+    """
+    rows = list(activations)
+    for index, row in enumerate(rows):
+        roles = {str(value).upper() for value in row.semantic_event_roles}
+        if ("RESULT" not in roles or "LEADER" in roles or not row.semantic_event_id
+                or row.activation_policy != "OWN_WINDOW" or row.source != "unified_final_package"
+                or row.reveal_start is None or row.phrase_start is None or row.phrase_end is None):
+            continue
+        leaders = [
+            other for other in rows
+            if other.asset_id != row.asset_id
+            and other.semantic_event_id == row.semantic_event_id
+            and "LEADER" in {str(value).upper() for value in other.semantic_event_roles}
+            and "RESULT" not in {str(value).upper() for value in other.semantic_event_roles}
+            and other.reveal_start is not None and other.phrase_start is not None
+            and other.settle_at is not None
+        ]
+        if not leaders:
+            continue
+        cause = min(leaders, key=lambda other: (float(other.reveal_start), other.asset_id))
+        if float(row.reveal_start) >= float(cause.reveal_start) - 1e-9:
+            continue
+        if not (float(row.phrase_start) + 1e-9 < float(cause.phrase_start) < float(row.phrase_end) - 1e-9):
+            continue
+        length = float(row.settle_at) - float(row.reveal_start)
+        peak_offset = float(row.semantic_peak) - float(row.reveal_start)
+        upper = min(float(row.phrase_end), visual_upper)
+        chosen = None
+        for reveal, policy in ((float(cause.settle_at), "after_cause_settle"),
+                               (float(cause.reveal_start), "with_cause_reveal")):
+            settle = reveal + length
+            if settle <= upper + 1e-9 and settle + _RESULT_AFTER_CAUSE_HOLD_SECONDS <= visual_upper + 1e-9:
+                chosen = (reveal, settle, policy)
+                break
+        if chosen is None:
+            continue
+        reveal, settle, policy = chosen
+        data = row.model_dump()
+        data.update(
+            reveal_start=reveal,
+            phrase_start=reveal,
+            semantic_peak=min(settle, reveal + peak_offset),
+            settle_at=settle,
+            evidence=[
+                *row.evidence,
+                "result_follows_cause",
+                f"result_cause_asset={cause.asset_id}",
+                f"result_cause_policy={policy}",
+                f"result_reveal_from={float(row.reveal_start):.6f}",
+            ],
+        )
+        rows[index] = StoryAssetActivation.model_validate(data).with_legacy_evidence()
+    return rows
+
+
 def schedule_windows(
     activations: list[AssetActivation], beat: StoryBeat, audio_duration: float,
     primary_ids: set[str], *, opening: bool = False,
@@ -711,6 +786,7 @@ def schedule_windows(
         opening=opening,
         event_evidence=opening_event_evidence,
     )
+    output = _results_follow_their_cause(output, beat, visual_upper=visual_upper)
 
     # Group members receive precisely the parent's window, not a second schedule.
     by_unit = {r.semantic_unit_id: r for r in output
