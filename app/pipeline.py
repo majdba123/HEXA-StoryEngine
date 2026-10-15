@@ -32,6 +32,8 @@ from app.motion import EntryMotionGrammar, MotionPlanner, ReferenceMotionEnforce
 from app.motion.cross_scene import CrossSceneContinuityPlanner
 from app.motion.arrival import EntryArrivalPolicy
 from app.motion.hero_travel import HeroTravelPlanner
+from app.motion.arrivals import SecondaryArrivalPlanner
+from app.motion.resolution import PayoffResolutionDirector
 from app.motion.semantic_reference import MotionSemanticReference
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
@@ -578,6 +580,15 @@ class StoryEnginePipeline:
                 story=story, composition=composition, choreography=choreography, motion=motion,
                 assets=assets, referent_carriers=self._referent_carriers(shared),
             )
+            # Cinematic VNext2 PAYOFF: each beat's resolving subject arrives with the
+            # reference pop and, where it is safe and spaced, the backdrop recedes.
+            self.resolution = PayoffResolutionDirector()
+            motion = self.resolution.plan(story=story, composition=composition, motion=motion, assets=assets,
+                                          emphasize=self.hero_travel.secondary_emphasis)
+            # Every other entering asset gets one reference gesture from its own geometry.
+            self.arrivals = SecondaryArrivalPlanner()
+            motion = self.arrivals.plan(story=story, composition=composition, motion=motion, assets=assets,
+                                        travel_sweeps=self.hero_travel.sweeps)
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,
                 assets=assets,
@@ -606,7 +617,10 @@ class StoryEnginePipeline:
             )
             composed_text = SceneBoundaryPlanner._text_boxes(text, text_composition, text_motion)
             motion = self.hero_travel.revoke_through_text(motion, entry_motion, composed_text)
+            motion = self.arrivals.pop_withdrawn(motion, self.hero_travel.withdrawn, composition=composition,
+                                                 assets=assets)
             motion = self.hero_travel.fit_emphasis_to_text(motion, composed_text)
+            motion = self.arrivals.settle_against_text(motion, composed_text)
             self.handoff_contracts.require_text_render_contract(
                 story=story,
                 assets=assets,
@@ -618,6 +632,14 @@ class StoryEnginePipeline:
             diagnostics.mkdir(parents=True, exist_ok=True)
             (diagnostics / "hero-travel.json").write_text(
                 json.dumps([row.to_payload() for row in self.hero_travel.decisions], indent=2),
+                encoding="utf-8",
+            )
+            (diagnostics / "arrivals.json").write_text(
+                json.dumps([row.to_payload() for row in self.arrivals.decisions], indent=2),
+                encoding="utf-8",
+            )
+            (diagnostics / "payoff-resolution.json").write_text(
+                json.dumps([row.to_payload() for row in self.resolution.decisions], indent=2),
                 encoding="utf-8",
             )
             (diagnostics / "text-owner-coupling.json").write_text(
