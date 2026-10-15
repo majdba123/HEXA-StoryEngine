@@ -78,3 +78,15 @@ The `restrict` option disables forwarding, agent forwarding and PTY, while `hexa
 - Failed readiness triggers an attempted rollback of **code only**. Restoring old SQLite blindly can erase newer job state; database rollback needs operator approval.
 - If a killed/dead deployment leaves `/var/lib/hexa-storyengine/web/.deploy-maintenance`, investigate and confirm no deployment is still running before removing it manually.
 - This uses controlled in-place Fast-forward updates with a short outage, matching today's VPS layout. Immutable release directories and atomic symlink cutover can be added as a separate upgrade. Do not claim zero downtime.
+
+## Automatic delivery verification
+
+Use a documentation-only change to validate the first automatic release safely.
+Make the change on `montage` and confirm its checks without touching production.
+Promote the exact reviewed commit to `bayer` with fast-forward (never force).
+Wait for both `V2 CI` and `Real Package Certification` to pass on that SHA.
+Verify the `HEXA Production Deploy` run was created by `workflow_run` (not manually dispatched)
+and ended with `DEPLOY_SUCCESS` or `DEPLOY_NOOP`. Verify the target SHA and
+`/ready` directly on the VPS. Never claim automatic deploy was tested solely
+because a manually dispatched run succeeded. Recheck inactive jobs and uploads
+immediately before promoting a release.
