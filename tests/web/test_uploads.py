@@ -153,6 +153,9 @@ def test_completion_is_idempotent_for_zip_and_folder(tmp_path, monkeypatch):
             response = client.post(f"/api/uploads/{uid}/complete")
             assert response.status_code == 202, response.text
             job = response.json()["id"]
+            assert f"resumable upload finalized upload={uid} job={job}" in (
+                tmp_path / "storage" / "security.log"
+            ).read_text(encoding="utf-8")
             assert client.post(f"/api/uploads/{uid}/complete").json()["id"] == job
             assert client.get(f"/api/uploads/{uid}").json()["job_id"] == job
             timings = client.get(f"/api/uploads/{uid}").json()
@@ -550,3 +553,108 @@ def test_aggregate_upload_reservation_limit(tmp_path, monkeypatch):
             ).status_code
             == 429
         )
+
+
+def test_chunk_fs_operation_does_not_block_health(tmp_path, monkeypatch):
+    """A delayed disk commit must not block the ASGI event loop."""
+    import asyncio
+    import threading
+
+    import httpx
+    from app.web.uploads import Uploads
+
+    async def exercise():
+        settings = replace(
+            Settings.from_env(),
+            work_root=tmp_path / "work",
+            export_root=tmp_path / "exports",
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        original = Uploads._commit_chunk
+
+        def delayed_commit(self, *args):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError("test commit was not released")
+            return original(self, *args)
+
+        monkeypatch.setattr(Uploads, "_commit_chunk", delayed_commit)
+        app = create_app(settings, tmp_path / "storage")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            package, audio = archive(), b"audio"
+            response = await client.post(
+                "/api/uploads",
+                json={"key": "responsive-upload-key", "manifest": manifest(package, audio)},
+            )
+            assert response.status_code == 201, response.text
+            uid = response.json()["id"]
+            pending = asyncio.create_task(
+                client.put(
+                    f"/api/uploads/{uid}/files/p0/chunks/0",
+                    content=package,
+                    headers={"X-Chunk-SHA256": hashlib.sha256(package).hexdigest()},
+                )
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                health = await asyncio.wait_for(client.get("/health"), timeout=2)
+                assert health.status_code == 200
+            finally:
+                release.set()
+            assert (await pending).status_code == 200
+
+    import asyncio
+
+    asyncio.run(exercise())
+
+
+def test_upload_cannot_be_discarded_during_validation(tmp_path, monkeypatch):
+    """Explicit discard cannot delete inputs a finalizer is currently validating."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi import HTTPException
+
+    settings = replace(
+        Settings.from_env(),
+        work_root=tmp_path / "work",
+        export_root=tmp_path / "exports",
+        export_min_free_bytes=0,
+    )
+    monkeypatch.setattr("app.web.uploads.export_root_problem", lambda _: None)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def delayed_audio(*_args):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("validation test not released")
+        raise HTTPException(status_code=422, detail="Intentional test validation failure")
+
+    monkeypatch.setattr("app.web.uploads.validate_audio", delayed_audio)
+    package, audio = archive(), b"audio"
+    storage = tmp_path / "storage"
+    with TestClient(create_app(settings, storage)) as client:
+        initialized = client.post(
+            "/api/uploads",
+            json={"key": "validation-delete-race", "manifest": manifest(package, audio)},
+        )
+        assert initialized.status_code == 201, initialized.text
+        uid = initialized.json()["id"]
+        assert put(client, uid, "p0", 0, package).status_code == 200
+        assert put(client, uid, "audio", 0, audio).status_code == 200
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(client.post, f"/api/uploads/{uid}/complete")
+            try:
+                assert entered.wait(5), "Validation did not start"
+                rejected = client.delete(f"/api/uploads/{uid}")
+                assert rejected.status_code == 409
+                assert (storage / "uploads" / uid / "p0").is_file()
+            finally:
+                release.set()
+            result = future.result(timeout=10)
+            assert result.status_code == 422
+            assert client.get(f"/api/uploads/{uid}").json()["state"] == "failed"
