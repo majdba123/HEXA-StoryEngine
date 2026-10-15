@@ -270,7 +270,11 @@ class MotionHandoffMixin(_HandoffCore):
 
     @staticmethod
     def _entry_opacity_inside_story_window(clock: object, cue: MotionCue) -> bool:
-        """The entry opacity clock must be exactly the cue's Story reveal -> settle window."""
+        """The entry opacity clock starts on the cue's Story reveal and completes inside it.
+
+        The ramp may finish before the Story settle (an entry that arrives at entry speed),
+        never after it, and must span at least the renderer's two-frame minimum.
+        """
         if not isinstance(clock, dict):
             return False
         try:
@@ -282,8 +286,8 @@ class MotionHandoffMixin(_HandoffCore):
         return (
             0.0 < initial < 1.0
             and abs(start - float(cue.start)) <= _EPS
-            and abs(settle - float(cue.end)) <= _EPS
-            and settle > start
+            and settle <= float(cue.end) + _EPS
+            and settle - start >= 2 / 30 - _EPS
         )
 
     @classmethod
