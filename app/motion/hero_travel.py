@@ -47,7 +47,10 @@ from .timing import (
     semantic_readability_floor_px,
 )
 
-HERO_TRAVEL = MotionComfortProfile(target_seconds=0.60, minimum_seconds=0.40, max_normalized_speed=1.0)
+# Cinematic VNext2: reference SLIDE entries (style_probe, n = 44) peak at 0.83 (q50) -
+# 1.22 (q75) frame widths/s over 8-13 frames (q25-q50); the VP4 cap of 1.0 w/s / 0.40 s
+# kept most heroes still (74 corpus abstentions on speed alone).
+HERO_TRAVEL = MotionComfortProfile(target_seconds=0.60, minimum_seconds=0.30, max_normalized_speed=1.25)
 SMOOTHSTEP_PEAK = 1.5  # peak derivative of 3p^2 - 2p^3
 _OFFSCREEN_MARGIN = 0.01
 _ANTICIPATION_GAP = 2 / 30  # never share a first frame with the earlier reveal
@@ -100,6 +103,7 @@ class HeroTravelPlanner:
         self.margin = _OFFSCREEN_MARGIN + max(0.0, float(horizontal_padding))
         self.decisions: list[HeroTravelDecision] = []
         self._sweeps: dict[tuple[str, str], tuple[float, float, Box]] = {}
+        self.withdrawn: set[tuple[str, str]] = set()
 
     def plan(
         self,
@@ -133,13 +137,13 @@ class HeroTravelPlanner:
             if (cue.beat_id, cue.asset_id) in (referent_carriers or ()) else cue
             for cue in motion
         ]
-        emphasized_previous = False
+        emphasized_previous: str | None = None  # family pulsed in the previous scene
         for beat in story:
             cues = [cue for cue in motion if cue.beat_id == beat.id]
             hero_id, reason = self._hero(beat, choreography, cues)
             if hero_id is None:
                 self.decisions.append(HeroTravelDecision(beat.id, None, "ABSTAIN", reason))
-                emphasized_previous = False
+                emphasized_previous = None
                 continue
             position = index[(beat.id, hero_id)]
             if (beat.id, hero_id) in continuing:
@@ -149,7 +153,7 @@ class HeroTravelPlanner:
                 self.decisions.append(HeroTravelDecision(beat.id, hero_id, "ABSTAIN",
                                                          "locked_family_or_referent_carrier",
                                                          emphasis="abstain:referent_carrier"))
-                emphasized_previous = False
+                emphasized_previous = None
                 continue
             # Motion's hero authority for later owners (Boundary's full-frame exit).
             output[position] = output[position].model_copy(
@@ -167,8 +171,11 @@ class HeroTravelPlanner:
                 output[position] = self._apply(cue, start=start, dx=dx, speed=speed)
                 row = HeroTravelDecision(beat.id, hero_id, "TRAVEL", reason, round(start, 6),
                                          round(float(cue.end), 6), round(dx, 6), round(speed, 4))
-            if emphasized_previous:
-                emphasis, why = None, "abstain:previous_scene_had_hero_emphasis"
+            family = (AssetManager.family_id(assets_by_id[hero_id]) if hero_id in assets_by_id else hero_id)
+            # Reference pulses come every 2-10 s (n = 25); only the same subject pulsing
+            # again in the very next scene reads as repetition.
+            if emphasized_previous == family:
+                emphasis, why = None, "abstain:same_subject_pulsed_in_previous_scene"
             else:
                 emphasis, why = self._emphasis(
                     beat=beat, cue=output[position], item=item, cues=cues,
@@ -177,11 +184,28 @@ class HeroTravelPlanner:
             if emphasis is not None:
                 output[position] = emphasis
                 self._emphases[(beat.id, hero_id)] = (item, layouts.get(beat.id, {}))
-            emphasized_previous = emphasis is not None
+            emphasized_previous = family if emphasis is not None else None
             self.decisions.append(HeroTravelDecision(
                 row.beat_id, row.asset_id, row.decision, row.reason, row.start, row.settle, row.dx,
                 row.peak_speed, why))
         return output
+
+    def secondary_emphasis(
+        self, *, beat: StoryBeat, cue: MotionCue, item: LayoutItem | None, cues: list[MotionCue],
+        layout: dict[str, LayoutItem],
+    ) -> tuple[MotionCue | None, str]:
+        """The same post-settle pulse for a beat's resolved subject when it is not the hero
+        (secondary focus). Every hero rule applies (competing accents, comfort speed,
+        collisions, frame, read hold); composed text trims it later like the hero's."""
+        emphasis, why = self._emphasis(beat=beat, cue=cue, item=item, cues=cues, layout=layout, continues=False)
+        if emphasis is not None and item is not None:
+            self._emphases[(beat.id, cue.asset_id)] = (item, layout)
+        return emphasis, why
+
+    @property
+    def sweeps(self) -> dict[tuple[str, str], tuple[float, float, Box]]:
+        """Planned travel paths: (start, settle, swept box) per (beat, hero)."""
+        return dict(self._sweeps)
 
     def revoke_through_text(
         self, motion: list[MotionCue], baseline: list[MotionCue],
@@ -191,6 +215,7 @@ class HeroTravelPlanner:
         text box visible during the travel returns to its certified baseline cue. Text
         composed against the earlier-visible hero stays collision-free for the later one."""
         revoked = set()
+        self.withdrawn: set[tuple[str, str]] = revoked
         for (beat_id, asset_id), (start, settle, sweep) in self._sweeps.items():
             if any(t0 < settle - _EPS and t1 > start + _EPS and _intersection(sweep, tb) > 0
                    for t0, t1, tb in text_boxes.get(beat_id, [])):
@@ -259,6 +284,10 @@ class HeroTravelPlanner:
             params = dict(cue.params)
             if delta is None:
                 params.pop("hero_emphasis", None)
+                carried = {**(params.get("program") or {}), "qa_base_entry": True}
+                if len(segments) == 1 and segments[0].phase == "ENTRY" and segments[0].program == carried \
+                        and segments[0].semantic_event_id is None:
+                    segments = []  # only the entry the pulse carried in remains: the cue is restored
                 changes[key] = "revoked:pulse_would_grow_into_composed_text"
             else:
                 params["hero_emphasis"] = {**pulse, "scale": round(1.0 + delta, 5)}
