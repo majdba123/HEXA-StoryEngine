@@ -173,7 +173,27 @@ async function poll() {
 }
 async function reconnect() {
   const active = await api('/api/jobs/active');
-  if (active.id) { const old = localStorage.getItem(uploadKey); localStorage.removeItem(uploadKey); if (old) await forgetFiles(old); activeUpload = null; watch(active.id); return; }
+  if (active.id) {
+    // A render started in another session must not erase an unrelated saved upload.
+    const old = localStorage.getItem(uploadKey);
+    if (old) {
+      try {
+        const session = await api(`/api/uploads/${old}`);
+        if (session.job_id === active.id) {
+          localStorage.removeItem(uploadKey);
+          await forgetFiles(old);
+        }
+      } catch (error) {
+        if (error.code === 404) {
+          localStorage.removeItem(uploadKey);
+          await forgetFiles(old);
+        }
+      }
+    }
+    activeUpload = null;
+    watch(active.id);
+    return;
+  }
   const uid = localStorage.getItem(uploadKey);
   if (uid) {
     try { files = await storedFiles(uid) || []; } catch (_) { files = []; }
