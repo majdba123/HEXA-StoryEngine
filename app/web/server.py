@@ -199,7 +199,9 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             raise HTTPException(422, "Invalid upload manifest JSON") from exc
         if not isinstance(body, dict):
             raise HTTPException(422, "Invalid upload manifest")
-        return uploads.initialize(upload_owner(), body.get("key"), body.get("manifest", {}))
+        return await asyncio.to_thread(
+            uploads.initialize, upload_owner(), body.get("key"), body.get("manifest", {})
+        )
 
     @app.get("/api/uploads/{upload_id}")
     def upload_status(upload_id: str):
@@ -212,7 +214,9 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
 
     @app.post("/api/uploads/{upload_id}/complete", status_code=202)
     async def finish_upload(upload_id: str):
-        return await asyncio.to_thread(uploads.complete, upload_id, upload_owner(), settings)
+        result = await asyncio.to_thread(uploads.complete, upload_id, upload_owner(), settings)
+        guard.log.info("resumable upload finalized upload=%s job=%s", upload_id, result["id"])
+        return result
 
     @app.delete("/api/uploads/{upload_id}")
     def discard_upload(upload_id: str):
