@@ -284,10 +284,8 @@ class HeroTravelPlanner:
             params = dict(cue.params)
             if delta is None:
                 params.pop("hero_emphasis", None)
-                carried = {**(params.get("program") or {}), "qa_base_entry": True}
-                if len(segments) == 1 and segments[0].phase == "ENTRY" and segments[0].program == carried \
-                        and segments[0].semantic_event_id is None:
-                    segments = []  # only the entry the pulse carried in remains: the cue is restored
+                # The entry segment the pulse carried in leaves with it: the cue is restored.
+                segments = [row for row in segments if row.program.get("carried_for") != "hero_emphasis"]
                 changes[key] = "revoked:pulse_would_grow_into_composed_text"
             else:
                 params["hero_emphasis"] = {**pulse, "scale": round(1.0 + delta, 5)}
@@ -450,7 +448,8 @@ class HeroTravelPlanner:
             # Same convention as MotionPlanner._carried_entry_segment: the carried base entry
             # keeps its qa_base_entry verification class.
             segments.insert(0, MotionSegment(phase="ENTRY", start=float(cue.start), end=float(cue.end),
-                                             program={**deepcopy(params.get("program") or {}), "qa_base_entry": True}))
+                                             program={**deepcopy(params.get("program") or {}), "qa_base_entry": True,
+                                                      "carried_for": "hero_emphasis"}))
         segments.append(MotionSegment(phase="ESTABLISH", start=start, end=end, program=program,
                                       semantic_action="HERO_EMPHASIS", involvement="FOCUS"))
         new_params = dict(params)

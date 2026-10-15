@@ -49,8 +49,9 @@ def _assets(*ids: str) -> list[VisualAsset]:
 def _plan(cues, items, *, beats=None, hero="hero", padding=0.0, text=None, carriers=None):
     beats = beats or [_beat()]
     planner = HeroTravelPlanner(horizontal_padding=padding)
+    heroes = hero if isinstance(hero, dict) else {b.id: hero for b in beats}
     directives = tuple(ChoreographyDirective(beat_id=b.id, sequence_id="q", phase=SequencePhase.SETUP,
-                                             action="REVEAL", primary_asset_id=hero) for b in beats)
+                                             action="REVEAL", primary_asset_id=heroes[b.id]) for b in beats)
     out = planner.plan(story=beats, composition=[CompositionBeat(beat_id=b.id, items=items) for b in beats],
                        choreography=ChoreographyPlan(directives=directives), motion=cues,
                        assets=_assets(*{c.asset_id for c in cues}), text_boxes=text, referent_carriers=carriers)
@@ -87,9 +88,17 @@ def test_scene_opener_never_travels_over_an_empty_canvas() -> None:
 
 
 def test_travel_never_exceeds_the_hero_speed_cap() -> None:
-    planner, _ = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.2, 1.5)], [SUPPORT, HERO])
+    # Cinematic VNext2 replaced the VP4 cap (1.0 w/s, 0.40 s) with the references' measured
+    # slide speed (peak 1.25 w/s, 0.30 s minimum). The cap itself is still never exceeded.
+    planner, _ = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.05, 1.3)], [SUPPORT, HERO])
     reason = next(d for d in planner.decisions).reason
     assert reason.startswith("insufficient_time") or reason.startswith("no_safe_direction:speed")
+    planner, out = _plan([_cue("support", 0.9, 1.1), _cue("hero", 1.2, 1.5)], [SUPPORT, HERO])
+    decision = next(d for d in planner.decisions)
+    assert decision.decision == "TRAVEL"                                  # 1.01 w/s: inside the new cap
+    assert decision.peak_speed <= HERO_TRAVEL.max_normalized_speed
+    hero = out[("b", "hero")]
+    assert hero.end - hero.start >= HERO_TRAVEL.minimum_seconds - 1e-9
 
 
 def test_a_visible_asset_on_every_path_blocks_travel() -> None:
@@ -143,12 +152,19 @@ def test_emphasis_is_a_separate_pulse_after_settle_that_finishes_before_the_hold
     assert entry.program["name"] == "hero_travel_entry"
 
 
-def test_emphasis_never_repeats_in_consecutive_scenes() -> None:
+def test_the_same_subject_never_pulses_in_consecutive_scenes() -> None:
+    # Cinematic VNext2: references pulse every 2-10 s (n = 25), so a pulse in the next scene
+    # is allowed; only the same subject pulsing again reads as repetition.
     beats = [_beat("b1", 0.0, 3.0), _beat("b2", 3.0, 6.0)]
     cues = [_cue("support", 0.1, 0.35, beat="b1"), _cue("hero", 1.0, 1.3, beat="b1"),
             _cue("support", 3.1, 3.35, beat="b2"), _cue("hero", 4.0, 4.3, beat="b2")]
     planner, _ = _plan(cues, [SUPPORT, HERO], beats=beats)
-    assert [d.emphasis for d in planner.decisions] == ["applied", "abstain:previous_scene_had_hero_emphasis"]
+    assert [d.emphasis for d in planner.decisions] == ["applied", "abstain:same_subject_pulsed_in_previous_scene"]
+    other = LayoutItem(asset_id="other", x=0.75, y=0.70, width=0.2, height=0.25)
+    cues = [_cue("support", 0.1, 0.35, beat="b1"), _cue("hero", 1.0, 1.3, beat="b1"),
+            _cue("support", 3.1, 3.35, beat="b2"), _cue("other", 4.0, 4.3, beat="b2")]
+    planner, _ = _plan(cues, [SUPPORT, HERO, other], beats=beats, hero={"b1": "hero", "b2": "other"})
+    assert [d.emphasis for d in planner.decisions] == ["applied", "applied"]
 
 
 def test_emphasis_abstains_beside_a_competing_accent_or_without_time() -> None:
@@ -174,3 +190,14 @@ def test_programs_never_share_keyframes_so_projection_scales_each_once() -> None
         frames = [id(frame) for program in programs if program for frame in program.get("keyframes", [])]
         lists = [id(program.get("keyframes")) for program in programs if program and program.get("keyframes")]
         assert len(frames) == len(set(frames)) and len(lists) == len(set(lists))
+
+
+def test_a_pulse_revoked_by_composed_text_restores_the_cue_exactly() -> None:
+    planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [SUPPORT, HERO])
+    hero = out[("b", "hero")]
+    assert hero.params.get("hero_emphasis") and any(r.program.get("carried_for") for r in hero.segments)
+    hugging = (0.851, 0.6, 0.95, 0.7)                     # touches the hero's right edge
+    revoked = planner.fit_emphasis_to_text(list(out.values()), {"b": [(0.0, 3.0, hugging)]})
+    hero = next(c for c in revoked if c.asset_id == "hero")
+    assert "hero_emphasis" not in hero.params and hero.segments == []
+    assert next(d for d in planner.decisions if d.asset_id == "hero").emphasis.startswith("revoked:")
