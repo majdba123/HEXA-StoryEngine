@@ -3,8 +3,8 @@
 ## Release policy
 
 - Develop and test on `montage`. Promote only an approved, tested commit to `bayer` with a fast-forward. Never force-push production.
-- Production deploys only when **V2 CI** and **Real Package Certification** both succeed for the exact current `bayer` SHA.
-- `HEXA_AUTO_DEPLOY` must be explicitly set to `true` before automatic deployment starts. It is **disabled by default**.
+- Only one automated GitHub workflow runs: **HEXA CI/CD (Bayer)** on a push to `bayer`. Its single Linux job runs the complete mandatory core, package, visual and real-package A-D test gates in sequence, then deploys the exact successful SHA. `montage` pushes never trigger GitHub Actions.
+- `HEXA_AUTO_DEPLOY=true` enables the deploy stage; a missing or different value fails closed (tests may pass, but nothing deploys).
 - An active rendering job or a recent resumable upload blocks deployment. Once the production version with the maintenance gate is installed, incoming writes are temporarily refused (503, Retry-After) during a deploy; existing reads/downloads remain available.
 - The deployment script is copied to a **root-owned location outside the repository**, executed by a dedicated forced-command SSH user. Do not grant GitHub Actions unrestricted root SSH access.
 - SQLite is backed up with Python's online backup API. Only `hexa-storyengine.service` is stopped/restarted; nginx, Redis, MySQL and other sites are untouched.
@@ -63,14 +63,18 @@ chmod 0600 /home/hexa-deploy/.ssh/authorized_keys
 
 The `restrict` option disables forwarding, agent forwarding and PTY, while `hexa-ssh-gate` accepts only `deploy <40-character-SHA>`. No SSH private key needs to come from the VPS, and no root credential belongs in GitHub.
 
-## Activation
+## Normal workflow
 
-1. Confirm both GitHub CI workflows succeeded for the latest `bayer` SHA.
-2. Configure the two secrets and three variables, with `HEXA_AUTO_DEPLOY=false`.
-3. Test the forced-command SSH access using the new key.
-4. Under GitHub Actions, select **HEXA Production Deploy → Run workflow** and enter the exact latest bayer SHA. This must report `GATE_PASS` twice and `DEPLOY_SUCCESS` or `DEPLOY_NOOP`.
-5. Confirm the VPS commit, `/ready`, authentication, upload recovery, and a production render if needed. **Only then enable** `HEXA_AUTO_DEPLOY=true`.
-6. Every subsequent tested `bayer` push deploys by itself, but an active job/upload defers deployment. Manually rerun after idle if needed. `montage` pushes never deploy.
+1. Develop and inspect real local renders on `montage`. Claude's dedicated `cinematic/vnext2` worktree stays isolated.
+2. After approval, fast-forward `bayer` to the tested `montage` commit and push `bayer` to GitHub.
+3. Exactly one `HEXA CI/CD (Bayer)` run with one Linux job executes on the `bayer` push. Tests run sequentially; ANY failure prevents deployment.
+4. This job compiles and lints, checks web/API/uploads, Test1/Test2/Test3, semantic certifications, package holdouts, visual gates, and all six real Final Packages (levels A-D). Corpus fingerprints and nonzero required test execution are mandatory.
+5. The job rechecks that its SHA is still the latest on `bayer`, then calls the existing restricted SSH deploy script. A render or recent active upload blocks the deploy. The script backs up SQLite, stops only HEXA, verifies readiness and rolls back code on failure.
+6. Verify `DEPLOY_SUCCESS` and the SHA in the VPS. If the server is busy, rerun this same workflow after it is idle. `montage` never directly deploys.
+
+## Optional manual deeper checks
+
+`Manual V2 Cross-platform Checks` retains the former dedicated Windows runner, but is no longer automatic. The single production Linux job exercises the same test source on Linux; this does NOT constitute Windows-runner certification. `Manual Real Package / Level E` retains optional full-length Level E encoding (explicit request with `level_e=true`). Normal automatic certification covers levels A-D, not Level E.
 
 ## Recovery notes
 

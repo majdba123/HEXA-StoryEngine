@@ -1,4 +1,4 @@
-name: Real Package Certification
+name: Manual Real Package / Level E
 
 # Fail-closed certification of the six real Unified Final Package 2.0 packages.
 # The ZIPs are not in Git: the corpus is downloaded from the repository variable
@@ -7,11 +7,6 @@ name: Real Package Certification
 # partial or different corpus fails the job; nothing here can skip to green.
 
 on:
-  push:
-    branches:
-      - main
-      - bayer
-      - montage
   workflow_dispatch:
     inputs:
       level_e:

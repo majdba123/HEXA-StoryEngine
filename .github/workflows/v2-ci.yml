@@ -1,13 +1,9 @@
-name: V2 CI
+name: Manual V2 Cross-platform Checks
 
+# Explicit manual-only Windows/full-suite regression suite.
+# Daily releases use the single HEXA CI/CD (Bayer) job instead.
 on:
-  push:
-    branches:
-      - main
-      - bayer
-      - majd
-      - montage
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
