@@ -41,7 +41,7 @@ jobs:
           fi
           sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 update
           sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 install -y ffmpeg
-          ffmpeg -version | head -n 1
+          ffmpeg -version | sed -n '1p'
 
       - name: Install HEXA and development dependencies
         run: python -m pip install -e ".[dev]"
