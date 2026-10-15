@@ -51,13 +51,13 @@ Web UI merged with `--no-ff` (merge commit `0b1b36e`); the merge is additive
   - `app/pipeline.py`: transaction revoke used `row.beat_id` on Story beats (latent crash).
 - [x] Phase 4 Builder authority: `docs/BUILDER-VISUAL-AUTHORING-VNEXT.md`,
   `app/final_package/authoring_audit.py` -> `authoring-audit.json` per bundle.
-- [~] Phase 5 tests: `tests/visual/test_vnext_*`, `tests/test2/final_package/test_authoring_audit.py`,
+- [x] Phase 5 tests: `tests/visual/test_vnext_*`, `tests/test2/final_package/test_authoring_audit.py`,
   `tests/web/test_web_security.py`.
-- [ ] Phase 6 encoded verification (BH candidate a6 rendered; export pending)
-- [ ] Phase 7 web end-to-end
-- [ ] Phase 8 promotion to `montage`
-- [ ] Phase 9 `feature/web-ui` cleanup
-- [ ] Phase 10 handoff
+- [x] Phase 6 encoded verification (v6 YouTube/Reels, holdouts Gray Hat and Script Kiddie)
+- [x] Phase 7 web end-to-end (HEXA-WEB.bat, real ZIP+audio, v6 produced, cancel, restart)
+- [x] Phase 8 promotion to `montage` (fast-forward push of this branch)
+- [ ] Phase 9 `feature/web-ui` cleanup (after CI on the promoted SHA)
+- [x] Phase 10 handoff: `docs/qa/VNEXT-FINAL-REPORT.md`, `docs/qa/vnext-acceptance.json`
 
 ## Evidence locations
 
@@ -65,8 +65,8 @@ Web UI merged with `--no-ff` (merge commit `0b1b36e`); the merge is additive
 
 ## Next step
 
-Wait for `E:\hexa-vnext\gates-a6.log` and `corpus-a6.log`; commit in logical commits;
-web end-to-end via HEXA-WEB.bat; export v6; promotion.
+Verify GitHub CI on the promoted `montage` SHA, confirm PR #3 shows merged, then delete
+the remote `feature/web-ui` branch (the local Codex worktree is left untouched).
 
 ## Resume commands
 

@@ -1,0 +1,30 @@
+{
+  "schema": "hexa.vnext.acceptance/1",
+  "engine_git_sha": "4c53c1bdbdc75d8588ac89b3961a7e2f4b546865",
+  "export": {
+    "version": 6,
+    "youtube": "E:\\HEXA_Exports\\HEXA_BLACK_HAT_HACKER_AR\\v6\\HEXA_BLACK_HAT_HACKER_AR_YOUTUBE.mp4",
+    "reels": "E:\\HEXA_Exports\\HEXA_BLACK_HAT_HACKER_AR\\v6\\HEXA_BLACK_HAT_HACKER_AR_REELS.mp4",
+    "youtube_render_plan_fingerprint": "b675d15fda01",
+    "reels_render_plan_fingerprint": "30286613a51b",
+    "frames": 2912, "fps": 30, "duration_s": 97.066667,
+    "final_media_verification": "PASS", "encoded_motion_verification": "PASS",
+    "deterministic_vs_independent_render": true,
+    "produced_by": "web UI -> StoryEnginePipeline.generate_bundle()"
+  },
+  "gates": {
+    "N1_opening_synchronization": {"status": "PASS", "youtube_openings_over_300ms": [0, 0], "total_ms": [627, 627], "reels_openings_over_300ms": [0, 0]},
+    "N2_read_hold": {"status": "FAIL", "deficits_within_narration": [13, 13], "still_below_300ms_until_picture_change": [11, 9], "note": "every remaining deficit is an authored final-word result (B1/B3)"},
+    "N3_payoff_coordination": {"status": "PASS", "competing_independent_accents_black_hat": [2, 1], "optional_gestures_yielded": 6, "result_follows_cause": {"BLACK_HAT_HACKER": 1, "STATE_LINKED_GROUP": 1}},
+    "N4_high_scale": {"status": "PASS", "black_hat_encoded_peaks": [1.0457, 1.0563, 1.0814, 1.067, 1.0771, 1.0821, 1.0795], "all_return_to_rest": true, "reference_pulse_median": [1.05, 1.065]},
+    "N5_entries_exits": {"status": "PASS", "bounded_entries_corpus": 68, "offscreen_travel_black_hat": 8, "full_exits_black_hat": 14, "exits_fully_gone": 14, "blank_frames": 0},
+    "N6_text_association": {"status": "PASS", "text_before_subject_corpus": [27, 1], "labels_below_0_68_corpus": [62, 12], "texts_placed_corpus": [362, 341]},
+    "N7_relation_integrity": {"status": "PASS", "continuity_decisions_identical_all_packages": true, "composition_identical_all_packages": true},
+    "N8_cross_format_parity": {"status": "PASS", "parity_differences_all_packages": 0}
+  },
+  "packages_planned": ["BLACK_HAT_HACKER", "INSIDER_THREAT", "SOCIAL_ENGINEER", "STATE_LINKED_GROUP", "SCRIPT_KIDDIE", "WHITE_HAT_HACKER", "GRAY_HAT_HACKER", "HACKTIVIST"],
+  "packages_encoded": ["BLACK_HAT_HACKER", "GRAY_HAT_HACKER", "SCRIPT_KIDDIE"],
+  "web_e2e": {"launcher": "HEXA-WEB.bat", "url": "http://127.0.0.1:8787", "real_upload": true, "generation_seconds": 531, "second_job_refused": 409, "refresh_restores_job": true, "downloads_match_export_sha256": true, "cancel": "canceled", "restart": "jobs and downloads persist; diagnostics 404 documented", "peak_private_mb": 973},
+  "tests": {"pytest": {"passed": 10087, "skipped": 38, "failed_then_fixed": 1}, "certification": {"passed": 349, "skipped": 6}},
+  "remaining_blockers": ["B1", "B3", "B4", "B2 stated-first cases", "B5 late anchors in sequences", "Reels text size (projection design)", "Builder source unavailable"]
+}
