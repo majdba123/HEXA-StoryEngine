@@ -8,8 +8,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
@@ -17,14 +17,18 @@ from app.desktop.export_preflight import export_root_problem
 from app.final_package.loader import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
 from app.web.jobs import Jobs
+from app.web.security import SECURITY_HEADERS, SESSION_COOKIE, WebGuard
 from app.web.validation import validate_audio, validate_zip
 
 
-def create_app(settings: Settings | None = None, storage: Path | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, storage: Path | None = None,
+               guard: WebGuard | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     storage = storage or Path(os.getenv("HEXA_WEB_STORAGE", ".hexa/web"))
-    jobs = Jobs(storage, settings)
+    retention = os.getenv("HEXA_WEB_RETENTION_DAYS")
+    jobs = Jobs(storage, settings, retention_days=float(retention) if retention else None)
     max_upload = int(os.getenv("HEXA_WEB_MAX_UPLOAD_BYTES", str(2 * 1024**3)))
+    guard = guard or WebGuard.from_env(storage, max_upload)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -34,6 +38,51 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
     app = FastAPI(title="HEXA Web", lifespan=lifespan)
     static = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static), name="static")
+
+    @app.middleware("http")
+    async def guarded(request: Request, call_next):
+        refusal = guard.refusal(request)
+        response = refusal if refusal is not None else await call_next(request)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
+
+    @app.get("/api/session")
+    def session(request: Request):
+        return {"auth_required": guard.token is not None, "authenticated": guard.authorized(request)}
+
+    @app.post("/api/session")
+    def login(request: Request, token: str = Body(..., embed=True)):
+        if guard.token is None:
+            return {"ok": True, "auth_required": False}
+        session_id = guard.login(token)
+        client = request.client.host if request.client else "-"
+        if session_id is None:
+            guard.log.warning("failed login client=%s", client)
+            raise HTTPException(401, "Invalid access token")
+        guard.log.info("login client=%s", client)
+        response = JSONResponse({"ok": True, "auth_required": True})
+        response.set_cookie(SESSION_COOKIE, session_id, httponly=True, samesite="strict",
+                            secure=request.url.scheme == "https")
+        return response
+
+    @app.get("/ready")
+    def ready():
+        problems = []
+        problem = export_root_problem(settings)
+        if problem:
+            problems.append(f"export_root: {problem}")
+        for name, binary in (("ffmpeg", settings.ffmpeg_bin), ("ffprobe", settings.ffprobe_bin)):
+            if shutil.which(str(binary)) is None and not Path(str(binary)).is_file():
+                problems.append(f"{name}: not found")
+        try:
+            probe = jobs.root / ".ready"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            problems.append(f"storage: {exc}")
+        body = {"ready": not problems, "problems": problems, "active_job": (jobs.active() or {}).get("id")}
+        return JSONResponse(body, status_code=200 if not problems else 503)
 
     @app.get("/")
     def index():
@@ -96,6 +145,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
         job_id = jobs.create()
         if job_id is None:
             raise HTTPException(409, "A generation job is already active")
+        guard.log.info("job admitted id=%s", job_id)
         directory = jobs.root / job_id
         package_path = directory / "package.zip"
         audio_path = directory / ("narration" + suffix)
@@ -149,6 +199,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None) ->
             raise HTTPException(404, "Job not found")
         if not jobs.cancel(job_id):
             raise HTTPException(409, "Job is not active")
+        guard.log.info("job cancel requested id=%s", job_id)
         return {"state": "cancelling"}
 
     @app.get("/api/jobs/{job_id}/download/{kind}")

@@ -147,4 +147,17 @@ for (const id of ['package', 'audio', 'folder']) {
       $(id).files[0]?.name || '';
   });
 }
-reconnect();
+async function ensureSession() {
+  // A server deployment sets an access token; local use has none.
+  const state = await fetch('/api/session').then(r => r.json());
+  if (!state.auth_required || state.authenticated) return true;
+  const token = window.prompt('رمز الدخول إلى HEXA');
+  if (!token) { status('مطلوب رمز الدخول'); return false; }
+  const response = await fetch('/api/session', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token})
+  });
+  if (!response.ok) { status('رمز الدخول غير صحيح'); return false; }
+  return true;
+}
+
+ensureSession().then(ok => { if (ok) reconnect(); }).catch(error => status(`تعذر الاتصال بالخادم: ${error.message}`));

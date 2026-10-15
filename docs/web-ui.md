@@ -12,10 +12,33 @@ Use the project's existing Python 3.11 environment. In this isolated worktree, s
 
 Refreshing or reopening the page reconnects to the server's active job and restores its progress and log. The browser remembers the last job to restore completed results. The server rejects a second job while one is queued, running, or cancelling. Upload copying, ZIP checks, audio probing, package loading, and export root checks run outside the ASGI event loop so status and health requests remain responsive during validation.
 
+## Security guards (all modes)
+
+* **Same-origin writes.** Every POST/PUT/PATCH/DELETE with a foreign `Origin` or
+  `Sec-Fetch-Site: cross-site` is refused (403), so another web page cannot start or cancel
+  a render on the local server.
+* **Allowed hosts.** Requests whose `Host` is not a loopback name (or a name listed in
+  `HEXA_WEB_ALLOWED_HOSTS`) are refused (421), which blocks DNS-rebinding against
+  `127.0.0.1:8787`.
+* **Request size.** A request whose `Content-Length` exceeds twice
+  `HEXA_WEB_MAX_UPLOAD_BYTES` plus 1 MiB is refused (413) before the upload is read.
+* **Access token.** With `HEXA_WEB_TOKEN` set, every `/api/` route except `/api/session`
+  requires either `Authorization: Bearer <token>` or the HttpOnly, SameSite=Strict session
+  cookie issued by `POST /api/session {"token": ...}`; the page asks for the token once.
+  The launcher refuses to listen on a non-loopback `HEXA_WEB_HOST` without a token.
+* **Headers.** `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` and a same-origin Content-Security-Policy on every response.
+* **Security log.** Refusals, logins and job admissions/cancellations are appended to
+  `<HEXA_WEB_STORAGE>/security.log`.
+* **Readiness.** `GET /ready` returns 503 with concrete problems (export root, FFmpeg,
+  FFprobe, storage) and the active job id; `GET /health` is liveness only.
+* **Retention.** `HEXA_WEB_RETENTION_DAYS` removes uploaded inputs of finished jobs older
+  than N days at startup. Export bundles under the export root are never deleted.
+
 ## Server preparation
 
-The same ASGI application can be launched with `uvicorn app.web.server:app --host 127.0.0.1 --port 8787 --workers 1`. The current interface has no authentication. Before any public or VPS deployment, put it behind authenticated private access and a reverse proxy, configure server storage and retention, and verify resource limits. Never expose `app.api` as the public upload interface. Deployment automation and production rollout are separate work.
+The same ASGI application can be launched with `uvicorn app.web.server:app --host 127.0.0.1 --port 8787 --workers 1`. Before any public or VPS deployment set `HEXA_WEB_TOKEN`, `HEXA_WEB_ALLOWED_HOSTS` and `HEXA_WEB_RETENTION_DAYS`, put it behind TLS on a reverse proxy, and verify resource limits (see `docs/qa/VPS-DEPLOYMENT-READINESS.md`). Never expose `app.api` as the public upload interface. Deployment automation and production rollout are separate work.
 
-Production blockers are: authentication and access control; retention and precise cleanup for uploads, diagnostics, and export bundles; measured CPU, RAM, disk, and worker limits for the target machine; and a reviewed deployment and rollback procedure. The web module does not implement those policies. Diagnostic ZIP downloads currently require the server process that generated the job.
+Remaining production work: export-bundle retention policy, measured CPU/RAM/disk limits on the target machine, and a reviewed deployment and rollback procedure. Diagnostic ZIP downloads still require the server process that generated the job.
 
-For integration, compare this branch against the recorded `origin/montage` baseline, then rebase or merge only after the engine developer has finished and the user authorizes integration. Resolve any conflicts in shared CI or docs without replacing newer engine files, rerun web tests and existing certification gates, and retain `HEXA.bat` for rollback.
+The web UI is integrated in `montage`; `HEXA.bat` remains the desktop fallback.

@@ -216,7 +216,7 @@ async def test_large_validation_does_not_block_health(tmp_path, monkeypatch):
     monkeypatch.setattr("app.web.server.validate_zip", slow_validation)
     app = create_app(settings, tmp_path / "storage")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
-                                 base_url="http://test") as client:
+                                 base_url="http://127.0.0.1") as client:
         pending = asyncio.create_task(client.post(
             "/api/jobs", files={"package": ("test.zip", archive()),
                                  "audio": ("voice.wav", b"audio")}))

@@ -7,7 +7,6 @@ on:
       - bayer
       - majd
       - montage
-      - feature/web-ui
   pull_request:
 
 jobs:

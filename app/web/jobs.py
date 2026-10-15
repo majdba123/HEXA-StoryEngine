@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import threading
+import time
 import uuid
 import os
 from pathlib import Path
@@ -15,7 +17,7 @@ from app.shared.errors import GenerationCancelledError
 class Jobs:
     """One worker per server process; SQLite admission also excludes other processes."""
 
-    def __init__(self, root: Path, settings: Settings) -> None:
+    def __init__(self, root: Path, settings: Settings, *, retention_days: float | None = None) -> None:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.settings = settings
@@ -44,6 +46,24 @@ class Jobs:
                 if not alive:
                     db.execute("UPDATE jobs SET state='failed', message='Server stopped during generation' "
                                "WHERE id=?", (row["id"],))
+        if retention_days is not None:
+            self.purge_uploads(retention_days)
+
+    def purge_uploads(self, days: float) -> list[str]:
+        """Delete uploaded inputs of finished jobs older than ``days``; exports are never touched.
+
+        Only directories named after a known finished job inside this storage root qualify.
+        """
+        cutoff = time.time() - days * 86400
+        removed = []
+        with self._connect() as db:
+            finished = {row["id"] for row in db.execute(
+                "SELECT id FROM jobs WHERE state IN ('completed','failed','canceled')")}
+        for path in self.root.iterdir():
+            if path.is_dir() and path.name in finished and path.stat().st_mtime < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+                removed.append(path.name)
+        return removed
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.db, timeout=30)
