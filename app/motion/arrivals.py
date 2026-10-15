@@ -27,6 +27,7 @@ from app.assets import AssetManager
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 
 from .collision import authored_overlap_ratio, box
+from .family import family_of, follow, rigid_followers
 from .resolution import POP_MAX_GROWTH, POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, POP_START_SCALE
 from .timing import projected_motion_activity_px
 
@@ -124,19 +125,31 @@ class SecondaryArrivalPlanner:
             for position in positions:
                 families[self._family(motion[position].asset_id, assets_by_id)] = families.get(
                     self._family(motion[position].asset_id, assets_by_id), 0) + 1
+            index = {output[p].asset_id: p for p in positions}
+            followed: set[str] = set()
             for position in sorted(positions, key=lambda p: (float(motion[p].start), motion[p].asset_id)):
                 cue = output[position]
+                if cue.asset_id in followed:
+                    continue
                 item = layout.get(cue.asset_id)
+                beat_cues = [output[p] for p in positions]
                 gesture, reason, updated = self._arrive(
                     cue, item=item, asset=assets_by_id.get(cue.asset_id),
                     family_size=families.get(self._family(cue.asset_id, assets_by_id), 1),
-                    beat_cues=[output[p] for p in positions], layout=layout,
+                    beat_cues=beat_cues, layout=layout,
                     sweeps={key: value for key, value in sweeps.items() if key[0] == beat.id},
+                    assets_by_id=assets_by_id,
                 )
                 if updated is not None:
                     output[position] = updated
                     if gesture == "SLIDE":
                         sweeps[(beat.id, cue.asset_id)] = self._slides[(beat.id, cue.asset_id)]
+                    # A rigid Pass2 family moves as one unit: its layers follow the primary.
+                    for member in rigid_followers(cue, beat_cues, layout, assets_by_id) or []:
+                        output[index[member.asset_id]] = follow(member, updated)
+                        followed.add(member.asset_id)
+                        self.decisions.append(ArrivalDecision(beat.id, member.asset_id, "FOLLOW",
+                                                              f"family_layer_follows:{cue.asset_id}"))
                 self.decisions.append(ArrivalDecision(beat.id, cue.asset_id, gesture, reason))
         return output
 
@@ -161,7 +174,13 @@ class SecondaryArrivalPlanner:
         for cue in motion:
             key = (cue.beat_id, cue.asset_id)
             output.append(self._pop_fallback.get(key, self._fade_fallback(cue)) if key in revoked else cue)
-        return output
+        leaders = {(cue.beat_id, cue.asset_id): cue for cue in output if (cue.beat_id, cue.asset_id) in revoked}
+        return [
+            follow(cue, leaders[(cue.beat_id, cue.params["family_follow"])])
+            if (cue.beat_id, cue.params.get("family_follow")) in leaders
+            and (cue.params.get("entry_grammar") or {}).get("arrival") == "FOLLOW" else cue
+            for cue in output
+        ]
 
     def pop_withdrawn(
         self,
@@ -186,10 +205,14 @@ class SecondaryArrivalPlanner:
             gesture, reason, updated = self._arrive(
                 cue, item=layouts.get(cue.beat_id, {}).get(cue.asset_id), asset=assets_by_id.get(cue.asset_id),
                 family_size=sum(1 for row in beat_cues if self._family(row.asset_id, assets_by_id) == family),
-                beat_cues=beat_cues, layout={}, sweeps={}, allow_slide=False,
+                beat_cues=beat_cues, layout=layouts.get(cue.beat_id, {}), sweeps={}, allow_slide=False,
+                assets_by_id=assets_by_id,
             )
             if updated is not None:
                 output[position] = updated
+                where = {row.asset_id: i for i, row in enumerate(output) if row.beat_id == cue.beat_id}
+                for member in rigid_followers(cue, beat_cues, layouts.get(cue.beat_id, {}), assets_by_id) or []:
+                    output[where[member.asset_id]] = follow(member, updated)
             self.decisions.append(ArrivalDecision(cue.beat_id, cue.asset_id, gesture, f"travel_withdrawn:{reason}"))
         return output
 
@@ -221,6 +244,7 @@ class SecondaryArrivalPlanner:
         layout: dict[str, LayoutItem],
         sweeps: dict[tuple[str, str], tuple[float, float, Box]],
         allow_slide: bool = True,
+        assets_by_id: dict[str, VisualAsset] | None = None,
     ) -> tuple[str, str, MotionCue | None]:
         params = cue.params if isinstance(cue.params, dict) else {}
         if item is None:
@@ -231,8 +255,10 @@ class SecondaryArrivalPlanner:
             return "TRAVEL", "hero_travel", None
         if params.get("reference_pop"):
             return "POP", "payoff_resolution", None
-        if family_size != 1 or (params.get("render_constraints") or {}).get("geometry_lock"):
-            return "FADE", "family_or_locked", None
+        if (params.get("render_constraints") or {}).get("geometry_lock"):
+            return "FADE", "geometry_locked_layer", None
+        if family_size != 1 and rigid_followers(cue, beat_cues, layout, assets_by_id or {}) is None:
+            return "FADE", "family_cannot_move_as_one", None
         if asset is not None and asset.parent_asset_id:
             return "FADE", "child_asset", None
         if params.get("handoff_from") or params.get("referent_carrier"):
@@ -255,7 +281,9 @@ class SecondaryArrivalPlanner:
             if isinstance(pulse, dict) and float(pulse["start"]) < arrival_end - _EPS \
                     and float(pulse["end"]) > float(cue.start) + _EPS:
                 return "FADE", "yields_to_hero_emphasis", None
-        slide = (self._slide(cue, item=item, beat_cues=beat_cues, layout=layout, sweeps=sweeps, window=window)
+        family = family_of(cue.asset_id, assets_by_id or {})
+        others = [row for row in beat_cues if family_of(row.asset_id, assets_by_id or {}) != family]
+        slide = (self._slide(cue, item=item, beat_cues=others, layout=layout, sweeps=sweeps, window=window)
                  if allow_slide else None)
         pop = self._pop(cue, item=item, window=window)
         if slide is not None:

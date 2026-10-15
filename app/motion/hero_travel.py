@@ -41,6 +41,7 @@ from app.targets import frame_size
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 
 from .collision import authored_overlap_ratio, box
+from .family import follow, rigid_followers
 from .timing import (
     MotionComfortProfile,
     motion_comfort,
@@ -169,6 +170,9 @@ class HeroTravelPlanner:
             if plan is not None:
                 start, dx, speed = plan
                 output[position] = self._apply(cue, start=start, dx=dx, speed=speed)
+                # A rigid Pass2 family travels as one unit: its layers follow the primary.
+                for member in rigid_followers(cue, cues, layouts.get(beat.id, {}), assets_by_id) or []:
+                    output[index[(beat.id, member.asset_id)]] = follow(member, output[position])
                 row = HeroTravelDecision(beat.id, hero_id, "TRAVEL", reason, round(start, 6),
                                          round(float(cue.end), 6), round(dx, 6), round(speed, 4))
             family = (AssetManager.family_id(assets_by_id[hero_id]) if hero_id in assets_by_id else hero_id)
@@ -229,9 +233,13 @@ class HeroTravelPlanner:
             for row in self.decisions
         ]
         base = {(cue.beat_id, cue.asset_id): cue for cue in baseline}
+        # The layers of a family that travelled as one unit return with it.
+        layers = {(cue.beat_id, cue.asset_id) for cue in motion
+                  if (cue.beat_id, (cue.params or {}).get("family_follow")) in revoked}
         return [
             base[key].model_copy(update={"params": {**base[key].params, "scene_hero": True}})
-            if (key := (cue.beat_id, cue.asset_id)) in revoked else cue
+            if (key := (cue.beat_id, cue.asset_id)) in revoked
+            else base[key] if key in layers else cue
             for cue in motion
         ]
 
@@ -330,11 +338,10 @@ class HeroTravelPlanner:
             return None, "not_entering"
         if (params.get("render_constraints") or {}).get("geometry_lock") or params.get("handoff_from") or continues:
             return None, "locked_family_or_referent_carrier"
-        asset = assets_by_id.get(cue.asset_id)
-        family = AssetManager.family_id(asset) if asset is not None else cue.asset_id
-        if any(other.asset_id != cue.asset_id and assets_by_id.get(other.asset_id) is not None
-               and AssetManager.family_id(assets_by_id[other.asset_id]) == family for other in cues):
-            return None, "pass2_family_travels_as_one_unit_not_supported"
+        followers = rigid_followers(cue, cues, layout, assets_by_id)
+        if followers is None:
+            return None, "pass2_family_cannot_move_as_one_unit"
+        unit = {cue.asset_id} | {row.asset_id for row in followers}
         settle = float(cue.end)
         if any(row.phase != "ENTRY" and float(row.start) < settle - _EPS and not self._result_pop(row)
                for row in cue.segments):
@@ -360,7 +367,7 @@ class HeroTravelPlanner:
                      max(begin[2], final[2]), max(begin[3], final[3]))
             blocker = None
             for other in cues:
-                if other.asset_id == cue.asset_id or float(other.start) >= settle - _EPS:
+                if other.asset_id in unit or float(other.start) >= settle - _EPS:
                     continue
                 other_item = layout.get(other.asset_id)
                 if other_item is None:

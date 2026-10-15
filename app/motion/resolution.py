@@ -31,6 +31,7 @@ from app.assets import AssetManager
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 
 from .collision import box
+from .family import follow, rigid_followers
 from .timing import projected_motion_activity_px
 
 _EPS = 1e-6
@@ -274,11 +275,15 @@ class PayoffResolutionDirector:
         arrival = "none"
         for asset_id in sorted(results):
             cue = updates.get(asset_id, by_asset[asset_id])
-            popped, why = self._pop(cue, layout.get(asset_id), assets_by_id, family_size=sum(
-                1 for row in cues if family(row.asset_id) == family(asset_id)))
+            followers = rigid_followers(cue, cues, layout, assets_by_id)
+            popped, why = self._pop(cue, layout.get(asset_id), assets_by_id,
+                                    family_size=1 if followers is not None else 2)
             if popped is not None:
                 updates[asset_id] = popped
                 arrival = "reference_pop"
+                for member in followers or []:
+                    # A rigid Pass2 family pops as one unit: its layers follow the primary.
+                    updates[member.asset_id] = follow(updates.get(member.asset_id, member), popped)
             elif arrival == "none":
                 arrival = f"kept:{why}"
 
@@ -347,8 +352,10 @@ class PayoffResolutionDirector:
             return None, "not_entering"
         if params.get("hero_travel"):
             return None, "travel_owns_arrival"
-        if family_size != 1 or (params.get("render_constraints") or {}).get("geometry_lock"):
-            return None, "family_or_locked"
+        if (params.get("render_constraints") or {}).get("geometry_lock"):
+            return None, "geometry_locked_layer"
+        if family_size != 1:
+            return None, "family_cannot_move_as_one"
         asset = assets_by_id.get(cue.asset_id)
         if asset is not None and asset.parent_asset_id:
             return None, "child_asset"

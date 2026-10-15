@@ -33,6 +33,7 @@ from app.motion.cross_scene import CrossSceneContinuityPlanner
 from app.motion.arrival import EntryArrivalPolicy
 from app.motion.hero_travel import HeroTravelPlanner
 from app.motion.arrivals import SecondaryArrivalPlanner
+from app.motion.family import bind_families
 from app.motion.resolution import PayoffResolutionDirector
 from app.motion.semantic_reference import MotionSemanticReference
 from app.refinement import RefinementService
@@ -709,6 +710,11 @@ class StoryEnginePipeline:
                     encoding="utf-8",
                 )
 
+            # Locked Pass2 layers draw with their family primary's transform (one unit).
+            motion = bind_families(
+                motion, {row.beat_id: {item.asset_id: item for item in row.items} for row in composition},
+                {asset.id: asset for asset in assets},
+            )
             self._check_cancel(cancelled)
             self._progress(progress, Stage.render, at(0.69), f"{prefix}Compiling render plan")
             plan, _ = self.render_planner.compile(

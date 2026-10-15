@@ -704,14 +704,29 @@ class FFmpegRenderer:
             # so a Pass2 family never fades as separate pieces.
             transform_source_label = base_source_label
 
+            # A geometry-locked Pass2 layer that Motion bound to its family primary (same
+            # Composition box) is drawn with the primary's transform: identical box and
+            # identical expressions keep the family pixel-aligned while it moves as one.
+            leader_id = (cue.params.get("family_follow")
+                         if cue is not None and isinstance(cue.params, dict) else None)
+            leader_cue = motion.get((beat.id, leader_id)) if leader_id else None
+            leader_item = current_items_by_id.get(leader_id) if leader_id else None
+            follows = bool(
+                geometry_locked and leader_cue is not None and leader_item is not None
+                and self.motion_adapter.supports(leader_cue)
+                and self._geometry(plan, leader_item) == (box_w, box_h, target_x, target_y)
+                and not (leader_cue.params.get("render_constraints") or {}).get("geometry_lock")
+            )
+            transform_cue = leader_cue if follows else cue
+
             scale_expr = "1"
             if (
-                not geometry_locked
-                and cue is not None
-                and self.motion_adapter.supports(cue)
+                (not geometry_locked or follows)
+                and transform_cue is not None
+                and self.motion_adapter.supports(transform_cue)
             ):
                 scale_expr = self.motion_adapter.scale_expression(
-                    cue=cue,
+                    cue=transform_cue,
                     segment_start=segment_start,
                     segment_duration=duration,
                 )
@@ -725,12 +740,12 @@ class FFmpegRenderer:
                 filters.append(f"[{transform_source_label}]null[{source_label}]")
 
             kind = cue.kind if cue else "reveal_in"
-            if geometry_locked:
+            if geometry_locked and not follows:
                 x_expr = str(target_x)
                 y_expr = str(target_y)
-            elif cue is not None and self.motion_adapter.supports(cue):
+            elif transform_cue is not None and self.motion_adapter.supports(transform_cue):
                 x_expr, y_expr = self.motion_adapter.position_expressions(
-                    cue=cue,
+                    cue=transform_cue,
                     target_x=target_x,
                     target_y=target_y,
                     canvas_width=plan.width,
