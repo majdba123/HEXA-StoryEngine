@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Install as root-owned /usr/local/sbin/hexa-deploy. Do not sudo-execute writable checkout files.
 set -Eeuo pipefail
-umask 077
+# Git checkout, merge and rollback create tracked files. The app runs as
+# hexa-studio, not root, so these files must be readable and dirs traversable.
+# Keep sensitive backups private through their root-only directory and file modes.
+umask 022
 APP=/var/www/hexa-storyengine
 DB=/var/lib/hexa-storyengine/web/jobs.sqlite3
 MAINTENANCE=/var/lib/hexa-storyengine/web/.deploy-maintenance
@@ -60,6 +63,7 @@ with sqlite3.connect(sys.argv[2]) as db:
     assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
 print('SQLITE_BACKUP_OK')
 PY
+chmod 600 "$BACKUP/jobs.sqlite3"
 
 # New requests get 503 with Retry-After; status and existing downloads stay accessible.
 touch "$MAINTENANCE"
@@ -90,6 +94,8 @@ STOPPED=1
 systemctl stop "$SERVICE"
 git merge --ff-only "$TARGET"
 [[ $(git rev-parse HEAD) == "$TARGET" ]]
+# Catch the failure mode that previously left the site unavailable.
+runuser -u hexa-studio -- test -r "$APP/app/web/server.py"
 systemctl start "$SERVICE"
 
 READY=0
