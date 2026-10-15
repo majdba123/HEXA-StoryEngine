@@ -590,6 +590,9 @@ class StoryEnginePipeline:
             self.arrivals = SecondaryArrivalPlanner()
             motion = self.arrivals.plan(story=story, composition=composition, motion=motion, assets=assets,
                                         travel_sweeps=self.hero_travel.sweeps)
+            # A scene opener holding the frame alone gets the reference pulse after it settles.
+            motion = self.hero_travel.hold_emphasis(story=story, composition=composition, motion=motion,
+                                                    assets=assets)
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,
                 assets=assets,

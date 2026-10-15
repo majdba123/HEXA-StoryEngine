@@ -41,7 +41,7 @@ from app.targets import frame_size
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 
 from .collision import authored_overlap_ratio, box
-from .family import follow, rigid_followers
+from .family import family_of, follow, rigid_followers
 from .timing import (
     MotionComfortProfile,
     motion_comfort,
@@ -60,6 +60,8 @@ EMPHASIS_RANGE = (0.03, 0.08)
 # Reference-measured post-settle pulse amplitudes, strongest first.
 EMPHASIS_CANDIDATES = (0.08, 0.07, 0.06, 0.05, 0.04, 0.03)
 EMPHASIS_SECONDS = 0.45
+# A scene opener that holds the frame alone at least this long gets the reference pulse.
+HOLD_ALONE_SECONDS = 1.0
 _EMPHASIS_PAUSE = 2 / 30  # a visible rest between arrival and emphasis
 _HOLD_GRID_MARGIN = 2 / 30
 _YIELD_ACTIONS = {"DEEMPHASIZE", "FOCUS_HANDOFF"}
@@ -192,6 +194,56 @@ class HeroTravelPlanner:
             self.decisions.append(HeroTravelDecision(
                 row.beat_id, row.asset_id, row.decision, row.reason, row.start, row.settle, row.dx,
                 row.peak_speed, why))
+        return output
+
+    def hold_emphasis(
+        self,
+        *,
+        story: list[StoryBeat],
+        composition: list[CompositionBeat],
+        motion: list[MotionCue],
+        assets: list[VisualAsset],
+    ) -> list[MotionCue]:
+        """A subject that opens its scene and then holds the frame alone for at least
+        HOLD_ALONE_SECONDS gets the reference pulse after it settles (references pulse
+        held subjects every 2-10 s). Every pulse rule applies; never the same subject in
+        two consecutive scenes."""
+        assets_by_id = {asset.id: asset for asset in assets}
+        layouts = {row.beat_id: {item.asset_id: item for item in row.items} for row in composition}
+        index = {(cue.beat_id, cue.asset_id): position for position, cue in enumerate(motion)}
+        output = list(motion)
+        self.hold_decisions: list[dict[str, str]] = []
+        previous: set[str] = set()
+        for beat in story:
+            cues = [cue for cue in output if cue.beat_id == beat.id]
+            pulsed = {family_of(cue.asset_id, assets_by_id) for cue in cues if cue.params.get("hero_emphasis")}
+            if not cues:
+                previous = set()
+                continue
+            opener = min(cues, key=lambda cue: (float(cue.start), cue.asset_id))
+            family = family_of(opener.asset_id, assets_by_id)
+            settle = max([float(opener.end)] + [float(row.end) for row in opener.segments])
+            alone_until = min((float(cue.start) for cue in cues if family_of(cue.asset_id, assets_by_id) != family),
+                              default=float(beat.end))
+            reason = None
+            if opener.params.get("hero_emphasis"):
+                reason = "opener_already_pulses"
+            elif (opener.params.get("render_constraints") or {}).get("geometry_lock"):
+                reason = "locked_layer"
+            elif alone_until - settle < HOLD_ALONE_SECONDS - _EPS:
+                reason = "not_alone_long_enough"
+            elif family in previous:
+                reason = "same_subject_pulsed_in_previous_scene"
+            else:
+                pulsed_cue, why = self.secondary_emphasis(
+                    beat=beat, cue=opener, item=layouts.get(beat.id, {}).get(opener.asset_id), cues=cues,
+                    layout=layouts.get(beat.id, {}))
+                if pulsed_cue is not None:
+                    output[index[(beat.id, opener.asset_id)]] = pulsed_cue
+                    pulsed = pulsed | {family}
+                reason = why
+            self.hold_decisions.append({"beat_id": beat.id, "asset_id": opener.asset_id, "decision": reason})
+            previous = pulsed
         return output
 
     def secondary_emphasis(

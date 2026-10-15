@@ -37,7 +37,7 @@ SLIDE_DISTANCE = 0.12        # frame widths (reference median travel 0.15, q25 0
 SLIDE_MIN_DISTANCE = 0.06
 SLIDE_EDGE_REACH = 0.16      # an asset whose box is this close to a side edge slides
 SLIDE_SECONDS = 10 / 30
-SLIDE_MIN_SECONDS = 5 / 30
+SLIDE_MIN_SECONDS = 4 / 30   # the references contain 4-frame slides (style_probe)
 SLIDE_MAX_PEAK_SPEED = 1.25  # w/s (reference slide peak q50 0.83, q75 1.22)
 SMOOTHSTEP_PEAK = 1.5
 _OVERLAP_SLACK = 0.02
@@ -72,9 +72,22 @@ def _moves(program: dict | None) -> bool:
     )
 
 
-def _is_nudge(program: dict | None) -> bool:
-    """Sprint 4.4's restrained leader scale-in (0.94 -> 1, optional small path)."""
-    return str((program or {}).get("name") or "") in {"reference_entry_scale_in", "reference_hero_spatial_scale_in"}
+def _is_nudge(program: dict | None, item: LayoutItem | None = None) -> bool:
+    """An entry gesture the reference arrival may replace: Sprint 4.4's restrained leader
+    scale-in (0.94 -> 1), or any planner gesture that stays below the visible arrival floor
+    (20 px) and carries no spoken accent (nothing grows above rest, no semantic peak)."""
+    program = program or {}
+    if str(program.get("name") or "") in {"reference_entry_scale_in", "reference_hero_spatial_scale_in"}:
+        return True
+    if item is None or "semantic_peak_progress" in program:
+        return False
+    frames = program.get("keyframes") or []
+    if any(float(f.get("scale", 1.0)) > 1.0 + 1e-9 for f in frames):
+        return False
+    return max((projected_motion_activity_px(dx=float(f.get("dx", 0.0)), dy=float(f.get("dy", 0.0)),
+                                             scale=float(f.get("scale", 1.0)), item_width=item.width,
+                                             item_height=item.height) for f in frames), default=0.0) \
+        < POP_MIN_ACTIVITY_PX
 
 
 def pop_frames(start_scale: float, settle: float) -> list[dict]:
@@ -264,7 +277,7 @@ class SecondaryArrivalPlanner:
         if params.get("handoff_from") or params.get("referent_carrier"):
             return "FADE", "referent_continuity", None
         program = params.get("program") or {}
-        if _moves(program) and not _is_nudge(program):
+        if _moves(program) and not _is_nudge(program, item):
             return "FADE", "certified_gesture_owns_entry", None
         window = float(cue.end) - float(cue.start)
         if window + _EPS < POP_MIN_SECONDS:
@@ -272,7 +285,8 @@ class SecondaryArrivalPlanner:
         arrival_end = float(cue.start) + min(max(SLIDE_SECONDS, POP_SECONDS), window)
         for row in cue.segments:
             if row.phase == "ENTRY":
-                if abs(float(row.start) - float(cue.start)) > _EPS or (_moves(row.program) and not _is_nudge(row.program)):
+                if abs(float(row.start) - float(cue.start)) > _EPS or (
+                        _moves(row.program) and not _is_nudge(row.program, item)):
                     return "FADE", "entry_segment_owns_motion", None
             elif float(row.start) < arrival_end - _EPS:
                 return "FADE", "accent_inside_arrival", None
