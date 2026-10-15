@@ -85,6 +85,22 @@ def test_readiness_reports_concrete_problems(tmp_path, monkeypatch):
         assert any(row.startswith("export_root:") for row in response.json()["problems"])
 
 
+
+def test_deployment_maintenance_blocks_mutations_but_keeps_reads_and_headers(tmp_path):
+    client, storage = _client(tmp_path)
+    with client:
+        marker = storage / ".deploy-maintenance"
+        marker.write_text("deployment", encoding="utf-8")
+        response = client.post("/api/jobs/missing/cancel")
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == "45"
+        assert response.headers["x-frame-options"] == "DENY"
+        assert client.get("/api/jobs/active").status_code == 200
+        assert client.get("/health").status_code == 200
+        marker.unlink()
+        assert client.post("/api/jobs/missing/cancel").status_code == 404
+
+
 def test_retention_removes_only_old_finished_uploads(tmp_path):
     settings = _settings(tmp_path)
     jobs = Jobs(tmp_path / "storage", settings)
