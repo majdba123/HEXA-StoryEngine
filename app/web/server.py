@@ -54,7 +54,16 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     @app.middleware("http")
     async def guarded(request: Request, call_next):
         refusal = guard.refusal(request)
-        response = refusal if refusal is not None else await call_next(request)
+        # Root-owned deployment flag, outside the checkout. While it exists,
+        # reject new mutations; GET status/downloads stay available.
+        # Keeps admitted jobs safe while an upgrade drains live requests.
+        if refusal is not None:
+            response = refusal
+        elif request.method in {"POST", "PUT", "PATCH", "DELETE"} and (jobs.root / ".deploy-maintenance").exists():
+            response = JSONResponse({"detail": "HEXA maintenance: retry after deployment"},
+                                    status_code=503, headers={"Retry-After": "45"})
+        else:
+            response = await call_next(request)
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
         return response
