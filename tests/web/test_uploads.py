@@ -606,8 +606,6 @@ def test_chunk_fs_operation_does_not_block_health(tmp_path, monkeypatch):
                 release.set()
             assert (await pending).status_code == 200
 
-    import asyncio
-
     asyncio.run(exercise())
 
 
