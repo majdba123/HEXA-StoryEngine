@@ -5,6 +5,7 @@ import shutil
 import json
 import zipfile
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,16 +20,27 @@ from app.shared.errors import InvalidPackageError
 from app.web.jobs import Jobs
 from app.web.security import SECURITY_HEADERS, SESSION_COOKIE, WebGuard
 from app.web.validation import validate_audio, validate_zip
+from app.web.uploads import Uploads
 
 
 def create_app(settings: Settings | None = None, storage: Path | None = None,
                guard: WebGuard | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    explicit_storage = storage is not None or bool(os.getenv("HEXA_WEB_STORAGE"))
     storage = storage or Path(os.getenv("HEXA_WEB_STORAGE", ".hexa/web"))
     retention = os.getenv("HEXA_WEB_RETENTION_DAYS")
     jobs = Jobs(storage, settings, retention_days=float(retention) if retention else None)
     max_upload = int(os.getenv("HEXA_WEB_MAX_UPLOAD_BYTES", str(2 * 1024**3)))
     guard = guard or WebGuard.from_env(storage, max_upload)
+    chunk_root = Path(os.getenv("HEXA_WEB_UPLOAD_ROOT", str(
+        storage / "uploads" if explicit_storage else Path.home() / ".hexa" / "uploads")))
+    uploads = Uploads(storage, jobs, max_upload, chunk_root,
+                      int(os.getenv("HEXA_WEB_CHUNK_BYTES", "262144")))
+    if retention:
+        uploads.purge_abandoned(float(retention))
+
+    def upload_owner() -> str:
+        return hashlib.sha256((guard.token or 'local').encode()).hexdigest()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -170,6 +182,47 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             raise
         return {"id": job_id, "state": "queued"}
 
+    @app.get("/api/uploads/config")
+    def upload_config():
+        return {"chunk_size": uploads.chunk_bytes, "max_file_bytes": max_upload}
+
+    @app.post("/api/uploads", status_code=201)
+    async def initialize_upload(request: Request):
+        raw = bytearray()
+        async for block in request.stream():
+            raw.extend(block)
+            if len(raw) > 1024 * 1024:
+                raise HTTPException(413, "Upload manifest is too large")
+        try:
+            body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(422, "Invalid upload manifest JSON") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(422, "Invalid upload manifest")
+        return uploads.initialize(upload_owner(), body.get("key"), body.get("manifest", {}))
+
+    @app.get("/api/uploads/{upload_id}")
+    def upload_status(upload_id: str):
+        return uploads.status(upload_id, upload_owner())
+
+    @app.put("/api/uploads/{upload_id}/files/{file_id}/chunks/{index}")
+    async def upload_chunk(upload_id: str, file_id: str, index: int, request: Request):
+        digest = request.headers.get("x-chunk-sha256", "")
+        return await uploads.chunk(upload_id, upload_owner(), file_id, index, digest, request)
+
+    @app.post("/api/uploads/{upload_id}/complete", status_code=202)
+    async def finish_upload(upload_id: str):
+        return await asyncio.to_thread(uploads.complete, upload_id, upload_owner(), settings)
+
+    @app.delete("/api/uploads/{upload_id}")
+    def discard_upload(upload_id: str):
+        uploads.discard(upload_id, upload_owner())
+        return {"state": "discarded"}
+
+    @app.post("/api/uploads/{upload_id}/retry")
+    def retry_upload(upload_id: str):
+        return uploads.retry(upload_id, upload_owner())
+
     @app.get("/api/jobs/active")
     def active_job():
         job = jobs.active()
@@ -202,9 +255,34 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         guard.log.info("job cancel requested id=%s", job_id)
         return {"state": "cancelling"}
 
+    @app.post("/api/jobs/{job_id}/retry", status_code=202)
+    def retry_job(job_id: str):
+        previous = jobs.get(job_id)
+        if previous is None or previous["state"] != "failed":
+            raise HTTPException(409, "Only failed jobs can be retried")
+        package = Path(previous["package"] or "")
+        audio = Path(previous["audio"] or "")
+        if not package.is_file() or not audio.is_file():
+            raise HTTPException(409, "Saved inputs are unavailable")
+        retry_id = jobs.create()
+        if retry_id is None:
+            raise HTTPException(409, "A generation job is already active")
+        jobs.start(retry_id, package, audio)
+        return {"id": retry_id, "state": "queued"}
+
     @app.get("/api/jobs/{job_id}/download/{kind}")
     def download(job_id: str, kind: str):
         job = jobs.get(job_id)
+        if kind == "diagnostics":
+            if job is None:
+                raise HTTPException(404, "Job not found")
+            path = jobs.root / job_id / "diagnostics.zip"
+            if not path.is_file():
+                report = jobs.report(job_id)
+                if report is None:
+                    raise HTTPException(404, "Diagnostic report unavailable")
+                jobs.save_report(job_id, report)
+            return FileResponse(path, filename=f"HEXA-diagnostic-{job_id[:8]}.zip")
         if job is None or job["state"] != "completed":
             raise HTTPException(404, "Completed job not found")
         bundle = Path(job["bundle"]).resolve()
@@ -215,13 +293,6 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             return FileResponse(path, filename=path.name, media_type="video/mp4")
         if kind == "manifest":
             return FileResponse(bundle / "export.json", filename="export.json")
-        if kind == "diagnostics":
-            path = jobs.root / job_id / "diagnostics.zip"
-            report = jobs.report(job_id)
-            if report is None:
-                raise HTTPException(404, "Diagnostic report unavailable after server restart")
-            report.export_zip(path)
-            return FileResponse(path, filename=f"HEXA-diagnostic-{job_id[:8]}.zip")
         raise HTTPException(404, "Unknown output")
 
     return app
