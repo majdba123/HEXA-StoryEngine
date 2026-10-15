@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import errno
+import asyncio
 import json
 import os
 import re
@@ -257,6 +258,14 @@ class Uploads:
                 raise HTTPException(413, "Chunk too large")
         if not data or hashlib.sha256(data).hexdigest() != digest:
             raise HTTPException(422, "Chunk checksum mismatch")
+        # Keep request streaming async; move fsync and SQLite commits off the event loop.
+        return await asyncio.to_thread(
+            self._commit_chunk, uid, owner, fid, index, digest, bytes(data)
+        )
+
+    def _commit_chunk(
+        self, uid: str, owner: str, fid: str, index: int, digest: str, data: bytes
+    ):
         with self.lock, self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             state = self.status(uid, owner)
@@ -320,6 +329,8 @@ class Uploads:
             state = self.status(uid, owner)
             if state["job_id"]:
                 raise HTTPException(409, "Generation job already admitted")
+            if state["state"] == "validating":
+                raise HTTPException(409, "Cannot discard while validation is in progress")
             if (self.root / uid).exists():
                 shutil.rmtree(self.root / uid)
             with self.connect() as db:
@@ -384,123 +395,123 @@ class Uploads:
                     "UPDATE uploads SET state='validating',validator_pid=?,updated=? WHERE id=?",
                     (os.getpid(), time.time(), uid),
                 )
-            validation_started = None
-            try:
-                problem = export_root_problem(settings)
-                if problem:
-                    raise HTTPException(422, problem)
-                verification_started = time.perf_counter()
-                for f in files:
-                    digest = hashlib.sha256()
-                    file_digest = hashlib.sha256()
-                    with (self.root / uid / f["id"]).open("rb") as stream:
-                        while block := stream.read(state["chunk_size"]):
-                            digest.update(hashlib.sha256(block).hexdigest().encode("ascii"))
-                            file_digest.update(block)
-                    if digest.hexdigest() != f["fingerprint"]:
-                        raise HTTPException(422, f"File integrity mismatch: {f['path']}")
-                    with self.connect() as db:
-                        db.execute(
-                            "UPDATE upload_files SET sha256=? WHERE upload_id=? AND file_id=?",
-                            (file_digest.hexdigest(), uid, f["id"]),
-                        )
+        validation_started = None
+        try:
+            problem = export_root_problem(settings)
+            if problem:
+                raise HTTPException(422, problem)
+            verification_started = time.perf_counter()
+            for f in files:
+                digest = hashlib.sha256()
+                file_digest = hashlib.sha256()
+                with (self.root / uid / f["id"]).open("rb") as stream:
+                    while block := stream.read(state["chunk_size"]):
+                        digest.update(hashlib.sha256(block).hexdigest().encode("ascii"))
+                        file_digest.update(block)
+                if digest.hexdigest() != f["fingerprint"]:
+                    raise HTTPException(422, f"File integrity mismatch: {f['path']}")
                 with self.connect() as db:
                     db.execute(
-                        "UPDATE uploads SET verify_seconds=? WHERE id=?",
-                        (time.perf_counter() - verification_started, uid),
+                        "UPDATE upload_files SET sha256=? WHERE upload_id=? AND file_id=?",
+                        (file_digest.hexdigest(), uid, f["id"]),
                     )
-                validation_started = time.perf_counter()
-                audio = next(f for f in files if f["role"] == "audio")
-                audio_path = self.root / uid / audio["id"]
-                # The stored identifier has no extension; probe the content with its validated suffix.
-                audio_named = self.root / uid / ("narration" + Path(audio["path"]).suffix.lower())
-                shutil.copyfile(audio_path, audio_named)
-                if os.name == "posix":
-                    audio_named.chmod(0o600)
-                validate_audio(audio_named, settings.ffprobe_bin)
-                package_path = self.root / uid / "package.zip"
-                if state["manifest"]["mode"] == "zip":
-                    package = next(f for f in files if f["role"] == "package")
-                    shutil.copyfile(self.root / uid / package["id"], package_path)
-                else:
-                    with zipfile.ZipFile(
-                        package_path, "w", compression=zipfile.ZIP_STORED
-                    ) as archive:
-                        for f in files:
-                            if f["role"] == "package":
-                                archive.write(self.root / uid / f["id"], f["path"])
-                if os.name == "posix":
-                    package_path.chmod(0o600)
-                validate_zip(package_path)
-                validation = self.root / uid / "validation"
+            with self.connect() as db:
+                db.execute(
+                    "UPDATE uploads SET verify_seconds=? WHERE id=?",
+                    (time.perf_counter() - verification_started, uid),
+                )
+            validation_started = time.perf_counter()
+            audio = next(f for f in files if f["role"] == "audio")
+            audio_path = self.root / uid / audio["id"]
+            # The stored identifier has no extension; probe the content with its validated suffix.
+            audio_named = self.root / uid / ("narration" + Path(audio["path"]).suffix.lower())
+            shutil.copyfile(audio_path, audio_named)
+            if os.name == "posix":
+                audio_named.chmod(0o600)
+            validate_audio(audio_named, settings.ffprobe_bin)
+            package_path = self.root / uid / "package.zip"
+            if state["manifest"]["mode"] == "zip":
+                package = next(f for f in files if f["role"] == "package")
+                shutil.copyfile(self.root / uid / package["id"], package_path)
+            else:
+                with zipfile.ZipFile(
+                    package_path, "w", compression=zipfile.ZIP_STORED
+                ) as archive:
+                    for f in files:
+                        if f["role"] == "package":
+                            archive.write(self.root / uid / f["id"], f["path"])
+            if os.name == "posix":
+                package_path.chmod(0o600)
+            validate_zip(package_path)
+            validation = self.root / uid / "validation"
+            try:
+                FinalPackageLoader().load(package_path, validation)
+            except InvalidPackageError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            finally:
+                shutil.rmtree(validation, ignore_errors=True)
+            with self.connect() as db:
+                db.execute(
+                    "UPDATE uploads SET validation_seconds=? WHERE id=?",
+                    (time.perf_counter() - validation_started, uid),
+                )
+            # The jobs unique index and upload association commit in the same SQLite transaction.
+            job_id = uuid.uuid4().hex
+            with self.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute("SELECT job_id FROM uploads WHERE id=?", (uid,)).fetchone()
+                if row["job_id"]:
+                    return {"id": row["job_id"], "state": "queued"}
                 try:
-                    FinalPackageLoader().load(package_path, validation)
-                except InvalidPackageError as exc:
-                    raise HTTPException(422, str(exc)) from exc
-                finally:
-                    shutil.rmtree(validation, ignore_errors=True)
+                    db.execute(
+                        "INSERT INTO jobs(id,state,message,package,audio) VALUES(?,'queued','Queued',?,?)",
+                        (job_id, str(package_path), str(audio_named)),
+                    )
+                    db.execute(
+                        "INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid())
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise HTTPException(409, "A generation job is already active") from exc
+                db.execute(
+                    "UPDATE uploads SET state='queued',validator_pid=NULL,job_id=?,admitted_at=?,updated=? WHERE id=?",
+                    (job_id, time.time(), time.time(), uid),
+                )
+            (self.jobs.root / job_id).mkdir(exist_ok=True)
+            self.jobs.start(job_id, package_path, audio_named)
+            return {"id": job_id, "state": "queued"}
+        except HTTPException as exc:
+            if validation_started is not None:
                 with self.connect() as db:
                     db.execute(
                         "UPDATE uploads SET validation_seconds=? WHERE id=?",
                         (time.perf_counter() - validation_started, uid),
                     )
-                # The jobs unique index and upload association commit in the same SQLite transaction.
-                job_id = uuid.uuid4().hex
+            if exc.status_code == 409:
                 with self.connect() as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    row = db.execute("SELECT job_id FROM uploads WHERE id=?", (uid,)).fetchone()
-                    if row["job_id"]:
-                        return {"id": row["job_id"], "state": "queued"}
-                    try:
-                        db.execute(
-                            "INSERT INTO jobs(id,state,message,package,audio) VALUES(?,'queued','Queued',?,?)",
-                            (job_id, str(package_path), str(audio_named)),
-                        )
-                        db.execute(
-                            "INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid())
-                        )
-                    except sqlite3.IntegrityError as exc:
-                        raise HTTPException(409, "A generation job is already active") from exc
                     db.execute(
-                        "UPDATE uploads SET state='queued',validator_pid=NULL,job_id=?,admitted_at=?,updated=? WHERE id=?",
-                        (job_id, time.time(), time.time(), uid),
+                        "UPDATE uploads SET state='uploading',validator_pid=NULL,error=?,updated=? WHERE id=? AND job_id IS NULL",
+                        (str(exc.detail), time.time(), uid),
                     )
-                (self.jobs.root / job_id).mkdir(exist_ok=True)
-                self.jobs.start(job_id, package_path, audio_named)
-                return {"id": job_id, "state": "queued"}
-            except HTTPException as exc:
-                if validation_started is not None:
-                    with self.connect() as db:
-                        db.execute(
-                            "UPDATE uploads SET validation_seconds=? WHERE id=?",
-                            (time.perf_counter() - validation_started, uid),
-                        )
-                if exc.status_code == 409:
-                    with self.connect() as db:
-                        db.execute(
-                            "UPDATE uploads SET state='uploading',validator_pid=NULL,error=?,updated=? WHERE id=? AND job_id IS NULL",
-                            (str(exc.detail), time.time(), uid),
-                        )
-                else:
-                    self.fail(uid, str(exc.detail))
-                raise
-            except OSError as exc:
-                if validation_started is not None:
-                    with self.connect() as db:
-                        db.execute(
-                            "UPDATE uploads SET validation_seconds=? WHERE id=?",
-                            (time.perf_counter() - validation_started, uid),
-                        )
-                self.fail(uid, str(exc))
-                if exc.errno in (errno.ENOSPC, errno.EDQUOT):
-                    raise HTTPException(507, "Insufficient storage during validation") from exc
-                raise
-            except Exception as exc:
-                if validation_started is not None:
-                    with self.connect() as db:
-                        db.execute(
-                            "UPDATE uploads SET validation_seconds=? WHERE id=?",
-                            (time.perf_counter() - validation_started, uid),
-                        )
-                self.fail(uid, str(exc))
-                raise
+            else:
+                self.fail(uid, str(exc.detail))
+            raise
+        except OSError as exc:
+            if validation_started is not None:
+                with self.connect() as db:
+                    db.execute(
+                        "UPDATE uploads SET validation_seconds=? WHERE id=?",
+                        (time.perf_counter() - validation_started, uid),
+                    )
+            self.fail(uid, str(exc))
+            if exc.errno in (errno.ENOSPC, errno.EDQUOT):
+                raise HTTPException(507, "Insufficient storage during validation") from exc
+            raise
+        except Exception as exc:
+            if validation_started is not None:
+                with self.connect() as db:
+                    db.execute(
+                        "UPDATE uploads SET validation_seconds=? WHERE id=?",
+                        (time.perf_counter() - validation_started, uid),
+                    )
+            self.fail(uid, str(exc))
+            raise
