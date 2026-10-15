@@ -1,4 +1,4 @@
-﻿const $ = id => document.getElementById(id);
+const $ = id => document.getElementById(id);
 const uploadKey = 'hexa.web.upload.v1';
 const pendingKey = 'hexa.web.upload.pending.v1';
 const jobKey = 'hexa.web.lastJob';
@@ -47,6 +47,9 @@ async function api(url, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { const error = new Error(body.detail || `HTTP ${response.status}`); error.code = response.status; throw error; }
   return body;
+}
+function permanentInitiationError(error) {
+  return [400, 409, 413, 422].includes(error.code);
 }
 function currentFiles() {
   const folder = Array.from($('folder').files);
@@ -175,7 +178,13 @@ async function reconnect() {
   if (uid) {
     try { files = await storedFiles(uid) || []; } catch (_) { files = []; }
     try { await resume(await api(`/api/uploads/${uid}`)); return; }
-    catch (error) { say(error.message); return; }
+    catch (error) {
+      if (error.code === 404) {
+        localStorage.removeItem(uploadKey);
+        await forgetFiles(uid);
+        files = [];
+      } else { say(error.message); return; }
+    }
   }
   const pending = localStorage.getItem(pendingKey);
   if (pending) {
@@ -185,7 +194,11 @@ async function reconnect() {
       localStorage.removeItem(pendingKey);
       files = [];
       await resume(session); return;
-    } catch (error) { say(`تعذر استعادة بداية الرفع: ${error.message}`); return; }
+    } catch (error) {
+      if (permanentInitiationError(error)) localStorage.removeItem(pendingKey);
+      say(`تعذر استعادة بداية الرفع: ${error.message}`);
+      return;
+    }
   }
   const old = localStorage.getItem(jobKey);
   if (old) watch(old);
@@ -209,7 +222,13 @@ $('form').addEventListener('submit', async event => {
     let pending = saved ? JSON.parse(saved) : {key:crypto.randomUUID(),manifest};
     if (JSON.stringify(pending.manifest) !== JSON.stringify(manifest)) throw Error('هناك بداية رفع محفوظة لملفات أخرى. اختر الملفات الأصلية.');
     localStorage.setItem(pendingKey, JSON.stringify(pending));
-    const snapshot = await api('/api/uploads', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pending)});
+    let snapshot;
+    try {
+      snapshot = await api('/api/uploads', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pending)});
+    } catch (error) {
+      if (permanentInitiationError(error)) localStorage.removeItem(pendingKey);
+      throw error;
+    }
     localStorage.setItem(uploadKey, snapshot.id);
     localStorage.removeItem(pendingKey);
     if (files.reduce((n, f) => n + f.file.size, 0) <= 100 * 1048576) {
