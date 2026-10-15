@@ -25,9 +25,12 @@ from app.final import FinalExporter, FinalMediaVerifier
 from app.final.bundle import ExportBundleWriter, ExportRoot, ReservedBundle, export_slug
 from app.canonical import CanonicalPackage
 from app.final_package import FinalPackageLoader
+from app.canonical import ensure_canonical_package
+from app.final_package.authoring_audit import audit_package
 from app.models import RenderPlan, Stage, StoryBeat, TextPlan, Transcript, VisualAsset
 from app.motion import EntryMotionGrammar, MotionPlanner, ReferenceMotionEnforcer, TextMotionPlanner
 from app.motion.cross_scene import CrossSceneContinuityPlanner
+from app.motion.arrival import EntryArrivalPolicy
 from app.motion.hero_travel import HeroTravelPlanner
 from app.motion.semantic_reference import MotionSemanticReference
 from app.refinement import RefinementService
@@ -161,6 +164,7 @@ class StoryEnginePipeline:
         self.motion = MotionPlanner()
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.entry_grammar = EntryMotionGrammar()
+        self.entry_arrival = EntryArrivalPolicy()
         self.scene_boundaries = SceneBoundaryPlanner(horizontal_padding=max(
             ReferencePlanProjector.reference_padding(row)[0] for row in SUPPORTED_VISUAL_TARGETS))
         self.cross_scene = CrossSceneContinuityPlanner()
@@ -456,6 +460,15 @@ class StoryEnginePipeline:
             ),
             encoding="utf-8",
         )
+        # Builder-owned visual limits (B1-B5), non-blocking: see docs/BUILDER-VISUAL-AUTHORING-VNEXT.md.
+        (workspace / "authoring-audit.json").write_text(
+            json.dumps(
+                [row.to_payload() for row in audit_package(ensure_canonical_package(package))],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         self.handoff_contracts.require_choreography_for_composition(
             story=story, assets=assets, choreography=choreography
         )
@@ -553,6 +566,8 @@ class StoryEnginePipeline:
                 motion, composition=composition, choreography=choreography, assets=assets,
                 story=story, text=shared.text,
             )
+            # An entry arrives at entry speed; Story reveal/peak/settle instants are kept.
+            motion = self.entry_arrival.apply(motion, composition=composition)
             # VP4 (authorized HERO_TRAVEL contract): one authoritative hero per scene may
             # travel in from off-frame and receive one post-settle emphasis. Text is then
             # composed once against this Motion and Boundary planned once on the final one.
@@ -589,9 +604,9 @@ class StoryEnginePipeline:
                     semantic_reference.text_cue_ids if semantic_reference is not None else None
                 ),
             )
-            motion = self.hero_travel.revoke_through_text(
-                motion, entry_motion, SceneBoundaryPlanner._text_boxes(text, text_composition, text_motion),
-            )
+            composed_text = SceneBoundaryPlanner._text_boxes(text, text_composition, text_motion)
+            motion = self.hero_travel.revoke_through_text(motion, entry_motion, composed_text)
+            motion = self.hero_travel.fit_emphasis_to_text(motion, composed_text)
             self.handoff_contracts.require_text_render_contract(
                 story=story,
                 assets=assets,
@@ -733,7 +748,7 @@ class StoryEnginePipeline:
                 candidate, changed, "transaction:text_or_boundary_would_change")
             if any(decision.accepted for decision in self.cross_scene.decisions) and changed_beats(candidate):
                 candidate = self.cross_scene.revoke(
-                    candidate, {row.beat_id for row in story},
+                    candidate, {row.id for row in story},
                     "transaction:verification_pass_not_identical")
         return candidate
 
