@@ -1,0 +1,113 @@
+name: HEXA Production Deploy
+
+on:
+  workflow_run:
+    workflows: [V2 CI, Real Package Certification]
+    types: [completed]
+    branches: [bayer]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full 40-character SHA of certified bayer release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hexa-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # No production deploy before the operator explicitly enables HEXA_AUTO_DEPLOY.
+    if: github.event_name == 'workflow_dispatch' || vars.HEXA_AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 40
+    steps:
+      - name: Confirm exact bayer commit and both independent CI gates
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.event.workflow_run.head_sha }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid full SHA'; exit 1; }
+          if [[ "$EVENT_NAME" == workflow_run ]]; then
+            [[ "$SOURCE_BRANCH" == bayer && "$SOURCE_EVENT" == push ]] || {
+              echo 'Only bayer push CI is authorized'; exit 1;
+            }
+          fi
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/bayer" --jq '.object.sha')"
+          if [[ "$TARGET_SHA" != "$latest" ]]; then
+            if [[ "$EVENT_NAME" == workflow_run ]]; then
+              echo 'Outdated CI result: newer bayer is available, skipping'
+              echo 'eligible=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo 'Manual SHA must equal current bayer'; exit 1
+          fi
+          for workflow in v2-ci.yml real-package-certification.yml; do
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?branch=bayer&event=push&head_sha=$TARGET_SHA&per_page=30")"
+            state="$(WF_JSON="$runs" python3 - "$TARGET_SHA" "$workflow" <<'PY'
+          import json, os, sys
+          sha, workflow = sys.argv[1:3]
+          runs = json.loads(os.environ['WF_JSON'])['workflow_runs']
+          matching = [r for r in runs if r['head_sha'] == sha and r['event'] == 'push']
+          if not matching:
+              print('PENDING')
+          elif matching[0]['status'] != 'completed':
+              print('PENDING')
+          elif matching[0]['conclusion'] == 'success':
+              print('PASS')
+          else:
+              print('FAIL')
+          PY
+            )"
+            if [[ "$state" == PENDING ]]; then
+              echo "Waiting for $workflow on exact SHA; next workflow completion will retry."
+              echo 'eligible=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [[ "$state" != PASS ]]; then
+              echo "Certification gate FAILED: $workflow"; exit 1
+            fi
+            echo "GATE_PASS: $workflow"
+          done
+          echo 'eligible=true' >> "$GITHUB_OUTPUT"
+          echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy certified release through restricted SSH
+        if: steps.verify.outputs.eligible == 'true'
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ steps.verify.outputs.sha }}
+          DEPLOY_HOST: ${{ vars.HEXA_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.HEXA_DEPLOY_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.HEXA_DEPLOY_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.HEXA_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DEPLOY_HOST" && -n "$SSH_PRIVATE_KEY" && -n "$SSH_KNOWN_HOSTS" ]] || {
+            echo 'Missing deploy host, SSH key, or pinned known_hosts'; exit 1;
+          }
+          [[ "$DEPLOY_HOST" =~ ^[0-9A-Za-z.:-]+$ ]] || exit 1
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          [[ "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || exit 1
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/hexa_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/hexa_key" >/dev/null
+          ssh -i "$HOME/.ssh/hexa_key" -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o ConnectTimeout=20 \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "hexa-deploy@$DEPLOY_HOST" "deploy $DEPLOY_SHA"
