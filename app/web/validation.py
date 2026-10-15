@@ -15,11 +15,22 @@ def validate_zip(path: Path, *, max_entries: int = 5000, max_unpacked: int = 4 *
             if not entries or len(entries) > max_entries:
                 raise ValueError("ZIP has an invalid number of entries")
             total = 0
+            names: set[str] = set()
             for item in entries:
                 name = item.filename.replace("\\", "/")
                 parts = name.split("/")
-                if name.startswith("/") or any(p in ("..", "") for p in parts[:-1]) or ":" in parts[0]:
+                segments = parts[:-1] if name.endswith("/") else parts
+                if (
+                    not name
+                    or name.startswith("/")
+                    or ":" in name
+                    or any(part in ("", ".", "..") for part in segments)
+                ):
                     raise ValueError("ZIP contains an unsafe path")
+                canonical = name.rstrip("/").casefold()
+                if canonical in names:
+                    raise ValueError("ZIP contains duplicate paths")
+                names.add(canonical)
                 if stat.S_ISLNK(item.external_attr >> 16):
                     raise ValueError("ZIP contains a symbolic link")
                 total += item.file_size
@@ -38,9 +49,22 @@ def validate_audio(path: Path, ffprobe: str) -> None:
         raise HTTPException(422, "Unsupported audio type")
     try:
         result = subprocess.run(
-            [ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type",
-             "-of", "default=noprint_wrappers=1", str(path)],
-            capture_output=True, text=True, timeout=30, check=False,
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "default=noprint_wrappers=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(422, f"Audio probe failed: {exc}") from exc

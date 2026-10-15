@@ -93,7 +93,9 @@ class WebGuard:
         if request.method in _UNSAFE:
             origin = request.headers.get("origin")
             site = request.headers.get("sec-fetch-site")
-            if site == "cross-site" or (origin and (urlsplit(origin).hostname or "").lower() != host.lower()):
+            expected_authority = request.headers.get("host", "").lower()
+            actual_authority = urlsplit(origin).netloc.lower() if origin else ""
+            if site == "cross-site" or (origin and actual_authority != expected_authority):
                 self.log.warning("refused cross-origin %s %s origin=%s client=%s",
                                  request.method, request.url.path, origin, client)
                 return JSONResponse({"detail": "Cross-origin request refused"}, status_code=403)

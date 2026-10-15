@@ -23,6 +23,7 @@ class Jobs:
         self.settings = settings
         self.db = self.root / "jobs.sqlite3"
         self._lock = threading.Lock()
+        self._report_lock = threading.Lock()
         self._cancel: dict[str, threading.Event] = {}
         self._reports: dict[str, BuildReportSession] = {}
         with self._connect() as db:
@@ -147,6 +148,23 @@ class Jobs:
             with self._lock:
                 self._cancel.pop(job_id, None)
                 self.update(job_id, **final)
+            try:
+                self.save_report(job_id, report)
+            except Exception:
+                # A diagnostic export must not replace the generation result.
+                pass
+
+    def save_report(self, job_id: str, report: BuildReportSession) -> Path:
+        with self._report_lock:
+            directory = self.root / job_id
+            temporary = directory / f"diagnostics-{uuid.uuid4().hex}.zip"
+            destination = directory / "diagnostics.zip"
+            try:
+                report.export_zip(temporary)
+                temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return destination
 
     def events(self, job_id: str) -> list[dict]:
         path = self.settings.work_root / job_id / "generation.log"
