@@ -64,7 +64,7 @@ def test_frontend_and_job_lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr("app.web.jobs.StoryEnginePipeline.generate_bundle", generate)
     with TestClient(create_app(settings, tmp_path / "storage")) as client:
         assert client.get("/").status_code == 200
-        assert "HEXA StoryEngine" in client.get("/").text
+        assert "Bayer Store Engine" in client.get("/").text
         assert client.get("/health").json()["ok"]
         response = client.post("/api/jobs", files={"package": ("test.zip", archive()),
                                                        "audio": ("voice.wav", b"audio")})
