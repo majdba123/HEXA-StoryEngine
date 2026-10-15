@@ -121,6 +121,11 @@ class SceneBoundaryPlanner:
 
         if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} or row.reason.startswith("abstain:"):
             return decided(f"clean_cut:boundary_{row.mode.lower()}:{row.reason}")
+        wash = next((cue.params["focus_wash"] for (beat_id, _), cue in cues.items()
+                     if beat_id == previous.id and isinstance(cue.params.get("focus_wash"), dict)), None)
+        if wash is not None and hero.asset_id not in (wash.get("focus_asset_ids") or []):
+            # It receded behind the scene's resolution: it leaves with the cut, never crisp again.
+            return decided("clean_cut:hero_receded_behind_resolution")
         layout, previous_layout = layouts.get(beat.id), layouts.get(previous.id)
         item = next((row_item for row_item in (previous_layout.items if previous_layout else [])
                      if row_item.asset_id == hero.asset_id), None)

@@ -26,6 +26,14 @@ _MOTION_COMFORT: dict[str, MotionComfortProfile] = {
 }
 
 
+# Cinematic VNext2: the approved references' own scale pop, measured with one instrument
+# on both references (SCALE entries <= 12 frames, n = 55): 3-8 frames, growth q90 0.85
+# frame heights per second. Only a cue Motion marked ``reference_pop`` uses it.
+REFERENCE_POP = MotionComfortProfile(target_seconds=5 / 30, minimum_seconds=3 / 30, max_normalized_speed=0.85)
+# Reference SLIDE entries (n = 44): 0.10-0.15 frame widths, peak 0.83 (q50) - 1.22 (q75) w/s.
+REFERENCE_SLIDE = MotionComfortProfile(target_seconds=10 / 30, minimum_seconds=5 / 30, max_normalized_speed=1.25)
+
+
 def motion_comfort(phase: str) -> MotionComfortProfile:
     return _MOTION_COMFORT.get(
         str(phase).upper(),
