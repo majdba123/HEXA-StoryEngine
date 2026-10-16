@@ -372,7 +372,7 @@ def test_bootstrap_two_accounts_on_clean_database_only(tmp_path, monkeypatch):
 
     with TestClient(create_app(settings, storage)) as user:
         headers = login(user, "majd1@gmail.com", "SecureUserTemporary123!")
-        assert user.get("/admin").status_code == 303
+        assert user.get("/admin", follow_redirects=False).status_code == 303
         assert user.get("/api/admin/users").status_code == 403
         assert user.get("/api/jobs/active").status_code == 403
         assert user.post("/api/account/password", headers=headers, json={
