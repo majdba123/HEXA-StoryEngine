@@ -9,7 +9,7 @@ git pull --ff-only origin montage
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start_local_montage.ps1 -Reset
 ```
 
-The script refuses to run from a different branch. It moves the previous `.hexa/montage-local` folder (SQLite, uploads, outputs, exports, work files) into an archive under `.hexa/local-archives`, **without deleting or copying the media**, and starts with fresh paths. The archive is intentionally retained for manual recovery. The `-Reset` switch is explicit because existing local state must not be overwritten accidentally.
+The script refuses to run from a different branch. With `-Reset`, it **permanently deletes only** `.hexa/montage-local` (its SQLite database, local test uploads, work files, and local test exports) before creating a fresh database. **No archive or backup is created.** It rejects linked directories/files and a running local server on port 8788. This is intentionally destructive, so do not pass `-Reset` after you have real local work you want to keep. The user requested a clean start without archiving the previous local test database; pre-existing `.hexa/local-archives` from earlier runs are not touched.
 
 **Local-only demonstration accounts**, created once in the fresh SQLite database:
 
