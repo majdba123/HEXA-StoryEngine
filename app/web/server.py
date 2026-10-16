@@ -486,16 +486,23 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         if job is None or job["state"] != "completed":
             raise HTTPException(404, "Completed job not found")
         bundle = Path(job["bundle"]).resolve()
-        if kind in {"youtube", "reels"}:
-            path = Path(job[kind]).resolve()
-            if path.parent != bundle or path.suffix.lower() != ".mp4":
-                raise HTTPException(404, "Output is unavailable")
+        if kind in {"youtube", "reels", "manifest"}:
+            if not admin_data.secure_root() or admin_data.root is None or admin_data.root not in bundle.parents:
+                raise HTTPException(404, "Output unavailable")
+            path = bundle / "export.json" if kind == "manifest" else Path(job[kind]).resolve()
+            suffix = ".json" if kind == "manifest" else ".mp4"
+            if (path.parent != bundle or path.suffix.lower() != suffix or
+                    (kind == "manifest" and path.name != "export.json") or
+                    not path.is_file() or _is_link(path)):
+                raise HTTPException(404, "Output unavailable")
             bundle_id = f"{bundle.parent.name}:{bundle.name}"
             if not admin_data.lease_download(bundle_id):
                 raise HTTPException(404, "Output unavailable")
-            return FileResponse(path, filename=path.name, media_type="video/mp4", background=BackgroundTask(admin_data.release_download, bundle_id))
-        if kind == "manifest":
-            return FileResponse(bundle / "export.json", filename="export.json")
+            return FileResponse(
+                path, filename=path.name,
+                media_type="application/json" if kind == "manifest" else "video/mp4",
+                background=BackgroundTask(admin_data.release_download, bundle_id),
+            )
         raise HTTPException(404, "Unknown output")
 
     return app
