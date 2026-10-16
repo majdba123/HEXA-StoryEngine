@@ -13,22 +13,33 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw 'Python virtual environment missing. Set up .venv first.'
 }
 
-$localRoot = Join-Path $project '.hexa\montage-local'
-if (Test-Path -LiteralPath $localRoot) {
+$stateRoot = Join-Path $project '.hexa'
+$localRoot = Join-Path $stateRoot 'montage-local'
+if ((Test-Path -LiteralPath $stateRoot) -and
+    (((Get-Item -LiteralPath $stateRoot).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+    throw 'Refusing to use a linked .hexa directory.'
+}
+
+if ($Reset -and (Test-Path -LiteralPath $localRoot)) {
+    # Reset is intentionally destructive for this ONE local test workspace.
+    # Never archive, follow links, or touch any other .hexa directory or VPS data.
     $item = Get-Item -LiteralPath $localRoot
-    if (-not $item.PSIsContainer -or (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
-        throw 'Unsafe local test directory; no state was changed.'
+    if (-not $item.PSIsContainer -or
+        (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw 'Unsafe local test directory; no data was deleted.'
     }
-    if ($Reset) {
-        # Moving a directory on this volume is not a media backup or deletion.
-        $archiveRoot = Join-Path $project '.hexa\local-archives'
-        New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
-        $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfff')
-        $archive = Join-Path $archiveRoot "montage-local-$timestamp-$id"
-        Move-Item -LiteralPath $localRoot -Destination $archive -ErrorAction Stop
-        Write-Host "Archived previous local test data: $archive"
+    $link = Get-ChildItem -LiteralPath $localRoot -Recurse -Force -ErrorAction Stop |
+        Where-Object { ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 } |
+        Select-Object -First 1
+    if ($null -ne $link) {
+        throw 'Refusing to delete local data containing filesystem links.'
     }
+    $listener = Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue
+    if ($listener) {
+        throw 'Stop the local HEXA server on port 8788 before resetting its database.'
+    }
+    Remove-Item -LiteralPath $localRoot -Recurse -Force -ErrorAction Stop
+    Write-Host 'Deleted old local montage test state (SQLite, uploads, work, and exports). No archive was created.'
 }
 
 $env:HEXA_WEB_STORAGE = Join-Path $localRoot 'web'
