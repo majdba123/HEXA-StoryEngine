@@ -17,6 +17,13 @@ Cases (from Story event authority only, never from words or package content):
 Priorities: P0 BUILD_UP / RELATION with a readable hold, P1 MULTI_OBJECT with a hold,
 P2 a resolution whose backdrop cannot recede safely, P3 SHORT_FINAL / OPENING.
 
+Cause -> consequence (visual sprint, 2026-10-16): when the result's authored relation is a
+directional flow/cause relation (the Choreography ``CONNECTABLE_RELATIONS``) and the event's
+leader of another family is already on screen, the result is marked ``causal_arrival``:
+the arrival pass then lets it arrive moving away from that cause (a short slide along the
+cause -> result direction, scale unchanged) when the path is safe, and keeps the pop
+otherwise. Without that evidence nothing is invented: the pop stays.
+
 Fail-closed rules for the backdrop wash: something must already be on screen to recede;
 nothing else may reveal or still move once it starts; the focus overlaps no backdrop
 asset (the renderer draws it above the wash); no backdrop asset continues into the next
@@ -28,6 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from app.assets import AssetManager
+from app.choreography.interactions import is_connectable_relation
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 
 from .collision import box
@@ -295,6 +303,9 @@ class PayoffResolutionDirector:
             popped, why = self._pop(cue, layout.get(asset_id), assets_by_id,
                                     family_size=1 if followers is not None else 2)
             if popped is not None:
+                cause = self._cause(event, popped, by_asset=by_asset, layout=layout, family=family)
+                if cause is not None:
+                    popped = popped.model_copy(update={"params": {**popped.params, "causal_arrival": cause}})
                 updates[asset_id] = popped
                 arrival = "reference_pop"
                 for member in followers or []:
@@ -355,6 +366,25 @@ class PayoffResolutionDirector:
             list(updates.values()),
             candidate,
         )
+
+    @staticmethod
+    def _cause(event, cue: MotionCue, *, by_asset: dict[str, MotionCue], layout: dict[str, LayoutItem],
+               family: Callable[[str], str]) -> dict | None:
+        """The authored cause a resolving result may visibly come from, or None.
+
+        Evidence only: a directional flow/cause relation on the result (Choreography) and an
+        event leader of another family that is laid out and revealed before the result."""
+        choreography = (cue.params or {}).get("choreography") or {}
+        relation = choreography.get("relationship") or next(iter(event.relation_kinds or []), None)
+        if not is_connectable_relation(relation):
+            return None
+        for leader in event.leader_asset_ids or []:
+            other = by_asset.get(leader)
+            if (other is None or leader not in layout or family(leader) == family(cue.asset_id)
+                    or float(other.start) >= float(cue.start) - _EPS):
+                continue
+            return {"cause_asset_id": leader, "relationship": str(relation).upper(), "event_id": event.event_id}
+        return None
 
     @staticmethod
     def _pop(

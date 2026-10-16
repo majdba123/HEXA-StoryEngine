@@ -265,10 +265,12 @@ class EncodedMotionVerifier:
                           and isinstance(cue.params.get("reference_pop"), dict)
                           and program_name.startswith("reference_pop")):
                         profile = REFERENCE_POP  # reference-measured arrival pop (VNext2)
-                    elif (segment.phase == "ENTRY" and isinstance(cue.params, dict)
+                    elif (segment.phase in {"ENTRY", "PAYOFF"} and isinstance(cue.params, dict)
                           and isinstance(cue.params.get("reference_slide"), dict)
                           and program_name.startswith("reference_slide")):
-                        profile = REFERENCE_SLIDE  # reference-measured edge slide (VNext2)
+                        # reference-measured slide (VNext2); a resolving result's causal slide
+                        # replaces its PAYOFF pop and keeps the same slide limits
+                        profile = REFERENCE_SLIDE
                     speed_limit = profile.max_normalized_speed * 1.08
                     if normalized_speed > speed_limit + 1e-6:
                         violations.append(RenderedMotionViolation(

@@ -275,6 +275,16 @@ class SecondaryArrivalPlanner:
         if params.get("hero_travel"):
             return "TRAVEL", "hero_travel", None
         if params.get("reference_pop"):
+            causal = params.get("causal_arrival")
+            if isinstance(causal, dict) and allow_slide and item is not None:
+                family = family_of(cue.asset_id, assets_by_id or {})
+                others = [row for row in beat_cues if family_of(row.asset_id, assets_by_id or {}) != family]
+                slide, why = self._causal_slide(cue, item=item, cause=layout.get(str(causal.get("cause_asset_id"))),
+                                                beat_cues=others, layout=layout, sweeps=sweeps)
+                if slide is not None:
+                    self._pop_fallback[(cue.beat_id, cue.asset_id)] = cue
+                    return "SLIDE", "causal_slide", slide
+                return "POP", f"payoff_resolution:causal_{why}", None
             return "POP", "payoff_resolution", None
         if (params.get("render_constraints") or {}).get("geometry_lock"):
             return "FADE", "geometry_locked_layer", None
@@ -316,6 +326,83 @@ class SecondaryArrivalPlanner:
         if pop is not None:
             return "POP", "reference_pop", pop
         return "FADE", "pop_below_visible_floor", None
+
+    def _causal_slide(
+        self,
+        cue: MotionCue,
+        *,
+        item: LayoutItem,
+        cause: LayoutItem | None,
+        beat_cues: list[MotionCue],
+        layout: dict[str, LayoutItem],
+        sweeps: dict[tuple[str, str], tuple[float, float, Box]],
+    ) -> tuple[MotionCue | None, str]:
+        """A resolving result arrives moving away from its authored cause (cause -> consequence).
+
+        Replaces the result's reference pop by a short slide along the cause -> result
+        direction, with the edge slide's distance, timing and speed limits, scale unchanged
+        (no enlargement), never starting beyond the halfway point to the cause. The swept
+        path must be clear of every other visible asset (the cause only when the result is
+        drawn above it, so it emerges from it) and of hero travel paths; else (None, why).
+        """
+        if cause is None:
+            return None, "cause_not_laid_out"
+        frame = active_target()
+        width, height = frame.width, frame.height
+        dx_px, dy_px = (item.x - cause.x) * width, (item.y - cause.y) * height
+        span = (dx_px * dx_px + dy_px * dy_px) ** 0.5
+        if span < 1.0:
+            return None, "cause_at_result"
+        start = float(cue.start)
+        # the pop's own window: the base program and every program starting with the reveal
+        window = min([float(cue.end) - start] + [float(row.end) - float(row.start) for row in cue.segments
+                                                  if abs(float(row.start) - start) <= _EPS])
+        seconds = min(SLIDE_SECONDS, window)
+        if seconds + _EPS < SLIDE_MIN_SECONDS:
+            return None, "window_below_slide_minimum"
+        distance_px = min(SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK) * width
+        distance_px = min(distance_px, 0.5 * span)
+        if distance_px + _EPS < SLIDE_MIN_DISTANCE * width:
+            return None, "cause_too_close"
+        dx, dy = -dx_px / span * distance_px / width, -dy_px / span * distance_px / height
+        final, begin = box(item, (0.0, 0.0, 1.0)), box(item, (dx, dy, 1.0))
+        sweep = (min(begin[0], final[0]), min(begin[1], final[1]), max(begin[2], final[2]), max(begin[3], final[3]))
+        end = start + seconds
+        for other in beat_cues:
+            if other.asset_id == cue.asset_id or float(other.start) >= end - _EPS:
+                continue
+            other_item = layout.get(other.asset_id)
+            if other_item is None or (other_item is cause and item.z > cause.z):
+                continue
+            target = box(other_item, (0.0, 0.0, 1.0))
+            allowed = authored_overlap_ratio(item, other_item) + _OVERLAP_SLACK
+            if _inter(sweep, target) / max(1e-9, min(_area(final), _area(target))) > allowed:
+                return None, "path_crosses_visible_asset"
+        for (_, asset_id), (t0, t1, path) in sweeps.items():
+            if asset_id != cue.asset_id and t0 < end - _EPS and t1 > start + _EPS and _inter(sweep, path) > 0:
+                return None, "path_crosses_hero_travel"
+        params = self._with_opacity({k: v for k, v in cue.params.items() if k != "reference_pop"}, cue, seconds)
+        params["reference_slide"] = {"dx": round(dx, 6), "dy": round(dy, 6), "seconds": round(seconds, 6),
+                                     "peak_speed": round(SMOOTHSTEP_PEAK * distance_px / width / seconds, 4),
+                                     "profile": "REFERENCE_SLIDE", "from_cause": params["causal_arrival"]}
+        params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
+        params["payoff_resolution"] = {**(params.get("payoff_resolution") or {}), "arrival": "causal_slide"}
+        self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
+
+        def frames(settle: float) -> list[dict]:
+            return slide_frames(dx, settle, dy)
+
+        window_all = float(cue.end) - start
+        params["program"] = {**(params.get("program") or {}), "name": "reference_slide_arrival",
+                             "settle_progress": 1.0, "keyframes": frames(seconds / window_all)}
+        segments = [
+            row.model_copy(update={"program": {**row.program, "name": f"reference_slide_{row.phase.lower()}",
+                                               "settle_progress": 1.0, "keyframes": frames(
+                                                   seconds / (float(row.end) - float(row.start)))}})
+            if abs(float(row.start) - start) <= _EPS and row.phase in {"ENTRY", "PAYOFF"} else row
+            for row in cue.segments
+        ]
+        return cue.model_copy(update={"params": params, "segments": segments}), "applied"
 
     @staticmethod
     def _gesture(cue: MotionCue, params: dict, name: str, frames, seconds: float) -> MotionCue:
