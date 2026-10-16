@@ -70,8 +70,15 @@ class Identity:
         db.execute("INSERT INTO identity_audit(actor_id,action,target_id,happened_at) VALUES(?,?,?,?)", (actor, action, target, time.time()))
 
     def bootstrap(self):
-        email = os.getenv("HEXA_ADMIN_EMAIL")
-        password = os.getenv("HEXA_ADMIN_BOOTSTRAP_PASSWORD")
+        """Initialize only a clean identity database.
+
+        The optional standard user is provisioned atomically with the first admin.
+        Existing accounts are never re-seeded, reset, or elevated on restart.
+        """
+        admin_email = os.getenv("HEXA_ADMIN_EMAIL")
+        admin_password = os.getenv("HEXA_ADMIN_BOOTSTRAP_PASSWORD")
+        user_email = os.getenv("HEXA_INITIAL_USER_EMAIL")
+        user_password = os.getenv("HEXA_INITIAL_USER_PASSWORD")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             count = db.execute("SELECT count(*) FROM users").fetchone()[0]
@@ -79,14 +86,36 @@ class Identity:
                 if not db.execute("SELECT 1 FROM users WHERE role='ADMIN' AND is_active=1 AND deleted_at IS NULL LIMIT 1").fetchone():
                     raise RuntimeError("No active administrator; use the documented offline restore procedure")
                 return
-            if not email or not password:
+            if not admin_email or not admin_password:
                 raise RuntimeError("Initial administrator requires HEXA_ADMIN_EMAIL and HEXA_ADMIN_BOOTSTRAP_PASSWORD")
-            email = normalize_email(email)
-            validate_password(password)
-            user_id = secrets.token_hex(16)
+            if bool(user_email) != bool(user_password):
+                raise RuntimeError("Initial user requires both HEXA_INITIAL_USER_EMAIL and HEXA_INITIAL_USER_PASSWORD")
+
+            admin_email = normalize_email(admin_email)
+            validate_password(admin_password)
+            if user_email is not None:
+                user_email = normalize_email(user_email)
+                validate_password(user_password)
+                if user_email == admin_email:
+                    raise ValueError("Initial administrator and user must have different email addresses")
+
             now = time.time()
-            db.execute("INSERT INTO users(id,email_normalized,password_hash,role,created_at,updated_at,password_changed_at) VALUES(?,?,?,'ADMIN',?,?,?)", (user_id, email, _HASHER.hash(password), now, now, now))
-            self.audit("bootstrap_admin", user_id, user_id, db)
+            admin_id = secrets.token_hex(16)
+            db.execute(
+                "INSERT INTO users(id,email_normalized,password_hash,role,created_at,updated_at,password_changed_at) "
+                "VALUES(?,?,?,'ADMIN',?,?,?)",
+                (admin_id, admin_email, _HASHER.hash(admin_password), now, now, now),
+            )
+            self.audit("bootstrap_admin", admin_id, admin_id, db)
+
+            if user_email is not None:
+                user_id = secrets.token_hex(16)
+                db.execute(
+                    "INSERT INTO users(id,email_normalized,password_hash,role,created_at,updated_at,password_changed_at,must_change_password) "
+                    "VALUES(?,?,?,'USER',?,?,?,1)",
+                    (user_id, user_email, _HASHER.hash(user_password), now, now, now),
+                )
+                self.audit("bootstrap_user", admin_id, user_id, db)
 
     def user(self, user_id: str):
         with self.connect() as db:

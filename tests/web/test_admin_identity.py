@@ -349,3 +349,72 @@ def test_failed_render_history_keeps_validated_package_name(tmp_path, monkeypatc
         assert rows[0]["state"] == "failed"
         assert rows[0]["package_name"] == "BLACK_HAT_HACKER"
         assert rows[0]["version"] is None
+
+
+def test_bootstrap_two_accounts_on_clean_database_only(tmp_path, monkeypatch):
+    settings, storage = setup(tmp_path, monkeypatch)
+    monkeypatch.setenv("HEXA_ADMIN_EMAIL", "majd@gmail.com")
+    monkeypatch.setenv("HEXA_ADMIN_BOOTSTRAP_PASSWORD", "SecureAdminTemporary123!")
+    monkeypatch.setenv("HEXA_INITIAL_USER_EMAIL", "majd1@gmail.com")
+    monkeypatch.setenv("HEXA_INITIAL_USER_PASSWORD", "SecureUserTemporary123!")
+
+    with TestClient(create_app(settings, storage)) as client:
+        admin_headers = login(client, "majd@gmail.com", "SecureAdminTemporary123!")
+        people = client.get("/api/admin/users").json()["items"]
+        assert {person["email_normalized"]: person["role"] for person in people} == {
+            "majd@gmail.com": "ADMIN", "majd1@gmail.com": "USER",
+        }
+        assert next(item for item in people if item["role"] == "USER")["must_change_password"] == 1
+        assert client.get("/api/admin/overview").status_code == 200
+        assert client.post("/api/admin/users", headers=admin_headers, json={
+            "email": "another@example.invalid", "password": "AnotherPassword123!",
+        }).status_code == 201
+
+    with TestClient(create_app(settings, storage)) as user:
+        headers = login(user, "majd1@gmail.com", "SecureUserTemporary123!")
+        assert user.get("/admin").status_code == 303
+        assert user.get("/api/admin/users").status_code == 403
+        assert user.get("/api/jobs/active").status_code == 403
+        assert user.post("/api/account/password", headers=headers, json={
+            "old_password": "SecureUserTemporary123!",
+            "new_password": "ChangedSecureUser123!",
+        }).status_code == 200
+        login(user, "majd1@gmail.com", "ChangedSecureUser123!")
+        assert user.get("/api/jobs/active").status_code == 200
+
+    monkeypatch.setenv("HEXA_INITIAL_USER_EMAIL", "unexpected@example.invalid")
+    monkeypatch.setenv("HEXA_INITIAL_USER_PASSWORD", "DifferentPassword123!")
+    with TestClient(create_app(settings, storage)) as existing:
+        login(existing, "majd@gmail.com", "SecureAdminTemporary123!")
+        emails = {row["email_normalized"] for row in existing.get("/api/admin/users").json()["items"]}
+        assert emails == {"majd@gmail.com", "majd1@gmail.com", "another@example.invalid"}
+    with sqlite3.connect(storage / "jobs.sqlite3") as db:
+        assert db.execute("SELECT count(*) FROM identity_audit WHERE action='bootstrap_user'").fetchone()[0] == 1
+        assert db.execute("SELECT count(*) FROM users").fetchone()[0] == 3
+
+
+@pytest.mark.parametrize("user_email,user_password", [
+    ("majd1@gmail.com", None),
+    (None, "SecureUserTemporary123!"),
+    ("majd@gmail.com", "SecureUserTemporary123!"),
+    ("majd1@gmail.com", "password"),
+])
+def test_bootstrap_rejects_incomplete_duplicate_or_weak_seed_without_partial_users(
+    tmp_path, monkeypatch, user_email, user_password,
+):
+    settings, storage = setup(tmp_path, monkeypatch)
+    monkeypatch.setenv("HEXA_ADMIN_EMAIL", "majd@gmail.com")
+    monkeypatch.setenv("HEXA_ADMIN_BOOTSTRAP_PASSWORD", "SecureAdminTemporary123!")
+    if user_email is None:
+        monkeypatch.delenv("HEXA_INITIAL_USER_EMAIL", raising=False)
+    else:
+        monkeypatch.setenv("HEXA_INITIAL_USER_EMAIL", user_email)
+    if user_password is None:
+        monkeypatch.delenv("HEXA_INITIAL_USER_PASSWORD", raising=False)
+    else:
+        monkeypatch.setenv("HEXA_INITIAL_USER_PASSWORD", user_password)
+    with pytest.raises((RuntimeError, ValueError)):
+        with TestClient(create_app(settings, storage)):
+            pass
+    with sqlite3.connect(storage / "jobs.sqlite3") as db:
+        assert db.execute("SELECT count(*) FROM users").fetchone()[0] == 0
