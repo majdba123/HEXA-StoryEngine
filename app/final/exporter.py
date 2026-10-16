@@ -28,7 +28,17 @@ class FinalExporter:
             str(target),
         ]
         try:
-            run_hidden(command, check=True, capture_output=True, text=True)
+            # FFmpeg echoes paths and metadata that may hold Arabic or other localized
+            # bytes. Decode as UTF-8 and replace undecodable text instead of letting a
+            # Windows locale (cp1252) reader thread fail and discard stderr.
+            run_hidden(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
         except FileNotFoundError as exc:
             raise DependencyUnavailableError(
                 "ffmpeg is not available",
@@ -65,7 +75,15 @@ class FinalExporter:
             str(output),
         ]
         try:
-            run_hidden(command, check=True, capture_output=True, text=True)
+            # Same localized-output decoding as preflight: keep stderr readable.
+            run_hidden(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
         except FileNotFoundError as exc:
             raise DependencyUnavailableError(
                 "ffmpeg is not available",
