@@ -14,6 +14,13 @@ async function api(path, options = {}) {
 function cell(row, value) { const item = row.insertCell(); item.textContent = value ?? '—'; return item; }
 function action(row, label, handler) { const button = document.createElement('button'); button.textContent = label; button.addEventListener('click', handler); row.lastElementChild.append(button); }
 let pages = {users:1,exports:1,history:1};
+function openPasswordReset(user) {
+  const dialog = $('reset-password-dialog');
+  $('reset-password-email').textContent = user.email_normalized;
+  $('reset-password-value').value = '';
+  dialog.dataset.userId = user.id;
+  dialog.showModal();
+}
 async function overview() {
   const data = await api('/api/admin/overview');
   const labels = {users_total:'المستخدمون',users_active:'الحسابات النشطة',users_disabled:'الحسابات المعطلة',jobs_completed:'مهام مكتملة',jobs_failed:'مهام فاشلة',jobs_active:'مهام جارية',packages:'حزم Final Package',bundles:'نسخ فيديو مكتملة',output_files:'ملفات MP4',export_bytes:'حجم ملفات الفيديو',disk_free_bytes:'مساحة القرص المتاحة'};
@@ -34,7 +41,7 @@ async function users() {
     action(row,'تعديل البريد', async () => { const email = prompt('البريد الجديد', user.email_normalized); if (email) await updateUser(user.id,{email}); });
     action(row,user.is_active ? 'تعطيل' : 'تفعيل', async () => { if (confirm(`تأكيد تغيير حالة ${user.email_normalized}؟`)) await updateUser(user.id,{is_active:!user.is_active}); });
     action(row,'تغيير الدور', async () => { if (confirm(`تغيير دور ${user.email_normalized}؟`)) await updateUser(user.id,{role:user.role==='ADMIN'?'USER':'ADMIN'}); });
-    action(row,'إعادة تعيين كلمة المرور', async () => { const password = prompt('كلمة مرور مؤقتة جديدة (12 حرفاً على الأقل)'); if (password && confirm(`إعادة تعيين كلمة مرور ${user.email_normalized}؟`)) await updateUser(user.id,{password}); });
+    action(row,'إعادة تعيين كلمة المرور', () => openPasswordReset(user));
     action(row,'حذف', async () => { if (confirm(`حذف حساب ${user.email_normalized} وتعطيل جلساته؟`)) await updateUser(user.id,{delete:true}); });
   }
   $('users-more').disabled = pages.users * 50 >= data.total;
@@ -80,6 +87,33 @@ $('user-refresh').addEventListener('click',() => { pages.users=1; tab('users'); 
 $('export-refresh').addEventListener('click',() => { pages.exports=1; tab('exports'); });
 $('history-refresh').addEventListener('click',() => { pages.history=1; tab('history'); });
 $('create-user').addEventListener('submit',async event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); try { await api('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); event.target.reset(); await users(); message('أُنشئ الحساب'); } catch(error) { message(error.message); } });
+$('reset-password-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const dialog = $('reset-password-dialog');
+  const target = dialog.dataset.userId;
+  const input = $('reset-password-value');
+  if (!target) return;
+  const submit = event.target.querySelector('[type="submit"]');
+  submit.disabled = true;
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(target)}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({password:input.value})
+    });
+    dialog.close();
+    message('تم تعيين كلمة المرور المؤقتة وإبطال جلسات الحساب');
+    await users();
+  } catch (error) {
+    message(error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
+$('reset-password-cancel').addEventListener('click', () => $('reset-password-dialog').close());
+$('reset-password-dialog').addEventListener('close', () => {
+  $('reset-password-value').value = '';
+  delete $('reset-password-dialog').dataset.userId;
+});
 $('change-password').addEventListener('submit',async event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); try { await api('/api/account/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); location.assign('/login'); } catch(error) { message(error.message); } });
 $('logout').addEventListener('click',async () => { await api('/api/logout',{method:'POST'}); location.assign('/login'); });
 tab('overview');

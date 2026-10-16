@@ -44,7 +44,9 @@ def test_login_rbac_csrf_and_persistent_session(tmp_path, monkeypatch):
         assert admin.post("/api/session", json={"token": "old-shared-token"}).status_code == 422
         assert admin.post("/api/session", json={"email": "root@example.invalid", "password": "wrong"}).status_code == 401
         headers = login(admin)
-        assert admin.get("/admin").status_code == 200
+        admin_page = admin.get("/admin")
+        assert admin_page.status_code == 200
+        assert 'id="reset-password-value" type="password"' in admin_page.text
         assert admin.post("/api/admin/users", json={"email": "user@example.invalid", "password": "AnotherGoodPassword123!"}).status_code == 403
         created = admin.post("/api/admin/users", headers=headers, json={"email": "user@example.invalid", "password": "AnotherGoodPassword123!"})
         assert created.status_code == 201, created.text
