@@ -16,15 +16,19 @@ This pass keeps every Story instant and only redistributes an entry's own keyfra
   accent around the unchanged peak instant, rising as fast as it falls.
 * An opacity ramp longer than the measured reference ramps (13 frames) ends with the
   arrival instead.
+* Another segment of the cue that starts with the reveal but rests until after the
+  arrival (e.g. a relation accent anchored on a later word) would mask the arrival on
+  screen (the renderer draws a non-ENTRY segment over the ENTRY): it now starts when the
+  arrival ends, every keyframe at its unchanged absolute time.
 
 Never touched: hero travel, geometry-locked or compound families, static programs,
-semantic segments other than ENTRY, cue windows, Story settle/peak params.
+semantic segments that move during the arrival, cue windows, Story settle/peak params.
 """
 from __future__ import annotations
 
 from math import ceil, hypot
 
-from app.models import CompositionBeat, LayoutItem, MotionCue
+from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment
 from app.motion.timing import motion_comfort
 
 _EPS = 1e-6
@@ -115,6 +119,35 @@ def bounded_entry(frames: list[dict], duration: float, item: LayoutItem) -> tupl
     return None
 
 
+def yield_to_arrival(row: MotionSegment, arrival: float) -> MotionSegment | None:
+    """``row`` starting when the arrival ends, or None when it does not mask the arrival.
+
+    Only a segment that starts before ``arrival`` and rests (identity pose) from its start
+    until at least ``arrival`` is moved; each kept keyframe keeps its absolute time.
+    """
+    start, end = float(row.start), float(row.end)
+    if row.phase == "ENTRY" or start >= arrival - _EPS or end <= arrival + _EPS:
+        return None
+    frames = sorted((dict(frame) for frame in (row.program or {}).get("keyframes") or []),
+                    key=lambda frame: float(frame.get("progress", 0.0)))
+    if len(frames) < 2:
+        return None
+    duration = end - start
+    times = [start + float(frame.get("progress", 0.0)) * duration for frame in frames]
+    moving = next((index for index, frame in enumerate(frames) if not _is_rest(frame)), None)
+    if moving is not None and (moving == 0 or times[moving - 1] < arrival - _EPS):
+        return None  # it moves before the arrival ends: its certified window stays
+    window = end - arrival
+    kept = [{**frame, "progress": round((time - arrival) / window, 6)}
+            for frame, time in zip(frames, times) if time >= arrival - _EPS]
+    if not kept or kept[0]["progress"] > _EPS:
+        kept.insert(0, {**frames[0], "progress": 0.0})
+    kept[0]["progress"] = 0.0
+    if kept[-1]["progress"] < 1.0 - _EPS:
+        kept.append({**kept[-1], "progress": 1.0})
+    return row.model_copy(update={"start": arrival, "program": {**row.program, "keyframes": kept}})
+
+
 class EntryArrivalPolicy:
     """Bound every entry's approach to entry speed; Story windows are unchanged."""
 
@@ -143,9 +176,14 @@ class EntryArrivalPolicy:
                     segments = list(cue.segments)
                     segments[entry_index] = segment.model_copy(
                         update={"program": {**segment.program, "keyframes": frames}})
-                    update["segments"] = segments
                     audit["target"] = "ENTRY_segment"
                     arrival = float(segment.start) + audit["approach_to"]
+                    for index, row in enumerate(segments):
+                        yielded = yield_to_arrival(row, arrival)
+                        if yielded is not None:
+                            segments[index] = yielded
+                            audit.setdefault("yielded_segments", []).append(row.phase)
+                    update["segments"] = segments
             elif not cue.segments and program:
                 result = bounded_entry(list(program.get("keyframes") or []), float(cue.end) - float(cue.start), item)
                 if result is not None:

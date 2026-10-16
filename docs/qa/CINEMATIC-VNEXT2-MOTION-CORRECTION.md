@@ -1,12 +1,14 @@
 # HEXA StoryEngine — Cinematic VNext2 motion correction (exits, payoff, pacing, sync)
 
 **Status:** implemented on `cinematic/vnext2`, verified by tests and by real FFmpeg encodes of
-all ten available real packages (YouTube and Reels). **Not a certification:** the user's
+all ten available real packages (YouTube and Reels). Update 2026-10-16: the user authorized the
+Story `SCENE_SENTENCE_START` opening authority (Problem D, §2-§4). **Not a certification:** the user's
 visual review is pending. Production (`montage`, `bayer`, VPS, CI/CD) untouched.
 
 Evidence (outside Git): `E:\hexa-vnext2\motion-fix\` — `b0-head\` (HEAD `280ae40` plans),
-`b1-wip\` (HEAD + preserved WIP plans), `c3\` (final plans), `encodes-a\`, `encodes-b\`
-(final encodes + `render-report.json`), `compare\` (before/after video and frame strips),
+`b1-wip\` (HEAD + preserved WIP plans), `c3\` (motion correction plans), `c5\` (final plans,
+with the Story authority), `encodes-a\`..`encodes-e\` (encodes + `render-report.json`; c/d/e
+re-encode the four packages whose plans changed), `compare\` (before/after video and frame strips),
 `gates\` (pytest junit/log). Harness (git-ignored): `.hexa/vnext2-motion/` (`probe.py`,
 `plan_all.py`, `render_package.py`, `compare.py`, `tables.py`, `beat_dump.py`,
 `asset_track.py`, `holds.py`, `rescore.py`).
@@ -36,7 +38,7 @@ Note: planning from the cache *without* re-planning Story reproduces the old 202
 | C1 | Rushed arrivals | `resolution.py` / `arrivals.py` constants | VNext2 reference pop from 0.62 size in ≤ 5 frames (peak scale rate up to **6.6 /s**); slides 0.12 w in 4–10 frames (WIP lowered the minimum to 4 frames) |
 | C2 | Rushed travel/exits | `HERO_TRAVEL` | VNext2 raised the authorized VP4 contract (1.0 w/s, 0.40 s) to 1.25 w/s, 0.30 s |
 | C3 | Busy scene openings | `release._hero_overlap_exit` | The outgoing hero's full-frame exit ran while several incoming elements arrived (e.g. BH 024 "ممكن يبيعها", 0.8 s: hero exit + 3 arrivals) |
-| D | Next sentence over the previous scene | Story (`_establish_opening_visual`) | Already fixed for Black Hat by `7b3676b` (0.23 s left, < 300 ms). In the other packages 25 boundaries remain (14.3 s over 10 packages, 22 of them > 300 ms): the opening establishment fails closed — 15 because the first visual's word comes > 0.42 s after the sentence starts with no authored evidence, 7 because the first visual is a RESULT. Boundary then (correctly) holds the old scene instead of a white canvas. **Not changed here: needs a Story timing decision (see §7)** |
+| D | Next sentence over the previous scene | Story (`_establish_opening_visual`) | Already fixed for Black Hat by `7b3676b` (0.23 s left, < 300 ms). In the other packages 25 boundaries remained (14.3 s over 10 packages, 22 of them > 300 ms): the opening establishment failed closed — 15 because the first visual's word comes > 0.42 s after the sentence starts with no authored evidence, 7 because the first visual is a RESULT — and Boundary (correctly) held the old scene instead of a white canvas. **Fixed 2026-10-16 with the user-authorized `SCENE_SENTENCE_START` authority (RESULT exclusion kept)** |
 
 ## 3. Changes (all generic: no package, scene, word or asset conditions)
 
@@ -51,29 +53,34 @@ Note: planning from the cache *without* re-planning Story reproduces the old 202
 | `app/motion/resolution.py` | Pop from 0.84 over up to 9 frames on a smoothstep, ≥ 6 frames (else the calm opacity entry), peak scale rate ≤ 1.0 /s (`pop_start_scale`); the PAYOFF secondary pulse abstains when another asset leads the beat |
 | `app/motion/arrivals.py` | Slide 0.08 w, 8–12 frames, ≤ 0.6 w/s; smoothstep pops. WIP `_is_nudge` kept; WIP 4-frame slide minimum superseded |
 | `app/motion/timing.py` | Encoded-motion QA profiles `REFERENCE_POP` / `REFERENCE_SLIDE` enforce the same calm limits |
+| `app/story/windows.py` (2026-10-16) | New opening authority `SCENE_SENTENCE_START` (user-authorized): on a scene's first beat, the first reveal cohort's safe carrier — non-RESULT (role and focus), dependency-free, event order 1 (or no event), CONTEXT/LEADER/PRIMARY/PARTICIPANT — is revealed at the first spoken word of its own sentence even when its own word is > 0.42 s later. Authored evidence (`AUTHORED_EVENT_SPOKEN`/`SCENE_PRELUDE`) keeps precedence. Phrase anchor, semantic peak and settle are unchanged; a RESULT-first scene keeps its timing; later reveals are never pulled forward |
+| `app/motion/arrival.py` (2026-10-16) | A semantic segment that starts with an (earlier) reveal but rests until after the bounded arrival now starts when the arrival ends (keyframes keep their absolute times), so it no longer masks the arrival on screen. Found by the encoded-motion gate on White Hat beat 031 (`RENDERED_SEGMENT_INACTIVE`) |
 
-Unchanged: Composition geometry, Story/narration timing, scene order, text placement rules,
+Unchanged: Composition geometry, narration/word timing (only scene-opening reveals moved, §3),
+scene order, text placement rules,
 Sprint 4.1 character emphasis and de-emphasis, Sprint 7 continuity, projection, FFmpeg
 encode settings.
 
-## 4. Measured result (frame-exact probe, final plans `c3` vs WIP baseline `b1`)
+## 4. Measured result (frame-exact probe, final plans `c5` vs WIP baseline `b1`)
 
 | Metric | Black Hat | Bug Bounty Hunter | Cybercrime Gangs | Gray Hat | Hacktivist | Insider Threat | Script Kiddie | Social Engineer | State Linked Group | White Hat | Total |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Mid-motion vanishes (YouTube) | 140→0 | 153→0 | 269→0 | 128→0 | 147→0 | 148→0 | 116→0 | 155→0 | 189→0 | 108→0 | **1553→0** |
 | Mid-motion vanishes (Reels) | 140→0 | 151→0 | 268→0 | 128→0 | 147→0 | 148→0 | 116→0 | 154→0 | 188→0 | 108→0 | **1548→0** |
-| Complete off-screen exits | 15→10 | 13→8 | 11→3 | 11→5 | 4→2 | 22→14 | 7→5 | 3→6 | 11→5 | 15→14 | **112→72** |
+| Complete off-screen exits | 15→10 | 13→1 | 11→2 | 11→5 | 4→2 | 22→14 | 7→5 | 3→3 | 11→5 | 15→12 | **112→59** |
 | Above-rest scale events | 77→32 | 57→27 | 123→52 | 59→32 | 39→16 | 87→37 | 66→28 | 55→30 | 103→36 | 55→23 | **721→313** |
 | Beats with >1 pulsing family | 18→0 | 11→0 | 19→0 | 8→0 | 4→0 | 18→0 | 15→0 | 9→0 | 23→0 | 9→0 | **134→0** |
 | Simultaneous emphasis (s) | 0.333→0 | 0.033→0 | 0→0 | 0→0 | 0→0 | 0→0 | 0.067→0 | 0.067→0 | 0.1→0 | 0.133→0 | **0.733→0** |
 | Beats repeating a pulse | 4→0 | 5→0 | 13→0 | 9→0 | 1→0 | 10→0 | 5→0 | 9→0 | 10→0 | 7→0 | **73→0** |
 | Frames scale rate > 1.2/s | 69→0 | 71→0 | 66→0 | 79→0 | 71→0 | 93→5 | 73→0 | 96→0 | 132→0 | 54→0 | **804→5** |
 | Max scale rate (/s) | 5.563→1.171 | 5.32→0.995 | 5.465→1.121 | 5.949→0.985 | 5.837→0.993 | 5.152→1.696 | 6.592→1.181 | 5.305→1.171 | 5.368→1.024 | 5.514→1.142 | **6.592→1.696** |
-| Max travel speed (w/s) | 1.221→0.984 | 1.235→0.865 | 1.231→0.975 | 1.225→0.866 | 1.227→0.851 | 1.224→0.864 | 1.229→0.96 | 1.234→0.903 | 1.224→0.999 | 1.224→0.845 | **1.235→0.999** |
+| Max travel speed (w/s) | 1.221→0.984 | 1.235→0.949 | 1.231→0.975 | 1.225→0.866 | 1.227→0.851 | 1.224→0.864 | 1.229→0.96 | 1.234→0.903 | 1.224→0.999 | 1.224→0.845 | **1.235→0.999** |
 | Frames with 3+ moving families | 118→37 | 161→23 | 199→24 | 105→24 | 112→17 | 110→0 | 93→0 | 175→40 | 184→30 | 114→12 | **1371→207** |
 | Beats final hold < 0.5 s | 26→18 | 30→30 | 40→39 | 22→25 | 23→26 | 22→14 | 24→21 | 31→32 | 36→34 | 26→23 | **280→262** |
-| Stale previous-scene boundaries | 1→1 | 7→7 | 2→2 | 0→0 | 0→0 | 3→3 | 3→3 | 4→4 | 2→2 | 3→3 | **25→25** |
-| Stale previous-scene seconds | 0.233→0.233 | 5.067→5.067 | 1.1→1.1 | 0→0 | 0→0 | 1.666→1.666 | 0.967→0.967 | 2.466→2.466 | 0.667→0.667 | 2.1→2.1 | **14.266→14.266** |
+| Stale previous-scene boundaries | 1→1 | 7→0 | 2→0 | 0→0 | 0→0 | 3→3 | 3→3 | 4→1 | 2→2 | 3→0 | **25→10** |
+| Stale previous-scene seconds | 0.233→0.233 | 5.067→0 | 1.1→0 | 0→0 | 0→0 | 1.666→1.666 | 0.967→0.967 | 2.466→0.333 | 0.667→0.667 | 2.1→0 | **14.266→3.866** |
+
+Problem D (2026-10-16 authority, `c3` → `c5`): boundaries where the new sentence plays over the previous scene 25 → 10, 14.27 s → 3.87 s over 10 packages; 7 remain > 300 ms. The 15 targeted beats (Bug Bounty 7, Cybercrime 2, Social Engineer 3, White Hat 3) now open with their first safe carrier on the first spoken word (e.g. Bug Bounty beat 011: the previous scene was held 1.43 s into the new sentence, now the cut is on frame 3). The remaining ones are all kept exclusions: 9 RESULT-first scenes and Black Hat beat 021 (0.23 s), whose first visual depends on another event (order 2). Plans of the other six packages are byte-identical.
 
 Emphasis leaders over 488 beats: scene-hero overshoot 149, hero held pulse 80, Sprint 4.1
 character emphasis 38, other settle pulse 16, PAYOFF subject 8, none (calm beat) 197;
@@ -88,34 +95,34 @@ cut); likewise at frames 225, 306 and 428.
 
 ## 5. Real encodes (production renderer, encoded-motion verifier, mux, final-media gate)
 
-| Package | Target | Video | Frames (plan / file) | Duration video / container | Audio | Encoded motion | Final media (A/V, white flash) | Render s |
+| Package | Target | Encode | Video | Frames (plan / file) | Duration video / container | Audio | Encoded motion | Final media (A/V, white flash) |
 |---|---|---|---|---|---|---|---|---|
-| Black Hat Hacker | youtube | h264 1920x1080 30/1 yuv420p | 2912 / 2912 | 97.067 / 97.067 | aac 44100 Hz 1ch | PASS | PASS | 189.9 |
-| Black Hat Hacker | reels | h264 1080x1920 30/1 yuv420p | 2912 / 2912 | 97.067 / 97.067 | aac 44100 Hz 1ch | PASS | PASS | 234.4 |
-| Bug Bounty Hunter | youtube | h264 1920x1080 30/1 yuv420p | 3309 / 3309 | 110.300 / 110.300 | aac 44100 Hz 1ch | PASS | PASS | 202.3 |
-| Bug Bounty Hunter | reels | h264 1080x1920 30/1 yuv420p | 3309 / 3309 | 110.300 / 110.300 | aac 44100 Hz 1ch | PASS | PASS | 109.7 |
-| Cybercrime Gangs | youtube | h264 1920x1080 30/1 yuv420p | 4581 / 4581 | 152.700 / 152.700 | aac 44100 Hz 1ch | PASS | PASS | 188.7 |
-| Cybercrime Gangs | reels | h264 1080x1920 30/1 yuv420p | 4581 / 4581 | 152.700 / 152.700 | aac 44100 Hz 1ch | PASS | PASS | 112.5 |
-| Gray Hat Hacker | youtube | h264 1920x1080 30/1 yuv420p | 2966 / 2966 | 98.867 / 98.871 | aac 44100 Hz 1ch | PASS | PASS | 275.2 |
-| Gray Hat Hacker | reels | h264 1080x1920 30/1 yuv420p | 2966 / 2966 | 98.867 / 98.871 | aac 44100 Hz 1ch | PASS | PASS | 136.3 |
-| Hacktivist | youtube | h264 1920x1080 30/1 yuv420p | 3423 / 3423 | 114.100 / 114.103 | aac 44100 Hz 1ch | PASS | PASS | 188.4 |
-| Hacktivist | reels | h264 1080x1920 30/1 yuv420p | 3423 / 3423 | 114.100 / 114.103 | aac 44100 Hz 1ch | PASS | PASS | 177.7 |
-| Insider Threat | youtube | h264 1920x1080 30/1 yuv420p | 4204 / 4204 | 140.133 / 140.147 | aac 44100 Hz 1ch | PASS | PASS | 247.3 |
-| Insider Threat | reels | h264 1080x1920 30/1 yuv420p | 4204 / 4204 | 140.133 / 140.147 | aac 44100 Hz 1ch | PASS | PASS | 320.2 |
-| Script Kiddie | youtube | h264 1920x1080 30/1 yuv420p | 2898 / 2898 | 96.600 / 96.600 | aac 44100 Hz 1ch | PASS | PASS | 171.1 |
-| Script Kiddie | reels | h264 1080x1920 30/1 yuv420p | 2898 / 2898 | 96.600 / 96.600 | aac 44100 Hz 1ch | PASS | PASS | 180.5 |
-| Social Engineer | youtube | h264 1920x1080 30/1 yuv420p | 3103 / 3103 | 103.433 / 103.433 | aac 44100 Hz 1ch | PASS | PASS | 228.5 |
-| Social Engineer | reels | h264 1080x1920 30/1 yuv420p | 3103 / 3103 | 103.433 / 103.433 | aac 44100 Hz 1ch | PASS | PASS | 155.6 |
-| State Linked Group | youtube | h264 1920x1080 30/1 yuv420p | 4773 / 4773 | 159.100 / 159.100 | aac 44100 Hz 1ch | PASS | PASS | 313.9 |
-| State Linked Group | reels | h264 1080x1920 30/1 yuv420p | 4773 / 4773 | 159.100 / 159.100 | aac 44100 Hz 1ch | PASS | PASS | 228.8 |
-| White Hat Hacker | youtube | h264 1920x1080 30/1 yuv420p | 2976 / 2976 | 99.200 / 99.200 | aac 44100 Hz 1ch | PASS | PASS | 268.8 |
-| White Hat Hacker | reels | h264 1080x1920 30/1 yuv420p | 2976 / 2976 | 99.200 / 99.200 | aac 44100 Hz 1ch | PASS | PASS | 270.1 |
+| Black Hat Hacker | youtube | `encodes-a` | h264 1920x1080 30/1 yuv420p | 2912 / 2912 | 97.067 / 97.067 | aac 44100 Hz | PASS | PASS |
+| Black Hat Hacker | reels | `encodes-a` | h264 1080x1920 30/1 yuv420p | 2912 / 2912 | 97.067 / 97.067 | aac 44100 Hz | PASS | PASS |
+| Bug Bounty Hunter | youtube | `encodes-c` | h264 1920x1080 30/1 yuv420p | 3309 / 3309 | 110.300 / 110.300 | aac 44100 Hz | PASS | PASS |
+| Bug Bounty Hunter | reels | `encodes-c` | h264 1080x1920 30/1 yuv420p | 3309 / 3309 | 110.300 / 110.300 | aac 44100 Hz | PASS | PASS |
+| Cybercrime Gangs | youtube | `encodes-d` | h264 1920x1080 30/1 yuv420p | 4581 / 4581 | 152.700 / 152.700 | aac 44100 Hz | PASS | PASS |
+| Cybercrime Gangs | reels | `encodes-d` | h264 1080x1920 30/1 yuv420p | 4581 / 4581 | 152.700 / 152.700 | aac 44100 Hz | PASS | PASS |
+| Gray Hat Hacker | youtube | `encodes-a` | h264 1920x1080 30/1 yuv420p | 2966 / 2966 | 98.867 / 98.871 | aac 44100 Hz | PASS | PASS |
+| Gray Hat Hacker | reels | `encodes-a` | h264 1080x1920 30/1 yuv420p | 2966 / 2966 | 98.867 / 98.871 | aac 44100 Hz | PASS | PASS |
+| Hacktivist | youtube | `encodes-a` | h264 1920x1080 30/1 yuv420p | 3423 / 3423 | 114.100 / 114.103 | aac 44100 Hz | PASS | PASS |
+| Hacktivist | reels | `encodes-a` | h264 1080x1920 30/1 yuv420p | 3423 / 3423 | 114.100 / 114.103 | aac 44100 Hz | PASS | PASS |
+| Insider Threat | youtube | `encodes-b` | h264 1920x1080 30/1 yuv420p | 4204 / 4204 | 140.133 / 140.147 | aac 44100 Hz | PASS | PASS |
+| Insider Threat | reels | `encodes-b` | h264 1080x1920 30/1 yuv420p | 4204 / 4204 | 140.133 / 140.147 | aac 44100 Hz | PASS | PASS |
+| Script Kiddie | youtube | `encodes-a` | h264 1920x1080 30/1 yuv420p | 2898 / 2898 | 96.600 / 96.600 | aac 44100 Hz | PASS | PASS |
+| Script Kiddie | reels | `encodes-a` | h264 1080x1920 30/1 yuv420p | 2898 / 2898 | 96.600 / 96.600 | aac 44100 Hz | PASS | PASS |
+| Social Engineer | youtube | `encodes-d` | h264 1920x1080 30/1 yuv420p | 3103 / 3103 | 103.433 / 103.433 | aac 44100 Hz | PASS | PASS |
+| Social Engineer | reels | `encodes-d` | h264 1080x1920 30/1 yuv420p | 3103 / 3103 | 103.433 / 103.433 | aac 44100 Hz | PASS | PASS |
+| State Linked Group | youtube | `encodes-b` | h264 1920x1080 30/1 yuv420p | 4773 / 4773 | 159.100 / 159.100 | aac 44100 Hz | PASS | PASS |
+| State Linked Group | reels | `encodes-b` | h264 1080x1920 30/1 yuv420p | 4773 / 4773 | 159.100 / 159.100 | aac 44100 Hz | PASS | PASS |
+| White Hat Hacker | youtube | `encodes-e` | h264 1920x1080 30/1 yuv420p | 2976 / 2976 | 99.200 / 99.200 | aac 44100 Hz | PASS | PASS |
+| White Hat Hacker | reels | `encodes-e` | h264 1080x1920 30/1 yuv420p | 2976 / 2976 | 99.200 / 99.200 | aac 44100 Hz | PASS | PASS |
 
-**20 / 20 outputs pass every gate.** Outputs: `E:\hexa-vnext2\motion-fix\encodes-a|b\<PKG>\`. Before/after: `compare\BLACK_HAT_v7_before_LEFT_vs_motionfix_after_RIGHT.mp4` (full, with narration) and `compare\BLACK_HAT_key_moments_slow40pct_before_LEFT_after_RIGHT.mp4` (scene cuts at 5.2 s, 19.8 s; beat 013 at 26.2 s; beats 024-025 at 51.9 s, slowed to 40 %).
+**20 / 20 final outputs pass every gate** (the six packages whose plans did not change keep their `c3` encodes: their `c5` plans are byte-identical and the renderer is unchanged). The first `c4` White Hat YouTube encode failed the encoded-motion gate (beat 031, `RENDERED_SEGMENT_INACTIVE`); fixed in `app/motion/arrival.py` and re-encoded (`encodes-e`). Before/after: `compare\BLACK_HAT_v7_before_LEFT_vs_motionfix_after_RIGHT.mp4` (full, with narration) and `compare\BLACK_HAT_key_moments_slow40pct_before_LEFT_after_RIGHT.mp4`.
 
 ## 6. Tests
 
-Full suite on the final tree (`gates/pytest-final.xml`): 10177 tests, 2 failures, 0 errors, 38 skipped (3951 s, run in parallel with two FFmpeg encode batches). The two failures were the wall-clock budgets of `tests/test3/test_package_shaped_stress.py` (50 scenes 61 s > 45 s, 100 scenes 190 s > 75 s) under that load; rerun on an idle machine: 3 tests, 0 failures (17.5 s and 38.1 s; HEAD `280ae40` measured 15.8 s vs 16.1 s for the same case back-to-back, so no planning regression). ruff, `git diff --check` and `compileall` pass.
+Full suite on the final tree (`gates/pytest-final2.xml`, idle machine): 10186 tests, 0 failures, 0 errors, 38 skipped (1654 s). ruff, `git diff --check` and `compileall` pass. (The 2026-10-15 run under two parallel encode batches had only the two wall-clock budgets of `tests/test3/test_package_shaped_stress.py` over budget; they pass unloaded.)
 
 New: `tests/visual/test_vnext2_emphasis_leader.py` (9), `tests/visual/test_vnext2_exit_pacing.py`
 (frame ownership ×4 — fails on HEAD for 3 of 4 frames —, hero exit vs arrivals, faint-opener
@@ -125,14 +132,13 @@ cut stays still), `test_vp2_restrained_exit.py` (complete exit, result covers, e
 leaves the canvas before removal), `test_vp4_hero_travel.py` (1.0 w/s cap, held pulse shape),
 `test_vnext_emphasis_causality_text.py` (5 %→3 % amplitudes, 6 % floor case),
 `test_vnext2_arrivals.py` (6-frame pop minimum, smoothstep, no overshoot, ≤ 1.0 /s).
+2026-10-16: `tests/test2/story/test_opening_establishment.py` (sentence-start authority for every long-lead case; RESULT, RESULT focus, dependency, event order 2, unordered event, unclassified role and non-first beat stay excluded; the 570a01cb diagnostic is covered without evidence and still fails closed when its first visual is a RESULT), `test_activation_windows.py` (opening beyond the 0.42 s budget), `tests/visual/test_vnext_entry_arrival.py` (a resting segment yields to the arrival with absolute keyframe times kept; a moving one keeps its window; no mutation).
 
 ## 7. Remaining issues and decisions
 
-1. **D (Story timing, user decision):** 22 boundaries in 9 packages still play the new sentence
-   over the previous scene for 0.33–1.43 s (Black Hat: none above 300 ms). Fixing it needs a
-   new Story opening authority (e.g. establish the first non-RESULT, dependency-free carrier of
-   a scene at its first spoken word even when its own word is > 0.42 s later). The 2026-10-15
-   opening-establishment authorization explicitly excluded new authorities, so it is not done.
+1. **D:** fixed for every non-RESULT, dependency-free opener by the 2026-10-16 authority. Kept
+   by design (user: keep the RESULT exclusion): 9 RESULT-first scenes (0.13–0.83 s, 7 above
+   300 ms) and one opener that depends on another event (Black Hat 021, 0.23 s).
 2. **Sprint 4.1 character emphasis** (38 beats) still peaks at up to 12 % in 0.3–0.6 s without
    a hold (protected certified behaviour). Reshaping it to the new held ≤ 6 % gesture is a
    one-line policy decision for the user.
@@ -144,8 +150,11 @@ leaves the canvas before removal), `test_vp4_hero_travel.py` (1.0 w/s cap, held 
 
 ## 8. Recommendation
 
-**READY for visual review** of the corrected motion (Problems A, B, C) on the Black Hat
-reference and the nine other packages: zero mid-motion vanishes, one emphasis per beat, calm
-arrivals, 20/20 encodes passing every gate. **Not a certification** - the user's visual review
-decides. Problem D outside Black Hat and the Sprint 4.1 amplitude are explicit open decisions
-(§7), not hidden passes.
+**READY for visual review** of the corrected motion (A, B, C) and of the scene/narration sync
+(D) on Black Hat and the nine other packages: zero mid-motion vanishes, one emphasis per beat,
+calm arrivals, every non-RESULT scene opener on its sentence's first word, 20/20 final encodes
+passing every gate, full test suite green. **Not a certification** — the user's visual review
+decides. Still open: the Sprint 4.1 character-emphasis amplitude (§7.2). Before/after videos:
+`compare\BLACK_HAT_v7_before_LEFT_vs_motionfix_after_RIGHT.mp4`,
+`compare\BLACK_HAT_key_moments_slow40pct_before_LEFT_after_RIGHT.mp4`,
+`compare\SCENE_SYNC_before_LEFT_after_RIGHT_BugBounty011_SocialEng016_WhiteHat028.mp4`.

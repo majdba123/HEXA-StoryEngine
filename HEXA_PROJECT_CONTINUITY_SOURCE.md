@@ -14326,3 +14326,15 @@ preserved hold-emphasis / sub-visible-nudge WIP. Full report:
   is a RESULT). Needs a new Story opening authority.
 - Sprint 4.1 character emphasis still peaks at 10-12 % without a hold.
 - Measurement note: cached shared plans hold an old Story; re-plan Story before measuring.
+
+### Update 2026-10-16: scene/narration sync (user-authorized Story authority)
+- New `SCENE_SENTENCE_START` opening authority (`app/story/windows.py`): on a scene's first
+  beat the first reveal cohort's safe carrier (non-RESULT, dependency-free, event order 1 or
+  no event, CONTEXT/LEADER/PRIMARY/PARTICIPANT) is revealed at the first spoken word of its
+  own sentence even when its word is > 0.42 s later; authored evidence keeps precedence;
+  phrase anchor, peak and settle unchanged; RESULT-first scenes and later reveals untouched.
+- Result over 10 packages: sentence-over-previous-scene boundaries 25 -> 10, 14.27 s -> 3.87 s;
+  the 10 left are the kept exclusions (9 RESULT-first, 1 dependent opener: Black Hat 021).
+- `app/motion/arrival.py`: a semantic segment resting until after the bounded arrival now
+  starts at the arrival end (absolute keyframe times kept); found by the encoded-motion gate
+  (White Hat beat 031). 20/20 final encodes pass.
