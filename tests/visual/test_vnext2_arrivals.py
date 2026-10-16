@@ -60,7 +60,8 @@ def test_an_asset_near_a_side_edge_slides_in_from_that_edge_at_reference_speed()
 
 
 def test_a_centred_asset_pops_and_a_tiny_one_keeps_its_fade() -> None:
-    tiny = LayoutItem(asset_id="tiny", x=0.5, y=0.2, width=0.02, height=0.02)
+    # tiny and away from every edge (near the top it would slide in from that edge)
+    tiny = LayoutItem(asset_id="tiny", x=0.5, y=0.5, width=0.02, height=0.02)
     planner, out = _run([_cue("center", 1.0, 1.3), _cue("tiny", 1.5, 1.8)], [CENTER, tiny])
     gestures = {d.asset_id: d.gesture for d in planner.decisions}
     assert gestures == {"center": "POP", "tiny": "FADE"}

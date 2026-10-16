@@ -8,7 +8,10 @@ animates uniformly:
 
 * SLIDE - an asset near a side edge slides in from that edge (reference slides: 0.10-0.15
   frame widths over 8-13 frames, peak 0.8-1.2 w/s), when the whole swept path is clear of
-  every asset visible meanwhile (authored overlap respected) and of hero travel paths;
+  every asset visible meanwhile (authored overlap respected) and of hero travel paths; an
+  asset near no side edge but near the top or bottom slides in vertically from that edge
+  over the same physical distance, reach and speed (the references' objects rise in from
+  the bottom; visual sprint, 2026-10-16);
 * POP   - otherwise a scale pop from the reference start size (0.62) in <= 5 frames;
 * FADE  - kept when the pop would not be visible (below 20 px) or the asset belongs to a
   Pass2 family, is geometry-locked, continues from an earlier beat, or already carries a
@@ -28,6 +31,8 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, Visual
 
 from .collision import authored_overlap_ratio, box
 from .family import family_of, follow, rigid_followers
+from app.targets.context import active_target
+
 from .resolution import POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, pop_start_scale
 from .timing import projected_motion_activity_px
 
@@ -102,9 +107,9 @@ def pop_frames(start_scale: float, settle: float) -> list[dict]:
     return frames
 
 
-def slide_frames(dx: float, settle: float) -> list[dict]:
+def slide_frames(dx: float, settle: float, dy: float = 0.0) -> list[dict]:
     settle = max(0.0, min(1.0, settle))
-    frames = [{"progress": 0.0, "dx": round(dx, 6), "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
+    frames = [{"progress": 0.0, "dx": round(dx, 6), "dy": round(dy, 6), "scale": 1.0, "easing": "smoothstep"},
               {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]
     if settle < 1.0 - _EPS:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"})
@@ -306,7 +311,8 @@ class SecondaryArrivalPlanner:
         if slide is not None:
             if pop is not None:
                 self._pop_fallback[(cue.beat_id, cue.asset_id)] = pop
-            return "SLIDE", "edge_slide", slide
+            vertical = bool((slide.params.get("reference_slide") or {}).get("dy"))
+            return "SLIDE", "edge_slide_vertical" if vertical else "edge_slide", slide
         if pop is not None:
             return "POP", "reference_pop", pop
         return "FADE", "pop_below_visible_floor", None
@@ -359,18 +365,25 @@ class SecondaryArrivalPlanner:
         window: float,
     ) -> MotionCue | None:
         final = box(item, (0.0, 0.0, 1.0))
+        frame = active_target()
+        aspect = frame.width / max(1, frame.height)  # one width unit in height units
         left_gap, right_gap = final[0], 1.0 - final[2]
         gap, sign = (left_gap, -1.0) if left_gap <= right_gap else (right_gap, 1.0)
-        if gap > SLIDE_EDGE_REACH + _EPS:
-            return None
+        vertical = gap > SLIDE_EDGE_REACH + _EPS
+        if vertical:
+            # Near no side edge: the nearer of top/bottom, at the same physical reach.
+            top_gap, bottom_gap = final[1], 1.0 - final[3]
+            gap, sign = (top_gap, -1.0) if top_gap <= bottom_gap else (bottom_gap, 1.0)
+            if gap / aspect > SLIDE_EDGE_REACH + _EPS:
+                return None
         seconds = min(SLIDE_SECONDS, window)
         if seconds + _EPS < SLIDE_MIN_SECONDS:
             return None
         distance = min(SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
         if distance + _EPS < SLIDE_MIN_DISTANCE:
             return None
-        dx = sign * distance
-        begin = box(item, (dx, 0.0, 1.0))
+        dx, dy = (0.0, sign * distance * aspect) if vertical else (sign * distance, 0.0)
+        begin = box(item, (dx, dy, 1.0))
         sweep = (min(begin[0], final[0]), min(begin[1], final[1]), max(begin[2], final[2]), max(begin[3], final[3]))
         start, end = float(cue.start), float(cue.start) + seconds
         for other in beat_cues:
@@ -388,9 +401,11 @@ class SecondaryArrivalPlanner:
                 return None
         params = self._with_opacity(dict(cue.params), cue, seconds)
         params.pop("hero_entry", None)
-        params["reference_slide"] = {"dx": round(dx, 6), "seconds": round(seconds, 6),
+        params["reference_slide"] = {"dx": round(dx, 6), **({"dy": round(dy, 6)} if vertical else {}),
+                                     "seconds": round(seconds, 6),
                                      "peak_speed": round(SMOOTHSTEP_PEAK * distance / seconds, 4),
                                      "profile": "REFERENCE_SLIDE"}
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
-        return self._gesture(cue, params, "reference_slide_arrival", lambda settle: slide_frames(dx, settle), seconds)
+        return self._gesture(cue, params, "reference_slide_arrival",
+                             lambda settle: slide_frames(dx, settle, dy), seconds)
