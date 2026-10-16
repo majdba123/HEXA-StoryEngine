@@ -14370,3 +14370,34 @@ closure commit; report `docs/qa/CINEMATIC-VNEXT2-MOTION-CORRECTION.md` §9; revi
 - Integration: regular merge into `montage` (32 commits ahead, only the continuity source shared,
   no conflict); the real merge (temporary commit 98e205c on no branch, tree acbe55e) passed the full suite: 10227 tests, 0 failures, 0 errors, 38 skipped, exit 0 (gates/pytest-merge-check.xml). Not merged; `bayer` untouched (production deploys only from `bayer`).
 - Open: Sprint 4.1 emphasis amplitude decision; RESULT-first scenes; user visual review.
+
+## CINEMATIC VISUAL DIRECTION & MOTION QUALITY SPRINT — 2026-10-16
+
+Branch `montage`, local commits on top of `df0482c` (not pushed): `204bff5` (Arabic reading
+order), `f3872c4` + `3335caf` (text transitions, anchoring, guard fix), `81fadb2` + `56f2de5`
+(motion blur; never drop a window's last frame), `0c3d7ab` (vertical edge slides), `1a578f8`
+(cause → consequence payoff), and the report commit. Report:
+`docs/qa/CINEMATIC-VISUAL-DIRECTION-SPRINT.md`. Review package: `E:\hexa-visual\REVIEW-visual-sprint\`.
+`bayer`, VPS, user data, Final Package inputs and Composition geometry untouched.
+
+- References: `انحياز 2.mp4`, `تأثير المتفرج2.mp4` measured (slide 1.15 w/s with blur ≈ v × 0.03 s,
+  focus wash σ ≈ 0.01 h / white → 210–212, text fades 0.33–0.40 s in, ~0.20 s out); `hallo 2.mp4`
+  not on the machine.
+- Text: the renderer re-sorted tied reveal tokens by time (12 reversed phrases in 5 packages,
+  e.g. Black Hat «المعرفة التقنية»); fixed + handoff contract. Text Motion now plans entry/word/
+  exit fades; added words fade alone (clipped), phrases centre on their box, the entry gesture
+  continues across words.
+- Motion blur: Motion owns `params.motion_blur` (180° shutter, lengths as content-height
+  fractions), Boundary owns `exit_motion_blur`; the renderer evaluates its own expressions
+  (`app/render/expression.py`) and blurs only the travelling frames (premultiplied `dblur`
+  branch). 704/1825 cues and 48 exits blurred; rest frames byte-identical; +7 % render time.
+  The final-media gate found a dropped last frame per blur window (near-white handoff frames)
+  → fixed with a spare branch frame.
+- Entries: assets near the top/bottom edge slide in vertically (+46 slides); exits unchanged
+  (hero-only contract). Payoff: a result with an authored directional relation arrives from its
+  cause (3 corpus cases); Black Hat 021 keeps its pop (7.7-frame window).
+- Certification (engineering, not artistic): 20/20 final outputs pass the encoded-motion and
+  final-media gates; full suite 10289 tests, 0 failures, 38 skipped; holdout gate 80/80.
+- Open for the user: Black Hat 021 tight payoff (pop / 7-frame slide / earlier Story reveal);
+  cold-open fade-in of each video's first element; blur strength 180° vs 270°; the pre-existing
+  straight-alpha box-fit edge fringe; Sprint 4.1 amplitude (unchanged).
