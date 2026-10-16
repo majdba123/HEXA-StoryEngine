@@ -471,7 +471,7 @@ class Uploads:
                     db.execute(
                         "INSERT INTO jobs(id,state,message,package,audio,user_id,created_at,package_name) VALUES(?,'queued','Queued',?,?,?,?,?)",
                         (job_id, str(package_path), str(audio_named), owner, time.time(),
-                         export_slug(validated_package.project_slug or validated_package.package_id)),
+                         export_slug(validated_package.project_slug or validated_package.package_id) if validated_package is not None else None),
                     )
                     db.execute(
                         "INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid())

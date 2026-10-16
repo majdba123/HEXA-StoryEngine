@@ -369,7 +369,8 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             await asyncio.to_thread(validate_zip, package_path)
             await asyncio.to_thread(validate_audio, audio_path, settings.ffprobe_bin)
             validated_package = await asyncio.to_thread(FinalPackageLoader().load, package_path, directory / "validation")
-            jobs.update(job_id, package_name=export_slug(validated_package.project_slug or validated_package.package_id))
+            if validated_package is not None:
+                jobs.update(job_id, package_name=export_slug(validated_package.project_slug or validated_package.package_id))
             await asyncio.to_thread(shutil.rmtree, directory / "validation", ignore_errors=True)
             jobs.start(job_id, package_path, audio_path)
         except InvalidPackageError as exc:
