@@ -135,3 +135,36 @@ def test_encoded_exit_is_opaque_and_leaves_the_canvas_before_it_is_removed(tmp_p
     # Completely off the canvas on the last frame before the opener: nothing vanishes in view.
     assert mass[-2] <= 0.02 * reference and mass[-1] == 0
     assert OLD_RIGHT  # geometry reference used by the band above
+
+
+# -- every unit leaves on its own (user review 2026-10-16: a leaving man "took" the card along)
+def _crossing_scene() -> Scene:
+    """card at the left edge, man in the middle (nearest exit also left), headset as RESULT."""
+    old = {"card": (0.12, 0.25, 0.16, 0.30), "man": (0.42, 0.50, 0.20, 0.80), "headset": (0.85, 0.70, 0.20, 0.30)}
+    scene = Scene(lead=30, opener=NEW_ON_OLD, later=60, old=old)
+    scene.story[0] = scene.story[0].model_copy(update={"active_visual_semantic_state": {a: a for a in old}})
+    focus = {"card": "SUPPORT", "man": "SUPPORT", "headset": "RESULT"}
+    scene.motion = [_with_focus(cue, focus=focus[cue.asset_id]) if cue.beat_id == "b1" else cue
+                    for cue in scene.motion]
+    return scene
+
+
+def test_an_exit_never_runs_over_another_outgoing_unit() -> None:
+    scene = _crossing_scene()
+    row = scene.plan()
+    assert row.mode == "CRISP_HANDOFF"
+    exit_audit = row.audit["exit"]
+    assert set(row.exit_starts) == {"card"}                              # leaves alone, path clear
+    assert exit_audit["path_blocked_units"] == [["man"]]                 # would have dragged the card
+    assert ["man"] in exit_audit["clean_cut_units"] and ["headset"] in exit_audit["clean_cut_units"]
+
+
+def test_without_a_unit_in_the_way_the_same_exit_is_planned() -> None:
+    scene = _crossing_scene()                                             # the same scene without the card
+    scene.composition[0] = scene.composition[0].model_copy(update={"items": [
+        item for item in scene.composition[0].items if item.asset_id != "card"]})
+    scene.motion = [cue for cue in scene.motion if cue.asset_id != "card"]
+    scene.story[0] = scene.story[0].model_copy(update={"active_visual_semantic_state": {"man": "man",
+                                                                                         "headset": "headset"}})
+    row = scene.plan()
+    assert set(row.exit_starts) == {"man"} and "path_blocked_units" not in row.audit["exit"]

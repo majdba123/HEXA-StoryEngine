@@ -14338,3 +14338,7 @@ preserved hold-emphasis / sub-visible-nudge WIP. Full report:
 - `app/motion/arrival.py`: a semantic segment resting until after the bounded arrival now
   starts at the arrival end (absolute keyframe times kept); found by the encoded-motion gate
   (White Hat beat 031). 20/20 final encodes pass.
+- Every outgoing unit leaves on its own (`release._exit_schedule`, user review 2026-10-16:
+  the Social Engineer man "took" the ID card along): a complete exit whose frame-by-frame
+  path runs over another outgoing unit beyond their authored overlap is not planned; Pass2
+  families still move as one picture. Glued exits: 1 -> 0.

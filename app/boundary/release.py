@@ -31,6 +31,8 @@ _OFFSCREEN_MARGIN = 0.01
 # when one of its cutouts is drawn at full opacity from its first frame and its footprint
 # covers at least this share of the frame.
 _SOLID_OPENER_AREA = 0.02
+# An exiting unit may pass its neighbours only within their authored overlap plus this slack.
+_EXIT_OVERLAP_SLACK = 0.02
 _EPS = 1e-6
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
@@ -357,6 +359,8 @@ class SceneBoundaryPlanner:
                 previous=previous, outgoing=outgoing, cues=cues, assets=assets,
                 outgoing_done=outgoing_done, segment=segment, opener_frame=k_open, fps=fps,
                 margin=self.exit_margin,
+                boxes={item.asset_id: self.footprints.resolve(item, assets.get(item.asset_id)).box
+                       for item in outgoing},
             )
             audit["exit"] = exits.pop("audit")
             return result(
@@ -375,7 +379,7 @@ class SceneBoundaryPlanner:
         cls, *, previous: StoryBeat, outgoing: list[LayoutItem],
         cues: dict[tuple[str, str], MotionCue], assets: dict[str, VisualAsset],
         outgoing_done: float, segment: BeatSegment, opener_frame: int, fps: int,
-        margin: float = _OFFSCREEN_MARGIN,
+        margin: float = _OFFSCREEN_MARGIN, boxes: dict[str, Box] | None = None,
     ) -> dict[str, object]:
         """Complete outgoing exits inside the pre-opener interval, or none (clean cut).
 
@@ -387,7 +391,10 @@ class SceneBoundaryPlanner:
         off the frame on every projection (``margin``), along a smoothstep path within the
         HERO_TRAVEL speed cap and minimum duration. A unit that cannot leave in the
         available time stays still and leaves with the opener (a clean cut), so nothing
-        vanishes halfway through an exit. Without Motion's rhythm authority it abstains.
+        vanishes halfway through an exit. Every unit leaves on its own: an exit whose path
+        would run over another outgoing unit (still or leaving, beyond their authored
+        overlap; ``boxes`` are the alpha footprints) is not planned, so no unit ever drags
+        another along. Without Motion's rhythm authority it abstains.
         """
         min_frames = ceil(HERO_TRAVEL.minimum_seconds * fps - _EPS)
         holds = []
@@ -423,32 +430,89 @@ class SceneBoundaryPlanner:
             families.setdefault(AssetManager.family_id(asset) if asset else item.asset_id, []).append(item)
         groups = sorted(families.values(), key=lambda members: (
             min(rank(m) for m in members), min(m.z for m in members), min(m.asset_id for m in members)))
-        starts: dict[str, float] = {}
-        leaving, staying = [], []
+        boxes = boxes or {}
+
+        def rest_box(members: list[LayoutItem]) -> Box:
+            rows = [boxes.get(m.asset_id) or (float(m.x) - float(m.width) / 2, float(m.y) - float(m.height) / 2,
+                                              float(m.x) + float(m.width) / 2, float(m.y) + float(m.height) / 2)
+                    for m in members]
+            return (min(r[0] for r in rows), min(r[1] for r in rows), max(r[2] for r in rows), max(r[3] for r in rows))
+
+        units = []
         for index, members in enumerate(groups):
-            frames = cls._complete_exit_frames(members, fps=fps, margin=margin)
+            frames, shift = cls._complete_exit_path(members, fps=fps, margin=margin)
             # The last unit (the semantic result) never leaves early: it covers the frame
             # until the opener, so completed exits can never leave a near-white frame.
-            if index == len(groups) - 1 or frames > window:
-                staying.append(sorted(m.asset_id for m in members))
+            fits = index != len(groups) - 1 and frames <= window
+            units.append({"members": members, "box": rest_box(members), "frames": frames, "shift": shift,
+                          "exits": False, "why": None if fits else "time", "fits": fits})
+        # Units decide in order (supporting first): earlier units at their decision, later
+        # ones still. Each pair is checked once, when the later of the two decides, against
+        # the earlier one's real path, so a planned exit never meets another outgoing unit.
+        for current in units:
+            if not current["fits"]:
                 continue
-            leaving.append(sorted(m.asset_id for m in members))
-            begin = (segment.start_frame + opener_frame - frames) / fps
-            starts.update({member.asset_id: begin for member in members})
-        return {"starts": starts, "audit": {
+            current["exits"] = True
+            if cls._exit_path_collides(current, units, opener_frame):
+                current["exits"], current["why"] = False, "path"
+        starts: dict[str, float] = {}
+        leaving, staying, crossing = [], [], []
+        for unit in units:
+            ids = sorted(m.asset_id for m in unit["members"])
+            if not unit["exits"]:
+                staying.append(ids)
+                if unit["why"] == "path":
+                    crossing.append(ids)
+                continue
+            leaving.append(ids)
+            begin = (segment.start_frame + opener_frame - unit["frames"]) / fps
+            starts.update({member.asset_id: begin for member in unit["members"]})
+        audit = {
             "decision": "complete_exit" if leaving else (
-                "clean_cut:exit_cannot_leave_the_frame_in_time" if len(groups) > 1
+                "clean_cut:exit_path_crosses_another_outgoing_unit" if crossing
+                else "clean_cut:exit_cannot_leave_the_frame_in_time" if len(groups) > 1
                 else "clean_cut:single_unit_covers_until_opener"),
-            "ready_frame": ready_frame, "window_frames": window, "order": leaving, "clean_cut_units": staying}}
+            "ready_frame": ready_frame, "window_frames": window, "order": leaving, "clean_cut_units": staying}
+        if crossing:
+            audit["path_blocked_units"] = crossing
+        return {"starts": starts, "audit": audit}
 
     @staticmethod
-    def _complete_exit_frames(members: list[LayoutItem], *, fps: int, margin: float) -> int:
-        """Frames a unit needs to leave the frame through its nearest side edge."""
+    def _exit_path_collides(current: dict, units: list[dict], opener_frame: int) -> bool:
+        """True when ``current``'s planned exit runs over another outgoing unit on any frame
+        before the opener (each unit at its own pose on that frame; authored overlap kept)."""
+
+        def at(unit: dict, frame: int) -> Box:
+            box = unit["box"]
+            if not unit["exits"]:
+                return box
+            first = opener_frame - unit["frames"]
+            progress = min(1.0, max(0.0, (frame - first) / max(1, unit["frames"] - 1)))
+            offset = unit["shift"] * (3 * progress ** 2 - 2 * progress ** 3)
+            return (box[0] + offset, box[1], box[2] + offset, box[3])
+
+        def ratio(a: Box, b: Box) -> float:
+            inter = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+            return inter / max(1e-9, min(_area(a), _area(b)))
+
+        for other in units:
+            if other is current:
+                continue
+            allowed = ratio(current["box"], other["box"]) + _EXIT_OVERLAP_SLACK
+            for frame in range(opener_frame - current["frames"], opener_frame):
+                if ratio(at(current, frame), at(other, frame)) > allowed + _EPS:
+                    return True
+        return False
+
+    @staticmethod
+    def _complete_exit_path(members: list[LayoutItem], *, fps: int, margin: float) -> tuple[int, float]:
+        """(frames, horizontal shift) for a unit leaving through its nearest side edge (the
+        direction the renderer executes)."""
         left = max(float(m.x) + float(m.width) / 2 for m in members) + margin
         right = 1.0 - min(float(m.x) - float(m.width) / 2 for m in members) + margin
-        seconds = max(HERO_TRAVEL.minimum_seconds,
-                      SMOOTHSTEP_PEAK * min(left, right) / HERO_TRAVEL.max_normalized_speed)
-        return ceil(seconds * fps - _EPS)
+        distance, shift = (left, -left) if left <= right else (right, right)
+        seconds = max(HERO_TRAVEL.minimum_seconds, SMOOTHSTEP_PEAK * distance / HERO_TRAVEL.max_normalized_speed)
+        return ceil(seconds * fps - _EPS), shift
 
     @classmethod
     def _hold_to_opener(
