@@ -40,8 +40,9 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     guard = guard or WebGuard.from_env(storage, max_upload)
     chunk_root = Path(os.getenv("HEXA_WEB_UPLOAD_ROOT", str(
         storage / "uploads" if explicit_storage else Path.home() / ".hexa" / "uploads")))
+    v2_enabled = os.getenv("HEXA_WEB_V2_ENABLED", "0").lower() in ("1", "true", "yes")
     uploads = Uploads(storage, jobs, max_upload, chunk_root,
-                      int(os.getenv("HEXA_WEB_CHUNK_BYTES", "262144")))
+                      int(os.getenv("HEXA_WEB_CHUNK_BYTES", "262144")), v2_enabled)
     identity = Identity(jobs.db)
     admin_data = AdminData(jobs.db, settings.export_root)
     if retention:
@@ -385,7 +386,9 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
 
     @app.get("/api/uploads/config")
     def upload_config():
-        return {"chunk_size": uploads.chunk_bytes, "max_file_bytes": max_upload}
+        return {"chunk_size": uploads.chunk_bytes, "max_file_bytes": max_upload,
+                "protocols": [1, 2] if uploads.v2_enabled else [1],
+                "v2_chunk_size": 4 * 1024 * 1024}
 
     @app.post("/api/uploads", status_code=201)
     async def initialize_upload(request: Request):

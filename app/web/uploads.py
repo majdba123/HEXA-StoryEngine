@@ -23,6 +23,7 @@ from app.shared.errors import InvalidPackageError
 SHA = re.compile(r"^[0-9a-f]{64}$")
 AUDIO = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 CHUNK = 256 * 1024
+V2_CHUNK = 4 * 1024 * 1024
 
 
 def safe_path(name: str) -> bool:
@@ -45,10 +46,12 @@ class Uploads:
         max_bytes: int,
         chunk_root: Path | None = None,
         chunk_bytes: int = CHUNK,
+        v2_enabled: bool = False,
     ):
         if chunk_bytes not in (CHUNK, 2 * CHUNK, 4 * CHUNK):
             raise ValueError("HEXA_WEB_CHUNK_BYTES must be 262144, 524288, or 1048576")
         self.chunk_bytes = chunk_bytes
+        self.v2_enabled = v2_enabled
         self.root = (chunk_root or root / "uploads").resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.name == "posix":
@@ -117,9 +120,30 @@ class Uploads:
     def initialize(self, owner: str, key: str, manifest: dict):
         if not isinstance(manifest, dict):
             raise HTTPException(422, "Invalid upload manifest")
-        if manifest.get("chunk_size", self.chunk_bytes) != self.chunk_bytes:
-            raise HTTPException(409, "Chunk size changed; start a new upload")
-        manifest = {**manifest, "chunk_size": self.chunk_bytes}
+        if not isinstance(key, str) or not 8 <= len(key) <= 128:
+            raise HTTPException(422, "Invalid idempotency key")
+        # An old session keeps its stored chunk size even when the server default changes.
+        with self.connect() as db:
+            old = db.execute(
+                "SELECT id,manifest FROM uploads WHERE owner=? AND key=?", (owner, key)
+            ).fetchone()
+        if old:
+            existing = json.loads(old["manifest"])
+            incoming = {**manifest, "chunk_size": manifest.get("chunk_size", existing["chunk_size"])}
+            if incoming != existing:
+                raise HTTPException(409, "Idempotency key conflicts with another manifest")
+            return self.status(old["id"], owner)
+        protocol = manifest.get("protocol", 1)
+        if type(protocol) is not int or protocol not in (1, 2):
+            raise HTTPException(422, "Unsupported upload protocol")
+        if protocol == 2 and not self.v2_enabled:
+            raise HTTPException(409, "Upload protocol V2 is disabled for new sessions")
+        chunk_size = manifest.get("chunk_size", self.chunk_bytes)
+        if type(chunk_size) is not int or chunk_size not in (
+            (self.chunk_bytes,) if protocol == 1 else (4 * CHUNK, 8 * CHUNK, V2_CHUNK)
+        ):
+            raise HTTPException(409, "Unsupported chunk size for upload protocol")
+        manifest = {**manifest, "chunk_size": chunk_size}
         files = manifest.get("files")
         mode = manifest.get("mode")
         if (
@@ -178,8 +202,6 @@ class Uploads:
             or total > 2 * self.max_bytes
         ):
             raise HTTPException(413, "Upload exceeds limit or has invalid roles")
-        if not isinstance(key, str) or not 8 <= len(key) <= 128:
-            raise HTTPException(422, "Invalid idempotency key")
         canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         with self.lock, self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -256,7 +278,7 @@ class Uploads:
         data = bytearray()
         async for block in request.stream():
             data.extend(block)
-            if len(data) > 4 * CHUNK:
+            if len(data) > V2_CHUNK:
                 raise HTTPException(413, "Chunk too large")
         if not data or hashlib.sha256(data).hexdigest() != digest:
             raise HTTPException(422, "Chunk checksum mismatch")

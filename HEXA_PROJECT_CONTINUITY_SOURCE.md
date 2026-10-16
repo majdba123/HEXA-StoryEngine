@@ -14370,3 +14370,7 @@ closure commit; report `docs/qa/CINEMATIC-VNEXT2-MOTION-CORRECTION.md` §9; revi
 - Integration: regular merge into `montage` (32 commits ahead, only the continuity source shared,
   no conflict); the real merge (temporary commit 98e205c on no branch, tree acbe55e) passed the full suite: 10227 tests, 0 failures, 0 errors, 38 skipped, exit 0 (gates/pytest-merge-check.xml). Not merged; `bayer` untouched (production deploys only from `bayer`).
 - Open: Sprint 4.1 emphasis amplitude decision; RESULT-first scenes; user visual review.
+
+## UPLOAD PERFORMANCE V2 FEATURE CHECKPOINT — 2026-10-16
+
+Isolated branch `feature/upload-performance-v2` starts from verified `origin/montage` `df0482c5b572a77ae706f97b642ec7f3a4e5d02b`. It is a transport performance candidate only; certification and production rollout remain separate. V2 explicitly negotiates 4 MiB sequential chunks, retains SHA-256/fsync/SQLite durability and legacy V1 sessions, and consumes authoritative committed progress from the chunk response. The old V1 default is unchanged. Local disposable HTTP benchmarks and their limitations are in `docs/performance/UPLOAD-PERFORMANCE-V2-CERTIFICATION.md`. No `montage`, `bayer`, engine, VPS, production database, or export change is authorized by this checkpoint.

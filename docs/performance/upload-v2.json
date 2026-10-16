@@ -1,0 +1,53 @@
+{
+  "environment": "localhost HTTP; application sleep approximates RTT, no network shaping",
+  "results": [
+    {
+      "protocol": 2,
+      "size_mib": 44.0,
+      "simulated_rtt_ms": 0.0,
+      "preparation_s": 0.20858509998652153,
+      "initialization_s": 0.051111799984937534,
+      "transfer_s": 3.5620228000043426,
+      "total_to_durable_upload_s": 3.821909499994945,
+      "mib_per_s": 12.17715187706297,
+      "requests": 13,
+      "retries": 0,
+      "median_request_ms": 146.70280000427738,
+      "p95_request_ms": 766.6824999905657,
+      "finalization_s": null,
+      "job_admission_s": null
+    },
+    {
+      "protocol": 2,
+      "size_mib": 44.0,
+      "simulated_rtt_ms": 50.0,
+      "preparation_s": 0.6148658999882173,
+      "initialization_s": 0.08617799999774434,
+      "transfer_s": 3.0132146999822,
+      "total_to_durable_upload_s": 3.714393799979007,
+      "mib_per_s": 14.195710256433165,
+      "requests": 13,
+      "retries": 0,
+      "median_request_ms": 178.1291999912355,
+      "p95_request_ms": 251.64139999542385,
+      "finalization_s": null,
+      "job_admission_s": null
+    },
+    {
+      "protocol": 2,
+      "size_mib": 44.0,
+      "simulated_rtt_ms": 150.0,
+      "preparation_s": 0.15465959999710321,
+      "initialization_s": 0.23443119999137707,
+      "transfer_s": 5.31928210001206,
+      "total_to_durable_upload_s": 5.708512799988966,
+      "mib_per_s": 7.922427621973239,
+      "requests": 13,
+      "retries": 0,
+      "median_request_ms": 307.0184000011068,
+      "p95_request_ms": 850.3714999882504,
+      "finalization_s": null,
+      "job_admission_s": null
+    }
+  ]
+}

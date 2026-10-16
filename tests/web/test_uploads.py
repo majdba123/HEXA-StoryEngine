@@ -666,3 +666,150 @@ def test_upload_cannot_be_discarded_during_validation(tmp_path, monkeypatch):
             result = future.result(timeout=10)
             assert result.status_code == 422
             assert client.get(f"/api/uploads/{uid}").json()["state"] == "failed"
+
+def test_v2_four_mib_chunk_acknowledges_durable_progress(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEXA_WEB_V2_ENABLED", "1")
+    settings = replace(
+        Settings.from_env(), work_root=tmp_path / "work", export_root=tmp_path / "exports"
+    )
+    package = b"z" * (4 * 1024 * 1024 + 17)
+    audio = b"audio"
+    m = manifest(package, audio)
+    m["protocol"] = 2
+    m["chunk_size"] = 4 * 1024 * 1024
+    m["files"][0]["fingerprint"] = hashlib.sha256(
+        (hashlib.sha256(package[:4 * 1024 * 1024]).hexdigest()
+         + hashlib.sha256(package[4 * 1024 * 1024:]).hexdigest()).encode()
+    ).hexdigest()
+    storage = tmp_path / "storage"
+    with TestClient(create_app(settings, storage)) as client:
+        config = client.get("/api/uploads/config").json()
+        assert config["v2_chunk_size"] == 4 * 1024 * 1024
+        created = client.post("/api/uploads", json={"key": "v2-four-mib", "manifest": m})
+        assert created.status_code == 201, created.text
+        uid = created.json()["id"]
+        first = put(client, uid, "p0", 0, package[:4 * 1024 * 1024])
+        assert first.status_code == 200, first.text
+        assert first.json()["files"]["p0"] == 4 * 1024 * 1024
+        assert put(client, uid, "p0", 0, package[:4 * 1024 * 1024]).json()["files"]["p0"] == 4 * 1024 * 1024
+        assert put(client, uid, "p0", 1, package[4 * 1024 * 1024:]).status_code == 200
+        assert put(client, uid, "audio", 0, audio).status_code == 200
+        assert (storage / "uploads" / uid / "p0").read_bytes() == package
+
+
+def test_v1_idempotent_resume_survives_server_default_change(tmp_path, monkeypatch):
+    settings = replace(
+        Settings.from_env(), work_root=tmp_path / "work", export_root=tmp_path / "exports"
+    )
+    storage = tmp_path / "storage"
+    package, audio = archive(), b"audio"
+    m = manifest(package, audio)
+    with TestClient(create_app(settings, storage)) as client:
+        created = client.post("/api/uploads", json={"key": "v1-old-default", "manifest": m})
+        assert created.status_code == 201
+        uid = created.json()["id"]
+    monkeypatch.setenv("HEXA_WEB_CHUNK_BYTES", str(2 * CHUNK))
+    with TestClient(create_app(settings, storage)) as client:
+        resumed = client.post("/api/uploads", json={"key": "v1-old-default", "manifest": m})
+        assert resumed.status_code == 201, resumed.text
+        assert resumed.json()["id"] == uid
+        assert resumed.json()["chunk_size"] == CHUNK
+        assert put(client, uid, "p0", 0, package).status_code == 200
+
+def test_v2_rejects_out_of_order_conflict_and_oversize(tmp_path, monkeypatch):
+    monkeypatch.setenv("HEXA_WEB_V2_ENABLED", "1")
+    settings = replace(
+        Settings.from_env(), work_root=tmp_path / "work", export_root=tmp_path / "exports"
+    )
+    chunk = 4 * 1024 * 1024
+    package, audio = b"q" * (chunk + 1), b"audio"
+    m = manifest(package, audio)
+    m.update(protocol=2, chunk_size=chunk)
+    m["files"][0]["fingerprint"] = hashlib.sha256(
+        (hashlib.sha256(package[:chunk]).hexdigest()
+         + hashlib.sha256(package[chunk:]).hexdigest()).encode()
+    ).hexdigest()
+    with TestClient(create_app(settings, tmp_path / "storage")) as client:
+        uid = client.post("/api/uploads", json={"key": "v2-conflict", "manifest": m}).json()["id"]
+        assert put(client, uid, "p0", 1, package[chunk:]).status_code == 409
+        assert put(client, uid, "p0", 0, package + b"x").status_code == 413
+        assert put(client, uid, "p0", 0, package[:chunk]).status_code == 200
+        assert put(client, uid, "p0", 0, b"x" * chunk).status_code == 409
+        assert client.get(f"/api/uploads/{uid}").json()["files"]["p0"] == chunk
+
+def test_v2_flag_disables_new_sessions_but_keeps_existing(tmp_path, monkeypatch):
+    settings = replace(
+        Settings.from_env(), work_root=tmp_path / "work", export_root=tmp_path / "exports"
+    )
+    storage = tmp_path / "storage"
+    package, audio = archive(), b"audio"
+    m = manifest(package, audio)
+    m.update(protocol=2, chunk_size=4 * 1024 * 1024)
+    m["files"][0]["fingerprint"] = hashlib.sha256(
+        hashlib.sha256(package).hexdigest().encode()
+    ).hexdigest()
+    monkeypatch.setenv("HEXA_WEB_V2_ENABLED", "1")
+    with TestClient(create_app(settings, storage)) as client:
+        created = client.post("/api/uploads", json={"key": "v2-before-rollback", "manifest": m})
+        assert created.status_code == 201, created.text
+        uid = created.json()["id"]
+    monkeypatch.delenv("HEXA_WEB_V2_ENABLED")
+    with TestClient(create_app(settings, storage)) as client:
+        assert client.get("/api/uploads/config").json()["protocols"] == [1]
+        resumed = client.post("/api/uploads", json={"key": "v2-before-rollback", "manifest": m})
+        assert resumed.status_code == 201
+        assert resumed.json()["id"] == uid
+        assert put(client, uid, "p0", 0, package).status_code == 200
+        assert client.post("/api/uploads", json={"key": "new-v2-disabled", "manifest": m}).status_code == 409
+
+def test_v2_real_package_and_wav_reach_job_admission(tmp_path, monkeypatch):
+    import wave
+    from tests.support.unified_package import write_unified_package
+
+    monkeypatch.setenv("HEXA_WEB_V2_ENABLED", "1")
+    package_dir = write_unified_package(
+        tmp_path / "fixture", script="One visual idea.",
+        scenes=[{"scene_id": "s1", "script_span": {"text": "One visual idea.",
+                 "global_char_start": 0, "global_char_end": 16},
+                 "assets": [{"asset_id": "a1", "role": "primary",
+                             "script_text": "One visual idea.",
+                             "script_span": {"text": "One visual idea.",
+                                             "global_char_start": 0, "global_char_end": 16},
+                             "binding_type": "EXPLICIT"}]}],
+    )
+    zip_path = tmp_path / "valid.zip"
+    with zipfile.ZipFile(zip_path, "w") as bundle:
+        for source in package_dir.rglob("*"):
+            if source.is_file():
+                bundle.write(source, "package/" + source.relative_to(package_dir).as_posix())
+    wav_path = tmp_path / "voice.wav"
+    with wave.open(str(wav_path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(16000)
+        stream.writeframes(b"\0\0" * 32000)
+    package, audio = zip_path.read_bytes(), wav_path.read_bytes()
+    m = manifest(package, audio)
+    m.update(protocol=2, chunk_size=4 * 1024 * 1024)
+    m["files"][0]["fingerprint"] = hashlib.sha256(
+        hashlib.sha256(package).hexdigest().encode()
+    ).hexdigest()
+    m["files"][1]["fingerprint"] = hashlib.sha256(
+        hashlib.sha256(audio).hexdigest().encode()
+    ).hexdigest()
+    export = tmp_path / "exports"
+    export.mkdir()
+    settings = replace(Settings.from_env(), work_root=tmp_path / "work",
+                       export_root=export, export_min_free_bytes=0)
+    started = []
+    monkeypatch.setattr("app.web.jobs.Jobs.start", lambda self, *args: started.append(args))
+    with TestClient(create_app(settings, tmp_path / "storage")) as client:
+        created = client.post("/api/uploads", json={"key": "v2-real-validation", "manifest": m})
+        assert created.status_code == 201, created.text
+        uid = created.json()["id"]
+        assert put(client, uid, "p0", 0, package).status_code == 200
+        assert put(client, uid, "audio", 0, audio).status_code == 200
+        admitted = client.post(f"/api/uploads/{uid}/complete")
+        assert admitted.status_code == 202, admitted.text
+        assert client.get(f"/api/uploads/{uid}").json()["job_id"] == admitted.json()["id"]
+        assert len(started) == 1
