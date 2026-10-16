@@ -126,7 +126,15 @@ def test_export_deletion_keeps_history_and_version_number(tmp_path, monkeypatch)
         inventory = admin.get("/api/admin/exports").json()
         assert inventory["total"] == 2
         bundle_id = next(row["id"] for row in inventory["items"] if row["version"] == 1)
+        assert next(row for row in inventory["items"] if row["id"] == bundle_id)["created_at"] == "2026-10-16T00:00:00+00:00"
         admin_id = admin.get("/api/session").json()["user"]["id"]
+        archived_job = Jobs(storage, settings).create(admin_id)
+        assert archived_job is not None
+        Jobs(storage, settings).update(
+            archived_job, state="completed", bundle=str(first.directory),
+            youtube=str(first.output_path("YOUTUBE")), reels=str(first.output_path("REELS")),
+        )
+        assert admin.get(f"/api/jobs/{archived_job}/download/manifest").status_code == 200
         data = AdminData(storage / "jobs.sqlite3", root)
         assert data.lease_download(bundle_id)
         with pytest.raises(ValueError, match="download"):
@@ -137,6 +145,8 @@ def test_export_deletion_keeps_history_and_version_number(tmp_path, monkeypatch)
         Jobs(storage, settings).update(active, state="failed")
         assert admin.delete(f"/api/admin/exports/{bundle_id}").status_code == 403
         assert admin.delete(f"/api/admin/exports/{bundle_id}", headers=headers).status_code == 200
+        assert admin.get(f"/api/jobs/{archived_job}/download/manifest").status_code == 404
+        assert admin.get(f"/api/jobs/{archived_job}/download/youtube").status_code == 404
         assert not first.directory.exists()
         assert second.output_path("YOUTUBE").read_bytes() == b"neighbor"
         assert admin.delete(f"/api/admin/exports/{bundle_id}", headers=headers).json()["status"] == "DELETED"
