@@ -11,6 +11,14 @@ from app.models import (
 )
 from app.text.timing.visibility import TEXT_ENTRY_MAX_SECONDS, TextVisibilityPolicy
 
+# Restrained appearance and disappearance. In the reference videos words fade in over
+# 0.33-0.40 s and out over ~0.20 s (measured 2026-10-16); HEXA text stays narration-locked,
+# so its fades are shorter and the exit fade never takes more than a share of the time
+# the complete phrase is readable.
+ENTRY_FADE_SHARE, ENTRY_FADE_MS = 0.5, (65, 120)
+WORD_FADE_SECONDS = 0.10
+EXIT_FADE_SECONDS, EXIT_FADE_HOLD_SHARE = 0.18, 0.30
+
 
 class TextMotionPlanner:
     """Plan text as a narration-locked but choreography-aware storytelling layer."""
@@ -75,6 +83,8 @@ class TextMotionPlanner:
                 display_start + self._entrance_duration(cue.semantic_type, 0),
             )
             entrance_end = max(display_start + 0.05, entrance_end)
+            entry_ms = round(sync["entry_duration"] * 1000)
+            full_hold = visible_end - (tokens[-1].start if tokens else display_start)
             output.append(
                 TextMotionCue(
                     beat_id=cue.beat_id,
@@ -98,7 +108,12 @@ class TextMotionPlanner:
                         "hook": directive.hook.value if directive is not None else "NONE",
                         "hook_mechanism": directive.hook_mechanism.value if directive is not None else "NONE",
                         "entry_strength": sync["entry_strength"],
-                        "entry_duration_ms": round(sync["entry_duration"] * 1000),
+                        "entry_duration_ms": entry_ms,
+                        "entry_fade_ms": max(ENTRY_FADE_MS[0], min(ENTRY_FADE_MS[1],
+                                                                   round(entry_ms * ENTRY_FADE_SHARE))),
+                        "word_fade_ms": round(WORD_FADE_SECONDS * 1000),
+                        "exit_fade_ms": round(1000 * max(0.0, min(EXIT_FADE_SECONDS,
+                                                                  EXIT_FADE_HOLD_SHARE * full_hold))),
                         "visual_sync": {
                             "available": sync["available"],
                             "asset_id": cue.anchor_asset_id,

@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import RenderPlan, StoryBeat, TextCue, TextLayoutItem, TextMotionCue
-from app.text.metrics import PRODUCTION_FONT_DIR, PRODUCTION_FONT_FAMILY, TEXT_SHADOW_PX, TextTypographyMetrics
+from app.text.metrics import (
+    PRODUCTION_FONT_DIR,
+    PRODUCTION_FONT_FAMILY,
+    TEXT_SHADOW_PX,
+    TextTypographyMetrics,
+    _bidi_runs,
+)
 
 
 _RLI = "\u2067"
@@ -174,12 +180,33 @@ class TextRenderer:
                     y = projection.offset_y + y * projection.scale
                 return round(x), round(y)
 
+            def ink_span(
+                state_text: str,
+                *,
+                anchor=anchor,
+                scale: float = safe_scale,
+                semantic_type: str = cue.semantic_type,
+                style_id: str = style_id,
+                rtl: bool = rtl,
+                face=face,
+            ) -> tuple[float, float]:
+                """Left/right ink edge (output pixels) of a reveal state drawn at its anchor."""
+                layout = self.metrics.layout(
+                    state_text, style_id=style_id, semantic_type=semantic_type,
+                    font_scale=scale, rtl=rtl, face=face,
+                )
+                x, _y = anchor(state_text)
+                pixel = projection.scale if projection is not None else 1.0
+                return x + layout.ink_left * pixel, x + layout.ink_right * pixel
+
             events.extend(self._cue_events(
                 cue_text=cue.text,
                 motion=motion,
                 item=item,
                 style_name=style_name,
                 anchor=anchor,
+                ink_span=ink_span,
+                canvas=(plan.width, plan.height),
                 face_tags=face_tags,
                 rtl=rtl,
                 font_scale=safe_scale,
@@ -199,6 +226,8 @@ class TextRenderer:
         style_name: str,
         anchor,
         rtl: bool,
+        ink_span=None,
+        canvas: tuple[int, int] = (1920, 1080),
         face_tags: str = "",
         font_scale: float,
         pixel_scale: float = 1.0,
@@ -207,11 +236,29 @@ class TextRenderer:
         frame: float = 1.0 / 30.0,
     ) -> list[str]:
         font_scale = max(0.40, min(1.0, float(font_scale)))
-        visible_end = float(motion.params.get("visible_end", motion.end))
+        params = motion.params
+        visible_end = float(params.get("visible_end", motion.end))
         event_global_start = max(motion.start, segment_start)
         local_end = min(duration, visible_end - segment_start)
         if local_end <= 0.06 or event_global_start >= segment_start + duration:
             return []
+        entry_strength = float(params.get("entry_strength", 0.0))
+        entry_ms = int(params.get("entry_duration_ms", 165))
+        # Appearance and disappearance are planned by Text Motion; plans without these
+        # fields keep the earlier entry fade and a cut at visible_end.
+        planned_entry_fade = params.get("entry_fade_ms")
+        entry_fade_ms = None if planned_entry_fade is None else int(planned_entry_fade)
+        word_fade = max(0.0, float(params.get("word_fade_ms", 0))) / 1000.0
+        exit_fade = max(0.0, float(params.get("exit_fade_ms", 0))) / 1000.0
+
+        def tags_for(x: int, y: int, *, first: bool, elapsed: float | None, fade_in_ms=None,
+                     fade_out: float = 0.0, clip: str = "") -> str:
+            return self._line_tags(
+                x=x, y=y, rtl=rtl, first=first, font_scale=font_scale, pixel_scale=pixel_scale,
+                entry_strength=entry_strength, entry_duration_ms=entry_ms, face_tags=face_tags,
+                entry_elapsed_ms=None if elapsed is None else max(0, round(elapsed * 1000)),
+                fade_in_ms=fade_in_ms, fade_out_ms=round(fade_out * 1000), clip=clip,
+            )
 
         tokens = list(motion.tokens)
         if not tokens:
@@ -219,17 +266,8 @@ class TextRenderer:
             if local_end <= start + 0.04:
                 return []
             x, y = anchor(cue_text)
-            tags = self._line_tags(
-                x=x,
-                y=y,
-                rtl=rtl,
-                first=True,
-                font_scale=font_scale,
-                pixel_scale=pixel_scale,
-                entry_strength=float(motion.params.get("entry_strength", 0.0)),
-                entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
-                face_tags=face_tags,
-            )
+            tags = tags_for(x, y, first=True, elapsed=0.0, fade_in_ms=entry_fade_ms,
+                            fade_out=min(exit_fade, (local_end - start) / 2.0))
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
         # Reveal states follow the planned reading order (Text Motion keeps the cue's
@@ -244,7 +282,7 @@ class TextRenderer:
             else:
                 states.append((state_start, index + 1))
 
-        events: list[str] = []
+        windows: list[tuple[float, float, int, int]] = []  # (local start, local end, words, state)
         for index, (state_start, words) in enumerate(states):
             state_global_start = max(event_global_start, state_start)
             if state_global_start >= visible_end:
@@ -255,7 +293,24 @@ class TextRenderer:
             end = min(duration, state_global_end - segment_start)
             if end <= start + 0.02 or start >= duration:
                 continue
+            windows.append((start, end, words, index))
+        if not windows:
+            return []
 
+        # The entry gesture starts with the first state; later states inside it continue it.
+        origin = windows[0][0] if windows[0][3] == 0 else None
+        gesture_dx, _gesture_dy, gesture_ms = self._entry_gesture(
+            rtl=rtl, pixel_scale=pixel_scale, entry_strength=entry_strength, entry_duration_ms=entry_ms,
+        )
+        # A new word fades in only where adding it moves no earlier word: one bidi
+        # direction for the whole line (mixed runs may reorder, so they stay a cut).
+        soft_words = word_fade > 0 and ink_span is not None and all(
+            is_rtl == rtl for _run, is_rtl in _bidi_runs(cue_text, rtl)
+        )
+        width, height = canvas
+        specs: list[dict] = []
+        previous_words = 0
+        for start, end, words, index in windows:
             # Full logical phrase prefix -> one FriBidi/HarfBuzz shaping run. No inline
             # alpha tags are inserted between Arabic tokens, which eliminates temporary
             # reverse ordering during reveal.
@@ -263,25 +318,83 @@ class TextRenderer:
             if not state_text:
                 continue
             x, y = anchor(state_text)
-            tags = self._line_tags(
-                x=x,
-                y=y,
-                rtl=rtl,
-                first=index == 0,
-                font_scale=font_scale,
-                pixel_scale=pixel_scale,
-                entry_strength=float(motion.params.get("entry_strength", 0.0)),
-                entry_duration_ms=int(motion.params.get("entry_duration_ms", 165)),
-                face_tags=face_tags,
-            )
+            main_start = start
+            if soft_words and specs and previous_words:
+                fade = min(word_fade, (end - start) / 2.0)
+                clip = self._added_word_clip(
+                    ink_span,
+                    " ".join(row.text for row in tokens[:previous_words]).strip(),
+                    state_text,
+                    " ".join(row.text for row in tokens[previous_words:words]).strip(),
+                    rtl=rtl, width=width, height=height,
+                    elapsed=None if origin is None else start - origin,
+                    gesture_ms=gesture_ms, gesture_dx=gesture_dx,
+                )
+                if fade >= frame - 1e-9 and clip:
+                    specs[-1]["end"] = start + fade  # earlier words stay exactly where they are
+                    specs.append({"start": start, "end": start + fade, "text": state_text, "x": x, "y": y,
+                                  "first": False, "fade_in": round(fade * 1000), "clip": clip})
+                    main_start = start + fade
+            specs.append({"start": main_start, "end": end, "text": state_text, "x": x, "y": y,
+                          "first": index == 0, "fade_in": entry_fade_ms if index == 0 else None, "clip": ""})
+            previous_words = words
+        if specs and exit_fade > 0:
+            last = specs[-1]
+            last["fade_out"] = min(exit_fade, (last["end"] - last["start"]) / 2.0)
+
+        events: list[str] = []
+        for spec in specs:
+            elapsed = None if origin is None else spec["start"] - origin
+            tags = tags_for(spec["x"], spec["y"], first=spec["first"], elapsed=elapsed,
+                            fade_in_ms=spec["fade_in"], fade_out=spec.get("fade_out", 0.0), clip=spec["clip"])
             events.append(self._dialogue(
-                start,
-                end,
+                spec["start"],
+                spec["end"],
                 style_name,
                 tags,
-                self._directional_text(state_text, rtl),
+                self._directional_text(spec["text"], rtl),
             ))
         return events
+
+    @staticmethod
+    def _added_word_clip(
+        ink_span, previous_text: str, state_text: str, added: str, *, rtl: bool, width: int, height: int,
+        elapsed: float | None, gesture_ms: int, gesture_dx: int,
+    ) -> str:
+        """Rectangle that shows only the newly added words of a reveal state.
+
+        The boundary sits in the middle of the gap between the earlier words' ink and the
+        new words' ink (outline and shadow included). Word gaps are tight (median ~12 px
+        at 1080p, ~6 px on Reels), so one output pixel is enough; with less, or overlapping
+        ink, the word keeps a cut (""). While the entry gesture still runs, the boundary
+        travels with the line.
+        """
+        if not added:
+            return ""
+        previous_left, previous_right = ink_span(previous_text)
+        state_left, state_right = ink_span(state_text)
+        added_left, added_right = ink_span(added)
+        added_width = added_right - added_left
+        if rtl:
+            new_edge = state_left + added_width  # the new words occupy the left end
+            gap = previous_left - new_edge
+            boundary = (previous_left + new_edge) / 2.0
+        else:
+            new_edge = state_right - added_width
+            gap = new_edge - previous_right
+            boundary = (previous_right + new_edge) / 2.0
+        if gap < 1.0:
+            return ""
+
+        def rect(edge: float) -> str:
+            edge = round(edge)
+            return f"\\clip(0,0,{edge},{height})" if rtl else f"\\clip({edge},0,{width},{height})"
+
+        if elapsed is not None and elapsed * 1000 < gesture_ms:
+            remaining_ms = gesture_ms - round(elapsed * 1000)
+            offset = gesture_dx * remaining_ms / gesture_ms
+            return f"{rect(boundary + offset)}\\t(0,{remaining_ms},{rect(boundary)})"
+        return rect(boundary)
 
     def _safe_text_geometry(
         self,
@@ -336,15 +449,30 @@ class TextRenderer:
         ink_center_y = top + layout.height / 2.0
 
         # Horizontal: the entry starts outward of the reading-start edge by ``entry_x``.
+        # The completed phrase is centred on its planned box (the box is centred on the
+        # semantic anchor and has a minimum label width, so a short word aligned to the
+        # box edge drifted off its anchor); when the box is too tight for the centred
+        # path, the path stays inside the box from its reading-start side.
         box_left = width * (item.x - item.max_width / 2.0)
         box_right = width * (item.x + item.max_width / 2.0)
+        box_center = width * item.x
         if rtl:
-            edge_x = box_right - entry_x
+            edge_x = min(box_center + layout.width / 2.0, box_right - entry_x)
             edge_x = max(margin_x + layout.width, min(width - margin_x - entry_x, edge_x))
         else:
-            edge_x = box_left + entry_x
+            edge_x = max(box_center - layout.width / 2.0, box_left + entry_x)
             edge_x = max(margin_x + entry_x, min(width - margin_x - layout.width, edge_x))
         return edge_x, ink_center_y, scale
+
+    @staticmethod
+    def _entry_gesture(
+        *, rtl: bool, pixel_scale: float, entry_strength: float, entry_duration_ms: int,
+    ) -> tuple[int, int, int]:
+        """The phrase's one entry path: (x offset, y offset, duration ms) towards rest."""
+        strength = max(0.0, min(1.0, float(entry_strength)))
+        horizontal = round((14 + round(10 * strength)) * pixel_scale)
+        vertical = round((10 + round(5 * strength)) * pixel_scale)
+        return (horizontal if rtl else -horizontal), vertical, max(130, min(240, int(entry_duration_ms)))
 
     @staticmethod
     def _line_tags(
@@ -358,27 +486,48 @@ class TextRenderer:
         entry_strength: float = 0.0,
         entry_duration_ms: int = 165,
         face_tags: str = "",
+        entry_elapsed_ms: int | None = None,
+        fade_in_ms: int | None = None,
+        fade_out_ms: int = 0,
+        clip: str = "",
     ) -> str:
+        """ASS tags of one reveal event.
+
+        ``first`` starts the phrase's entry gesture. A later state that begins while the
+        gesture is still running (``entry_elapsed_ms``) continues the same linear path
+        from where the phrase is, so adding a word never makes the line jump.
+        """
         alignment = 4  # middle-left: ink lands exactly where the shared measurement puts it
         scale = max(40, min(100, round(font_scale * 100)))
         size_tag = f"\\fscx{scale}\\fscy{scale}"
-        if first:
+        dx, dy, duration = TextRenderer._entry_gesture(
+            rtl=rtl, pixel_scale=pixel_scale, entry_strength=entry_strength,
+            entry_duration_ms=entry_duration_ms,
+        )
+        elapsed = 0 if first else entry_elapsed_ms
+        moving = elapsed is not None and elapsed < duration
+        if first and fade_in_ms is None:
+            strength = max(0.0, min(1.0, float(entry_strength)))
+            fade_in_ms = max(45, min(65, round(65 - 15 * strength)))
+        fade = f"\\fad({int(fade_in_ms or 0)},{int(fade_out_ms)})" if (fade_in_ms or fade_out_ms) else ""
+        if moving:
             # One bounded entry gesture for the phrase. Semantic focus may make the
             # gesture more decisive, but the final anchor/font/style stay unchanged and
             # there is never a post-arrival bounce.
-            strength = max(0.0, min(1.0, float(entry_strength)))
-            horizontal = round((14 + round(10 * strength)) * pixel_scale)
-            vertical = round((10 + round(5 * strength)) * pixel_scale)
-            direction = horizontal if rtl else -horizontal
-            duration = max(130, min(240, int(entry_duration_ms)))
-            fade = max(45, min(65, round(65 - 15 * strength)))
-            return (
-                f"\\an{alignment}{face_tags}{size_tag}\\move("
-                f"{x + direction},{y + vertical},{x},{y},0,{duration})"
-                f"\\fad({fade},0)\\blur{0.35 if pixel_scale == 1.0 else round(0.35 * pixel_scale, 3)}"
-            )
-        blur = 0.25 if pixel_scale == 1.0 else round(0.25 * pixel_scale, 3)
-        return f"\\an{alignment}{face_tags}{size_tag}\\pos({x},{y})\\blur{blur}"
+            remaining = 1.0 - elapsed / duration
+            place = (f"\\move({x + round(dx * remaining)},{y + round(dy * remaining)},{x},{y},"
+                     f"0,{duration - elapsed})")
+        else:
+            place = f"\\pos({x},{y})"
+        rest_blur = 0.25 if pixel_scale == 1.0 else round(0.25 * pixel_scale, 3)
+        blur = f"\\blur{rest_blur}"
+        if moving:
+            # Slightly softer only while travelling and sharp at rest, so every reveal
+            # state at rest draws identical pixels: adding a word never re-sharpens the line.
+            moving_blur = 0.35 if pixel_scale == 1.0 else round(0.35 * pixel_scale, 3)
+            settle = duration - elapsed
+            blur = f"\\blur{moving_blur}\\t({settle},{settle},\\blur{rest_blur})"
+        return f"\\an{alignment}{face_tags}{size_tag}{place}{fade}{clip}{blur}"
 
     def _document(self, plan: RenderPlan, events: list[str]) -> str:
         theme = self.theme
