@@ -486,6 +486,10 @@ class SceneBoundaryRelease(BaseModel):
     overlap_exits: dict[str, dict[str, float]] = Field(
         default_factory=dict, exclude_if=lambda value: not value,
     )
+    # Directional blur of the exits planned above (exit_starts / overlap_exits), owned by
+    # Boundary: {"owner": "BOUNDARY", "shutter", "min_length", "max_length"} with lengths as
+    # fractions of the content height. Empty means the exits are drawn sharp.
+    exit_motion_blur: dict[str, Any] = Field(default_factory=dict, exclude_if=lambda value: not value)
     reason: str
     downgrade_reason: str | None = None
     audit: dict[str, Any] = Field(default_factory=dict)

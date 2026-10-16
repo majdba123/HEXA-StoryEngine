@@ -17,6 +17,7 @@ from app.models import (
     VisualAsset,
 )
 from app.motion.hero_travel import HERO_TRAVEL, SMOOTHSTEP_PEAK
+from app.motion.motion_blur import MAX_LENGTH, MIN_LENGTH, MOTION_BLUR_SHUTTER
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
 
@@ -34,6 +35,10 @@ _SOLID_OPENER_AREA = 0.02
 # An exiting unit may pass its neighbours only within their authored overlap plus this slack.
 _EXIT_OVERLAP_SLACK = 0.02
 _EPS = 1e-6
+# A planned exit travels like any other motion: it smears along its path with the same
+# exposure Motion uses for the elements it moves (visual sprint B3).
+EXIT_MOTION_BLUR = {"owner": "BOUNDARY", "shutter": MOTION_BLUR_SHUTTER,
+                    "min_length": MIN_LENGTH, "max_length": MAX_LENGTH}
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
 _PROTECTED_PHASES = frozenset({"INTERACT", "REACT", "PAYOFF"})
@@ -218,7 +223,8 @@ class SceneBoundaryPlanner:
             exits = {key: value for key, value in row.exit_starts.items() if key not in leaving}
             spec = {"start": round(start, 6), "end": round(end, 6), "direction": direction}
             return decided("full_frame_exit", exit_starts=exits,
-                           overlap_exits={member.asset_id: dict(spec) for member in members})
+                           overlap_exits={member.asset_id: dict(spec) for member in members},
+                           exit_motion_blur=dict(EXIT_MOTION_BLUR))
         return decided("clean_cut:" + ",".join(reasons))
 
     def _plan_one(
@@ -241,7 +247,8 @@ class SceneBoundaryPlanner:
                 opener_at=audit.pop("opener_at", None),
                 release_start=audit.pop("release_start", None),
                 release_end=audit.pop("release_end", None),
-                exit_starts=audit.pop("exit_starts", None) or {},
+                exit_starts=(exit_starts := audit.pop("exit_starts", None) or {}),
+                exit_motion_blur=dict(EXIT_MOTION_BLUR) if exit_starts else {},
                 audit=audit,
             )
 

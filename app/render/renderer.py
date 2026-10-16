@@ -14,6 +14,7 @@ from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.connection import connection_specs, draw_connection, fade_seconds
+from app.render.expression import compile_expression
 from app.render.motion import FFmpegMotionAdapter
 from app.render.resources import RenderConcurrencyPolicy
 from app.render.text import TextRenderer
@@ -192,7 +193,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text(?:-under)?\.ass|-connection-\d+\.png)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under)?\.ass|-connection-\d+\.png|-blur-\d+-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -351,6 +352,7 @@ class FFmpegRenderer:
             bridge_start, bridge_end = release[0], release[2]
         bridge_duration = max(0.0, bridge_end - bridge_start)
         planned_exits = self._planned_exit_starts(plan, beat, previous_beat) if release is not None else {}
+        exit_blur_spec = self._planned_exit_blur(plan, beat, previous_beat)
         visual_carrier_id = (
             None
             if bridge_duration > 0 or previous_beat is None
@@ -499,13 +501,28 @@ class FFmpegRenderer:
                             start=exit_begin, duration=exit_end - exit_begin,
                         )
                 next_old = f"oldmix{bridge_index}"
-                filters.append(
-                    f"[{old_label}][{source_label}]overlay="
-                    f"x='{target_x}+({horizontal})*{progress_expr}':"
-                    f"y='{target_y}+({vertical})*{progress_expr}':"
-                    f"enable='between(t,0,{bridge_end:.6f})':"
-                    f"eof_action=pass:shortest=0[{next_old}]"
+                old_x = f"{target_x}+({horizontal})*{progress_expr}"
+                old_y = f"{target_y}+({vertical})*{progress_expr}"
+                exit_blur = self._motion_blur_windows(
+                    plan=plan, spec=exit_blur_spec if exit_start is not None and release is not None else None,
+                    x_expr=old_x, y_expr=old_y, scale_expr="1", box=(box_w, box_h),
+                    visible=(0.0, bridge_end), duration=duration,
                 )
+                if exit_blur:
+                    filters.extend(self._motion_blur_filters(
+                        windows=exit_blur, source_label=source_label, sharp_label=f"{source_label}sharp",
+                        scale_chain="null", centred=False, under_label=old_label, out_label=next_old,
+                        x_expr=old_x, y_expr=old_y, visible=(0.0, bridge_end), target=target,
+                        key=f"old{bridge_index}",
+                    ))
+                else:
+                    filters.append(
+                        f"[{old_label}][{source_label}]overlay="
+                        f"x='{old_x}':"
+                        f"y='{old_y}':"
+                        f"enable='between(t,0,{bridge_end:.6f})':"
+                        f"eof_action=pass:shortest=0[{next_old}]"
+                    )
                 old_label = next_old
 
             if carried_wash is not None and not carried_wash.get("applied") and outgoing_items:
@@ -570,11 +587,23 @@ class FFmpegRenderer:
                 f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
             )
-            filters.append(
-                f"[{composite_label}][{label}]overlay="
-                f"x='{target_x}+({travel})*(3*pow({progress},2)-2*pow({progress},3))':y={target_y}:"
-                f"enable='between(t,0,{finish:.6f})':eof_action=pass:shortest=0[{label}mix]"
+            exit_x = f"{target_x}+({travel})*(3*pow({progress},2)-2*pow({progress},3))"
+            exit_blur = self._motion_blur_windows(
+                plan=plan, spec=exit_blur_spec, x_expr=exit_x, y_expr=str(target_y), scale_expr="1",
+                box=(box_w, box_h), visible=(0.0, finish), duration=duration,
             )
+            if exit_blur:
+                filters.extend(self._motion_blur_filters(
+                    windows=exit_blur, source_label=label, sharp_label=f"{label}sharp", scale_chain="null",
+                    centred=False, under_label=composite_label, out_label=f"{label}mix", x_expr=exit_x,
+                    y_expr=str(target_y), visible=(0.0, finish), target=target, key=f"ovx{exit_index}",
+                ))
+            else:
+                filters.append(
+                    f"[{composite_label}][{label}]overlay="
+                    f"x='{exit_x}':y={target_y}:"
+                    f"enable='between(t,0,{finish:.6f})':eof_action=pass:shortest=0[{label}mix]"
+                )
             composite_label = f"{label}mix"
 
         frame_safe_reveal_starts = self._frame_safe_group_reveal_starts(
@@ -734,14 +763,10 @@ class FFmpegRenderer:
                     segment_start=segment_start,
                     segment_duration=duration,
                 )
-            if scale_expr != "1":
-                filters.append(
-                    f"[{transform_source_label}]scale="
-                    f"w='max(2,iw*({scale_expr}))':h='max(2,ih*({scale_expr}))':eval=frame"
-                    f"[{source_label}]"
-                )
-            else:
-                filters.append(f"[{transform_source_label}]null[{source_label}]")
+            scale_chain = (
+                f"scale=w='max(2,iw*({scale_expr}))':h='max(2,ih*({scale_expr}))':eval=frame"
+                if scale_expr != "1" else "null"
+            )
 
             kind = cue.kind if cue else "reveal_in"
             if geometry_locked and not follows:
@@ -798,11 +823,28 @@ class FFmpegRenderer:
                 reveal_start=effective_reveal_start,
                 persistent=(persistent or visual_carrier),
             )
-            filters.append(
-                f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{enable_start:.6f},{enable_end:.6f})':eof_action=pass:shortest=0"
-                f"[{next_label}]"
+            blur = self._motion_blur_windows(
+                plan=plan,
+                spec=(transform_cue.params.get("motion_blur")
+                      if transform_cue is not None and isinstance(transform_cue.params, dict)
+                      and (not geometry_locked or follows) else None),
+                x_expr=x_expr, y_expr=y_expr, scale_expr=scale_expr, box=(box_w, box_h),
+                visible=(enable_start, enable_end), duration=duration,
             )
+            if not blur:
+                filters.append(f"[{transform_source_label}]{scale_chain}[{source_label}]")
+                filters.append(
+                    f"[{composite_label}][{source_label}]overlay=x='{x_expr}':y='{y_expr}':"
+                    f"enable='between(t,{enable_start:.6f},{enable_end:.6f})':eof_action=pass:shortest=0"
+                    f"[{next_label}]"
+                )
+            else:
+                filters.extend(self._motion_blur_filters(
+                    windows=blur, source_label=transform_source_label, sharp_label=source_label,
+                    scale_chain=scale_chain, centred=scale_expr != "1", under_label=composite_label,
+                    out_label=next_label, x_expr=x_expr, y_expr=y_expr,
+                    visible=(enable_start, enable_end), target=target, key=str(layer_index),
+                ))
             composite_label = next_label
 
         for connection_index, connection in enumerate(connections):
@@ -841,6 +883,146 @@ class FFmpegRenderer:
         self._run(command, "render segment failed")
 
 
+
+    @staticmethod
+    def _motion_blur_windows(
+        *,
+        plan: RenderPlan,
+        spec: dict | None,
+        x_expr: str,
+        y_expr: str,
+        scale_expr: str,
+        box: tuple[int, int],
+        visible: tuple[float, float],
+        duration: float,
+    ) -> list[dict]:
+        """Per-frame directional blur for one drawn element, from the exact drawn position.
+
+        Motion decides *whether* an element is blurred (``params["motion_blur"]``); here
+        each encoded frame gets the smear of the displacement the element's centre travels
+        during that frame's exposure (centred on the frame): direction = displacement
+        direction, length = displacement, sharp wherever it rests. Contiguous blurred frames
+        form windows; frames outside them are drawn exactly as without blur.
+        """
+        if not isinstance(spec, dict) or spec.get("owner") not in {"MOTION", "BOUNDARY"}:
+            return []
+        fps = plan.fps
+        shutter = max(0.0, min(1.0, float(spec.get("shutter", 0.5))))
+        if shutter <= 0.0:
+            return []
+        # Lengths are fractions of the content height: the projected reference frame on
+        # a projected target, the canvas itself otherwise.
+        content_height = (plan.projection.reference_height * plan.projection.scale
+                          if plan.projection else plan.height)
+        min_px = float(spec.get("min_length", 0.0)) * content_height
+        max_px = float(spec.get("max_length", 1.0)) * content_height
+        x_of, y_of = compile_expression(x_expr), compile_expression(y_expr)
+        s_of = compile_expression(scale_expr) if scale_expr != "1" else (lambda t: 1.0)
+        box_w, box_h = box
+        centred = scale_expr != "1"
+
+        def centre(t: float) -> tuple[float, float]:
+            s = s_of(t)
+            width, height = (max(2.0, box_w * s), max(2.0, box_h * s)) if centred else (box_w, box_h)
+            return x_of(t, width, height) + width / 2.0, y_of(t, width, height) + height / 2.0
+
+        half = shutter / (2.0 * fps)
+        first = max(0, math.ceil(visible[0] * fps - 1e-9))
+        last = min(round(duration * fps) - 1, math.floor(visible[1] * fps + 1e-9))
+        frames: list[tuple[int, float, float]] = []  # (frame, radius before transform scale, angle)
+        for n in range(first, last + 1):
+            t = n / fps
+            (x0, y0), (x1, y1) = centre(t - half), centre(t + half)
+            length = math.hypot(x1 - x0, y1 - y0)
+            # an exposure that jumps further than four maximum smears is a cut, not motion
+            if not math.isfinite(length) or length < min_px or length > 4.0 * max_px:
+                continue
+            # dblur is symmetric; its 10-90 % edge spread is ~3.3 x radius, a box exposure
+            # of length L spreads 0.8 L: radius = 0.24 L. Applied before the transform scale.
+            radius = 0.24 * min(length, max_px) / max(0.05, s_of(t))
+            if radius < 0.25:
+                continue
+            frames.append((n, radius, math.degrees(math.atan2(y1 - y0, x1 - x0)) % 180.0))
+        windows: list[dict] = []
+        for n, radius, angle in frames:
+            if windows and n == windows[-1]["frames"][-1][0] + 1:
+                windows[-1]["frames"].append((n, radius, angle))
+            else:
+                windows.append({"frames": [(n, radius, angle)]})
+        for window in windows:
+            rows = window["frames"]
+            window["start"] = (rows[0][0] - 0.5) / fps
+            window["end"] = (rows[-1][0] + 0.5) / fps
+            window["margin"] = math.ceil(4.0 * max(row[1] for row in rows)) + 2
+            window["fps"] = fps
+        return windows
+
+    @staticmethod
+    def _motion_blur_filters(
+        *,
+        windows: list[dict],
+        source_label: str,
+        sharp_label: str,
+        scale_chain: str,
+        centred: bool,
+        under_label: str,
+        out_label: str,
+        x_expr: str,
+        y_expr: str,
+        visible: tuple[float, float],
+        target: Path,
+        key: str,
+    ) -> list[str]:
+        """Draw an element sharp outside its blur windows and blurred inside them.
+
+        Each window is its own short branch (trimmed to the window, so no other frame is
+        touched): padded so the smear is never clipped by the box, premultiplied so
+        transparent pixels never bleed colour into the smear (no halo), directionally
+        blurred frame by frame (``sendcmd``), then given the same transform as the sharp
+        element. A centred transform already absorbs the padding; otherwise the overlay
+        is shifted by it.
+        """
+        def escape(value: Path) -> str:
+            return str(value.resolve()).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
+
+        # Pin the split input: premultiply/dblur work in planar formats, and a shared split
+        # would otherwise move the sharp branch to them too (rounding its edges by 1-2 levels).
+        filters = [f"[{source_label}]format=rgba,split={len(windows) + 1}[{sharp_label}pre]"
+                   + "".join(f"[mb{key}src{index}]" for index in range(len(windows))),
+                   f"[{sharp_label}pre]{scale_chain}[{sharp_label}]"]
+        inside = "+".join(f"between(t,{w['start']:.6f},{w['end']:.6f})" for w in windows)
+        shown = f"between(t,{visible[0]:.6f},{visible[1]:.6f})"
+        middle = f"mb{key}sharp"
+        filters.append(
+            f"[{under_label}][{sharp_label}]overlay=x='{x_expr}':y='{y_expr}':"
+            f"enable='{shown}*not({inside})':eof_action=pass:shortest=0[{middle}]"
+        )
+        for index, window in enumerate(windows):
+            margin, fps = window["margin"], window["fps"]
+            instance = f"dblur@mb{key}x{index}"
+            commands = target.parent / f"{target.stem}-blur-{key}-{index}.cmd"
+            commands.write_text("".join(
+                f"{max(0.0, n / fps - 0.0005):.6f} {instance} radius {radius:.3f}, {instance} angle {angle:.3f};\n"
+                for n, radius, angle in window["frames"]
+            ), encoding="utf-8")
+            n0, r0, a0 = window["frames"][0]
+            filters.append(
+                f"[mb{key}src{index}]trim=start={window['start']:.6f}:end={window['end']:.6f},"
+                f"pad=iw+{2 * margin}:ih+{2 * margin}:{margin}:{margin}:color=0x00000000,"
+                f"premultiply=inplace=1,sendcmd=f='{escape(commands)}',"
+                f"{instance}=angle={a0:.3f}:radius={r0:.3f},unpremultiply=inplace=1,"
+                f"{scale_chain}[mb{key}blur{index}]"
+            )
+            x_blur = x_expr if centred else f"({x_expr})-{margin}"
+            y_blur = y_expr if centred else f"({y_expr})-{margin}"
+            label = out_label if index == len(windows) - 1 else f"mb{key}mix{index}"
+            filters.append(
+                f"[{middle}][mb{key}blur{index}]overlay=x='{x_blur}':y='{y_blur}':"
+                f"enable='{shown}*between(t,{window['start']:.6f},{window['end']:.6f})':"
+                f"eof_action=pass:shortest=0[{label}]"
+            )
+            middle = label
+        return filters
 
     @staticmethod
     def _focus_wash(
@@ -1054,6 +1236,15 @@ class FFmpegRenderer:
         row = next((r for r in plan.scene_boundaries
                     if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
         return dict(row.overlap_exits) if row is not None else {}
+
+    @staticmethod
+    def _planned_exit_blur(plan: RenderPlan, beat: StoryBeat, previous_beat: StoryBeat | None) -> dict:
+        """Boundary's blur of the exits it planned for this boundary (empty: drawn sharp)."""
+        if previous_beat is None:
+            return {}
+        row = next((r for r in plan.scene_boundaries
+                    if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
+        return dict(row.exit_motion_blur) if row is not None else {}
 
     @staticmethod
     def _planned_exit_starts(

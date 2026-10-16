@@ -34,6 +34,7 @@ from app.motion.arrival import EntryArrivalPolicy
 from app.motion.hero_travel import HeroTravelPlanner
 from app.motion.arrivals import SecondaryArrivalPlanner
 from app.motion.emphasis_leader import EmphasisLeaderPolicy
+from app.motion.motion_blur import MotionBlurPolicy
 from app.motion.family import bind_families
 from app.motion.resolution import PayoffResolutionDirector
 from app.motion.semantic_reference import MotionSemanticReference
@@ -172,6 +173,7 @@ class StoryEnginePipeline:
         self.scene_boundaries = SceneBoundaryPlanner(horizontal_padding=max(
             ReferencePlanProjector.reference_padding(row)[0] for row in SUPPORTED_VISUAL_TARGETS))
         self.cross_scene = CrossSceneContinuityPlanner()
+        self.motion_blur = MotionBlurPolicy()
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
@@ -729,6 +731,14 @@ class StoryEnginePipeline:
             motion = bind_families(
                 motion, {row.beat_id: {item.asset_id: item for item in row.items} for row in composition},
                 {asset.id: asset for asset in assets},
+            )
+            # Visual sprint B1: Motion owns motion blur, decided on the final Motion.
+            motion = self.motion_blur.plan(motion, composition, width=target.width, height=target.height,
+                                           fps=target.fps)
+            (workspace / "diagnostics").mkdir(parents=True, exist_ok=True)
+            (workspace / "diagnostics" / "motion-blur.json").write_text(
+                json.dumps([row.to_payload() for row in self.motion_blur.decisions], indent=2),
+                encoding="utf-8",
             )
             self._check_cancel(cancelled)
             self._progress(progress, Stage.render, at(0.69), f"{prefix}Compiling render plan")
