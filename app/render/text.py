@@ -186,6 +186,7 @@ class TextRenderer:
                 pixel_scale=projection.scale if projection else 1.0,
                 segment_start=segment_start,
                 duration=duration,
+                frame=1.0 / max(1, int(plan.fps)),
             ))
         return events
 
@@ -203,6 +204,7 @@ class TextRenderer:
         pixel_scale: float = 1.0,
         segment_start: float,
         duration: float,
+        frame: float = 1.0 / 30.0,
     ) -> list[str]:
         font_scale = max(0.40, min(1.0, float(font_scale)))
         visible_end = float(motion.params.get("visible_end", motion.end))
@@ -211,7 +213,7 @@ class TextRenderer:
         if local_end <= 0.06 or event_global_start >= segment_start + duration:
             return []
 
-        tokens = sorted(motion.tokens, key=lambda row: (row.start, row.end))
+        tokens = list(motion.tokens)
         if not tokens:
             start = max(0.0, event_global_start - segment_start)
             if local_end <= start + 0.04:
@@ -230,13 +232,25 @@ class TextRenderer:
             )
             return [self._dialogue(start, local_end, style_name, tags, self._directional_text(cue_text, rtl))]
 
-        events: list[str] = []
+        # Reveal states follow the planned reading order (Text Motion keeps the cue's
+        # logical word order); they are never re-sorted by time, which shaped tied words
+        # in the wrong order. Words that begin within one frame of each other appear
+        # together as one state: a shorter state cannot be seen and would overlap the next.
+        states: list[tuple[float, int]] = []  # (state start, number of words shown)
         for index, token in enumerate(tokens):
-            state_global_start = max(event_global_start, token.start)
+            state_start = max(float(token.start), states[-1][0] if states else float("-inf"))
+            if states and state_start - states[-1][0] < frame - 1e-9:
+                states[-1] = (states[-1][0], index + 1)
+            else:
+                states.append((state_start, index + 1))
+
+        events: list[str] = []
+        for index, (state_start, words) in enumerate(states):
+            state_global_start = max(event_global_start, state_start)
             if state_global_start >= visible_end:
                 continue
-            next_start = tokens[index + 1].start if index + 1 < len(tokens) else visible_end
-            state_global_end = min(visible_end, max(state_global_start + 0.04, next_start))
+            next_start = states[index + 1][0] if index + 1 < len(states) else visible_end
+            state_global_end = min(visible_end, next_start)
             start = max(0.0, state_global_start - segment_start)
             end = min(duration, state_global_end - segment_start)
             if end <= start + 0.02 or start >= duration:
@@ -245,7 +259,7 @@ class TextRenderer:
             # Full logical phrase prefix -> one FriBidi/HarfBuzz shaping run. No inline
             # alpha tags are inserted between Arabic tokens, which eliminates temporary
             # reverse ordering during reveal.
-            state_text = " ".join(row.text for row in tokens[: index + 1]).strip()
+            state_text = " ".join(row.text for row in tokens[:words]).strip()
             if not state_text:
                 continue
             x, y = anchor(state_text)

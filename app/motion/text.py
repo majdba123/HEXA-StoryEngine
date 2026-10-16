@@ -147,6 +147,9 @@ class TextMotionPlanner:
             )
             # Words spoken before the subject is recognizable appear with it, together.
             start = max(float(token.spoken_start), floor) if not_before is not None else token.spoken_start
+            # Tokens keep the cue's reading order; a word never starts before the previous one.
+            if output:
+                start = max(start, output[-1].start)
             end = max(
                 start + 0.05,
                 min(start + duration, visible_end),

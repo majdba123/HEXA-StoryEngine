@@ -299,6 +299,21 @@ class TextHandoffMixin(_HandoffCore):
                         beat_start=beat.start,
                         beat_end=beat.end,
                     )
+            # The renderer reveals the words in the order they are listed: they must read
+            # as the cue does, each starting no earlier than the word before it.
+            if motion.tokens and (
+                " ".join(token.text for token in motion.tokens).split() != cue.text.split()
+                or any(later.start < earlier.start - _EPS
+                       for earlier, later in zip(motion.tokens, motion.tokens[1:]))
+            ):
+                cls._add(
+                    violations,
+                    "text_motion_tokens_out_of_reading_order",
+                    beat_id=beat.id,
+                    text_cue_id=cue.id,
+                    text=cue.text,
+                    tokens=[(token.text, token.start) for token in motion.tokens],
+                )
 
         cls._raise(
             "text-motion->render",
