@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const csrf = () => decodeURIComponent(document.cookie.match(/(?:^|; )hexa_csrf=([^;]*)/)?.[1] || '');
 const message = value => { $('message').textContent = value; };
-const date = value => value ? new Date(value * 1000).toLocaleString('ar') : 'غير معروف';
+const date = value => { const stamp = typeof value === 'number' ? new Date(value * 1000) : new Date(value); return value && !Number.isNaN(stamp.getTime()) ? stamp.toLocaleString('ar') : 'غير معروف'; };
 const mb = value => value == null ? '—' : `${(value / 1048576).toFixed(1)} MiB`;
 async function api(path, options = {}) {
   options.headers = {...options.headers, 'X-CSRF-Token': csrf()};
@@ -45,7 +45,7 @@ async function exportsList() {
   $('export-rows').replaceChildren();
   for (const item of data.items) {
     const row = $('export-rows').insertRow();
-    for (const value of [item.slug,`v${item.version}`,item.status,mb(item.outputs?.youtube),mb(item.outputs?.reels),mb(item.bytes),'']) cell(row,value);
+    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.status,mb(item.outputs?.youtube),mb(item.outputs?.reels),mb(item.bytes),'']) cell(row,value);
     if (item.status === 'AVAILABLE') {
       for (const kind of ['youtube','reels']) if (item.outputs?.[kind] != null) {
         const link = document.createElement('a'); link.href = `/api/admin/exports/${encodeURIComponent(item.id)}/download/${kind}`; link.textContent = kind; row.lastElementChild.append(link,' ');
