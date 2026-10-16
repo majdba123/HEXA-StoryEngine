@@ -1,5 +1,15 @@
 # HEXA PROJECT CONTINUITY SOURCE
 
+## LATEST OPERATIONAL CHECKPOINT — 2026-10-16
+
+**Read this checkpoint first.** For the newest administrator dashboard, local developer environment, SQLite identity bootstrap, VPS authentication rollout, backup, GitHub merge, CI and release status, read **[Admin / Local / Production Release Handoff](docs/handoffs/2026-10-16-admin-local-production-release.md)**.
+
+At the moment immediately before handoff-only documentation commits, GitHub `montage` and `bayer` both pointed to `638be6b69e7357d046cad0cb64023ae26afb92bd`; the remote `feature/admin-dashboard` was deleted. This verifies that admin code was already promoted into GitHub `bayer`, **not** that VPS deployment succeeded. Production CI was pending/in progress; confirm latest CI result, deploy gate and actual VPS checkout/readiness before any further production action.
+
+**The legacy sections below record older, date-stamped architectural decisions and sprint history; their older "current" branch/status statements must not override this latest 2026-10-16 checkpoint.** This documentation-only update is committed to `montage`; its new SHA is not itself a production release.
+
+---
+
 ## OFFICIAL CURRENT CHECKPOINT
 
 Last updated: 2026-09-19
