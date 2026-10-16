@@ -14342,3 +14342,21 @@ preserved hold-emphasis / sub-visible-nudge WIP. Full report:
   the Social Engineer man "took" the ID card along): a complete exit whose frame-by-frame
   path runs over another outgoing unit beyond their authored overlap is not planned; Pass2
   families still move as one picture. Glued exits: 1 -> 0.
+
+## CINEMATIC VNEXT2 FINAL ENGINEERING CLOSURE — 2026-10-16
+
+Branch `cinematic/vnext2`, commits `ceacd43`, `c6e8c2c`, `74f2e28`, `3b82b58`, `27031a5` and this
+closure commit; report `docs/qa/CINEMATIC-VNEXT2-MOTION-CORRECTION.md` §9; review package
+`E:\hexa-vnext2\REVIEW-cinematic-vnext2\`.
+
+- Scope completed: exits finish or cut cleanly, every element leaves on its own, one emphasis
+  leader per beat, calm pacing, frame ownership, sentence-start scene opening (user-authorized),
+  arrival masking. Preserved WIP committed unchanged (`ceacd43`).
+- Certification (code `27031a5`): 20/20 final outputs rendered from plans byte-identical to
+  HEAD's and passing the encoded-motion and final-media gates; full suite 10188 tests, 0 failures, 0 errors, 38 skipped, exit 0 (985 s, gates/pytest-head-run4.xml). Three earlier full runs on the same SHA this afternoon each had exactly one failure in the wall-clock micro-benchmark of tests/certification/alignment/test_alignment_text_certification.py (test_long_scripts_prepare_in_linear_time[1000] 73 ms > 70 ms once, test_size_matrix_scales_linearly twice) while a local web server used 423 s of CPU; the module is untouched by this branch, and the benchmark passed 42 isolated reproductions on both HEAD and 280ae40 (whole file x5, timing tests x30, full collection x7).
+- Metrics over 10 packages: mid-motion vanishes 1553 -> 0; glued exits 1 -> 0; multi-pulse beats
+  134 -> 0; frames with scale rate > 1.2/s 804 -> 5 (Sprint 4.1); sentence over previous scene
+  25 / 14.27 s -> 10 / 3.87 s (kept exclusions).
+- Integration: regular merge into `montage` (32 commits ahead, only the continuity source shared,
+  no conflict); the real merge (temporary commit 98e205c on no branch, tree acbe55e) passed the full suite: 10227 tests, 0 failures, 0 errors, 38 skipped, exit 0 (gates/pytest-merge-check.xml). Not merged; `bayer` untouched (production deploys only from `bayer`).
+- Open: Sprint 4.1 emphasis amplitude decision; RESULT-first scenes; user visual review.

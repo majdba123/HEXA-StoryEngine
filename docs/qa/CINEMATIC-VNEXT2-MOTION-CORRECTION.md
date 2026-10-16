@@ -160,3 +160,67 @@ decides. Still open: the Sprint 4.1 character-emphasis amplitude (§7.2). Before
 `compare\BLACK_HAT_v7_before_LEFT_vs_motionfix_after_RIGHT.mp4`,
 `compare\BLACK_HAT_key_moments_slow40pct_before_LEFT_after_RIGHT.mp4`,
 `compare\SCENE_SYNC_before_LEFT_after_RIGHT_BugBounty011_SocialEng016_WhiteHat028.mp4`.
+
+## 9. Final engineering closure (2026-10-16)
+
+### Commits of this work on `cinematic/vnext2`
+
+| Commit | Content |
+|---|---|
+| `ceacd43` | Preserved WIP, committed unchanged (opener hold pulse, sub-visible nudge, 4-frame slide minimum) |
+| `c6e8c2c` | Motion correction: exits finish or cut cleanly, one emphasis leader per beat, calm pacing, frame-ownership fix |
+| `74f2e28` | User-authorized `SCENE_SENTENCE_START` opening authority + arrival-masking fix |
+| `3b82b58` | Every outgoing element leaves on its own (frame-by-frame exit path check) |
+| `27031a5` | Empty `tests/__init__.py`, identical to `montage` (test packaging only, see below) |
+| this commit | Closure report and continuity checkpoint (documentation only) |
+
+### Certification evidence (code `27031a5`)
+
+* **Provenance:** all 20 final outputs (10 packages × YouTube/Reels) were rendered from plans
+  byte-identical to the plans HEAD produces (`plan_diff.py`, run `c7-head`), and no render, final
+  or shared file changed after those encodes started (renderer unchanged `c6e8c2c` → HEAD).
+  No re-encode was needed.
+* **RenderPlan differential, motion certification (`c3`) → HEAD:** only the 15 sentence-start
+  beats changed — Bug Bounty 011/020/030/037/041/042/047, Cybercrime 062/069, Social Engineer
+  016/042/047, White Hat 028/030/031 (story activation, the opener cue, its boundary row and the
+  labels anchored on it). Black Hat, Gray Hat, Hacktivist, Insider Threat, Script Kiddie and
+  State-Linked Group plans are byte-identical. `3b82b58` and `27031a5` change no plan.
+* **Frame checks (HEAD plans, real filtergraph per frame):** mid-motion vanishes 0 (YouTube) / 0
+  (Reels); glued exits of different families 0 / 0 (`c3`: 1, Social Engineer 28.1 s, 9 frames);
+  simultaneous emphasis 0 s, beats with > 1 pulsing family 0, max scale 1.12 (Sprint 4.1 character
+  emphasis); frames with scale rate > 1.2 /s: 5 (Sprint 4.1, Insider Threat), max 1.696 /s; max
+  travel 0.999 w/s (cap 1.0); scene/narration overlap 25 boundaries / 14.27 s → 10 / 3.87 s.
+* **Encoded media:** 20 / 20 PASS (encoded-motion verifier: 0 violations, so no masked or static
+  entry; final-media gate: 0 A/V, near-white or blank-frame issues).
+* **Tests:** full suite on `27031a5`, idle machine: 10188 tests, 0 failures, 0 errors, 38 skipped, exit 0 (985 s, gates/pytest-head-run4.xml). Three earlier full runs on the same SHA this afternoon each had exactly one failure in the wall-clock micro-benchmark of tests/certification/alignment/test_alignment_text_certification.py (test_long_scripts_prepare_in_linear_time[1000] 73 ms > 70 ms once, test_size_matrix_scales_linearly twice) while a local web server used 423 s of CPU; the module is untouched by this branch, and the benchmark passed 42 isolated reproductions on both HEAD and 280ae40 (whole file x5, timing tests x30, full collection x7). ruff, `compileall` and
+  `git diff --check` over all branch commits pass.
+* **Test environment finding:** after `montage` gained `tests/__init__.py` (`6b7d2ee`) and the
+  main checkout was fast-forwarded to it, a virtualenv with an editable install of that checkout
+  resolved `import tests...` to the other checkout, so this branch's suite failed collection
+  (`tests.visual.test_vnext2_payoff_resolution` not found). Fixed by `27031a5` (the identical
+  empty file); earlier certification runs (before 10:18) were not affected.
+
+### Outputs relative to the previous certifications
+
+* vs the motion-correction certification (`c6e8c2c`): Bug Bounty, Cybercrime, Social Engineer and
+  White Hat outputs changed (sentence start; White Hat beat 031 arrival); the other six identical.
+* vs the `3b82b58` certification: no output changed.
+
+### Integration with `montage` (not executed)
+
+* `origin/montage` `b98996d` is 32 commits ahead of the shared base `a436917` (web/admin, deploy,
+  CI, docs); a regular merge is required (no fast-forward). Files touched by both sides:
+  `HEXA_PROJECT_CONTINUITY_SOURCE.md` only (auto-merges; `tests/__init__.py` is the same blob).
+  `git merge-tree` reports no conflict. The real merge (temporary commit 98e205c on no branch, tree acbe55e) passed the full suite: 10227 tests, 0 failures, 0 errors, 38 skipped, exit 0 (gates/pytest-merge-check.xml).
+* CI: a push to `montage` runs only `admin-feature-validation.yml` (no production environment,
+  no SSH). Production deploys only from a push to `bayer` — do not push `bayer`.
+* Rollback: before the merge is pushed, discard the integration worktree (nothing else changed);
+  after it is pushed, `git revert -m 1 <merge-sha>` on `montage` and push (history kept).
+
+### Known limitations (open, not hidden)
+
+1. The 10 remaining sentence-over-previous-scene boundaries are the kept exclusions: 9
+   RESULT-first scenes (7 above 300 ms, up to 0.83 s) and Black Hat 021 (0.23 s, dependent opener).
+2. Sprint 4.1 character emphasis still peaks at 10-12 % in 0.3-0.6 s without a hold (protected).
+3. Late narration-locked reveals leave < 0.5 s before some cuts (262 beats; Story timing).
+4. The visual design is not user-approved; the next phase starts with your review of the videos.
