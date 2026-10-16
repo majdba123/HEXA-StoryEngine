@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.models import RenderPlan, StoryBeat, TextLayoutItem, TextMotionCue
+from app.models import RenderPlan, StoryBeat, TextCue, TextLayoutItem, TextMotionCue
 from app.text.metrics import PRODUCTION_FONT_DIR, PRODUCTION_FONT_FAMILY, TEXT_SHADOW_PX, TextTypographyMetrics
 
 
@@ -48,12 +49,14 @@ class TextRenderer:
         segment_start: float,
         duration: float,
         output: Path,
+        include: Callable[[TextCue], bool] | None = None,
     ) -> Path | None:
         events = self._events_for_beat(
             plan,
             beat,
             segment_start=segment_start,
             duration=duration,
+            include=include,
         )
         if not events:
             return None
@@ -83,8 +86,12 @@ class TextRenderer:
         *,
         segment_start: float,
         duration: float,
+        include: Callable[[TextCue], bool] | None = None,
     ) -> list[str]:
-        cue_by_id = {cue.id: cue for cue in plan.text.cues if cue.beat_id == beat.id}
+        cue_by_id = {
+            cue.id: cue for cue in plan.text.cues
+            if cue.beat_id == beat.id and (include is None or include(cue))
+        }
         style_by_id = {style.id: style for style in plan.text.styles}
         layout_beat = next((row for row in plan.text_composition if row.beat_id == beat.id), None)
         if layout_beat is None:

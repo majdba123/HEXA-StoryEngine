@@ -19,10 +19,12 @@ class TextVisibilityPolicy:
     composition and motion so spatial collision checks match the rendered lifetime.
     """
 
-    @staticmethod
-    def visible_end(cue: TextCue, beat: StoryBeat, siblings: list[TextCue]) -> float:
+    @classmethod
+    def visible_end(cls, cue: TextCue, beat: StoryBeat, siblings: list[TextCue]) -> float:
         min_read = min(1.90, max(0.86, 0.52 + len(cue.text) * 0.060))
-        target = max(cue.spoken_end + 0.24, cue.spoken_start + min_read)
+        # A label held back until its subject is recognizable is read from that instant,
+        # not from the spoken word it could not yet show (same caps: next cue, the cut).
+        target = max(cue.spoken_end + 0.24, cls.display_start(cue, beat) + min_read)
         later = [
             row.spoken_start
             for row in siblings

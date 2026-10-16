@@ -1,9 +1,12 @@
-"""Visual Polish VP2-A: restrained outgoing exit inside a CRISP_HANDOFF (generic engine rules).
+"""Outgoing exits inside a CRISP_HANDOFF (VP2-A, completed by Cinematic VNext2).
 
 The exit only uses pre-opener time the outgoing scene no longer needs (Motion's own minimum
-read hold after its last settle), lasts the certified EXIT comfort duration, ends on the
-unchanged opener, staggers supporting visuals before the semantic result, keeps Pass2
-families together, never fades and never clips; otherwise the handoff stays a clean cut.
+read hold after its last settle) and ends on the unchanged opener. VNext2: an exit is
+planned only when it can finish - the unit leaves the frame completely through its nearest
+side edge within the HERO_TRAVEL speed cap - so nothing vanishes halfway through an exit
+(the former restrained drift moved a few pixels and was then cut). A unit that cannot
+leave in time stays still and leaves with the opener (clean cut). Pass2 families leave as
+one unit; an exit never fades.
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ import numpy as np
 import pytest
 
 from app.models import MotionCue
+from app.motion.hero_travel import HERO_TRAVEL, SMOOTHSTEP_PEAK
 from app.render.renderer import FFmpegRenderer
 from tests.visual.test_sprint_4_5_scene_handoffs import FPS, NEW_ON_OLD, OLD_RIGHT, Scene, _encode
 
@@ -47,17 +51,30 @@ def test_exit_needs_motion_read_hold_authority() -> None:
     assert row.audit["exit"]["decision"] == "abstain:no_motion_read_hold_authority"
 
 
-def test_exit_is_staggered_support_first_result_last_and_ends_on_the_opener() -> None:
+# Both fixture units sit 0.31 frame widths (margin included) from their nearest side edge.
+_EXIT_FRAMES = 14  # ceil(30 * max(0.40, 1.5 * 0.31 / 1.0))
+
+
+def test_an_exit_is_planned_only_when_the_unit_can_leave_the_frame_and_ends_on_the_opener() -> None:
     scene = _scene(16)
     row = scene.plan()
     assert row.mode == "CRISP_HANDOFF" and row.audit["opener_frame"] == 16
     exit_audit = row.audit["exit"]
-    assert exit_audit["decision"] == "restrained_exit"
-    assert exit_audit["exit_frames"] == round(0.40 * FPS)                  # EXIT comfort target
-    assert exit_audit["order"] == [["old_b"], ["old_a"]]                  # SUPPORT, then RESULT
+    assert exit_audit["decision"] == "complete_exit"
+    assert exit_audit["order"] == [["old_b"]]                             # the SUPPORT unit leaves
+    assert exit_audit["clean_cut_units"] == [["old_a"]]                   # the RESULT covers to the cut
     starts = {asset: scene.frame(time) for asset, time in row.exit_starts.items()}
-    assert starts == {"old_b": 16 - 12, "old_a": 16 - 12 + 2}
+    assert starts == {"old_b": 16 - _EXIT_FRAMES}
+    distance = 1 - (0.8 - 0.2 / 2) + 0.01
+    assert _EXIT_FRAMES / FPS >= SMOOTHSTEP_PEAK * distance / HERO_TRAVEL.max_normalized_speed - 1e-9
     assert row.release_start == row.release_end == row.opener_at          # opener never moves
+
+
+def test_a_unit_that_cannot_leave_in_time_stays_still_for_a_clean_cut() -> None:
+    row = _scene(13).plan()                                               # 13 < 14 frames needed
+    assert row.mode == "CRISP_HANDOFF" and row.exit_starts == {}
+    assert row.audit["exit"]["decision"] == "clean_cut:exit_cannot_leave_the_frame_in_time"
+    assert row.audit["exit"]["clean_cut_units"] == [["old_b"], ["old_a"]]
 
 
 def test_too_little_time_keeps_a_clean_cut() -> None:
@@ -83,36 +100,25 @@ def test_pass2_family_leaves_as_one_unit() -> None:
         assert len(set(row.exit_starts.values())) == 1
 
 
-def test_exit_offset_is_comfort_bounded_and_never_clips() -> None:
+def test_the_executed_exit_takes_the_cutout_completely_off_the_canvas_through_its_nearest_edge() -> None:
     scene = _scene(16)
     plan = scene.render_plan()
-    near_edge = scene.composition[0].items[1].model_copy(update={"x": 0.88})  # 38 px of room
-    for item in (scene.composition[0].items[1], near_edge):
-        dx, dy = FFmpegRenderer._restrained_exit_offset(plan=plan, item=item, seconds=0.40)
-        box_w, box_h, x, y = FFmpegRenderer._geometry(plan, item)
-        assert 0 <= x + dx and x + box_w + dx <= plan.width and 0 <= y + dy and y + box_h + dy <= plan.height
-        assert abs(dx) <= 0.14 * 0.40 * plan.width + 1 and abs(dy) <= 0.14 * 0.40 * plan.height + 1
-    # Authored geometry already past the edge: the exit never pushes it further out.
-    past_edge = scene.composition[0].items[1].model_copy(update={"x": 0.93})
-    dx, _dy = FFmpegRenderer._restrained_exit_offset(plan=plan, item=past_edge, seconds=0.40)
-    assert dx == 0
-
-
-def test_unreadable_exit_offset_yields_to_clean_cut() -> None:
-    scene = _scene(16)
-    plan = scene.render_plan()
-    item = scene.composition[0].items[1].model_copy(update={
-        "x": 0.895, "y": 0.895, "width": 0.2, "height": 0.2})
-    assert FFmpegRenderer._restrained_exit_offset(plan=plan, item=item, seconds=0.40) == (0, 0)
+    old_a, old_b = scene.composition[0].items[0], scene.composition[0].items[1]
+    for item, direction in ((old_a, -1), (old_b, 1)):
+        dx = FFmpegRenderer._offcanvas_exit_offset(plan=plan, item=item)
+        box_w, _box_h, x, _y = FFmpegRenderer._geometry(plan, item)
+        assert dx * direction > 0
+        assert (x + box_w + dx <= 0) if direction < 0 else (x + dx >= plan.width)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
-def test_encoded_exit_is_opaque_moves_out_and_ends_on_the_opener(tmp_path) -> None:
+def test_encoded_exit_is_opaque_and_leaves_the_canvas_before_it_is_removed(tmp_path) -> None:
     scene = _scene(16, root=tmp_path)
     row = scene.plan()
     frames = _encode(scene, [row], tmp_path / "exit")
-    band = (slice(int(0.1 * 270), int(0.5 * 270)), slice(int(0.62 * 480), 480))   # old_b only
+    band = (slice(int(0.1 * 270), int(0.5 * 270)), slice(int(0.62 * 480), 480))   # old_b's side
     b, opener = 60, 60 + 16
+    begin = 16 - _EXIT_FRAMES
     mass, centre = [], []
     for k in range(b, opener + 1):
         dark = frames[k][band] < 128
@@ -120,10 +126,45 @@ def test_encoded_exit_is_opaque_moves_out_and_ends_on_the_opener(tmp_path) -> No
         centre.append(float(np.nonzero(dark)[1].mean()) if dark.any() else None)
     reference = mass[0]
     assert reference > 0
-    assert all(abs(m - reference) <= 0.12 * reference for m in mass[:-1])  # opaque: no fade
-    moving = [c for c in centre[16 - 12:-1] if c is not None]
+    assert all(abs(m - reference) <= 0.12 * reference for m in mass[:begin + 1])  # opaque, still
+    assert all(abs(c - centre[0]) < 0.5 for c in centre[:begin + 1] if c is not None)
+    # It travels outward and the visible part only shrinks as it crosses the edge (no fade).
+    assert all(right <= left + 0.02 * reference for left, right in zip(mass[begin:], mass[begin + 1:]))
+    moving = [c for c in centre[begin:] if c is not None]
     assert all(right >= left - 0.5 for left, right in zip(moving, moving[1:]))
-    assert moving[-1] - centre[0] >= 6                                      # visibly moved outward
-    assert mass[-1] == 0                                                    # gone on the opener frame
-    assert all(abs(c - centre[0]) < 0.5 for c in centre[:16 - 12] if c is not None)  # still before exit
+    # Completely off the canvas on the last frame before the opener: nothing vanishes in view.
+    assert mass[-2] <= 0.02 * reference and mass[-1] == 0
     assert OLD_RIGHT  # geometry reference used by the band above
+
+
+# -- every unit leaves on its own (user review 2026-10-16: a leaving man "took" the card along)
+def _crossing_scene() -> Scene:
+    """card at the left edge, man in the middle (nearest exit also left), headset as RESULT."""
+    old = {"card": (0.12, 0.25, 0.16, 0.30), "man": (0.42, 0.50, 0.20, 0.80), "headset": (0.85, 0.70, 0.20, 0.30)}
+    scene = Scene(lead=30, opener=NEW_ON_OLD, later=60, old=old)
+    scene.story[0] = scene.story[0].model_copy(update={"active_visual_semantic_state": {a: a for a in old}})
+    focus = {"card": "SUPPORT", "man": "SUPPORT", "headset": "RESULT"}
+    scene.motion = [_with_focus(cue, focus=focus[cue.asset_id]) if cue.beat_id == "b1" else cue
+                    for cue in scene.motion]
+    return scene
+
+
+def test_an_exit_never_runs_over_another_outgoing_unit() -> None:
+    scene = _crossing_scene()
+    row = scene.plan()
+    assert row.mode == "CRISP_HANDOFF"
+    exit_audit = row.audit["exit"]
+    assert set(row.exit_starts) == {"card"}                              # leaves alone, path clear
+    assert exit_audit["path_blocked_units"] == [["man"]]                 # would have dragged the card
+    assert ["man"] in exit_audit["clean_cut_units"] and ["headset"] in exit_audit["clean_cut_units"]
+
+
+def test_without_a_unit_in_the_way_the_same_exit_is_planned() -> None:
+    scene = _crossing_scene()                                             # the same scene without the card
+    scene.composition[0] = scene.composition[0].model_copy(update={"items": [
+        item for item in scene.composition[0].items if item.asset_id != "card"]})
+    scene.motion = [cue for cue in scene.motion if cue.asset_id != "card"]
+    scene.story[0] = scene.story[0].model_copy(update={"active_visual_semantic_state": {"man": "man",
+                                                                                         "headset": "headset"}})
+    row = scene.plan()
+    assert set(row.exit_starts) == {"man"} and "path_blocked_units" not in row.audit["exit"]

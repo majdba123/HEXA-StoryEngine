@@ -1208,7 +1208,9 @@ def test_opening_result_is_never_revealed_early() -> None:
     assert "opening_spoken_coverage" not in scheduled.evidence
 
 
-def test_opening_establishment_does_not_cross_visual_lead_budget() -> None:
+def test_opening_beyond_the_visual_lead_budget_opens_at_the_sentence_start() -> None:
+    # User-authorized 2026-10-16: past the 0.42 s budget the scene's first safe carrier is
+    # established at the first spoken word of its own sentence (SCENE_SENTENCE_START).
     beat = StoryBeat(
         id="b", scene_id="s", start=0.0, end=2.5,
         audio_start=0.20, audio_end=2.5, narration="long intro then subject", action="INTRODUCE",
@@ -1222,9 +1224,13 @@ def test_opening_establishment_does_not_cross_visual_lead_budget() -> None:
     )
 
     scheduled = schedule_windows([row], beat, 2.5, {"leader"}, opening=True)[0]
+    phrase_locked = schedule_windows([row], beat, 2.5, {"leader"}, opening=False)[0]
 
-    assert scheduled.reveal_start == pytest.approx(0.90)
-    assert "opening_spoken_coverage" not in scheduled.evidence
+    assert scheduled.reveal_start == pytest.approx(0.20)
+    assert "opening_establish_authority=SCENE_SENTENCE_START" in scheduled.evidence
+    for name in ("phrase_start", "phrase_end", "semantic_peak", "settle_at"):
+        assert getattr(scheduled, name) == pytest.approx(getattr(phrase_locked, name))
+    assert phrase_locked.reveal_start == pytest.approx(0.90)            # never outside an opening
 
 
 def test_nonopening_exact_binding_remains_phrase_locked() -> None:

@@ -91,11 +91,23 @@ def _flagged_opening_frames(windows: dict[str, StoryAssetActivation], audio_star
 
 
 # 11. Exact production regression at 30 fps -------------------------------------------
-def test_diagnostic_570a01cb_reproduces_33_white_frames_without_event_authority() -> None:
+def test_diagnostic_570a01cb_is_covered_from_the_first_word_without_event_authority() -> None:
+    # Before 2026-10-16 this reproduced 33 white frames (6-38): no authored event evidence.
+    # The sentence-start authority now opens the scene's first safe carrier at 0.18 s.
     windows = _schedule(_diagnostic_rows(), events=None)
-    frames = _flagged_opening_frames(windows, 0.18)
-    assert frames == list(range(6, 39))
-    assert len(frames) == 33
+    assert _flagged_opening_frames(windows, 0.18) == []
+    carrier = windows["participant"]
+    assert carrier.reveal_start == pytest.approx(0.18)
+    assert "opening_establish_authority=SCENE_SENTENCE_START" in carrier.evidence
+    assert [key for key, row in windows.items() if "opening_spoken_coverage" in row.evidence] == ["participant"]
+
+
+def test_diagnostic_570a01cb_with_a_result_first_still_reproduces_the_white_frames() -> None:
+    # The RESULT exclusion stays: a scene whose first reveal is a RESULT is not opened early.
+    rows = [_row("participant", 1.30, 1.56, roles=["PARTICIPANT", "RESULT"], focus="RESULT", sequence_order=2),
+            *_diagnostic_rows()[1:]]
+    windows = _schedule(rows, events=None)
+    assert _flagged_opening_frames(windows, 0.18) == list(range(6, 39))
     assert all("opening_spoken_coverage" not in row.evidence for row in windows.values())
 
 
@@ -116,8 +128,11 @@ def test_both_authored_authorities_establish(authority) -> None:
 
 @pytest.mark.parametrize("authority", ["", "GUESS", "BOUNDED_STORY_LEAD"])
 def test_unknown_evidence_authority_is_not_trusted(authority) -> None:
+    # Unknown evidence is ignored; only the sentence-start authority covers the lead.
     windows = _schedule(_diagnostic_rows(), events={"E1": 0.18}, authority=authority)
-    assert windows["participant"].reveal_start == pytest.approx(1.30)
+    assert windows["participant"].reveal_start == pytest.approx(0.18)
+    assert "opening_establish_authority=SCENE_SENTENCE_START" in windows["participant"].evidence
+    assert f"opening_establish_authority={authority}" not in windows["participant"].evidence
 
 
 # 1/12/13. Narration before first phrase; no early payoff; no new internal gap -------
@@ -213,28 +228,50 @@ def test_unsafe_first_cohort_does_not_promote_a_later_safe_visual() -> None:
     assert windows["leader"].reveal_start == pytest.approx(1.90)
 
 
-# 9/10. Long lead without event evidence fails closed deterministically --------------
+# 9/10. Long lead without event evidence: the sentence start, deterministically -------
 @pytest.mark.parametrize(
     ("events", "event_id", "event_order"),
     [
         (None, "E1", 1),                 # no aligned event evidence
         ({}, "E1", 1),                   # event span did not resolve
-        ({"E1": 0.90}, "E1", 1),         # event begins after narration: future meaning
+        ({"E1": 0.90}, "E1", 1),         # event begins after narration
         ({"E1": 0.18 + 0.05}, "E1", 1),  # beyond alignment tolerance
         ({"E1": 0.18}, None, None),      # no authored event at all
-        ({"E1": 0.18}, "E1", None),      # unordered event cannot claim order 1
         ({"OTHER": 0.18}, "E1", 1),      # another event's coverage is not authority
         ({"E1": float("nan")}, "E1", 1),
     ],
 )
-def test_long_lead_without_event_authority_fails_closed(events, event_id, event_order) -> None:
+def test_long_lead_without_event_authority_opens_at_the_sentence_start(events, event_id, event_order) -> None:
     row = _row("leader", 1.30, 1.70, roles=["LEADER"], focus="PRIMARY",
                event_id=event_id, event_order=event_order)
     first = _schedule([row], events=events)
     second = _schedule([row], events=events)
-    assert first["leader"].reveal_start == pytest.approx(1.30)
+    assert first["leader"].reveal_start == pytest.approx(0.18)
+    assert "opening_establish_authority=SCENE_SENTENCE_START" in first["leader"].evidence
+    assert first["leader"].phrase_start == pytest.approx(1.30)            # word anchor unchanged
     assert first["leader"].model_dump() == second["leader"].model_dump()
-    assert _flagged_opening_frames(first, 0.18) == list(range(6, 39))
+    assert _flagged_opening_frames(first, 0.18) == []
+
+
+@pytest.mark.parametrize(
+    ("roles", "focus", "event_id", "event_order", "dependencies", "opening"),
+    [
+        (["RESULT"], "PRIMARY", "E1", 1, None, True),       # a RESULT is never opened early
+        (["LEADER"], "RESULT", "E1", 1, None, True),        # nor a RESULT-focused visual
+        (["LEADER"], "PRIMARY", "E1", 1, ["E0"], True),     # it depends on another event
+        (["LEADER"], "PRIMARY", "E2", 2, None, True),       # a later event step
+        (["LEADER"], "PRIMARY", "E1", None, None, True),    # unordered event member
+        ([], None, "E1", 1, None, True),                    # unclassified role
+        (["LEADER"], "PRIMARY", "E1", 1, None, False),      # not the scene's first beat
+    ],
+)
+def test_long_lead_sentence_start_keeps_every_exclusion(roles, focus, event_id, event_order, dependencies,
+                                                        opening) -> None:
+    row = _row("carrier", 1.30, 1.70, roles=roles, focus=focus, event_id=event_id,
+               event_order=event_order, dependencies=dependencies)
+    windows = _schedule([row], events=None, opening=opening)
+    assert windows["carrier"].reveal_start == pytest.approx(1.30)
+    assert "opening_spoken_coverage" not in windows["carrier"].evidence
 
 
 def test_event_start_within_alignment_tolerance_is_authority() -> None:

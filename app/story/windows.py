@@ -17,6 +17,9 @@ _MAX_OPENING_ESTABLISH_LEAD_SECONDS = 0.42
 # instant. Matches the planner's spoken-span admission tolerance.
 _OPENING_EVENT_SPOKEN_TOLERANCE_SECONDS = 0.025
 _OPENING_EVENT_AUTHORITIES = frozenset({"AUTHORED_EVENT_SPOKEN", "SCENE_PRELUDE"})
+# User-authorized (2026-10-16): a scene's first safe carrier may be established at the first
+# spoken word of its own sentence, whatever the lead (RESULT-first scenes stay unchanged).
+_SCENE_SENTENCE_START = "SCENE_SENTENCE_START"
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,10 +452,16 @@ def _establish_opening_visual(
       forced alignment by the planner (``OpeningEventEvidence``), proves the
       carrier's own event may be established from the first spoken instant. The lead
       is bounded by that authored evidence, never by a larger constant.
+    * SCENE_SENTENCE_START (user-authorized 2026-10-16): otherwise the same carrier -
+      the scene's first reveal cohort, non-RESULT, dependency-free, event order 1 -
+      is established at the first spoken word of its own sentence even when its own
+      word comes more than 0.42 s later, so the new sentence never plays over the
+      previous scene's artwork. It only applies on the scene's first beat, so the
+      carrier never leaves its own sentence.
 
     Semantic peak/settle and the exact phrase anchor stay unchanged; the carrier stays
     the first reveal, so later events, later reveals and RESULT content are never pulled
-    forward. Without an authority Story fails closed and changes nothing.
+    forward (a scene whose first reveal is a RESULT keeps its timing).
     """
     if not opening or not activations:
         return activations
@@ -479,11 +488,9 @@ def _establish_opening_visual(
     lead = earliest_reveal - audio_start
     bounded_lead = lead <= _MAX_OPENING_ESTABLISH_LEAD_SECONDS + 1e-9
 
-    def lead_authority(row: StoryAssetActivation) -> str | None:
-        if bounded_lead:
-            return "BOUNDED_STORY_LEAD"
-        # A long lead needs explicit authored event evidence: a known event id with
-        # order exactly 1 that may be established from the first spoken word.
+    def authored_evidence(row: StoryAssetActivation) -> str | None:
+        # Authored event evidence: a known event id with order exactly 1 that may be
+        # established from the first spoken word.
         event_id = str(row.semantic_event_id or "").strip()
         if not event_id or row.semantic_event_order != 1 or not event_evidence:
             return None
@@ -495,6 +502,20 @@ def _establish_opening_visual(
         if evidence.establish_from > audio_start + _OPENING_EVENT_SPOKEN_TOLERANCE_SECONDS:
             return None
         return evidence.authority
+
+    def lead_authority(row: StoryAssetActivation) -> str | None:
+        # Called only for a safe carrier (first cohort, non-RESULT, dependency-free): the
+        # strongest authority that covers the lead is recorded.
+        if bounded_lead:
+            return "BOUNDED_STORY_LEAD"
+        authored = authored_evidence(row)
+        if authored is not None:
+            return authored
+        # An event member without an order could sit anywhere in its event chain: only
+        # the event's first step (or a unit with no event at all) opens the sentence.
+        if str(row.semantic_event_id or "").strip() and row.semantic_event_order != 1:
+            return None
+        return _SCENE_SENTENCE_START
 
     cohort = [
         (index, row)

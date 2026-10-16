@@ -74,12 +74,22 @@ class TextCompositionPlanner:
                         and visible_end - display_start + 1e-9 < self.visibility.readable_floor(cue)):
                     # The text may not appear before its own visual subject, and waiting for
                     # that subject leaves too little time to read it: the cue abstains.
+                    later = [float(row.spoken_start) for row in cues
+                             if float(row.spoken_start) > float(cue.spoken_start) + 0.04]
                     self.abstentions.append({
                         "beat_id": beat.id, "text_cue_id": cue.id,
                         "reason": "anchor_not_recognizable_in_time",
                         "spoken_start": round(float(cue.spoken_start), 3),
                         "anchor_ready": round(display_start, 3),
                         "visible_end": round(visible_end, 3),
+                        # Machine-readable justification: which limit closes the window.
+                        "text": cue.text,
+                        "anchor_asset_id": cue.anchor_asset_id,
+                        "readable_floor": round(self.visibility.readable_floor(cue), 3),
+                        "window": round(visible_end - display_start, 3),
+                        "cap": ("scene_cut" if visible_end >= float(beat.end) - 1e-6
+                                else "next_cue" if later and visible_end >= min(later) - 0.08 - 1e-6
+                                else "read_target"),
                     })
                     continue
                 concurrent = [

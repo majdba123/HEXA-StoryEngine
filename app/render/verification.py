@@ -12,6 +12,8 @@ from app.models import LayoutItem, MotionSegment, RenderPlan
 from app.motion.hero_travel import HERO_TRAVEL
 from app.motion.timing import (
     GOLDEN_MINOR,
+    REFERENCE_POP,
+    REFERENCE_SLIDE,
     encoded_motion_renderability_floor_px,
     max_comfort_displacement,
     motion_comfort,
@@ -259,6 +261,14 @@ class EncodedMotionVerifier:
                     if segment.phase == "ENTRY" and isinstance(cue.params, dict) and isinstance(
                             cue.params.get("hero_travel"), dict):
                         profile = HERO_TRAVEL  # authorized hero travel contract, ENTRY only
+                    elif (segment.phase in {"ENTRY", "PAYOFF"} and isinstance(cue.params, dict)
+                          and isinstance(cue.params.get("reference_pop"), dict)
+                          and program_name.startswith("reference_pop")):
+                        profile = REFERENCE_POP  # reference-measured arrival pop (VNext2)
+                    elif (segment.phase == "ENTRY" and isinstance(cue.params, dict)
+                          and isinstance(cue.params.get("reference_slide"), dict)
+                          and program_name.startswith("reference_slide")):
+                        profile = REFERENCE_SLIDE  # reference-measured edge slide (VNext2)
                     speed_limit = profile.max_normalized_speed * 1.08
                     if normalized_speed > speed_limit + 1e-6:
                         violations.append(RenderedMotionViolation(

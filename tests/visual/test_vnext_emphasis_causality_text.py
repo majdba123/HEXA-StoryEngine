@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from app.models import AssetActivation, LayoutItem, MotionCue, StoryBeat, TextCue
-from app.motion.hero_travel import EMPHASIS_CANDIDATES
+from app.motion.hero_travel import EMPHASIS_CANDIDATES, EMPHASIS_RANGE
 from app.story.windows import schedule_windows
 from app.text.timing import TextVisibilityPolicy
 from tests.visual.test_vp4_hero_travel import HERO, SUPPORT, _cue, _plan
@@ -16,18 +16,24 @@ def _pulse_scale(cue: MotionCue) -> float:
     return max(f["scale"] for f in pulse.program["keyframes"])
 
 
-def test_emphasis_takes_the_strongest_reference_amplitude_that_is_safe() -> None:
+BIG_HERO = LayoutItem(asset_id="hero", x=0.75, y=0.62, width=0.3, height=0.45)   # 486 px: floor < 3.5 %
+
+
+def test_emphasis_takes_the_strongest_restrained_amplitude_that_is_safe() -> None:
+    _planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [SUPPORT, BIG_HERO])
+    assert _pulse_scale(out[("b", "hero")]) == pytest.approx(1 + EMPHASIS_CANDIDATES[0]) == pytest.approx(1.05)
+    # A 270 px subject needs ~6 % to be readable: it gets exactly that floor, never more.
     _planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [SUPPORT, HERO])
-    assert _pulse_scale(out[("b", "hero")]) == pytest.approx(1 + EMPHASIS_CANDIDATES[0])
+    assert 1 + EMPHASIS_CANDIDATES[0] < _pulse_scale(out[("b", "hero")]) <= 1 + EMPHASIS_RANGE[1] + 1e-9
 
 
 def test_a_neighbour_steps_the_emphasis_down_instead_of_colliding() -> None:
-    def neighbour(gap: float) -> LayoutItem:
-        return LayoutItem(asset_id="support", x=0.75 - 0.2 / 2 - 0.1 - gap, y=0.70, width=0.2, height=0.25)
+    def neighbour(gap: float) -> LayoutItem:          # its right edge sits ``gap`` left of the hero
+        return LayoutItem(asset_id="support", x=0.6 - 0.1 - gap, y=0.70, width=0.2, height=0.25)
 
-    _planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [neighbour(0.003), HERO])
+    _planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [neighbour(0.0015), BIG_HERO])
     assert 1 + EMPHASIS_CANDIDATES[-1] - 1e-9 <= _pulse_scale(out[("b", "hero")]) < 1 + EMPHASIS_CANDIDATES[0]
-    planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [neighbour(0.0), HERO])
+    planner, out = _plan([_cue("support", 0.1, 0.35), _cue("hero", 1.0, 1.3)], [neighbour(0.0), BIG_HERO])
     assert planner.decisions[0].emphasis == "abstain:scaled_hero_would_collide"
     assert "hero_emphasis" not in out[("b", "hero")].params
 
@@ -119,5 +125,6 @@ def test_text_and_a_subject_revealed_on_the_same_words_enter_together() -> None:
 
 def test_emphasis_keeps_the_exact_readable_amplitude_when_stronger_ones_clip() -> None:
     from app.motion.hero_travel import _amplitudes
-    assert _amplitudes(0.045) == [0.08, 0.07, 0.06, 0.05, 0.045]
-    assert _amplitudes(0.01)[-1] == 0.03
+    assert _amplitudes(0.045) == [0.05, 0.045]
+    assert _amplitudes(0.042) == [0.05, 0.045, 0.042]
+    assert _amplitudes(0.01)[-1] == 0.03 and _amplitudes(0.01)[0] == 0.05

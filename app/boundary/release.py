@@ -17,7 +17,6 @@ from app.models import (
     VisualAsset,
 )
 from app.motion.hero_travel import HERO_TRAVEL, SMOOTHSTEP_PEAK
-from app.motion.timing import motion_comfort
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
 
@@ -28,8 +27,12 @@ RELEASE_FRAMES = 6
 MIN_RELEASE_FRAMES = 5
 OVERLAP_FRAMES = 4
 _OFFSCREEN_MARGIN = 0.01
-# A staggered exit never gives its last (leading) visual fewer frames than this.
-_MIN_EXIT_ASSET_FRAMES = 6
+# An opener cohort covers the frame on its own (no near-white frame after a clean cut) only
+# when one of its cutouts is drawn at full opacity from its first frame and its footprint
+# covers at least this share of the frame.
+_SOLID_OPENER_AREA = 0.02
+# An exiting unit may pass its neighbours only within their authored overlap plus this slack.
+_EXIT_OVERLAP_SLACK = 0.02
 _EPS = 1e-6
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
@@ -107,7 +110,8 @@ class SceneBoundaryPlanner:
         the unchanged incoming opener, then leaves along a smoothstep path with the
         HERO_TRAVEL speed cap until it is outside the frame on every projection; the
         incoming scene's timing, read holds and narration are unchanged. Any incoming
-        artwork or text on the path makes it a clean cut instead.
+        artwork or text on the path, or any incoming reveal after the opener while it is
+        still leaving (competing motion), makes it a clean cut instead.
         """
         beat, previous = segment.beat, segment.previous_beat
         assert previous is not None
@@ -121,6 +125,11 @@ class SceneBoundaryPlanner:
 
         if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} or row.reason.startswith("abstain:"):
             return decided(f"clean_cut:boundary_{row.mode.lower()}:{row.reason}")
+        wash = next((cue.params["focus_wash"] for (beat_id, _), cue in cues.items()
+                     if beat_id == previous.id and isinstance(cue.params.get("focus_wash"), dict)), None)
+        if wash is not None and hero.asset_id not in (wash.get("focus_asset_ids") or []):
+            # It receded behind the scene's resolution: it leaves with the cut, never crisp again.
+            return decided("clean_cut:hero_receded_behind_resolution")
         layout, previous_layout = layouts.get(beat.id), layouts.get(previous.id)
         item = next((row_item for row_item in (previous_layout.items if previous_layout else [])
                      if row_item.asset_id == hero.asset_id), None)
@@ -163,6 +172,10 @@ class SceneBoundaryPlanner:
         ]
         opener = int(row.audit.get("opener_frame", min(first.values())))
         start = (segment.start_frame + opener) / fps
+        solid_opener = any(
+            frame == opener and not self._has_entry_opacity(cues.get((beat.id, key)))
+            and _area(footprints[key]) >= _SOLID_OPENER_AREA
+            for key, frame in first.items())
         reasons = []
         left = unit[2] + self.exit_margin            # move left until the right edge is past 0
         right = 1.0 - unit[0] + self.exit_margin     # move right until the left edge is past 1
@@ -176,6 +189,12 @@ class SceneBoundaryPlanner:
                 continue
             end = (segment.start_frame + end_frame) / fps
             blocker = None
+            if solid_opener and any(opener < frame < end_frame for frame in first.values()):
+                # One leaving hero beside the arriving opener reads as a handoff; further
+                # incoming arrivals during the exit would make the opening busy and rushed.
+                # A faint or tiny opener needs the leaving hero as cover (else near-white).
+                reasons.append("incoming_arrivals_during_exit")
+                continue
             for frame in range(opener, end_frame + 1):
                 progress = (frame - opener) / frames
                 shift = direction * distance * (3 * progress ** 2 - 2 * progress ** 3)
@@ -339,6 +358,9 @@ class SceneBoundaryPlanner:
             exits = self._exit_schedule(
                 previous=previous, outgoing=outgoing, cues=cues, assets=assets,
                 outgoing_done=outgoing_done, segment=segment, opener_frame=k_open, fps=fps,
+                margin=self.exit_margin,
+                boxes={item.asset_id: self.footprints.resolve(item, assets.get(item.asset_id)).box
+                       for item in outgoing},
             )
             audit["exit"] = exits.pop("audit")
             return result(
@@ -357,19 +379,24 @@ class SceneBoundaryPlanner:
         cls, *, previous: StoryBeat, outgoing: list[LayoutItem],
         cues: dict[tuple[str, str], MotionCue], assets: dict[str, VisualAsset],
         outgoing_done: float, segment: BeatSegment, opener_frame: int, fps: int,
+        margin: float = _OFFSCREEN_MARGIN, boxes: dict[str, Box] | None = None,
     ) -> dict[str, object]:
-        """Restrained outgoing exit inside the pre-opener interval, or none (clean cut).
+        """Complete outgoing exits inside the pre-opener interval, or none (clean cut).
 
-        The exit may only use time the outgoing scene no longer needs: it starts after the
-        last outgoing motion has settled plus Motion's own minimum read hold, lasts the
-        certified EXIT comfort duration (never shorter than its minimum) and ends on the
-        unchanged opener frame. Supporting visuals yield first and the semantic result
-        last; a Pass2 family leaves as one unit. Without enough time, or without Motion's
-        rhythm authority, it abstains and the handoff stays a clean crisp cut.
+        An exit may only use time the outgoing scene no longer needs: it starts after the
+        last outgoing motion has settled plus Motion's own minimum read hold, and ends on
+        the unchanged opener frame. The last unit in order (the semantic result) always
+        stays as cover until the opener. An exit is planned only when it can finish: the unit (a
+        Pass2 family leaves as one) slides out through its nearest side edge until it is
+        off the frame on every projection (``margin``), along a smoothstep path within the
+        HERO_TRAVEL speed cap and minimum duration. A unit that cannot leave in the
+        available time stays still and leaves with the opener (a clean cut), so nothing
+        vanishes halfway through an exit. Every unit leaves on its own: an exit whose path
+        would run over another outgoing unit (still or leaving, beyond their authored
+        overlap; ``boxes`` are the alpha footprints) is not planned, so no unit ever drags
+        another along. Without Motion's rhythm authority it abstains.
         """
-        comfort = motion_comfort("EXIT")
-        min_frames = ceil(comfort.minimum_seconds * fps - _EPS)
-        target_frames = max(min_frames, round(comfort.target_seconds * fps))
+        min_frames = ceil(HERO_TRAVEL.minimum_seconds * fps - _EPS)
         holds = []
         for item in outgoing:
             cue = cues.get((previous.id, item.asset_id))
@@ -385,7 +412,6 @@ class SceneBoundaryPlanner:
         if window < min_frames:
             return {"starts": {}, "audit": {"decision": "clean_cut:insufficient_time_after_read_hold",
                                             "ready_frame": ready_frame, "window_frames": window}}
-        exit_frames = min(target_frames, window)
 
         def rank(item: LayoutItem) -> int:
             cue = cues.get((previous.id, item.asset_id))
@@ -404,16 +430,89 @@ class SceneBoundaryPlanner:
             families.setdefault(AssetManager.family_id(asset) if asset else item.asset_id, []).append(item)
         groups = sorted(families.values(), key=lambda members: (
             min(rank(m) for m in members), min(m.z for m in members), min(m.asset_id for m in members)))
-        step = 0 if len(groups) == 1 else min(2, (exit_frames - _MIN_EXIT_ASSET_FRAMES) // (len(groups) - 1))
-        step = max(0, step)
-        first = opener_frame - exit_frames
-        starts = {
-            member.asset_id: (segment.start_frame + first + step * index) / fps
-            for index, members in enumerate(groups) for member in members
-        }
-        return {"starts": starts, "audit": {"decision": "restrained_exit", "ready_frame": ready_frame,
-                                            "exit_frames": exit_frames, "stagger_frames": step,
-                                            "order": [sorted(m.asset_id for m in members) for members in groups]}}
+        boxes = boxes or {}
+
+        def rest_box(members: list[LayoutItem]) -> Box:
+            rows = [boxes.get(m.asset_id) or (float(m.x) - float(m.width) / 2, float(m.y) - float(m.height) / 2,
+                                              float(m.x) + float(m.width) / 2, float(m.y) + float(m.height) / 2)
+                    for m in members]
+            return (min(r[0] for r in rows), min(r[1] for r in rows), max(r[2] for r in rows), max(r[3] for r in rows))
+
+        units = []
+        for index, members in enumerate(groups):
+            frames, shift = cls._complete_exit_path(members, fps=fps, margin=margin)
+            # The last unit (the semantic result) never leaves early: it covers the frame
+            # until the opener, so completed exits can never leave a near-white frame.
+            fits = index != len(groups) - 1 and frames <= window
+            units.append({"members": members, "box": rest_box(members), "frames": frames, "shift": shift,
+                          "exits": False, "why": None if fits else "time", "fits": fits})
+        # Units decide in order (supporting first): earlier units at their decision, later
+        # ones still. Each pair is checked once, when the later of the two decides, against
+        # the earlier one's real path, so a planned exit never meets another outgoing unit.
+        for current in units:
+            if not current["fits"]:
+                continue
+            current["exits"] = True
+            if cls._exit_path_collides(current, units, opener_frame):
+                current["exits"], current["why"] = False, "path"
+        starts: dict[str, float] = {}
+        leaving, staying, crossing = [], [], []
+        for unit in units:
+            ids = sorted(m.asset_id for m in unit["members"])
+            if not unit["exits"]:
+                staying.append(ids)
+                if unit["why"] == "path":
+                    crossing.append(ids)
+                continue
+            leaving.append(ids)
+            begin = (segment.start_frame + opener_frame - unit["frames"]) / fps
+            starts.update({member.asset_id: begin for member in unit["members"]})
+        audit = {
+            "decision": "complete_exit" if leaving else (
+                "clean_cut:exit_path_crosses_another_outgoing_unit" if crossing
+                else "clean_cut:exit_cannot_leave_the_frame_in_time" if len(groups) > 1
+                else "clean_cut:single_unit_covers_until_opener"),
+            "ready_frame": ready_frame, "window_frames": window, "order": leaving, "clean_cut_units": staying}
+        if crossing:
+            audit["path_blocked_units"] = crossing
+        return {"starts": starts, "audit": audit}
+
+    @staticmethod
+    def _exit_path_collides(current: dict, units: list[dict], opener_frame: int) -> bool:
+        """True when ``current``'s planned exit runs over another outgoing unit on any frame
+        before the opener (each unit at its own pose on that frame; authored overlap kept)."""
+
+        def at(unit: dict, frame: int) -> Box:
+            box = unit["box"]
+            if not unit["exits"]:
+                return box
+            first = opener_frame - unit["frames"]
+            progress = min(1.0, max(0.0, (frame - first) / max(1, unit["frames"] - 1)))
+            offset = unit["shift"] * (3 * progress ** 2 - 2 * progress ** 3)
+            return (box[0] + offset, box[1], box[2] + offset, box[3])
+
+        def ratio(a: Box, b: Box) -> float:
+            inter = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+            return inter / max(1e-9, min(_area(a), _area(b)))
+
+        for other in units:
+            if other is current:
+                continue
+            allowed = ratio(current["box"], other["box"]) + _EXIT_OVERLAP_SLACK
+            for frame in range(opener_frame - current["frames"], opener_frame):
+                if ratio(at(current, frame), at(other, frame)) > allowed + _EPS:
+                    return True
+        return False
+
+    @staticmethod
+    def _complete_exit_path(members: list[LayoutItem], *, fps: int, margin: float) -> tuple[int, float]:
+        """(frames, horizontal shift) for a unit leaving through its nearest side edge (the
+        direction the renderer executes)."""
+        left = max(float(m.x) + float(m.width) / 2 for m in members) + margin
+        right = 1.0 - min(float(m.x) - float(m.width) / 2 for m in members) + margin
+        distance, shift = (left, -left) if left <= right else (right, right)
+        seconds = max(HERO_TRAVEL.minimum_seconds, SMOOTHSTEP_PEAK * distance / HERO_TRAVEL.max_normalized_speed)
+        return ceil(seconds * fps - _EPS), shift
 
     @classmethod
     def _hold_to_opener(
@@ -596,3 +695,7 @@ class SceneBoundaryPlanner:
                 end = max(float(cue.spoken_end), ends.get(cue.id, float(cue.spoken_end)))
                 output.setdefault(beat.beat_id, []).append((float(cue.spoken_start), end, box))
         return output
+
+
+def _area(box: Box) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])

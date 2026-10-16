@@ -26,6 +26,15 @@ _MOTION_COMFORT: dict[str, MotionComfortProfile] = {
 }
 
 
+# Cinematic VNext2 arrival pop (cues Motion marked ``reference_pop``): growth at most 0.85
+# frame heights per second (reference q90), over 6-9 frames - the references' own 3-5 frame
+# pops read as rushed in reviewed HEXA renders.
+REFERENCE_POP = MotionComfortProfile(target_seconds=9 / 30, minimum_seconds=6 / 30, max_normalized_speed=0.85)
+# Edge slide (cues marked ``reference_slide``): a calm settle, at most 0.6 frame widths per
+# second over 8-12 frames (the references' 0.8-1.2 w/s slides read as rushed).
+REFERENCE_SLIDE = MotionComfortProfile(target_seconds=12 / 30, minimum_seconds=8 / 30, max_normalized_speed=0.6)
+
+
 def motion_comfort(phase: str) -> MotionComfortProfile:
     return _MOTION_COMFORT.get(
         str(phase).upper(),

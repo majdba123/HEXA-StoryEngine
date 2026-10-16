@@ -14297,3 +14297,76 @@ the encoded verifier still rejects it. The fix belongs to event timing, not the 
 0/40 after. `tests/certification/render_handoff/`: frame-grid oracle (500 boundary, 600
 mode, 200 delayed, 200 threshold, 100 short-beat variants) and 41 real 320x180 encodes
 (32 of 35 fail on the pre-fix renderer).
+
+## CINEMATIC VNEXT2 MOTION CORRECTION CHECKPOINT — 2026-10-15
+
+Branch `cinematic/vnext2` (worktree `E:\hexa-vnext2-wt`), on top of `280ae40` plus the
+preserved hold-emphasis / sub-visible-nudge WIP. Full report:
+`docs/qa/CINEMATIC-VNEXT2-MOTION-CORRECTION.md`; evidence `E:\hexa-vnext2\motion-fix\`.
+
+### Root causes (user review of the Black Hat render)
+1. Abrupt disappearance: every ordinary scene change drew the legacy outgoing drift
+   (48-120 px in the last frames before the opener) and then removed the cutout fully
+   opaque on screen, although Boundary had planned a clean cut; CRISP_HANDOFF "restrained"
+   exits were capped below what could leave the frame. 1553 mid-motion vanishes in 10 packages.
+2. Cheap payoff: up to five independent sources grew cutouts above rest (event-chain
+   overshoots, relation accents, hero / secondary / opener pulses); no per-beat leader.
+   134 beats with several pulsing families, 73 with the same element pulsing twice.
+3. Rushed motion: VNext2 reference pops (0.62 size in <= 5 frames, up to 6.6 scale/s),
+   fast slides and hero travel above the authorized 1.0 w/s.
+4. A non-ENTRY segment starting on an encoded frame could lose that frame to 6-decimal
+   rounding (one frame drawn in the previous pose).
+
+### Contract now
+- An outgoing cutout either completes its exit off the frame (planned, HERO_TRAVEL cap,
+  the semantic result always covers until the opener) or stays still and leaves on the
+  opener frame. Authored object handoffs and authored blur keep their own bridge.
+- One emphasis leader per beat (`app/motion/emphasis_leader.py`): only one Pass2 family
+  grows above authored size, once; Sprint 4.1 character emphasis is never removed.
+- Settle emphasis: rest, rise, hold, release (0.60-0.90 s, 5 % -> 3 %, <= 6 % for the
+  readability floor) or none. Pops 0.84 / 6-9 frames / smoothstep / <= 1.0 scale/s;
+  slides 0.08 w / 8-12 frames / <= 0.6 w/s; HERO_TRAVEL 1.0 w/s / 0.40 s.
+- The outgoing hero's full-frame exit yields to competing incoming arrivals only when the
+  opener alone covers the frame (opaque, >= 2 % of the frame).
+
+### Not changed (decisions for the user)
+- Scene/narration sync: fixed for Black Hat by the opening establishment (0.23 s left);
+  in the other packages 22 boundaries > 300 ms remain because Story fails closed (15: first
+  visual's word > 0.42 s after the sentence start without authored evidence; 7: first visual
+  is a RESULT). Needs a new Story opening authority.
+- Sprint 4.1 character emphasis still peaks at 10-12 % without a hold.
+- Measurement note: cached shared plans hold an old Story; re-plan Story before measuring.
+
+### Update 2026-10-16: scene/narration sync (user-authorized Story authority)
+- New `SCENE_SENTENCE_START` opening authority (`app/story/windows.py`): on a scene's first
+  beat the first reveal cohort's safe carrier (non-RESULT, dependency-free, event order 1 or
+  no event, CONTEXT/LEADER/PRIMARY/PARTICIPANT) is revealed at the first spoken word of its
+  own sentence even when its word is > 0.42 s later; authored evidence keeps precedence;
+  phrase anchor, peak and settle unchanged; RESULT-first scenes and later reveals untouched.
+- Result over 10 packages: sentence-over-previous-scene boundaries 25 -> 10, 14.27 s -> 3.87 s;
+  the 10 left are the kept exclusions (9 RESULT-first, 1 dependent opener: Black Hat 021).
+- `app/motion/arrival.py`: a semantic segment resting until after the bounded arrival now
+  starts at the arrival end (absolute keyframe times kept); found by the encoded-motion gate
+  (White Hat beat 031). 20/20 final encodes pass.
+- Every outgoing unit leaves on its own (`release._exit_schedule`, user review 2026-10-16:
+  the Social Engineer man "took" the ID card along): a complete exit whose frame-by-frame
+  path runs over another outgoing unit beyond their authored overlap is not planned; Pass2
+  families still move as one picture. Glued exits: 1 -> 0.
+
+## CINEMATIC VNEXT2 FINAL ENGINEERING CLOSURE — 2026-10-16
+
+Branch `cinematic/vnext2`, commits `ceacd43`, `c6e8c2c`, `74f2e28`, `3b82b58`, `27031a5` and this
+closure commit; report `docs/qa/CINEMATIC-VNEXT2-MOTION-CORRECTION.md` §9; review package
+`E:\hexa-vnext2\REVIEW-cinematic-vnext2\`.
+
+- Scope completed: exits finish or cut cleanly, every element leaves on its own, one emphasis
+  leader per beat, calm pacing, frame ownership, sentence-start scene opening (user-authorized),
+  arrival masking. Preserved WIP committed unchanged (`ceacd43`).
+- Certification (code `27031a5`): 20/20 final outputs rendered from plans byte-identical to
+  HEAD's and passing the encoded-motion and final-media gates; full suite 10188 tests, 0 failures, 0 errors, 38 skipped, exit 0 (985 s, gates/pytest-head-run4.xml). Three earlier full runs on the same SHA this afternoon each had exactly one failure in the wall-clock micro-benchmark of tests/certification/alignment/test_alignment_text_certification.py (test_long_scripts_prepare_in_linear_time[1000] 73 ms > 70 ms once, test_size_matrix_scales_linearly twice) while a local web server used 423 s of CPU; the module is untouched by this branch, and the benchmark passed 42 isolated reproductions on both HEAD and 280ae40 (whole file x5, timing tests x30, full collection x7).
+- Metrics over 10 packages: mid-motion vanishes 1553 -> 0; glued exits 1 -> 0; multi-pulse beats
+  134 -> 0; frames with scale rate > 1.2/s 804 -> 5 (Sprint 4.1); sentence over previous scene
+  25 / 14.27 s -> 10 / 3.87 s (kept exclusions).
+- Integration: regular merge into `montage` (32 commits ahead, only the continuity source shared,
+  no conflict); the real merge (temporary commit 98e205c on no branch, tree acbe55e) passed the full suite: 10227 tests, 0 failures, 0 errors, 38 skipped, exit 0 (gates/pytest-merge-check.xml). Not merged; `bayer` untouched (production deploys only from `bayer`).
+- Open: Sprint 4.1 emphasis amplitude decision; RESULT-first scenes; user visual review.

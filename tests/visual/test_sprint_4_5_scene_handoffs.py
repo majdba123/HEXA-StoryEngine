@@ -365,10 +365,12 @@ def test_renderer_executes_exact_end_as_one_group_fade_without_the_legacy_drift(
     assert any(f.startswith("color=c=white@0.0:") and f.endswith("[oldbase0]") for f in graph)
     assert not any("fade=t=out" in f for f in legacy)
     assert any(f.startswith("color=c=white:") and f.endswith("[oldbase0]") for f in legacy)
-    moving = [f for f in _old(legacy) if "overlay=x='" in f and "+(0)*" not in f.split(":y=")[0]]
-    assert moving                                                      # certified drift exists...
+    # Cinematic VNext2: an ordinary outgoing cutout never starts an exit it cannot finish
+    # before it is removed, so without a plan it stays still (no partial drift) ...
     assert all("+(0)*" in f.split(":y=")[0] and "+(0)*" in f.split(":y=")[1]
-               for f in _old(graph) if "overlay=x='" in f)             # ...and is not stacked on the fade
+               for f in _old(legacy) if "overlay=x='" in f)
+    assert all("+(0)*" in f.split(":y=")[0] and "+(0)*" in f.split(":y=")[1]
+               for f in _old(graph) if "overlay=x='" in f)             # ...nor is drift stacked on the fade
     assert [f for f in graph if f not in _old(graph)] == [f for f in legacy if f not in _old(legacy)]
 
 
@@ -474,8 +476,9 @@ def test_encoded_exact_end_fades_the_old_scene_to_zero_on_the_opener_frame(tmp_p
     for box in (OLD_LEFT, OLD_RIGHT, NEW_CLEAR, NEW_LATER):
         outside[(slice(None), *_region(box, -0.01))] = 255.0
     assert outside.min() >= 250
-    assert (legacy[b + 2:b + 10] < 128).any(axis=0)[_region((0.2, 0.3, 0.3, 0.4))].sum() > (
-        (legacy[b] < 128)[_region((0.2, 0.3, 0.3, 0.4))].sum())           # the certified cut did drift
+    # VNext2: the unplanned cut no longer starts an exit it cannot finish (no partial drift).
+    assert (legacy[b + 2:b + 10] < 128).any(axis=0)[_region((0.2, 0.3, 0.3, 0.4))].sum() <= 1.02 * (
+        (legacy[b] < 128)[_region((0.2, 0.3, 0.3, 0.4))].sum())           # the cut stays still
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")

@@ -23,12 +23,16 @@ Authorized product contract (2026-10-14), deliberately narrow:
   the travel; any relation/interaction segment during the travel window makes it abstain.
 
 Post-settle hero emphasis (a separate animation, never the 0.94 entry scale): after the
-hero has fully settled, one 1.0 -> 1+d -> 1.0 scale pulse that finishes before Rhythm's
-read hold. d is the strongest of the reference-measured amplitudes (8 % down to 3 %; the
-approved references pulse large subjects 4-8 %, median ~5 %) that passes the readability
-floor, the ESTABLISH comfort speed, the frame and every authored neighbour; composed text
-later trims it again (``fit_emphasis_to_text``). Selective: the scene's hero only, never
-in two consecutive scenes, never while another asset makes an independent accent.
+hero has fully settled and rested long enough to be recognised, one restrained
+1.0 -> 1+d (rise) -> 1+d (held, so the viewer registers it) -> 1.0 (release) scale
+gesture that finishes before Rhythm's read hold. d is the strongest restrained amplitude
+(5 % down to 3 %, at most 6 % where the readability floor needs it; reviewed renders found
+the 7-8 % reference pulses aggressive) that passes the readability floor, the ESTABLISH
+comfort speed, the frame and every authored neighbour; composed text later trims it again
+(``fit_emphasis_to_text``). Without time for
+the whole held gesture there is no pulse. Selective: one emphasis leader per beat (see
+``emphasis_leader``), never in two consecutive scenes for the same subject, never while
+another asset makes an independent accent.
 """
 from __future__ import annotations
 
@@ -41,22 +45,32 @@ from app.targets import frame_size
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
 
 from .collision import authored_overlap_ratio, box
+from .family import family_of, follow, rigid_followers
 from .timing import (
     MotionComfortProfile,
     motion_comfort,
     semantic_readability_floor_px,
 )
 
+# Authorized VP4 hero-travel contract (2026-10-14): at most 1.0 frame widths/s, at least
+# 0.40 s. VNext2 had raised it to 1.25 w/s / 0.30 s; reviewed renders found entries and
+# exits at that speed rushed, so travel (and the Boundary exits timed with it) is back
+# inside the authorized contract. A path that needs more speed keeps its fallback.
 HERO_TRAVEL = MotionComfortProfile(target_seconds=0.60, minimum_seconds=0.40, max_normalized_speed=1.0)
 SMOOTHSTEP_PEAK = 1.5  # peak derivative of 3p^2 - 2p^3
 _OFFSCREEN_MARGIN = 0.01
 _ANTICIPATION_GAP = 2 / 30  # never share a first frame with the earlier reveal
 _OVERLAP_SLACK = 0.02
-EMPHASIS_RANGE = (0.03, 0.08)
-# Reference-measured post-settle pulse amplitudes, strongest first.
-EMPHASIS_CANDIDATES = (0.08, 0.07, 0.06, 0.05, 0.04, 0.03)
-EMPHASIS_SECONDS = 0.45
-_EMPHASIS_PAUSE = 2 / 30  # a visible rest between arrival and emphasis
+EMPHASIS_RANGE = (0.03, 0.06)  # 6 % only where the readability floor needs it
+# Restrained post-settle amplitudes, strongest first (a premium accent, not a bounce).
+EMPHASIS_CANDIDATES = (0.05, 0.045, 0.04, 0.035, 0.03)
+# The held gesture: rise over the first 35 %, hold to 65 %, release over the last 35 %.
+EMPHASIS_SECONDS = 0.90
+EMPHASIS_MIN_SECONDS = 0.60
+EMPHASIS_RISE, EMPHASIS_HOLD_END = 0.35, 0.65
+# A scene opener that holds the frame alone at least this long gets the reference pulse.
+HOLD_ALONE_SECONDS = 1.0
+_EMPHASIS_PAUSE = 6 / 30  # the settled subject is recognised before it is emphasised
 _HOLD_GRID_MARGIN = 2 / 30
 _YIELD_ACTIONS = {"DEEMPHASIZE", "FOCUS_HANDOFF"}
 _EPS = 1e-6
@@ -100,6 +114,7 @@ class HeroTravelPlanner:
         self.margin = _OFFSCREEN_MARGIN + max(0.0, float(horizontal_padding))
         self.decisions: list[HeroTravelDecision] = []
         self._sweeps: dict[tuple[str, str], tuple[float, float, Box]] = {}
+        self.withdrawn: set[tuple[str, str]] = set()
 
     def plan(
         self,
@@ -133,13 +148,13 @@ class HeroTravelPlanner:
             if (cue.beat_id, cue.asset_id) in (referent_carriers or ()) else cue
             for cue in motion
         ]
-        emphasized_previous = False
+        emphasized_previous: str | None = None  # family pulsed in the previous scene
         for beat in story:
             cues = [cue for cue in motion if cue.beat_id == beat.id]
             hero_id, reason = self._hero(beat, choreography, cues)
             if hero_id is None:
                 self.decisions.append(HeroTravelDecision(beat.id, None, "ABSTAIN", reason))
-                emphasized_previous = False
+                emphasized_previous = None
                 continue
             position = index[(beat.id, hero_id)]
             if (beat.id, hero_id) in continuing:
@@ -149,7 +164,7 @@ class HeroTravelPlanner:
                 self.decisions.append(HeroTravelDecision(beat.id, hero_id, "ABSTAIN",
                                                          "locked_family_or_referent_carrier",
                                                          emphasis="abstain:referent_carrier"))
-                emphasized_previous = False
+                emphasized_previous = None
                 continue
             # Motion's hero authority for later owners (Boundary's full-frame exit).
             output[position] = output[position].model_copy(
@@ -165,10 +180,16 @@ class HeroTravelPlanner:
             if plan is not None:
                 start, dx, speed = plan
                 output[position] = self._apply(cue, start=start, dx=dx, speed=speed)
+                # A rigid Pass2 family travels as one unit: its layers follow the primary.
+                for member in rigid_followers(cue, cues, layouts.get(beat.id, {}), assets_by_id) or []:
+                    output[index[(beat.id, member.asset_id)]] = follow(member, output[position])
                 row = HeroTravelDecision(beat.id, hero_id, "TRAVEL", reason, round(start, 6),
                                          round(float(cue.end), 6), round(dx, 6), round(speed, 4))
-            if emphasized_previous:
-                emphasis, why = None, "abstain:previous_scene_had_hero_emphasis"
+            family = (AssetManager.family_id(assets_by_id[hero_id]) if hero_id in assets_by_id else hero_id)
+            # Reference pulses come every 2-10 s (n = 25); only the same subject pulsing
+            # again in the very next scene reads as repetition.
+            if emphasized_previous == family:
+                emphasis, why = None, "abstain:same_subject_pulsed_in_previous_scene"
             else:
                 emphasis, why = self._emphasis(
                     beat=beat, cue=output[position], item=item, cues=cues,
@@ -177,11 +198,80 @@ class HeroTravelPlanner:
             if emphasis is not None:
                 output[position] = emphasis
                 self._emphases[(beat.id, hero_id)] = (item, layouts.get(beat.id, {}))
-            emphasized_previous = emphasis is not None
+            emphasized_previous = family if emphasis is not None else None
             self.decisions.append(HeroTravelDecision(
                 row.beat_id, row.asset_id, row.decision, row.reason, row.start, row.settle, row.dx,
                 row.peak_speed, why))
         return output
+
+    def hold_emphasis(
+        self,
+        *,
+        story: list[StoryBeat],
+        composition: list[CompositionBeat],
+        motion: list[MotionCue],
+        assets: list[VisualAsset],
+    ) -> list[MotionCue]:
+        """A subject that opens its scene and then holds the frame alone for at least
+        HOLD_ALONE_SECONDS gets the reference pulse after it settles (references pulse
+        held subjects every 2-10 s). Every pulse rule applies; never the same subject in
+        two consecutive scenes."""
+        assets_by_id = {asset.id: asset for asset in assets}
+        layouts = {row.beat_id: {item.asset_id: item for item in row.items} for row in composition}
+        index = {(cue.beat_id, cue.asset_id): position for position, cue in enumerate(motion)}
+        output = list(motion)
+        self.hold_decisions: list[dict[str, str]] = []
+        previous: set[str] = set()
+        for beat in story:
+            cues = [cue for cue in output if cue.beat_id == beat.id]
+            pulsed = {family_of(cue.asset_id, assets_by_id) for cue in cues if cue.params.get("hero_emphasis")}
+            if not cues:
+                previous = set()
+                continue
+            opener = min(cues, key=lambda cue: (float(cue.start), cue.asset_id))
+            family = family_of(opener.asset_id, assets_by_id)
+            settle = max([float(opener.end)] + [float(row.end) for row in opener.segments])
+            alone_until = min((float(cue.start) for cue in cues if family_of(cue.asset_id, assets_by_id) != family),
+                              default=float(beat.end))
+            reason = None
+            if opener.params.get("hero_emphasis"):
+                reason = "opener_already_pulses"
+            elif pulsed or any(row.semantic_action == "EMPHASIZE" for cue in cues for row in cue.segments):
+                reason = "beat_already_has_emphasis_leader"  # one emphasis leader per beat
+            elif (opener.params.get("render_constraints") or {}).get("geometry_lock"):
+                reason = "locked_layer"
+            elif alone_until - settle < HOLD_ALONE_SECONDS - _EPS:
+                reason = "not_alone_long_enough"
+            elif family in previous:
+                reason = "same_subject_pulsed_in_previous_scene"
+            else:
+                pulsed_cue, why = self.secondary_emphasis(
+                    beat=beat, cue=opener, item=layouts.get(beat.id, {}).get(opener.asset_id), cues=cues,
+                    layout=layouts.get(beat.id, {}))
+                if pulsed_cue is not None:
+                    output[index[(beat.id, opener.asset_id)]] = pulsed_cue
+                    pulsed = pulsed | {family}
+                reason = why
+            self.hold_decisions.append({"beat_id": beat.id, "asset_id": opener.asset_id, "decision": reason})
+            previous = pulsed
+        return output
+
+    def secondary_emphasis(
+        self, *, beat: StoryBeat, cue: MotionCue, item: LayoutItem | None, cues: list[MotionCue],
+        layout: dict[str, LayoutItem],
+    ) -> tuple[MotionCue | None, str]:
+        """The same post-settle pulse for a beat's resolved subject when it is not the hero
+        (secondary focus). Every hero rule applies (competing accents, comfort speed,
+        collisions, frame, read hold); composed text trims it later like the hero's."""
+        emphasis, why = self._emphasis(beat=beat, cue=cue, item=item, cues=cues, layout=layout, continues=False)
+        if emphasis is not None and item is not None:
+            self._emphases[(beat.id, cue.asset_id)] = (item, layout)
+        return emphasis, why
+
+    @property
+    def sweeps(self) -> dict[tuple[str, str], tuple[float, float, Box]]:
+        """Planned travel paths: (start, settle, swept box) per (beat, hero)."""
+        return dict(self._sweeps)
 
     def revoke_through_text(
         self, motion: list[MotionCue], baseline: list[MotionCue],
@@ -191,6 +281,7 @@ class HeroTravelPlanner:
         text box visible during the travel returns to its certified baseline cue. Text
         composed against the earlier-visible hero stays collision-free for the later one."""
         revoked = set()
+        self.withdrawn: set[tuple[str, str]] = revoked
         for (beat_id, asset_id), (start, settle, sweep) in self._sweeps.items():
             if any(t0 < settle - _EPS and t1 > start + _EPS and _intersection(sweep, tb) > 0
                    for t0, t1, tb in text_boxes.get(beat_id, [])):
@@ -204,9 +295,13 @@ class HeroTravelPlanner:
             for row in self.decisions
         ]
         base = {(cue.beat_id, cue.asset_id): cue for cue in baseline}
+        # The layers of a family that travelled as one unit return with it.
+        layers = {(cue.beat_id, cue.asset_id) for cue in motion
+                  if (cue.beat_id, (cue.params or {}).get("family_follow")) in revoked}
         return [
             base[key].model_copy(update={"params": {**base[key].params, "scene_hero": True}})
-            if (key := (cue.beat_id, cue.asset_id)) in revoked else cue
+            if (key := (cue.beat_id, cue.asset_id)) in revoked
+            else base[key] if key in layers else cue
             for cue in motion
         ]
 
@@ -259,6 +354,8 @@ class HeroTravelPlanner:
             params = dict(cue.params)
             if delta is None:
                 params.pop("hero_emphasis", None)
+                # The entry segment the pulse carried in leaves with it: the cue is restored.
+                segments = [row for row in segments if row.program.get("carried_for") != "hero_emphasis"]
                 changes[key] = "revoked:pulse_would_grow_into_composed_text"
             else:
                 params["hero_emphasis"] = {**pulse, "scale": round(1.0 + delta, 5)}
@@ -303,11 +400,10 @@ class HeroTravelPlanner:
             return None, "not_entering"
         if (params.get("render_constraints") or {}).get("geometry_lock") or params.get("handoff_from") or continues:
             return None, "locked_family_or_referent_carrier"
-        asset = assets_by_id.get(cue.asset_id)
-        family = AssetManager.family_id(asset) if asset is not None else cue.asset_id
-        if any(other.asset_id != cue.asset_id and assets_by_id.get(other.asset_id) is not None
-               and AssetManager.family_id(assets_by_id[other.asset_id]) == family for other in cues):
-            return None, "pass2_family_travels_as_one_unit_not_supported"
+        followers = rigid_followers(cue, cues, layout, assets_by_id)
+        if followers is None:
+            return None, "pass2_family_cannot_move_as_one_unit"
+        unit = {cue.asset_id} | {row.asset_id for row in followers}
         settle = float(cue.end)
         if any(row.phase != "ENTRY" and float(row.start) < settle - _EPS and not self._result_pop(row)
                for row in cue.segments):
@@ -333,7 +429,7 @@ class HeroTravelPlanner:
                      max(begin[2], final[2]), max(begin[3], final[3]))
             blocker = None
             for other in cues:
-                if other.asset_id == cue.asset_id or float(other.start) >= settle - _EPS:
+                if other.asset_id in unit or float(other.start) >= settle - _EPS:
                     continue
                 other_item = layout.get(other.asset_id)
                 if other_item is None:
@@ -368,11 +464,12 @@ class HeroTravelPlanner:
         if not isinstance(hold_ms, (int, float)) or hold_ms <= 0:
             return None, "abstain:no_rhythm_read_hold_authority"
         start = settle + _EMPHASIS_PAUSE
-        minimum = motion_comfort("ESTABLISH").minimum_seconds
         # The read hold is measured on encoded frames: the pulse's last moving frame and
         # the cut both land on the frame grid, so keep a 2-frame margin before the hold.
         end = min(start + EMPHASIS_SECONDS, float(beat.end) - float(hold_ms) / 1000 - _HOLD_GRID_MARGIN)
-        if end - start + _EPS < minimum:
+        if end - start + _EPS < EMPHASIS_MIN_SECONDS:
+            # No room to rise, be registered and release calmly: a rushed pulse is worse
+            # than none, so the subject simply rests.
             return None, f"abstain:no_time_after_settle({max(0.0, end - start):.3f}s)"
         duration = end - start
         frame_w, frame_h = frame_size()
@@ -385,7 +482,7 @@ class HeroTravelPlanner:
         extent = min(float(item.width), float(item.height))
         delta, why = None, "abstain:no_safe_reference_amplitude"
         for candidate in _amplitudes(readable):
-            if candidate * extent / (0.45 * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
+            if candidate * extent / (EMPHASIS_RISE * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
                 why = "abstain:emphasis_exceeds_comfort_speed"
                 continue
             problem = HeroTravelPlanner._scaled_problem(item, cue.asset_id, layout, candidate)
@@ -411,7 +508,10 @@ class HeroTravelPlanner:
             "settle_progress": 1.0,
             "keyframes": [
                 {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
-                {"progress": 0.45, "dx": 0.0, "dy": 0.0, "scale": round(1.0 + delta, 5), "easing": "smoothstep"},
+                {"progress": EMPHASIS_RISE, "dx": 0.0, "dy": 0.0, "scale": round(1.0 + delta, 5),
+                 "easing": "smoothstep"},
+                {"progress": EMPHASIS_HOLD_END, "dx": 0.0, "dy": 0.0, "scale": round(1.0 + delta, 5),
+                 "easing": "smoothstep"},
                 {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
             ],
         }
@@ -421,7 +521,8 @@ class HeroTravelPlanner:
             # Same convention as MotionPlanner._carried_entry_segment: the carried base entry
             # keeps its qa_base_entry verification class.
             segments.insert(0, MotionSegment(phase="ENTRY", start=float(cue.start), end=float(cue.end),
-                                             program={**deepcopy(params.get("program") or {}), "qa_base_entry": True}))
+                                             program={**deepcopy(params.get("program") or {}), "qa_base_entry": True,
+                                                      "carried_for": "hero_emphasis"}))
         segments.append(MotionSegment(phase="ESTABLISH", start=start, end=end, program=program,
                                       semantic_action="HERO_EMPHASIS", involvement="FOCUS"))
         new_params = dict(params)

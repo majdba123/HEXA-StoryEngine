@@ -10,7 +10,7 @@ from pathlib import Path
 from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
 from app.models import MotionCue, RenderPlan, StoryBeat
-from app.motion.timing import GOLDEN_MINOR, max_comfort_displacement, semantic_readability_floor_px
+from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
 from app.render.connection import connection_specs, draw_connection, fade_seconds
@@ -192,7 +192,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text\.ass|-connection-\d+\.png)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under)?\.ass|-connection-\d+\.png)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -232,6 +232,18 @@ class FFmpegRenderer:
         if not ordered_items:
             self._render_color_segment(plan, duration, target, frame_count=frame_count)
             return
+        wash = self._focus_wash(
+            plan=plan, beat=beat, ordered_items=ordered_items, motion=motion,
+            segment_start=segment_start, duration=duration,
+        )
+        if wash is not None:
+            # The resolved focus is drawn above the receded backdrop: Motion planned it
+            # only where the focus overlaps no other asset, so this z move is invisible
+            # outside the wash.
+            ordered_items = (
+                [item for item in ordered_items if item.asset_id not in wash["focus"]]
+                + [item for item in ordered_items if item.asset_id in wash["focus"]]
+            )
         previous_layout = composition.get(previous_beat.id) if previous_beat else None
         transition = self.transition_policy.decide(
             previous_beat,
@@ -293,6 +305,14 @@ class FFmpegRenderer:
             if previous_layout is not None
             else []
         )
+        carried_wash = self._carried_wash(
+            plan=plan, previous_beat=previous_beat, previous_layout=previous_layout, motion=motion,
+        )
+        if carried_wash is not None:
+            outgoing_items = (
+                [item for item in outgoing_items if item.asset_id not in carried_wash["focus"]]
+                + [item for item in outgoing_items if item.asset_id in carried_wash["focus"]]
+            )
         incoming_start, _incoming_reveal = self._incoming_handoff_window(
             beat=beat,
             ordered_items=ordered_items,
@@ -420,7 +440,9 @@ class FFmpegRenderer:
             # and optional blur; a narration gap must never become a long blurred hold.
             # A planned release fades the outgoing artwork only, never the background:
             # the group is composited on a transparent canvas.
-            old_canvas = "white@0.0" if release is not None else "white"
+            # A receded backdrop is held as one opaque picture (its grey wash included), so a
+            # planned release fades the whole washed frame instead of only its artwork.
+            old_canvas = "white@0.0" if release is not None and carried_wash is None else "white"
             filters.append(
                 f"color=c={old_canvas}:s={plan.width}x{plan.height}:r={plan.fps}:"
                 f"d={bridge_end:.6f},format=rgba[oldbase0]"
@@ -428,6 +450,11 @@ class FFmpegRenderer:
             old_label = "oldbase0"
             input_offset = len(ordered_items)
             for bridge_index, item in enumerate(outgoing_items):
+                if (carried_wash is not None and item.asset_id in carried_wash["focus"]
+                        and not carried_wash.get("applied")):
+                    filters.append(f"[{old_label}]{self._wash_chain(plan, carried_wash)},format=rgba[oldwashed]")
+                    old_label = "oldwashed"
+                    carried_wash["applied"] = True
                 input_index = input_offset + bridge_index
                 box_w, box_h, target_x, target_y = self._geometry(plan, item)
                 source_label = f"oldasset{bridge_index}"
@@ -443,27 +470,31 @@ class FFmpegRenderer:
                     object_target_by_outgoing.get(item.asset_id, "")
                 )
                 # The planned opacity release owns the boundary: the legacy exit drift
-                # is not stacked on top of it.
-                horizontal, vertical = (0, 0) if release is not None else self._bridge_exit_offset(
+                # is not stacked on top of it. Without a release only an authored blur
+                # bridge or an authored object handoff (target-seeking) may drift: an
+                # ordinary outgoing cutout never starts an exit it cannot finish before it
+                # is removed, so it stays still and leaves on the incoming opener frame.
+                drifts = release is None and (
+                    transition.mode == SceneTransitionMode.BLUR_BRIDGE or target_item is not None)
+                horizontal, vertical = self._bridge_exit_offset(
                     plan=plan,
                     item=item,
                     mode=transition.mode,
                     target_item=target_item,
-                )
+                ) if drifts else (0, 0)
                 progress_expr = self._bridge_progress_expression(
                     start=bridge_start,
                     duration=bridge_duration,
                 )
                 exit_start = planned_exits.get(item.asset_id)
                 if release is not None and exit_start is not None:
-                    # A planned restrained exit: opaque, from the planned start to the
-                    # last frame before the opener, which removes the outgoing scene.
+                    # A planned exit: opaque, from the planned start until the cutout is
+                    # completely off the canvas on the last frame before the opener, which
+                    # removes the outgoing scene. Boundary only plans exits that fit.
                     exit_begin = max(0.0, float(exit_start) - segment_start)
                     exit_end = release[2] - 0.75 / plan.fps
                     if exit_end > exit_begin + 0.5 / plan.fps:
-                        horizontal, vertical = self._restrained_exit_offset(
-                            plan=plan, item=item, seconds=exit_end - exit_begin,
-                        )
+                        horizontal, vertical = self._offcanvas_exit_offset(plan=plan, item=item), 0
                         progress_expr = self._bridge_progress_expression(
                             start=exit_begin, duration=exit_end - exit_begin,
                         )
@@ -477,6 +508,10 @@ class FFmpegRenderer:
                 )
                 old_label = next_old
 
+            if carried_wash is not None and not carried_wash.get("applied") and outgoing_items:
+                filters.append(f"[{old_label}]{self._wash_chain(plan, carried_wash)},format=rgba[oldwashed]")
+                old_label = "oldwashed"
+                carried_wash["applied"] = True
             if transition.mode == SceneTransitionMode.BLUR_BRIDGE:
                 filters.append(f"[{old_label}]split=2[oldcrisp][oldblurbase]")
                 filters.append(
@@ -596,8 +631,29 @@ class FFmpegRenderer:
             )
             composite_label = f"{label}mix"
 
+        text_under = None
+        if wash is not None:
+            focus_ids = wash["focus"]
+            text_under = self.text_renderer.write_beat_ass(
+                plan,
+                beat,
+                segment_start=segment_start,
+                duration=duration,
+                output=target.parent / f"{target.stem}-text-under.ass",
+                include=lambda cue: bool(cue.anchor_asset_id) and cue.anchor_asset_id not in focus_ids,
+            )
         for layer_index, item in enumerate(ordered_items):
             cue = motion.get((beat.id, item.asset_id))
+            if wash is not None and item.asset_id in wash["focus"] and not wash.get("applied"):
+                # Backdrop recession (VNext2 PAYOFF): everything already composited, and
+                # the labels of receding assets, blur and wash toward grey on one clock
+                # while the resolved focus stays crisp above it.
+                if text_under is not None:
+                    filters.append(self.text_renderer.ass_filter(text_under, composite_label, "washtext"))
+                    composite_label = "washtext"
+                filters.extend(self._focus_wash_filters(plan, wash, composite_label, duration))
+                composite_label = "washed"
+                wash["applied"] = True
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
             start, end, _fade_duration = self._cue_window(
                 beat=beat,
@@ -652,14 +708,29 @@ class FFmpegRenderer:
             # so a Pass2 family never fades as separate pieces.
             transform_source_label = base_source_label
 
+            # A geometry-locked Pass2 layer that Motion bound to its family primary (same
+            # Composition box) is drawn with the primary's transform: identical box and
+            # identical expressions keep the family pixel-aligned while it moves as one.
+            leader_id = (cue.params.get("family_follow")
+                         if cue is not None and isinstance(cue.params, dict) else None)
+            leader_cue = motion.get((beat.id, leader_id)) if leader_id else None
+            leader_item = current_items_by_id.get(leader_id) if leader_id else None
+            follows = bool(
+                geometry_locked and leader_cue is not None and leader_item is not None
+                and self.motion_adapter.supports(leader_cue)
+                and self._geometry(plan, leader_item) == (box_w, box_h, target_x, target_y)
+                and not (leader_cue.params.get("render_constraints") or {}).get("geometry_lock")
+            )
+            transform_cue = leader_cue if follows else cue
+
             scale_expr = "1"
             if (
-                not geometry_locked
-                and cue is not None
-                and self.motion_adapter.supports(cue)
+                (not geometry_locked or follows)
+                and transform_cue is not None
+                and self.motion_adapter.supports(transform_cue)
             ):
                 scale_expr = self.motion_adapter.scale_expression(
-                    cue=cue,
+                    cue=transform_cue,
                     segment_start=segment_start,
                     segment_duration=duration,
                 )
@@ -673,12 +744,12 @@ class FFmpegRenderer:
                 filters.append(f"[{transform_source_label}]null[{source_label}]")
 
             kind = cue.kind if cue else "reveal_in"
-            if geometry_locked:
+            if geometry_locked and not follows:
                 x_expr = str(target_x)
                 y_expr = str(target_y)
-            elif cue is not None and self.motion_adapter.supports(cue):
+            elif transform_cue is not None and self.motion_adapter.supports(transform_cue):
                 x_expr, y_expr = self.motion_adapter.position_expressions(
-                    cue=cue,
+                    cue=transform_cue,
                     target_x=target_x,
                     target_y=target_y,
                     canvas_width=plan.width,
@@ -755,6 +826,10 @@ class FFmpegRenderer:
             segment_start=segment_start,
             duration=duration,
             output=target.parent / f"{target.stem}-text.ass",
+            include=(
+                None if wash is None
+                else lambda cue: not cue.anchor_asset_id or cue.anchor_asset_id in wash["focus"]
+            ),
         )
         if ass_path is not None:
             text_label = "textmix"
@@ -766,6 +841,92 @@ class FFmpegRenderer:
         self._run(command, "render segment failed")
 
 
+
+    @staticmethod
+    def _focus_wash(
+        *,
+        plan: RenderPlan,
+        beat: StoryBeat,
+        ordered_items: list,
+        motion: dict[tuple[str, str], MotionCue],
+        segment_start: float,
+        duration: float,
+    ) -> dict | None:
+        """The beat's planned backdrop recession in segment-local seconds, or None.
+
+        Motion owns every decision (``params["focus_wash"]`` on the resolved focus); the
+        renderer only fails closed when the plan no longer matches what is on screen.
+        """
+        present = {item.asset_id for item in ordered_items}
+        for item in ordered_items:
+            cue = motion.get((beat.id, item.asset_id))
+            spec = cue.params.get("focus_wash") if cue is not None and isinstance(cue.params, dict) else None
+            if not isinstance(spec, dict):
+                continue
+            focus = {str(asset_id) for asset_id in spec.get("focus_asset_ids") or []} & present
+            if not focus or focus == present:
+                return None
+            start = float(spec["start"]) - segment_start
+            end = min(duration, float(spec.get("end", segment_start + duration)) - segment_start)
+            ramp = float(spec.get("ramp", 5 / plan.fps))
+            if start < 0.0 or end - start + 1e-6 < ramp:
+                return None
+            return {
+                "focus": focus, "start": start, "end": end, "ramp": ramp,
+                "blur": float(spec.get("blur_px", 0.0)),
+                "tint": str(spec.get("tint", "#FFFFFF")).lstrip("#"),
+                "tint_alpha": max(0.0, min(1.0, float(spec.get("tint_alpha", 0.5)))),
+            }
+        return None
+
+    @staticmethod
+    def _wash_chain(plan: RenderPlan, wash: dict) -> str:
+        """Blur and grey-tint filters for a receded backdrop (alpha is kept as composited)."""
+        sigma = wash["blur"] * (plan.projection.scale if plan.projection else 1.0)
+        tint, alpha = wash["tint"], wash["tint_alpha"]
+        red, green, blue = (int(tint[i:i + 2], 16) for i in (0, 2, 4))
+        keep = 1.0 - alpha
+        lut = (f"lutrgb=r='val*{keep:.4f}+{red * alpha:.3f}':g='val*{keep:.4f}+{green * alpha:.3f}':"
+               f"b='val*{keep:.4f}+{blue * alpha:.3f}'")
+        return (f"gblur=sigma={sigma:.3f}:steps=2," if sigma > 0.05 else "") + lut
+
+    @classmethod
+    def _focus_wash_filters(cls, plan: RenderPlan, wash: dict, source_label: str, duration: float) -> list[str]:
+        """Crossfade the composited backdrop into its receded copy on one clock."""
+        start, ramp, end = wash["start"], wash["ramp"], wash["end"]
+        release = (
+            f",fade=t=out:st={end - ramp:.6f}:d={ramp:.6f}:alpha=1"
+            if end < duration - 0.5 / plan.fps else ""
+        )
+        chain = cls._wash_chain(plan, wash).replace(
+            "steps=2,", f"steps=2:enable='gte(t,{max(0.0, start - 1.0 / plan.fps):.6f})',", 1)
+        return [
+            f"[{source_label}]split=2[washsharp][washsrc]",
+            f"[washsrc]{chain},format=rgba,settb=AVTB,"
+            f"fade=t=in:st={start:.6f}:d={ramp:.6f}:alpha=1{release}[washfx]",
+            "[washsharp][washfx]overlay=x=0:y=0:eof_action=pass:shortest=0[washed]",
+        ]
+
+    @classmethod
+    def _carried_wash(
+        cls,
+        *,
+        plan: RenderPlan,
+        previous_beat: StoryBeat | None,
+        previous_layout,
+        motion: dict[tuple[str, str], MotionCue],
+    ) -> dict | None:
+        """A backdrop wash still on at the previous beat's last frame: the held picture of
+        that scene keeps it until the incoming opener removes it."""
+        if previous_beat is None or previous_layout is None:
+            return None
+        wash = cls._focus_wash(
+            plan=plan, beat=previous_beat, ordered_items=list(previous_layout.items), motion=motion,
+            segment_start=float(previous_beat.start), duration=float(previous_beat.end) - float(previous_beat.start),
+        )
+        if wash is None or wash["end"] < float(previous_beat.end) - float(previous_beat.start) - 1.0 / plan.fps:
+            return None
+        return wash
 
     @classmethod
     def _scene_release_window(
@@ -908,31 +1069,13 @@ class FFmpegRenderer:
         return dict(row.exit_starts)
 
     @classmethod
-    def _restrained_exit_offset(cls, *, plan: RenderPlan, item, seconds: float) -> tuple[int, int]:
-        """Directional exit offset limited by the EXIT comfort speed and the frame edges.
-
-        Direction is the existing geometric bridge rule. Magnitude never exceeds what the
-        certified EXIT comfort profile allows in ``seconds``, and the cutout box never
-        leaves the canvas (no clipping); an axis left with a negligible move stays still.
-        """
-        dx, dy = cls._bridge_exit_offset(plan=plan, item=item, mode=SceneTransitionMode.MOTION_HANDOFF)
-        scale = plan.projection.scale if plan.projection else 1.0
-        reference_w = plan.projection.reference_width * scale if plan.projection else plan.width
-        reference_h = plan.projection.reference_height * scale if plan.projection else plan.height
-        budget = max_comfort_displacement("EXIT", seconds)
-        dx = max(-budget * reference_w, min(budget * reference_w, dx))
-        dy = max(-budget * reference_h, min(budget * reference_h, dy))
-        box_w, box_h, target_x, target_y = cls._geometry(plan, item)
-        dx = max(-max(0, target_x), min(max(0, plan.width - target_x - box_w), dx))
-        dy = max(-max(0, target_y), min(max(0, plan.height - target_y - box_h), dy))
-        dx, dy = round(dx), round(dy)
-        readable = semantic_readability_floor_px(
-            "EXIT", item_width=item.width, item_height=item.height, duration=seconds,
-            frame_width=plan.width, frame_height=plan.height,
-        )
-        if math.hypot(dx, dy) < readable:
-            return 0, 0  # A microscopic drift followed by a cut reads worse than a clean cut.
-        return dx, dy
+    def _offcanvas_exit_offset(cls, *, plan: RenderPlan, item) -> int:
+        """Horizontal offset that takes the cutout box completely off the canvas through
+        its nearest side edge (the direction Boundary timed the exit for)."""
+        box_w, _box_h, target_x, _target_y = cls._geometry(plan, item)
+        margin = max(4, round(4 * (plan.projection.scale if plan.projection else 1.0)))
+        left, right = target_x + box_w + margin, plan.width - target_x + margin
+        return -left if left <= right else right
 
     @staticmethod
     def _bridge_progress_expression(*, start: float, duration: float) -> str:
