@@ -194,11 +194,11 @@ class AdminData:
                 sort: str = "newest"):
         order = "ASC" if sort == "oldest" else "DESC"
         submitted = "COALESCE((SELECT MIN(created) FROM uploads WHERE job_id=j.id),j.created_at)"
-        clause = f"(j.id LIKE ? OR j.package LIKE ? OR j.bundle LIKE ?) AND (?='' OR j.state=?) AND (? IS NULL OR {submitted}>=?) AND (? IS NULL OR {submitted}<?)"
-        args = (f"%{search}%", f"%{search}%", f"%{search}%", state, state,
+        clause = f"(j.id LIKE ? OR j.package_name LIKE ? OR j.package LIKE ? OR j.bundle LIKE ?) AND (?='' OR j.state=?) AND (? IS NULL OR {submitted}>=?) AND (? IS NULL OR {submitted}<?)"
+        args = (f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%", state, state,
                 from_at, from_at, to_at, to_at)
         with self.connect() as db:
-            rows = db.execute(f"SELECT j.id,j.state,j.progress,j.created_at,(SELECT MIN(created) FROM uploads WHERE job_id=j.id) AS upload_created_at,j.started_at,j.finished_at,j.user_id,CASE WHEN u.deleted_at IS NULL THEN u.email_normalized END AS user_email,j.bundle FROM jobs j LEFT JOIN users u ON u.id=j.user_id WHERE {clause} ORDER BY COALESCE({submitted},0) {order},j.id {order} LIMIT 50 OFFSET ?", (*args, (page - 1) * 50)).fetchall()
+            rows = db.execute(f"SELECT j.id,j.state,j.progress,j.created_at,j.package_name,(SELECT MIN(created) FROM uploads WHERE job_id=j.id) AS upload_created_at,j.started_at,j.finished_at,j.user_id,CASE WHEN u.deleted_at IS NULL THEN u.email_normalized END AS user_email,j.bundle FROM jobs j LEFT JOIN users u ON u.id=j.user_id WHERE {clause} ORDER BY COALESCE({submitted},0) {order},j.id {order} LIMIT 50 OFFSET ?", (*args, (page - 1) * 50)).fetchall()
             counts = db.execute(f"SELECT count(*) total,sum(j.state='completed') completed,sum(j.state='failed') failed FROM jobs j WHERE {clause}", args).fetchone()
             bundle_ids = [f"{Path(row['bundle']).parent.name}:{Path(row['bundle']).name}" for row in rows if row["bundle"]]
             statuses = {}
@@ -212,7 +212,7 @@ class AdminData:
             item["submitted_at"] = item.pop("upload_created_at") or item["created_at"]
             bundle = Path(row["bundle"]) if row["bundle"] else None
             bundle_id = f"{bundle.parent.name}:{bundle.name}" if bundle else None
-            item["package_name"] = bundle.parent.name if bundle else None
+            item["package_name"] = bundle.parent.name if bundle else (row["package_name"] or None)
             item["version"] = bundle.name if bundle else None
             item["media_status"] = statuses.get(bundle_id, "UNKNOWN") if bundle_id else "UNKNOWN"
             item.pop("bundle")

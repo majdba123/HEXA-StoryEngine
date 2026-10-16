@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import HTTPException, Request
 from app.web.validation import validate_zip, validate_audio
 from app.final_package.loader import FinalPackageLoader
+from app.final.bundle import export_slug
 from app.desktop.export_preflight import export_root_problem
 from app.shared.errors import InvalidPackageError
 
@@ -446,7 +447,7 @@ class Uploads:
             validate_zip(package_path)
             validation = self.root / uid / "validation"
             try:
-                FinalPackageLoader().load(package_path, validation)
+                validated_package = FinalPackageLoader().load(package_path, validation)
             except InvalidPackageError as exc:
                 raise HTTPException(422, str(exc)) from exc
             finally:
@@ -468,8 +469,9 @@ class Uploads:
                         raise HTTPException(403, "Account is no longer active")
                 try:
                     db.execute(
-                        "INSERT INTO jobs(id,state,message,package,audio,user_id,created_at) VALUES(?,'queued','Queued',?,?,?,?)",
-                        (job_id, str(package_path), str(audio_named), owner, time.time()),
+                        "INSERT INTO jobs(id,state,message,package,audio,user_id,created_at,package_name) VALUES(?,'queued','Queued',?,?,?,?,?)",
+                        (job_id, str(package_path), str(audio_named), owner, time.time(),
+                         export_slug(validated_package.project_slug or validated_package.package_id)),
                     )
                     db.execute(
                         "INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid())

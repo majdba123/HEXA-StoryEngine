@@ -329,3 +329,21 @@ def test_concurrent_admin_changes_keep_one_active_admin(tmp_path, monkeypatch):
     assert outcomes.count(True) == 1
     with identity.connect() as db:
         assert db.execute("SELECT count(*) FROM users WHERE role='ADMIN' AND is_active=1 AND deleted_at IS NULL").fetchone()[0] == 1
+
+
+def test_failed_render_history_keeps_validated_package_name(tmp_path, monkeypatch):
+    settings, storage = setup(tmp_path, monkeypatch)
+    with TestClient(create_app(settings, storage)) as client:
+        login(client)
+        admin_id = client.get("/api/session").json()["user"]["id"]
+        failed_id = Jobs(storage, settings).create(admin_id, package_name="BLACK_HAT_HACKER")
+        assert failed_id is not None
+        Jobs(storage, settings).update(failed_id, state="failed", message="Encoder failed")
+        result = client.get("/api/admin/history?search=BLACK_HAT_HACKER")
+        assert result.status_code == 200, result.text
+        rows = result.json()["items"]
+        assert len(rows) == 1
+        assert rows[0]["id"] == failed_id
+        assert rows[0]["state"] == "failed"
+        assert rows[0]["package_name"] == "BLACK_HAT_HACKER"
+        assert rows[0]["version"] is None

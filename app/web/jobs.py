@@ -35,9 +35,10 @@ class Jobs:
                        "progress REAL NOT NULL DEFAULT 0, stage TEXT, message TEXT, "
                        "package TEXT, audio TEXT, bundle TEXT, youtube TEXT, reels TEXT)")
             columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
-            for name in ("user_id", "created_at", "started_at", "finished_at"):
+            for name in ("user_id", "created_at", "started_at", "finished_at", "package_name"):
                 if name not in columns:
-                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {'TEXT' if name == 'user_id' else 'REAL'}")
+                    kind = "TEXT" if name in {"user_id", "package_name"} else "REAL"
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {kind}")
             db.execute("CREATE INDEX IF NOT EXISTS jobs_user_id ON jobs(user_id)")
             db.execute("INSERT OR IGNORE INTO web_schema_migrations(version) VALUES(1)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_web_job ON jobs "
@@ -81,7 +82,7 @@ class Jobs:
         db.row_factory = sqlite3.Row
         return db
 
-    def create(self, user_id: str | None = None) -> str | None:
+    def create(self, user_id: str | None = None, *, package_name: str | None = None) -> str | None:
         job_id = uuid.uuid4().hex
         try:
             with self._connect() as db:
@@ -89,7 +90,7 @@ class Jobs:
                 if user_id and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone():
                     if not db.execute("SELECT 1 FROM users WHERE id=? AND is_active=1 AND must_change_password=0 AND deleted_at IS NULL", (user_id,)).fetchone():
                         raise PermissionError("Account is no longer active")
-                db.execute("INSERT INTO jobs(id,state,message,user_id,created_at) VALUES(?, 'queued', 'Queued', ?, ?)", (job_id, user_id, time.time()))
+                db.execute("INSERT INTO jobs(id,state,message,user_id,created_at,package_name) VALUES(?, 'queued', 'Queued', ?, ?, ?)", (job_id, user_id, time.time(), package_name))
                 db.execute("INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid()))
         except sqlite3.IntegrityError:
             return None
