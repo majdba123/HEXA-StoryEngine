@@ -980,7 +980,10 @@ class FFmpegRenderer:
         transparent pixels never bleed colour into the smear (no halo), directionally
         blurred frame by frame (``sendcmd``), then given the same transform as the sharp
         element. A centred transform already absorbs the padding; otherwise the overlay
-        is shifted by it.
+        is shifted by it. A branch keeps one spare frame past its window: with
+        ``eof_action=pass`` the overlay drops the frame that arrives together with the
+        branch's end of stream, which removed the element on a window's last frame (and
+        on every one-frame window). The spare frame is outside the overlay's enable.
         """
         def escape(value: Path) -> str:
             return str(value.resolve()).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
@@ -1007,7 +1010,7 @@ class FFmpegRenderer:
             ), encoding="utf-8")
             n0, r0, a0 = window["frames"][0]
             filters.append(
-                f"[mb{key}src{index}]trim=start={window['start']:.6f}:end={window['end']:.6f},"
+                f"[mb{key}src{index}]trim=start={window['start']:.6f}:end={window['end'] + 1.0 / fps:.6f},"
                 f"pad=iw+{2 * margin}:ih+{2 * margin}:{margin}:{margin}:color=0x00000000,"
                 f"premultiply=inplace=1,sendcmd=f='{escape(commands)}',"
                 f"{instance}=angle={a0:.3f}:radius={r0:.3f},unpremultiply=inplace=1,"

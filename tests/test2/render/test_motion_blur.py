@@ -202,6 +202,12 @@ def test_encoded_blur_is_directional_resolves_sharp_and_has_no_halo(tmp_path: Pa
     moving = [n for n in range(len(sharp)) if not np.array_equal(sharp[n], blurred[n])]
     assert moving, "the travelling frames must be smeared"
     assert min(moving) >= round(0.6 * 30) and max(moving) <= round(1.1 * 30)  # rest frames byte-identical
+    # the element is drawn on every frame - a branch's end of stream once swallowed the
+    # window's last frame (and every one-frame window: near-white handoff frames)
+    for n in range(len(sharp)):
+        ink_sharp = int((np.abs(sharp[n] - 255).sum(axis=2) > 30).sum())
+        ink_blurred = int((np.abs(blurred[n] - 255).sum(axis=2) > 30).sum())
+        assert ink_blurred >= 0.8 * ink_sharp, f"element missing on frame {n}"
     middle = round(0.85 * 30)                                                  # peak speed
     # premultiplied smear: the trail (pixels that are canvas in the sharp frame) only mixes
     # the sprite with the white canvas, so it is never darker than the sprite. A straight-
