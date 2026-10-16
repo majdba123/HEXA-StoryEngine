@@ -1,0 +1,37 @@
+{
+  "environment": "localhost HTTP; application sleep approximates RTT, no network shaping",
+  "results": [
+    {
+      "protocol": 1,
+      "size_mib": 100.0,
+      "simulated_rtt_ms": 0.0,
+      "preparation_s": 0.7018658999877516,
+      "initialization_s": 0.36015799999586307,
+      "transfer_s": 40.752450200001476,
+      "total_to_durable_upload_s": 41.814576099975966,
+      "mib_per_s": 2.4323378223805023,
+      "requests": 803,
+      "retries": 0,
+      "median_request_ms": 34.953399997903034,
+      "p95_request_ms": 106.39020000235178,
+      "finalization_s": null,
+      "job_admission_s": null
+    },
+    {
+      "protocol": 1,
+      "size_mib": 100.0,
+      "simulated_rtt_ms": 50.0,
+      "preparation_s": 0.37403079998330213,
+      "initialization_s": 0.10727560002123937,
+      "transfer_s": 100.73799900000449,
+      "total_to_durable_upload_s": 101.21942949999357,
+      "mib_per_s": 0.9916168837556475,
+      "requests": 803,
+      "retries": 0,
+      "median_request_ms": 87.62560000177473,
+      "p95_request_ms": 441.52849998208694,
+      "finalization_s": null,
+      "job_admission_s": null
+    }
+  ]
+}

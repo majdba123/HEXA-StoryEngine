@@ -4,6 +4,7 @@ let CHUNK = 256 * 1024;
 let activeJob = null, activeUpload = null, files = [], polling = null, stopped = false;
 let uploadBusy = false;
 let preparing = false;
+let uploadMeter = null;
 const say = message => { $('status').textContent = message; };
 const fmt = bytes => `${(bytes / 1048576).toFixed(2)} MiB`;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -60,13 +61,26 @@ function currentFiles() {
     {id: 'audio', path: audio.name, role: 'audio', file: audio}
   ]};
 }
-function progress(snapshot, sending = 0, phase = '') {
+function progress(snapshot, sending = 0, phase = '', entry = null) {
+  const now = performance.now();
   const total = snapshot.manifest.files.reduce((n, f) => n + f.size, 0);
   const confirmed = Object.values(snapshot.files).reduce((n, x) => n + x, 0);
+  if (!uploadMeter) uploadMeter = {time: now, bytes: confirmed, rate: 0, paint: 0};
+  const elapsed = Math.max(0.001, (now - uploadMeter.time) / 1000);
+  if (confirmed > uploadMeter.bytes) {
+    const currentRate = (confirmed - uploadMeter.bytes) / elapsed;
+    uploadMeter.rate = uploadMeter.rate ? uploadMeter.rate * 0.7 + currentRate * 0.3 : currentRate;
+    uploadMeter.bytes = confirmed;
+    uploadMeter.time = now;
+  }
+  if (sending && now - uploadMeter.paint < 120) return;
+  uploadMeter.paint = now;
   const percent = total ? Math.floor(confirmed / total * 100) : 0;
   $('progress').value = percent;
-  const checkpoint = snapshot.updated ? new Date(snapshot.updated * 1000).toLocaleTimeString('ar') : '';
-  say(`${phase ? `${phase}: ` : ''}تم تأكيد ${fmt(confirmed)} من ${fmt(total)} (${percent}%)${sending ? `، جارٍ إرسال ${fmt(sending)}` : ''}${checkpoint ? ` • آخر تأكيد: ${checkpoint}` : ''}`);
+  const fileProgress = entry ? ` • ${entry.path}: ${fmt(snapshot.files[entry.id] || 0)} من ${fmt(entry.size)}` : '';
+  const inFlight = sending ? ` • جارٍ إرسال ${fmt(sending)} (لم يؤكدها الخادم بعد)` : '';
+  const speed = uploadMeter.rate ? ` • ${fmt(uploadMeter.rate)}/ث • المتبقي نحو ${Math.ceil((total - confirmed) / uploadMeter.rate)} ث` : '';
+  say(`${phase ? `${phase}: ` : ''}تم تأكيد ${fmt(confirmed)} من ${fmt(total)} (${percent}%)${fileProgress}${inFlight}${speed}`);
 }
 function xhrChunk(url, blob, digest, onProgress) {
   return new Promise((resolve, reject) => {
@@ -74,13 +88,18 @@ function xhrChunk(url, blob, digest, onProgress) {
     xhr.setRequestHeader('X-Chunk-SHA256', digest);
     xhr.setRequestHeader('X-CSRF-Token', decodeURIComponent(document.cookie.match(/(?:^|; )hexa_csrf=([^;]*)/)?.[1] || ''));
     xhr.upload.onprogress = event => onProgress(event.loaded);
-    xhr.onload = () => xhr.status < 300 ? resolve() : reject(Object.assign(Error(`HTTP ${xhr.status}`), {code: xhr.status}));
+    xhr.onload = () => {
+      if (xhr.status === 401) { location.assign('/login'); reject(Object.assign(Error('HTTP 401'), {code: 401})); return; }
+      if (xhr.status >= 300) { reject(Object.assign(Error(`HTTP ${xhr.status}`), {code: xhr.status})); return; }
+      try { resolve(JSON.parse(xhr.responseText)); } catch (_) { reject(Error('Invalid chunk acknowledgement')); }
+    };
     xhr.onerror = () => reject(Error('انقطع الاتصال'));
     xhr.send(blob);
   });
 }
 async function runUpload(snapshot) {
   CHUNK = snapshot.chunk_size;
+  uploadMeter = null;
   activeUpload = snapshot.id; localStorage.setItem(uploadKey, snapshot.id); stopped = false;
   $('cancel-upload').hidden = false;
   $('generate').textContent = 'استئناف الرفع';
@@ -103,8 +122,6 @@ async function runUpload(snapshot) {
     say(`جارٍ التحقق من الملف ${i + 1} من ${files.length}...`);
     if (await fingerprint(files[i].file) !== manifest[i].fingerprint) { say('تطابق اسم الملف وحجمه، لكن محتواه مختلف.'); return; }
   }
-  const started = performance.now();
-  const initialConfirmed = Object.values(snapshot.files).reduce((n, x) => n + x, 0);
   let retries = 0;
   for (let i = 0; i < files.length && !stopped; i++) {
     const entry = manifest[i], file = files[i].file;
@@ -114,18 +131,23 @@ async function runUpload(snapshot) {
       const digest = await sha(blob);
       try {
         const phase = entry.role === 'audio' ? 'رفع التعليق الصوتي' : 'رفع Final Package';
-        await xhrChunk(`/api/uploads/${snapshot.id}/files/${entry.id}/chunks/${index}`, blob, digest, sent => progress(snapshot, sent, phase));
-        snapshot = await api(`/api/uploads/${snapshot.id}`);
-        const confirmed = Object.values(snapshot.files).reduce((n, x) => n + x, 0);
-        const total = snapshot.manifest.files.reduce((n, f) => n + f.size, 0);
-        const rate = (confirmed - initialConfirmed) / Math.max(1, (performance.now() - started) / 1000);
-        const remaining = rate ? Math.ceil((total - confirmed) / rate) : 0;
-        progress(snapshot, 0, phase); say(`${$('status').textContent} • ${fmt(rate)}/s • المتبقي نحو ${remaining} ث • آخر نقطة: ${fmt(confirmed)} • إعادة المحاولة: ${retries}`);
+        const acknowledged = await xhrChunk(`/api/uploads/${snapshot.id}/files/${entry.id}/chunks/${index}`, blob, digest, sent => progress(snapshot, sent, phase, entry));
+        if (acknowledged.id !== snapshot.id || acknowledged.files?.[entry.id] !== offset + blob.size) throw Error('Invalid committed checkpoint');
+        snapshot = acknowledged;
+        progress(snapshot, 0, phase, entry);
         retries = 0;
       } catch (error) {
         if (stopped) return;
         if ([400, 401, 403, 413, 422].includes(error.code)) throw error;
-        snapshot = await api(`/api/uploads/${snapshot.id}`);
+        try {
+          snapshot = await api(`/api/uploads/${snapshot.id}`);
+        } catch (reconcileError) {
+          if ([401, 403, 404].includes(reconcileError.code)) throw reconcileError;
+          if (++retries > 8) { say('توقف الرفع مؤقتاً. الاتصال بالخادم غير متاح؛ اضغط استئناف لاحقاً.'); return; }
+          say(`تعذّر التأكد من نقطة الحفظ (${retries})، جارٍ إعادة الاتصال...`);
+          await pause(Math.min(30000, 500 * 2 ** retries) + Math.random() * 500);
+          continue;
+        }
         if (snapshot.files[entry.id] > offset) continue;
         if (++retries > 8) { say('توقف الرفع مؤقتاً. اضغط استئناف لإعادة المحاولة.'); return; }
         say(`إعادة الاتصال (${retries})...`); await pause(Math.min(30000, 500 * 2 ** retries) + Math.random() * 500);
@@ -231,14 +253,17 @@ $('form').addEventListener('submit', async event => {
     const chosen = currentFiles(); files = chosen.files;
     const existing = localStorage.getItem(uploadKey);
     if (existing) { await resume(await api(`/api/uploads/${existing}`)); return; }
-    CHUNK = (await api('/api/uploads/config')).chunk_size;
-    const manifest = {mode: chosen.mode, chunk_size: CHUNK, files: []};
+    const saved = localStorage.getItem(pendingKey);
+    const pendingOld = saved ? JSON.parse(saved) : null;
+    const config = pendingOld ? null : await api('/api/uploads/config');
+    const protocol = pendingOld ? (pendingOld.manifest.protocol || 1) : (config.protocols?.includes(2) ? 2 : 1);
+    CHUNK = pendingOld?.manifest?.chunk_size || (protocol === 2 ? config.v2_chunk_size : config.chunk_size);
+    const manifest = {mode: chosen.mode, ...(pendingOld && pendingOld.manifest.protocol === undefined ? {} : {protocol}), chunk_size: CHUNK, files: []};
     for (let i = 0; i < files.length; i++) {
       say(`تحضير الملف ${i + 1} من ${files.length}...`);
       const f = files[i]; manifest.files.push({id:f.id,path:f.path,size:f.file.size,fingerprint:await fingerprint(f.file),role:f.role});
     }
-    const saved = localStorage.getItem(pendingKey);
-    let pending = saved ? JSON.parse(saved) : {key:crypto.randomUUID(),manifest};
+    let pending = pendingOld || {key:crypto.randomUUID(),manifest};
     if (JSON.stringify(pending.manifest) !== JSON.stringify(manifest)) throw Error('هناك بداية رفع محفوظة لملفات أخرى. اختر الملفات الأصلية.');
     localStorage.setItem(pendingKey, JSON.stringify(pending));
     let snapshot;
@@ -292,4 +317,7 @@ async function ensureSession() {
   if (state.user.role === 'ADMIN') $('admin-link').hidden = false;
   return true;
 }
-ensureSession().then(ok => { if (ok) reconnect(); }).catch(error => say(error.message));
+$('generate').disabled = true;
+ensureSession().then(async ok => { if (ok) await reconnect(); })
+  .catch(error => say(error.message))
+  .finally(() => { if (!preparing && !uploadBusy) $('generate').disabled = false; });

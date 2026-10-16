@@ -1,0 +1,69 @@
+{
+  "environment": "localhost HTTP; application sleep approximates RTT, no network shaping",
+  "results": [
+    {
+      "protocol": 1,
+      "size_mib": 44.0,
+      "simulated_rtt_ms": 0.0,
+      "preparation_s": 0.15533929999219254,
+      "initialization_s": 0.09542639998835512,
+      "transfer_s": 19.899892799992813,
+      "total_to_durable_upload_s": 20.150799499999266,
+      "mib_per_s": 2.20049949137877,
+      "requests": 355,
+      "retries": 0,
+      "median_request_ms": 33.12469998490997,
+      "p95_request_ms": 130.69350001751445,
+      "finalization_s": null,
+      "job_admission_s": null
+    },
+    {
+      "protocol": 1,
+      "size_mib": 44.0,
+      "simulated_rtt_ms": 50.0,
+      "preparation_s": 0.1347957999969367,
+      "initialization_s": 0.39744190001511015,
+      "transfer_s": 72.33167080002022,
+      "total_to_durable_upload_s": 72.86407340000733,
+      "mib_per_s": 0.6049833224246642,
+      "requests": 355,
+      "retries": 0,
+      "median_request_ms": 86.27979999873787,
+      "p95_request_ms": 902.6189999829512,
+      "finalization_s": null,
+      "job_admission_s": null
+    },
+    {
+      "protocol": 1,
+      "size_mib": 100.0,
+      "simulated_rtt_ms": 0.0,
+      "preparation_s": 0.4868641000066418,
+      "initialization_s": 0.10984829999506474,
+      "transfer_s": 43.33990439999616,
+      "total_to_durable_upload_s": 43.93670300001395,
+      "mib_per_s": 2.3015045056929586,
+      "requests": 803,
+      "retries": 0,
+      "median_request_ms": 35.19229998346418,
+      "p95_request_ms": 130.22409999393858,
+      "finalization_s": null,
+      "job_admission_s": null
+    },
+    {
+      "protocol": 1,
+      "size_mib": 100.0,
+      "simulated_rtt_ms": 50.0,
+      "preparation_s": 0.2726265999954194,
+      "initialization_s": 0.07763380001415499,
+      "transfer_s": 86.74806209999952,
+      "total_to_durable_upload_s": 87.09844140001223,
+      "mib_per_s": 1.1517312014903271,
+      "requests": 803,
+      "retries": 0,
+      "median_request_ms": 77.22429999266751,
+      "p95_request_ms": 182.40100000984967,
+      "finalization_s": null,
+      "job_admission_s": null
+    }
+  ]
+}
