@@ -1,12 +1,11 @@
 <!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HEXA StoryEngine</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main><header><h1>HEXA StoryEngine</h1><p>اختر الـ Final Package والصوت، ثم ولّد الفيديو.</p></header>
+<body><main><header><h1>HEXA StoryEngine</h1><p>اختر الـ Final Package والصوت، ثم ولّد الفيديو.</p><nav><a id="admin-link" href="/admin" hidden>Admin Dashboard</a><button id="logout" type="button">تسجيل الخروج</button></nav></header>
 <form id="form"><div class="field"><label for="package">Final Package</label><div class="file-control"><input class="file-input" id="package" type="file" accept=".zip"><label class="file-button" for="package">اختيار ZIP</label><span class="file-name" id="package-name">لم يتم اختيار ملف</span></div></div>
-<div class="field"><label for="folder">مجلد Final Package</label><div class="file-control"><input class="file-input" id="folder" type="file" webkitdirectory multiple><label class="file-button" for="folder">اختيار مجلد</label><span class="file-name" id="folder-name">لم يتم اختيار مجلد</span></div></div>
 <div class="field"><label for="audio">الصوت</label><div class="file-control"><input class="file-input" id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,.flac,.ogg" required><label class="file-button" for="audio">اختيار ملف صوت</label><span class="file-name" id="audio-name">لم يتم اختيار ملف</span></div></div>
 <div class="actions"><button id="generate" type="submit">توليد YouTube + Reels</button><button id="retry-upload" type="button" hidden>إعادة محاولة الرفع</button><button id="retry-job" type="button" hidden>إعادة محاولة التوليد</button><button id="cancel-upload" type="button" hidden>إلغاء الرفع</button><button id="cancel" type="button" disabled>إلغاء</button></div></form>
 <progress id="progress" max="100" value="0"></progress><p id="status" role="status">جاهز</p>
 <section><div class="heading"><h2>لوحة السجل</h2><button id="clear" type="button">مسح اللوحة</button></div><pre id="log" aria-live="polite"></pre></section>
-<nav id="results" hidden><a id="youtube">تنزيل YouTube</a><a id="reels">تنزيل Reels</a><a id="manifest">ملف النتيجة</a><a id="diagnostics">استخراج تقرير التشخيص</a></nav><p id="export-path" dir="ltr"></p></main>
+<nav id="results" hidden><a id="youtube">تنزيل YouTube</a><a id="reels">تنزيل Reels</a><a id="manifest">ملف النتيجة</a><a id="diagnostics">استخراج تقرير التشخيص</a></nav></main>
 <script src="/static/app.js" defer></script></body></html>

@@ -1,0 +1,7 @@
+# Database changes and migration
+
+The application opens `HEXA_WEB_STORAGE/jobs.sqlite3`. Startup creates version markers `web_schema_migrations`, `identity_schema`, and `admin_schema`, plus `users`, `identity_sessions`, `identity_audit`, `login_attempts`, and `export_inventory`. Existing `jobs` gains nullable `user_id`, `created_at`, `started_at`, and `finished_at`; `uploads` gains an index on `job_id`. No existing job or upload row is deleted. Legacy job timestamps remain NULL when reliable values are unavailable. The old upload owner hashes are retained. Unknown future schema versions fail startup.
+
+Before activating a release, stop admission, wait for active jobs and uploads to drain, and use the existing deployment script's SQLite online backup. Verify the backup with `PRAGMA integrity_check` and retain a copy of the export root metadata. The schema additions are additive, but the old application cannot interpret new identity rules. Roll back code only with an explicit access-control plan; restoring an older database would discard sessions, users, job history, and deletion audit events.
+
+The first startup with an empty users table requires `HEXA_ADMIN_EMAIL` and `HEXA_ADMIN_BOOTSTRAP_PASSWORD`. They are not written to Git or logged. If users exist, the seeder never inserts or elevates anyone. A database with users but no active administrator fails startup and requires offline recovery from a verified backup or an operator-approved recovery command while the service is stopped.

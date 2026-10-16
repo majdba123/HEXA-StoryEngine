@@ -27,9 +27,19 @@ class Jobs:
         self._cancel: dict[str, threading.Event] = {}
         self._reports: dict[str, BuildReportSession] = {}
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("CREATE TABLE IF NOT EXISTS web_schema_migrations (version INTEGER PRIMARY KEY)")
+            if any(row[0] != 1 for row in db.execute("SELECT version FROM web_schema_migrations")):
+                raise RuntimeError("Unsupported web jobs database schema")
             db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, state TEXT NOT NULL, "
                        "progress REAL NOT NULL DEFAULT 0, stage TEXT, message TEXT, "
                        "package TEXT, audio TEXT, bundle TEXT, youtube TEXT, reels TEXT)")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            for name in ("user_id", "created_at", "started_at", "finished_at"):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {'TEXT' if name == 'user_id' else 'REAL'}")
+            db.execute("CREATE INDEX IF NOT EXISTS jobs_user_id ON jobs(user_id)")
+            db.execute("INSERT OR IGNORE INTO web_schema_migrations(version) VALUES(1)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_web_job ON jobs "
                        "((1)) WHERE state IN ('queued','running','cancelling')")
             # A new server must not claim another live process's render has stopped.
@@ -71,11 +81,15 @@ class Jobs:
         db.row_factory = sqlite3.Row
         return db
 
-    def create(self) -> str | None:
+    def create(self, user_id: str | None = None) -> str | None:
         job_id = uuid.uuid4().hex
         try:
             with self._connect() as db:
-                db.execute("INSERT INTO jobs(id,state,message) VALUES(?, 'queued', 'Queued')", (job_id,))
+                db.execute("BEGIN IMMEDIATE")
+                if user_id and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone():
+                    if not db.execute("SELECT 1 FROM users WHERE id=? AND is_active=1 AND must_change_password=0 AND deleted_at IS NULL", (user_id,)).fetchone():
+                        raise PermissionError("Account is no longer active")
+                db.execute("INSERT INTO jobs(id,state,message,user_id,created_at) VALUES(?, 'queued', 'Queued', ?, ?)", (job_id, user_id, time.time()))
                 db.execute("INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid()))
         except sqlite3.IntegrityError:
             return None
@@ -83,6 +97,10 @@ class Jobs:
         return job_id
 
     def update(self, job_id: str, **changes: object) -> None:
+        if changes.get("state") == "running":
+            changes["started_at"] = time.time()
+        if changes.get("state") in {"completed", "failed", "canceled"}:
+            changes["finished_at"] = time.time()
         with self._connect() as db:
             fields = ", ".join(f"{key}=?" for key in changes)
             db.execute(f"UPDATE jobs SET {fields} WHERE id=?", (*changes.values(), job_id))

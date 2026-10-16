@@ -1,7 +1,5 @@
 const $ = id => document.getElementById(id);
-const uploadKey = 'hexa.web.upload.v1';
-const pendingKey = 'hexa.web.upload.pending.v1';
-const jobKey = 'hexa.web.lastJob';
+let uploadKey, pendingKey, jobKey;
 let CHUNK = 256 * 1024;
 let activeJob = null, activeUpload = null, files = [], polling = null, stopped = false;
 let uploadBusy = false;
@@ -43,8 +41,10 @@ async function fingerprint(file) {
   return sha(new Blob([hashes.join('')]));
 }
 async function api(url, options = {}) {
+  if (options.method && options.method !== 'GET') options.headers = {...options.headers, 'X-CSRF-Token': decodeURIComponent(document.cookie.match(/(?:^|; )hexa_csrf=([^;]*)/)?.[1] || '')};
   const response = await fetch(url, options);
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401 && url !== '/api/session') location.assign('/login');
   if (!response.ok) { const error = new Error(body.detail || `HTTP ${response.status}`); error.code = response.status; throw error; }
   return body;
 }
@@ -52,13 +52,11 @@ function permanentInitiationError(error) {
   return [400, 409, 413, 422].includes(error.code);
 }
 function currentFiles() {
-  const folder = Array.from($('folder').files);
   const packageFile = $('package').files[0];
   const audio = $('audio').files[0];
-  if ((!folder.length && !packageFile) || !audio) throw Error('اختر ملف ZIP أو مجلد والصوت');
-  return {mode: folder.length ? 'folder' : 'zip', files: [
-    ...(folder.length ? folder.map((file, i) => ({id: `p${i}`, path: file.webkitRelativePath, role: 'package', file})) :
-      [{id: 'p0', path: packageFile.name, role: 'package', file: packageFile}]),
+  if (!packageFile || !audio) throw Error('اختر ملف ZIP والصوت');
+  return {mode: 'zip', files: [
+    {id: 'p0', path: packageFile.name, role: 'package', file: packageFile},
     {id: 'audio', path: audio.name, role: 'audio', file: audio}
   ]};
 }
@@ -74,6 +72,7 @@ function xhrChunk(url, blob, digest, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest(); xhr.open('PUT', url);
     xhr.setRequestHeader('X-Chunk-SHA256', digest);
+    xhr.setRequestHeader('X-CSRF-Token', decodeURIComponent(document.cookie.match(/(?:^|; )hexa_csrf=([^;]*)/)?.[1] || ''));
     xhr.upload.onprogress = event => onProgress(event.loaded);
     xhr.onload = () => xhr.status < 300 ? resolve() : reject(Object.assign(Error(`HTTP ${xhr.status}`), {code: xhr.status}));
     xhr.onerror = () => reject(Error('انقطع الاتصال'));
@@ -165,7 +164,7 @@ async function poll() {
     const phases = {queued:'بانتظار التوليد',running:'جارٍ التوليد',render:'التصيير',export:'إنهاء الملفات',cancelling:'جارٍ الإلغاء',completed:'اكتمل',failed:'فشل',canceled:'ألغي'};
     say(`${phases[job.stage] || phases[job.state] || job.stage || job.state}: ${job.message || ''}`);
     $('log').textContent = events.map(event => event.line).join('\n');
-    if (job.state === 'completed') { links(id); $('export-path').textContent = job.export_directory || ''; }
+    if (job.state === 'completed') links(id);
     $('retry-job').hidden = job.state !== 'failed';
     $('retry-job').dataset.jobId = id;
     if (['completed','failed','canceled'].includes(job.state)) { clearInterval(polling); polling = null; activeJob = null; $('cancel').disabled = true; }
@@ -277,11 +276,20 @@ $('cancel-upload').addEventListener('click', async () => {
   try { await api(`/api/uploads/${activeUpload}`, {method:'DELETE'}); await forgetFiles(activeUpload); localStorage.removeItem(uploadKey); activeUpload = null; $('cancel-upload').hidden = true; say('حُذف الرفع.'); } catch (error) { say(error.message); }
 });
 $('clear').addEventListener('click', () => { $('log').textContent = ''; });
-for (const id of ['package','folder','audio']) $(id).addEventListener('change', () => { $(`${id}-name`).textContent = $(id).files[0]?.webkitRelativePath || $(id).files[0]?.name || ''; });
+for (const id of ['package','audio']) $(id).addEventListener('change', () => { $(`${id}-name`).textContent = $(id).files[0]?.name || ''; });
+$('logout').addEventListener('click', async () => {
+  await api('/api/logout', {method:'POST'});
+  for (const key of [uploadKey, pendingKey, jobKey]) localStorage.removeItem(key);
+  location.assign('/login');
+});
 async function ensureSession() {
   const state = await api('/api/session');
-  if (!state.auth_required || state.authenticated) return true;
-  const token = prompt('رمز الدخول إلى HEXA'); if (!token) return false;
-  await api('/api/session', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})}); return true;
+  if (!state.authenticated) { location.assign('/login'); return false; }
+  const scope = `hexa.web.${state.user.id}`;
+  uploadKey = `${scope}.upload`;
+  pendingKey = `${scope}.pending`;
+  jobKey = `${scope}.lastJob`;
+  if (state.user.role === 'ADMIN') $('admin-link').hidden = false;
+  return true;
 }
 ensureSession().then(ok => { if (ok) reconnect(); }).catch(error => say(error.message));

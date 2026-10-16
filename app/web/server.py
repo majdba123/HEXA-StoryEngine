@@ -6,11 +6,14 @@ import json
 import zipfile
 import asyncio
 import hashlib
+import hmac
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
@@ -18,6 +21,9 @@ from app.desktop.export_preflight import export_root_problem
 from app.final_package.loader import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
 from app.web.jobs import Jobs
+from app.web.identity import Identity, SESSION_SECONDS
+from app.web.admin_data import AdminData
+from app.final.bundle import _is_link
 from app.web.security import SECURITY_HEADERS, SESSION_COOKIE, WebGuard
 from app.web.validation import validate_audio, validate_zip
 from app.web.uploads import Uploads
@@ -36,14 +42,42 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         storage / "uploads" if explicit_storage else Path.home() / ".hexa" / "uploads")))
     uploads = Uploads(storage, jobs, max_upload, chunk_root,
                       int(os.getenv("HEXA_WEB_CHUNK_BYTES", "262144")))
+    identity = Identity(jobs.db)
+    admin_data = AdminData(jobs.db, settings.export_root)
     if retention:
         uploads.purge_abandoned(float(retention))
 
-    def upload_owner() -> str:
-        return hashlib.sha256((guard.token or 'local').encode()).hexdigest()
+    def principal(request: Request) -> dict:
+        user = getattr(request.state, "user", None)
+        if user is None:
+            raise HTTPException(401, "Authentication required")
+        return user
+
+    def admin(request: Request) -> dict:
+        user = principal(request)
+        if user["role"] != "ADMIN":
+            raise HTTPException(403, "Administrator access required")
+        return user
+
+    def upload_owner(request: Request, upload_id: str | None = None) -> str:
+        user = principal(request)
+        if upload_id and user["role"] == "ADMIN":
+            with uploads.connect() as db:
+                row = db.execute("SELECT u.owner FROM uploads u LEFT JOIN users i ON i.id=u.owner WHERE u.id=? AND i.id IS NULL", (upload_id,)).fetchone()
+            if row:
+                return row["owner"]
+        return user["id"]
+
+    def owned_job(request: Request, job_id: str) -> dict:
+        job = jobs.get(job_id)
+        if job is None or (principal(request)["role"] != "ADMIN" and job.get("user_id") != principal(request)["id"]):
+            raise HTTPException(404, "Job not found")
+        return job
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        identity.bootstrap()
+        admin_data.recover_deletions()
         yield
         # Non-daemon workers finish shutdown before process exit. Cancellation is cooperative.
 
@@ -54,6 +88,21 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     @app.middleware("http")
     async def guarded(request: Request, call_next):
         refusal = guard.refusal(request)
+        path = request.url.path
+        public = path in {"/login", "/health", "/ready", "/api/session"} or path.startswith("/static/")
+        user = identity.current(request.cookies.get(SESSION_COOKIE))
+        request.state.user = user
+        if refusal is None and not public and user is None:
+            refusal = JSONResponse({"detail": "Authentication required"}, status_code=401) if path.startswith("/api/") else RedirectResponse("/login", status_code=303)
+        if refusal is None and user and user["must_change_password"] and path not in {"/change-password", "/api/account/password", "/api/logout", "/api/session"} and not path.startswith("/static/"):
+            refusal = JSONResponse({"detail": "Password change required"}, status_code=403) if path.startswith("/api/") else RedirectResponse("/change-password", status_code=303)
+        if refusal is None and (path == "/admin" or path.startswith("/api/admin/")) and (not user or user["role"] != "ADMIN"):
+            refusal = JSONResponse({"detail": "Administrator access required"}, status_code=403)
+        if refusal is None and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not public:
+            supplied = request.headers.get("x-csrf-token", "")
+            expected = user["csrf_digest"] if user else ""
+            if not supplied or not hmac.compare_digest(hashlib.sha256(supplied.encode()).hexdigest(), expected):
+                refusal = JSONResponse({"detail": "CSRF token required"}, status_code=403)
         # Root-owned deployment flag, outside the checkout. While it exists,
         # reject new mutations; GET status/downloads stay available.
         # Keeps admitted jobs safe while an upgrade drains live requests.
@@ -66,29 +115,149 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             response = await call_next(request)
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+        if not path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.get("/api/session")
     def session(request: Request):
-        return {"auth_required": guard.token is not None, "authenticated": guard.authorized(request)}
+        user = getattr(request.state, "user", None)
+        return {"auth_required": True, "authenticated": user is not None,
+                "user": {"id": user["id"], "email": user["email_normalized"], "role": user["role"], "must_change_password": bool(user["must_change_password"])} if user else None}
 
     @app.post("/api/session")
-    def login(request: Request, token: str = Body(..., embed=True)):
-        if guard.token is None:
-            return {"ok": True, "auth_required": False}
-        session_id = guard.login(token)
+    def login(request: Request, email: str = Body(...), password: str = Body(...)):
         client = request.client.host if request.client else "-"
-        if session_id is None:
-            guard.log.warning("failed login client=%s", client)
-            raise HTTPException(401, "Invalid access token")
-        guard.log.info("login client=%s", client)
-        response = JSONResponse({"ok": True, "auth_required": True})
-        response.set_cookie(SESSION_COOKIE, session_id, httponly=True, samesite="strict",
-                            secure=request.url.scheme == "https")
+        result = identity.login(email, password, client)
+        if result is None:
+            raise HTTPException(401, "Invalid credentials")
+        session_id, csrf, user = result
+        response = JSONResponse({"ok": True, "user": {"id": user["id"], "email": user["email_normalized"], "role": user["role"]}, "csrf": csrf})
+        secure_cookie = request.url.scheme == "https"
+        response.set_cookie(SESSION_COOKIE, session_id, httponly=True, samesite="strict", secure=secure_cookie, max_age=SESSION_SECONDS, path="/")
+        response.set_cookie("hexa_csrf", csrf, httponly=False, samesite="strict", secure=secure_cookie, max_age=SESSION_SECONDS, path="/")
         return response
 
+    @app.post("/api/logout")
+    def logout(request: Request):
+        identity.revoke(request.cookies.get(SESSION_COOKIE))
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        response.delete_cookie("hexa_csrf", path="/")
+        return response
+
+    @app.post("/api/account/password")
+    def own_password(request: Request, old_password: str = Body(...), new_password: str = Body(...)):
+        try:
+            changed = identity.change_own_password(principal(request)["id"], old_password, new_password)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not changed:
+            raise HTTPException(403, "Current password is incorrect")
+        response = JSONResponse({"ok": True, "reauthenticate": True})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        response.delete_cookie("hexa_csrf", path="/")
+        return response
+
+    @app.get("/api/admin/users")
+    def list_users(request: Request, search: str = "", page: int = 1):
+        admin(request)
+        if not 1 <= page <= 100000 or len(search) > 254:
+            raise HTTPException(422, "Invalid search")
+        return identity.users(search, 50, (page - 1) * 50)
+
+    @app.post("/api/admin/users", status_code=201)
+    def create_user(request: Request, email: str = Body(...), password: str = Body(...), role: str = Body("USER")):
+        actor = admin(request)
+        try:
+            result = identity.create_user(actor["id"], email, password, role)
+            admin_data.invalidate_overview()
+            return result
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "Email already exists") from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.patch("/api/admin/users/{user_id}")
+    async def edit_user(user_id: str, request: Request):
+        actor = admin(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(422, "Invalid account changes")
+        try:
+            result = identity.change_user(actor["id"], user_id, body)
+            admin_data.invalidate_overview()
+            return result
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "Email already exists") from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/admin/overview")
+    def admin_overview(request: Request):
+        admin(request)
+        return admin_data.overview()
+
+    @app.get("/api/admin/exports")
+    def admin_exports(request: Request, search: str = "", page: int = 1):
+        admin(request)
+        if not 1 <= page <= 100000 or len(search) > 80:
+            raise HTTPException(422, "Invalid search")
+        return admin_data.inventory(search, page)
+
+    @app.get("/api/admin/history")
+    def admin_history(request: Request, search: str = "", state: str = "", page: int = 1,
+                      from_at: float | None = None, to_at: float | None = None, sort: str = "newest"):
+        admin(request)
+        if (not 1 <= page <= 100000 or len(search) > 100 or
+                state not in {"", "queued", "running", "cancelling", "completed", "failed", "canceled"} or
+                sort not in {"newest", "oldest"} or
+                (from_at is not None and (from_at < 0 or from_at > 4102444800)) or
+                (to_at is not None and (to_at < 0 or to_at > 4102444800)) or
+                (from_at is not None and to_at is not None and from_at >= to_at)):
+            raise HTTPException(422, "Invalid history filter")
+        return admin_data.history(search, state, page, from_at, to_at, sort)
+
+    @app.delete("/api/admin/exports/{bundle_id}")
+    def delete_export(bundle_id: str, request: Request):
+        actor = admin(request)
+        try:
+            return admin_data.delete_bundle(bundle_id, actor["id"])
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/admin/exports/{bundle_id}/download/{kind}")
+    def admin_export_download(bundle_id: str, kind: str, request: Request):
+        admin(request)
+        if not admin_data.secure_root() or admin_data.root is None:
+            raise HTTPException(404, "Export root is not configured")
+        if kind not in {"youtube", "reels"}:
+            raise HTTPException(404, "Unknown output")
+        with admin_data.connect() as db:
+            row = db.execute("SELECT slug,version FROM export_inventory WHERE id=? AND status='AVAILABLE'", (bundle_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Export unavailable")
+        directory = admin_data.root / row["slug"] / f"v{row['version']}"
+        path = directory / f"{row['slug']}_{kind.upper()}.mp4"
+        if (_is_link(admin_data.configured_root) or _is_link(admin_data.root) or _is_link(directory.parent) or _is_link(directory) or _is_link(path) or
+                not path.is_file() or path.resolve().parent != directory.resolve()):
+            raise HTTPException(404, "Output unavailable")
+        if not admin_data.lease_download(bundle_id):
+            raise HTTPException(404, "Output unavailable")
+        return FileResponse(path, filename=path.name, media_type="video/mp4", background=BackgroundTask(admin_data.release_download, bundle_id))
+
     @app.get("/ready")
-    def ready():
+    def ready(request: Request):
         problems = []
         problem = export_root_problem(settings)
         if problem:
@@ -102,12 +271,30 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             probe.unlink()
         except OSError as exc:
             problems.append(f"storage: {exc}")
-        body = {"ready": not problems, "problems": problems, "active_job": (jobs.active() or {}).get("id")}
+        active = (jobs.active() or {}).get("id")
+        user = getattr(request.state, "user", None)
+        if user and user["role"] == "ADMIN":
+            body = {"ready": not problems, "problems": problems, "active_job": active}
+        else:
+            body = {"ready": not problems, "active_job": True if active else None}
         return JSONResponse(body, status_code=200 if not problems else 503)
 
     @app.get("/")
     def index():
         return FileResponse(static / "index.html")
+
+    @app.get("/login")
+    def login_page():
+        return FileResponse(static / "login.html")
+
+    @app.get("/change-password")
+    def change_password_page():
+        return FileResponse(static / "change-password.html")
+
+    @app.get("/admin")
+    def admin_page(request: Request):
+        admin(request)
+        return FileResponse(static / "admin.html")
 
     @app.get("/health")
     def health():
@@ -150,7 +337,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
                         target.write(chunk)
 
     @app.post("/api/jobs", status_code=202)
-    async def create_job(audio: UploadFile = File(...), package: UploadFile | None = File(None),
+    async def create_job(request: Request, audio: UploadFile = File(...), package: UploadFile | None = File(None),
                          folder_files: list[UploadFile] | None = File(None),
                          folder_paths: str | None = Form(None)):
         problem = await asyncio.to_thread(export_root_problem, settings)
@@ -163,7 +350,10 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         suffix = Path(audio.filename or "").suffix.lower()
         if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}:
             raise HTTPException(422, "Unsupported audio type")
-        job_id = jobs.create()
+        try:
+            job_id = jobs.create(principal(request)["id"])
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
         if job_id is None:
             raise HTTPException(409, "A generation job is already active")
         guard.log.info("job admitted id=%s", job_id)
@@ -209,83 +399,80 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         if not isinstance(body, dict):
             raise HTTPException(422, "Invalid upload manifest")
         return await asyncio.to_thread(
-            uploads.initialize, upload_owner(), body.get("key"), body.get("manifest", {})
+            uploads.initialize, upload_owner(request), body.get("key"), body.get("manifest", {})
         )
 
     @app.get("/api/uploads/{upload_id}")
-    def upload_status(upload_id: str):
-        return uploads.status(upload_id, upload_owner())
+    def upload_status(upload_id: str, request: Request):
+        return uploads.status(upload_id, upload_owner(request, upload_id))
 
     @app.put("/api/uploads/{upload_id}/files/{file_id}/chunks/{index}")
     async def upload_chunk(upload_id: str, file_id: str, index: int, request: Request):
         digest = request.headers.get("x-chunk-sha256", "")
-        return await uploads.chunk(upload_id, upload_owner(), file_id, index, digest, request)
+        return await uploads.chunk(upload_id, upload_owner(request, upload_id), file_id, index, digest, request)
 
     @app.post("/api/uploads/{upload_id}/complete", status_code=202)
-    async def finish_upload(upload_id: str):
-        result = await asyncio.to_thread(uploads.complete, upload_id, upload_owner(), settings)
+    async def finish_upload(upload_id: str, request: Request):
+        result = await asyncio.to_thread(uploads.complete, upload_id, upload_owner(request, upload_id), settings)
         guard.log.info("resumable upload finalized upload=%s job=%s", upload_id, result["id"])
         return result
 
     @app.delete("/api/uploads/{upload_id}")
-    def discard_upload(upload_id: str):
-        uploads.discard(upload_id, upload_owner())
+    def discard_upload(upload_id: str, request: Request):
+        uploads.discard(upload_id, upload_owner(request, upload_id))
         return {"state": "discarded"}
 
     @app.post("/api/uploads/{upload_id}/retry")
-    def retry_upload(upload_id: str):
-        return uploads.retry(upload_id, upload_owner())
+    def retry_upload(upload_id: str, request: Request):
+        return uploads.retry(upload_id, upload_owner(request, upload_id))
 
     @app.get("/api/jobs/active")
-    def active_job():
+    def active_job(request: Request):
         job = jobs.active()
-        if job is None:
+        if job is None or (principal(request)["role"] != "ADMIN" and job.get("user_id") != principal(request)["id"]):
             return {"id": None}
         return {key: job[key] for key in ("id", "state", "progress", "stage", "message")}
 
     @app.get("/api/jobs/{job_id}")
-    def get_job(job_id: str):
-        job = jobs.get(job_id)
-        if job is None:
-            raise HTTPException(404, "Job not found")
+    def get_job(job_id: str, request: Request):
+        job = owned_job(request, job_id)
         result = {key: job[key] for key in ("id", "state", "progress", "stage", "message")}
-        if job["state"] == "completed":
-            result["export_directory"] = job["bundle"]
         return result
 
     @app.get("/api/jobs/{job_id}/events")
-    def events(job_id: str):
-        if jobs.get(job_id) is None:
-            raise HTTPException(404, "Job not found")
+    def events(job_id: str, request: Request):
+        owned_job(request, job_id)
         return jobs.events(job_id)
 
     @app.post("/api/jobs/{job_id}/cancel")
-    def cancel(job_id: str):
-        if jobs.get(job_id) is None:
-            raise HTTPException(404, "Job not found")
+    def cancel(job_id: str, request: Request):
+        owned_job(request, job_id)
         if not jobs.cancel(job_id):
             raise HTTPException(409, "Job is not active")
         guard.log.info("job cancel requested id=%s", job_id)
         return {"state": "cancelling"}
 
     @app.post("/api/jobs/{job_id}/retry", status_code=202)
-    def retry_job(job_id: str):
-        previous = jobs.get(job_id)
+    def retry_job(job_id: str, request: Request):
+        previous = owned_job(request, job_id)
         if previous is None or previous["state"] != "failed":
             raise HTTPException(409, "Only failed jobs can be retried")
         package = Path(previous["package"] or "")
         audio = Path(previous["audio"] or "")
         if not package.is_file() or not audio.is_file():
             raise HTTPException(409, "Saved inputs are unavailable")
-        retry_id = jobs.create()
+        try:
+            retry_id = jobs.create(principal(request)["id"])
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
         if retry_id is None:
             raise HTTPException(409, "A generation job is already active")
         jobs.start(retry_id, package, audio)
         return {"id": retry_id, "state": "queued"}
 
     @app.get("/api/jobs/{job_id}/download/{kind}")
-    def download(job_id: str, kind: str):
-        job = jobs.get(job_id)
+    def download(job_id: str, kind: str, request: Request):
+        job = owned_job(request, job_id)
         if kind == "diagnostics":
             if job is None:
                 raise HTTPException(404, "Job not found")
@@ -303,7 +490,10 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             path = Path(job[kind]).resolve()
             if path.parent != bundle or path.suffix.lower() != ".mp4":
                 raise HTTPException(404, "Output is unavailable")
-            return FileResponse(path, filename=path.name, media_type="video/mp4")
+            bundle_id = f"{bundle.parent.name}:{bundle.name}"
+            if not admin_data.lease_download(bundle_id):
+                raise HTTPException(404, "Output unavailable")
+            return FileResponse(path, filename=path.name, media_type="video/mp4", background=BackgroundTask(admin_data.release_download, bundle_id))
         if kind == "manifest":
             return FileResponse(bundle / "export.json", filename="export.json")
         raise HTTPException(404, "Unknown output")

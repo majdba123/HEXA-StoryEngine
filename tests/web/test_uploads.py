@@ -1,11 +1,14 @@
 from __future__ import annotations
 import hashlib
 import io
+import os
 import zipfile
 from dataclasses import replace
-from fastapi.testclient import TestClient
+from tests.web.auth_client import AuthenticatedTestClient as TestClient
+from fastapi.testclient import TestClient as RawTestClient
 from app.config import Settings
 from app.web.server import create_app
+from app.web.identity import Identity
 from app.web.uploads import CHUNK
 
 
@@ -91,10 +94,11 @@ def test_upload_bounds_and_auth(tmp_path):
     )
     from app.web.security import WebGuard
 
-    guard = WebGuard(storage=tmp_path / "storage", max_request_bytes=CHUNK + 1024, token="secret")
+    guard = WebGuard(storage=tmp_path / "storage", max_request_bytes=CHUNK + 1024)
+    with RawTestClient(create_app(settings, tmp_path / "storage", guard)) as anonymous:
+        assert anonymous.post("/api/uploads", json={}).status_code == 401
+        assert anonymous.post("/api/session", json={"token": "secret"}).status_code == 422
     with TestClient(create_app(settings, tmp_path / "storage", guard)) as client:
-        assert client.post("/api/uploads", json={}).status_code == 401
-        assert client.post("/api/session", json={"token": "secret"}).status_code == 200
         package, audio = archive(), b"audio"
         response = client.post(
             "/api/uploads", json={"key": "stable-key", "manifest": manifest(package, audio)}
@@ -581,13 +585,19 @@ def test_chunk_fs_operation_does_not_block_health(tmp_path, monkeypatch):
 
         monkeypatch.setattr(Uploads, "_commit_chunk", delayed_commit)
         app = create_app(settings, tmp_path / "storage")
+        Identity(tmp_path / "storage" / "jobs.sqlite3").bootstrap()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
         ) as client:
+            auth = await client.post("/api/session", json={"email": os.environ["HEXA_ADMIN_EMAIL"],
+                                                           "password": os.environ["HEXA_ADMIN_BOOTSTRAP_PASSWORD"]})
+            assert auth.status_code == 200
+            csrf = auth.json()["csrf"]
             package, audio = archive(), b"audio"
             response = await client.post(
                 "/api/uploads",
                 json={"key": "responsive-upload-key", "manifest": manifest(package, audio)},
+                headers={"X-CSRF-Token": csrf},
             )
             assert response.status_code == 201, response.text
             uid = response.json()["id"]
@@ -595,7 +605,7 @@ def test_chunk_fs_operation_does_not_block_health(tmp_path, monkeypatch):
                 client.put(
                     f"/api/uploads/{uid}/files/p0/chunks/0",
                     content=package,
-                    headers={"X-Chunk-SHA256": hashlib.sha256(package).hexdigest()},
+                    headers={"X-Chunk-SHA256": hashlib.sha256(package).hexdigest(), "X-CSRF-Token": csrf},
                 )
             )
             try:

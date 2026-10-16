@@ -1,16 +1,9 @@
-"""Request guards for the HEXA web UI: same-origin writes, optional access token, limits.
-
-Local use (the default) binds 127.0.0.1 with no token. A server deployment must set
-``HEXA_WEB_TOKEN``; the launcher refuses a non-loopback bind without it. Every guard
-fails closed and every refusal is written to the security log.
-"""
+"""Host, origin, and request-size guards for the HEXA web UI."""
 from __future__ import annotations
 
-import hmac
 import ipaddress
 import logging
 import os
-import secrets
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,7 +11,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
-_PUBLIC = {"/", "/health", "/ready", "/api/session"}
 _LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
 SESSION_COOKIE = "hexa_session"
 SECURITY_HEADERS = {
@@ -52,37 +44,20 @@ def security_logger(storage: Path) -> logging.Logger:
 
 
 class WebGuard:
-    """Same-origin writes, allowed hosts, request size and the optional access token."""
+    """Same-origin writes, allowed hosts, and request size."""
 
-    def __init__(self, *, storage: Path, max_request_bytes: int, token: str | None = None,
+    def __init__(self, *, storage: Path, max_request_bytes: int,
                  allowed_hosts: set[str] | None = None) -> None:
-        self.token = token or None
         self.max_request_bytes = max_request_bytes
         # Starlette's TestClient uses "testserver"; a public deployment lists its own name.
         self.allowed_hosts = {name.lower() for name in (allowed_hosts or set())} | _LOOPBACK_NAMES | {"testserver"}
-        self.sessions: set[str] = set()
         self.log = security_logger(storage)
 
     @classmethod
     def from_env(cls, storage: Path, max_upload: int) -> "WebGuard":
         hosts = {row.strip() for row in os.getenv("HEXA_WEB_ALLOWED_HOSTS", "").split(",") if row.strip()}
         return cls(storage=storage, max_request_bytes=2 * max_upload + 1024 * 1024,
-                   token=os.getenv("HEXA_WEB_TOKEN"), allowed_hosts=hosts)
-
-    def login(self, supplied: str) -> str | None:
-        if self.token is None or not hmac.compare_digest(supplied.encode(), self.token.encode()):
-            return None
-        session = secrets.token_urlsafe(32)
-        self.sessions.add(session)
-        return session
-
-    def authorized(self, request: Request) -> bool:
-        if self.token is None:
-            return True
-        header = request.headers.get("authorization", "")
-        if header.startswith("Bearer ") and hmac.compare_digest(header[7:].encode(), self.token.encode()):
-            return True
-        return request.cookies.get(SESSION_COOKIE) in self.sessions
+                   allowed_hosts=hosts)
 
     def refusal(self, request: Request) -> JSONResponse | None:
         host = urlsplit(f"//{request.headers.get('host', '')}").hostname or ""
@@ -103,8 +78,4 @@ class WebGuard:
             if length and length.isdigit() and int(length) > self.max_request_bytes:
                 self.log.warning("refused oversized request %s bytes client=%s", length, client)
                 return JSONResponse({"detail": "Request exceeds configured size limit"}, status_code=413)
-        path = request.url.path
-        if path.startswith("/api/") and path not in _PUBLIC and not self.authorized(request):
-            self.log.warning("refused unauthenticated %s %s client=%s", request.method, path, client)
-            return JSONResponse({"detail": "Authentication required"}, status_code=401)
         return None

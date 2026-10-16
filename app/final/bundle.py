@@ -206,9 +206,22 @@ class ExportBundleWriter:
             payload = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
-        return payload.get("completed") is True and all(
-            (directory / row["filename"]).is_file() for row in payload.get("outputs", {}).values()
-        )
+        if not isinstance(payload, dict):
+            return False
+        outputs = payload.get("outputs")
+        if payload.get("completed") is not True or not isinstance(outputs, dict) or not outputs:
+            return False
+        try:
+            return all(
+                isinstance(row, dict)
+                and isinstance(row.get("filename"), str)
+                and Path(row["filename"]).name == row["filename"]
+                and row["filename"] not in {".", ".."}
+                and (directory / row["filename"]).is_file()
+                for row in outputs.values()
+            )
+        except (OSError, TypeError, ValueError):
+            return False
 
     def _package_dir(self, slug: str) -> Path:
         if slug != export_slug(slug):

@@ -61,6 +61,7 @@ class Uploads:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, owner TEXT NOT NULL, key TEXT NOT NULL, state TEXT NOT NULL, manifest TEXT NOT NULL, job_id TEXT, error TEXT, created REAL, updated REAL NOT NULL, validator_pid INTEGER, verify_seconds REAL, validation_seconds REAL, admitted_at REAL, expected_bytes INTEGER, UNIQUE(owner,key))"
             )
+            db.execute("CREATE INDEX IF NOT EXISTS uploads_job_id ON uploads(job_id)")
             db.execute(
                 "CREATE TABLE IF NOT EXISTS upload_files (upload_id TEXT NOT NULL, file_id TEXT NOT NULL, offset INTEGER NOT NULL DEFAULT 0, sha256 TEXT, PRIMARY KEY(upload_id,file_id))"
             )
@@ -462,10 +463,13 @@ class Uploads:
                 row = db.execute("SELECT job_id FROM uploads WHERE id=?", (uid,)).fetchone()
                 if row["job_id"]:
                     return {"id": row["job_id"], "state": "queued"}
+                if len(owner) == 32 and all(char in "0123456789abcdef" for char in owner):
+                    if not db.execute("SELECT 1 FROM users WHERE id=? AND is_active=1 AND must_change_password=0 AND deleted_at IS NULL", (owner,)).fetchone():
+                        raise HTTPException(403, "Account is no longer active")
                 try:
                     db.execute(
-                        "INSERT INTO jobs(id,state,message,package,audio) VALUES(?,'queued','Queued',?,?)",
-                        (job_id, str(package_path), str(audio_named)),
+                        "INSERT INTO jobs(id,state,message,package,audio,user_id,created_at) VALUES(?,'queued','Queued',?,?,?,?)",
+                        (job_id, str(package_path), str(audio_named), owner, time.time()),
                     )
                     db.execute(
                         "INSERT INTO owners(job_id,pid) VALUES(?,?)", (job_id, os.getpid())

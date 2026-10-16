@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import asyncio
 import threading
 import time
@@ -11,12 +12,13 @@ from types import SimpleNamespace
 import pytest
 import httpx
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
+from tests.web.auth_client import AuthenticatedTestClient as TestClient
 
 from app.config import Settings
 from app.models import Stage
 from app.web.server import create_app
 from app.web.jobs import Jobs
+from app.web.identity import Identity
 from app.web.validation import validate_zip
 
 
@@ -215,11 +217,16 @@ async def test_large_validation_does_not_block_health(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.web.server.validate_zip", slow_validation)
     app = create_app(settings, tmp_path / "storage")
+    Identity(tmp_path / "storage" / "jobs.sqlite3").bootstrap()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://127.0.0.1") as client:
+        auth = await client.post("/api/session", json={"email": "web-test-admin@example.invalid",
+                                                       "password": os.environ["HEXA_ADMIN_BOOTSTRAP_PASSWORD"]})
+        assert auth.status_code == 200
         pending = asyncio.create_task(client.post(
             "/api/jobs", files={"package": ("test.zip", archive()),
-                                 "audio": ("voice.wav", b"audio")}))
+                                 "audio": ("voice.wav", b"audio")},
+            headers={"X-CSRF-Token": auth.json()["csrf"]}))
         try:
             assert await asyncio.to_thread(entered.wait, 10)
             health = await asyncio.wait_for(client.get("/health"), timeout=2)

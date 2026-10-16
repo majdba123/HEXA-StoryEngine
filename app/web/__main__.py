@@ -14,8 +14,8 @@ from app.web.security import is_loopback
 def main() -> None:
     port = int(os.getenv("HEXA_WEB_PORT", "8787"))
     host = os.getenv("HEXA_WEB_HOST", "127.0.0.1")
-    if not is_loopback(host) and not os.getenv("HEXA_WEB_TOKEN"):
-        raise SystemExit("[HEXA WEB] Refusing to listen on a non-loopback address without HEXA_WEB_TOKEN.")
+    if not is_loopback(host) and not os.getenv("HEXA_WEB_ALLOWED_HOSTS"):
+        raise SystemExit("[HEXA WEB] A non-loopback bind requires HEXA_WEB_ALLOWED_HOSTS.")
     address = f"http://127.0.0.1:{port}"
 
     def open_when_ready() -> None:
