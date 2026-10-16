@@ -319,3 +319,19 @@ Full suite on the final code (`56f2de5`, worktree `E:\hexa-visual-wt`): **10289 
 `app/pipeline.py`, `app/models.py`, `app/boundary/release.py` (blur); `app/motion/arrivals.py`
 (vertical and causal slides), `app/motion/resolution.py` (causal evidence),
 `app/render/verification.py` (PAYOFF slide comfort). 18 files, +1640 / −88 lines including tests.
+
+## 12. Montage consolidation and first post-sprint render — 2026-10-17
+
+`montage` already contained all eight visual sprint commits. The final exporter FFmpeg stderr fix was integrated as code commit `0f598a16307e1bff2780225ecb1a301ac5e2bea3`; its original dirty Claude worktree remains preserved. `bayer` stayed at `df0482c5b572a77ae706f97b642ec7f3a4e5d02b`. The upload V2 worktree is unfinished and was not merged; established upload recovery code is already present on `montage`. No worktree or branch was deleted because each nonredundant worktree has pending changes or ignored review evidence. Remote branches remain `bayer` and `montage` only.
+
+Final code gates: pytest 10,293 total, 10,255 passed, 38 skipped, zero failures/errors in `E:\hexa-visual\final\gates\pytest-montage-consolidation.xml` (1406.062 s); 80/80 package holdouts pass in `pytest-montage-holdouts.xml`; compileall, full Ruff, JavaScript syntax for all four web scripts, and diff check pass. Automatic Admin Feature Validation for `0f598a16` passed: https://github.com/majdba123/HEXA-StoryEngine/actions/runs/38979773313. The manual V2 cross-platform and real-package workflows require a separate dispatch and are not represented by this automatic result.
+
+First real production bundle, exact clean engine SHA `0f598a16`, source ZIP `HEXA_BLACK_HAT_HACKER_AR_UNIFIED_FINAL_PACKAGE_2_0.zip` SHA-256 `bfb64814b1fcdb952e2c93216822f49ba651e7fb113079aa8ee40cdeca53630f`, with the original Black Hat narration MP3 and `HEXA_RENDER_WORKERS=1`:
+
+- Manifest: `E:\hexa-visual\FIRST-MONTAGE-0f598a16\exports\HEXA_BLACK_HAT_HACKER_AR\v1\export.json`; completed, clean tree, source fingerprint matches certified manifest.
+- YouTube: `HEXA_BLACK_HAT_HACKER_AR_YOUTUBE.mp4`, 1920x1080/30 fps, H.264/AAC, 97.067 s video and 97.059 s audio, 24,570,277 bytes, encoded-motion PASS, final-media PASS, output stage 198.783 s.
+- Reels: `HEXA_BLACK_HAT_HACKER_AR_REELS.mp4`, 1080x1920/30 fps, H.264/AAC, same durations, 10,644,532 bytes, encoded-motion PASS, final-media PASS, output stage 644.703 s.
+- Pipeline 1182.479 s (wall 1189.415 s), shared semantic stage 338.962 s. Both rendered-motion QA reports pass with 131 checked segments, 74 static skips and zero violations. FFmpeg-only time was not instrumented; sampled Python peak working set was 1.99 GiB and free physical RAM fell to about 0.5 GiB. This run is not a controlled speed baseline. Earlier controlled comparison showed about +7% motion-blur cost.
+- Frame review: `E:\hexa-visual\FIRST-MONTAGE-0f598a16\review-stills\` includes the correctly ordered "المعرفة التقنية" at 4.5 s, the Black Hat 021 "حساب موظف" moment at 46.9 s, and first/final frames. The first frame is white by the current cold-open design; the last frame contains authored artwork. These samples and automated gates do not constitute full user visual acceptance.
+
+Outstanding artistic decisions remain those in section 10: Black Hat 021 short PAYOFF pop, cold-open fade, 180-degree versus 270-degree blur, straight-alpha box-fit fringe, and Sprint 4.1 emphasis amplitude. Preserve the two MP4s for the user's full-motion review. No production deployment or `bayer` promotion.
