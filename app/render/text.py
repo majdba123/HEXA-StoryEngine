@@ -227,7 +227,7 @@ class TextRenderer:
         anchor,
         rtl: bool,
         ink_span=None,
-        canvas: tuple[int, int] = (1920, 1080),
+        canvas: tuple[int, int],
         face_tags: str = "",
         font_scale: float,
         pixel_scale: float = 1.0,
@@ -364,8 +364,8 @@ class TextRenderer:
         """Rectangle that shows only the newly added words of a reveal state.
 
         The boundary sits in the middle of the gap between the earlier words' ink and the
-        new words' ink (outline and shadow included). Word gaps are tight (median ~12 px
-        at 1080p, ~6 px on Reels), so one output pixel is enough; with less, or overlapping
+        new words' ink (outline and shadow included). Word gaps are tight (a median of
+        about a tenth of the line height), so one output pixel is enough; with less, or overlapping
         ink, the word keeps a cut (""). While the entry gesture still runs, the boundary
         travels with the line.
         """
