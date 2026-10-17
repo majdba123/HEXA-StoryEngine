@@ -43,7 +43,7 @@ Remaining production work: export-bundle retention policy, measured CPU/RAM/disk
 
 The web UI is integrated in `montage`; `HEXA.bat` remains the desktop fallback.
 
-## Resumable upload candidate (feature branch)
+## Resumable upload candidate (`montage`)
 
 The browser now uses `POST /api/uploads` with `{key,manifest}` before any bytes move. The manifest declares `mode` (`zip` or `folder`) and files with `id`, safe relative `path`, `size`, `role` (`package` or `audio`), and `fingerprint`. The fingerprint is SHA-256 of concatenated lowercase SHA-256 hex digests of consecutive configured slices; it is intentionally **not** the file's ordinary SHA-256. This scheme allows bounded browser memory. Each `PUT /api/uploads/{id}/files/{file_id}/chunks/{index}` carries raw bytes and `X-Chunk-SHA256`. Only the next negotiated slice is accepted; identical retries return the committed offset. `GET /api/uploads/config` returns the legacy V1 chunk size (256 KiB by default; 512 KiB and 1 MiB are permitted through `HEXA_WEB_CHUNK_BYTES`) plus V2 capability and a 4 MiB V2 recommendation when `HEXA_WEB_V2_ENABLED=1` (default `0`). Turning the flag off stops new V2 sessions while preserving existing V2 resumes. A new browser session explicitly records `protocol: 2` and the chosen size in its manifest; V1 sessions retain their stored size and fingerprint semantics. The V2 browser consumes the committed offset returned by each chunk PUT, requesting full status only for recovery. `GET /api/uploads/{id}` returns authoritative offsets, manifest, state, and job ID. `POST /api/uploads/{id}/complete` verifies all slices again, checks ZIP/audio/Final Package, and atomically associates one admitted job. Repeating completion returns that job. `DELETE /api/uploads/{id}` explicitly discards only an unadmitted upload. Private routes use the existing web guard.
 
@@ -51,7 +51,7 @@ Upload metadata lives in `jobs.sqlite3` (`uploads`, `upload_files`, `upload_chun
 
 `HEXA_WEB_MAX_UPLOAD_BYTES` limits each file and the combined manifest to twice that limit. Session count is capped at 100, active incomplete sessions reserve at most `HEXA_WEB_TOTAL_UPLOAD_BYTES` (default: twice `HEXA_WEB_MAX_UPLOAD_BYTES`) in aggregate, and creation is limited to 10 sessions per owner per minute. Free disk space is checked at creation. With `HEXA_WEB_RETENTION_DAYS`, startup removes expired incomplete or failed uploads and inputs of terminal jobs; active jobs remain untouched. A failed render with retained inputs can be retried explicitly through `POST /api/jobs/{id}/retry`; the one-active-job SQLite index still applies. A server crash during rendering marks the orphaned job failed rather than claiming exact mid-render resumption. Future deployment automation should check `/ready` and refuse a deploy while `active_job` is non-null.
 
-The original multipart `POST /api/jobs` remains for compatibility. The upload protocol is a development candidate and requires Firefox, slow-link, full corpus, and encoded-output certification before promotion. `montage` and `bayer` remain untouched.
+The original multipart `POST /api/jobs` remains for compatibility. The upload protocol is integrated into `montage` as a development candidate and remains disabled by default. The isolated Firefox refresh test and simulated slow-link benchmarks have passed; real-network, full-corpus, and encoded-output certification remain necessary before promotion to `bayer`. `bayer` remains untouched.
 
 ### Upload API responses and recovery
 

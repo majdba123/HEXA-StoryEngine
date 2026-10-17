@@ -1,6 +1,6 @@
 ﻿# Upload Performance V2: measured transport checkpoint
 
-Status: **PARTIALLY COMPLETE; not production certified**. Base: `origin/montage` at `df0482c5b572a77ae706f97b642ec7f3a4e5d02b`. Feature branch: `feature/upload-performance-v2`. The base source tree and new worktree were clean before edits. The existing local `montage` worktree and stash were left untouched. No production rollout was performed.
+Status: **integrated into `montage`; not production certified**. The isolated upload work began from `df0482c5b572a77ae706f97b642ec7f3a4e5d02b` on `feature/upload-performance-v2` and was merged into `montage` on 2026-10-17. No production rollout was performed; the feature remains disabled by default.
 
 ## Root cause and protocol decision
 

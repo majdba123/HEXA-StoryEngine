@@ -85,6 +85,7 @@ def main():
             browser.find_element(By.ID, "password").send_keys(env["HEXA_ADMIN_BOOTSTRAP_PASSWORD"])
             browser.find_element(By.CSS_SELECTOR, "#login button").click()
             wait_for(lambda: browser.find_elements(By.ID, "package"), 20)
+            wait_for(lambda: browser.find_element(By.ID, "generate").is_enabled(), 30)
             browser.find_element(By.ID, "package").send_keys(str(package))
             browser.find_element(By.ID, "audio").send_keys(str(audio))
             browser.find_element(By.ID, "generate").click()
