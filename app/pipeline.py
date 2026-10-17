@@ -216,6 +216,10 @@ class StoryEnginePipeline:
             shared, target, workspace, progress=progress, cancelled=cancelled, announce=False,
         )
         output_file = self._output_path(shared.package.package_id, output_name)
+        if os.getenv("HEXA_VISUAL_STORYTELLING_V1", "0") == "1":
+            from app.visual_storytelling import enhance_reference_plan
+
+            plan = enhance_reference_plan(package_path, plan, workspace)
         result = self._render_target(
             shared, target, plan, workspace, output_file, audio_path,
             progress=progress, cancelled=cancelled, span=(0.76, 0.90), announce=False,
@@ -290,6 +294,14 @@ class StoryEnginePipeline:
             else:
                 plans[target.target_id] = self.reference_projector.project(reference, target, target_ws)
             plan_seconds[target.target_id] = time.perf_counter() - begin
+        # Opt-in additive pass. The default and sidecar-free routes remain unchanged.
+        if os.getenv("HEXA_VISUAL_STORYTELLING_V1", "0") == "1":
+            from app.visual_storytelling import enhance_reference_plan
+
+            reference_ws = workspaces[REFERENCE_TARGET.target_id]
+            plans[REFERENCE_TARGET.target_id] = enhance_reference_plan(
+                package_path, plans[REFERENCE_TARGET.target_id], reference_ws,
+            )
         reference_plan = plans[REFERENCE_TARGET.target_id]
         for target in targets[1:]:
             differences = semantic_differences(reference_plan, plans[target.target_id])
