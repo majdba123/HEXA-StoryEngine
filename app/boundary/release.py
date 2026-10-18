@@ -59,11 +59,13 @@ class SceneBoundaryPlanner:
     A collision is a safety fact, never evidence that two scenes are related.
     """
 
-    def __init__(self, *, horizontal_padding: float = 0.0) -> None:
+    def __init__(self, *, horizontal_padding: float = 0.0, vertical_padding: float = 0.0) -> None:
         self.classifier = VisualTransitionPolicy()
         self.footprints = AlphaFootprintResolver()
-        # Reference-frame padding so an exiting hero ends off-screen on every projection.
+        # Both margins are needed: a 16:9 frame projected on Reels can have large
+        # TOP/BOTTOM letterbox regions, not just side padding.
         self.exit_margin = _OFFSCREEN_MARGIN + max(0.0, float(horizontal_padding))
+        self.vertical_exit_margin = _OFFSCREEN_MARGIN + max(0.0, float(vertical_padding))
 
     def plan(
         self,
@@ -184,8 +186,8 @@ class SceneBoundaryPlanner:
         reasons = []
         left = unit[2] + self.exit_margin
         right = 1.0 - unit[0] + self.exit_margin
-        top = unit[3] + self.exit_margin
-        bottom = 1.0 - unit[1] + self.exit_margin
+        top = unit[3] + self.vertical_exit_margin
+        bottom = 1.0 - unit[1] + self.vertical_exit_margin
         # Four directions; prefer the shortest safe exit while preserving timing.
         directions = ((0.0, -1.0, top), (0.0, 1.0, bottom),
                       (-1.0, 0.0, left), (1.0, 0.0, right))
