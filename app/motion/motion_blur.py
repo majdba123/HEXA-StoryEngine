@@ -18,7 +18,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from app.models import CompositionBeat, MotionCue
+from app.layout.footprint import AlphaFootprintResolver
+from app.models import CompositionBeat, MotionCue, VisualAsset
 from app.render.expression import compile_expression
 from app.render.motion import FFmpegMotionAdapter
 
@@ -58,17 +59,23 @@ def exposure_lengths(
 class MotionBlurPolicy:
     def __init__(self) -> None:
         self.adapter = FFmpegMotionAdapter()
+        self.footprints = AlphaFootprintResolver()
         self.decisions: list[MotionBlurDecision] = []
 
     def plan(
-        self, motion: list[MotionCue], composition: list[CompositionBeat], *, width: int, height: int, fps: int,
+        self, motion: list[MotionCue], composition: list[CompositionBeat], *,
+        width: int, height: int, fps: int, assets: list[VisualAsset] | None = None,
     ) -> list[MotionCue]:
         self.decisions = []
         laid_out = {(beat.beat_id, item.asset_id) for beat in composition for item in beat.items}
         # Assign the strongest visible shutter to the largest laid-out moving icon.
         # Single-asset scenes keep the certified exposure; split/followers abstain.
-        areas = {(beat.beat_id, item.asset_id): float(item.width) * float(item.height)
-                 for beat in composition for item in beat.items}
+        assets_by_id = {asset.id: asset for asset in assets or []}
+        areas = {}
+        for beat in composition:
+            for item in beat.items:
+                box = self.footprints.resolve(item, assets_by_id.get(item.asset_id)).box
+                areas[(beat.beat_id, item.asset_id)] = max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
         peaks: dict[tuple[str, str], float] = {}
         for candidate in motion:
             params = candidate.params or {}
