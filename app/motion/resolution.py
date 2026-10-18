@@ -511,7 +511,7 @@ class PayoffResolutionDirector:
                 **row.program, "name": f"reference_icon_hit_{row.phase.lower()}" if hit
                 else f"reference_pop_{row.phase.lower()}", "settle_progress": 1.0,
                 "keyframes": (_icon_hit_frames(seconds / (float(row.end) - float(row.start))) if hit
-                              else _pop_frames(start_scale, seconds / (float(row.end) - float(row.start)))}})
+                              else _pop_frames(start_scale, seconds / (float(row.end) - float(row.start))))}})
             replaced = True
         if not replaced:
             return None, "no_static_entry_to_replace"
