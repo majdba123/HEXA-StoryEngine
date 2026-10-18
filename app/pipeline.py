@@ -170,8 +170,12 @@ class StoryEnginePipeline:
         self.motion_reference = ReferenceMotionEnforcer(self.reference.profile)
         self.entry_grammar = EntryMotionGrammar()
         self.entry_arrival = EntryArrivalPolicy()
-        self.scene_boundaries = SceneBoundaryPlanner(horizontal_padding=max(
-            ReferencePlanProjector.reference_padding(row)[0] for row in SUPPORTED_VISUAL_TARGETS))
+        self.scene_boundaries = SceneBoundaryPlanner(
+            horizontal_padding=max(ReferencePlanProjector.reference_padding(row)[0]
+                                   for row in SUPPORTED_VISUAL_TARGETS),
+            vertical_padding=max(ReferencePlanProjector.reference_padding(row)[1]
+                                 for row in SUPPORTED_VISUAL_TARGETS),
+        )
         self.cross_scene = CrossSceneContinuityPlanner()
         self.motion_blur = MotionBlurPolicy()
         self.text_motion = TextMotionPlanner()
