@@ -35,7 +35,7 @@ from app.targets.context import active_target
 
 from .resolution import POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, pop_start_scale
 from .timing import projected_motion_activity_px
-from .visual_flow.direction import focus_handoff_direction
+from .visual_flow.direction import focus_handoff_direction, spatial_entry_direction
 
 _EPS = 1e-6
 _FRAME = 1 / 30
@@ -81,6 +81,32 @@ def _moves(program: dict | None) -> bool:
     )
 
 
+def _replaceable_decorative_entry(cue: MotionCue) -> bool:
+    """Replace modest generic entry wiggles, never authored event execution."""
+    params = cue.params or {}
+    semantic = params.get("semantic_focus") or {}
+    if semantic.get("event_flow_execution") not in (None, "NONE"):
+        return False
+    if params.get("causal_arrival") or params.get("hero_emphasis") or params.get("payoff_resolution"):
+        return False
+    if any(row.phase != "ENTRY" or row.semantic_action or row.connection
+           or "semantic_peak_progress" in row.program for row in cue.segments):
+        return False
+    program = params.get("program") or {}
+    name = str(program.get("name") or "")
+    if name.startswith("density_safe_"):
+        name = name[len("density_safe_"):]
+    if not name.startswith("reference_") or name.startswith(("reference_pop", "reference_slide")):
+        return False
+    frames = program.get("keyframes") or []
+    if not frames or "semantic_peak_progress" in program:
+        return False
+    return all(abs(float(row.get("dx", 0.0))) <= 0.045
+               and abs(float(row.get("dy", 0.0))) <= 0.045
+               and 0.95 <= float(row.get("scale", 1.0)) <= 1.045
+               for row in frames)
+
+
 def _is_nudge(program: dict | None, item: LayoutItem | None = None) -> bool:
     """An entry gesture the reference arrival may replace: Sprint 4.4's restrained leader
     scale-in (0.94 -> 1), or any planner gesture that stays below the visible arrival floor
@@ -108,9 +134,10 @@ def pop_frames(start_scale: float, settle: float) -> list[dict]:
     return frames
 
 
-def slide_frames(dx: float, settle: float, dy: float = 0.0) -> list[dict]:
+def slide_frames(dx: float, settle: float, dy: float = 0.0, *, start_scale: float = 1.0) -> list[dict]:
     settle = max(0.0, min(1.0, settle))
-    frames = [{"progress": 0.0, "dx": round(dx, 6), "dy": round(dy, 6), "scale": 1.0, "easing": "smoothstep"},
+    frames = [{"progress": 0.0, "dx": round(dx, 6), "dy": round(dy, 6), "scale": start_scale,
+               "easing": "smoothstep"},
               {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]
     if settle < 1.0 - _EPS:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"})
@@ -138,14 +165,18 @@ class SecondaryArrivalPlanner:
         sweeps = dict(travel_sweeps or {})
         output = list(motion)
         layout_beats = {row.beat_id: row for row in composition}
-        directions = {}
+        directions: dict[tuple[str, str], tuple[float, float]] = {}
         for index, beat in enumerate(story):
-            direction = focus_handoff_direction(
-                story[index - 1] if index else None, beat, layout_beats,
-                frame_width=active_target().width, frame_height=active_target().height,
-            )
-            if direction is not None:
-                directions[beat.id] = direction
+            previous = story[index - 1] if index else None
+            focus = focus_handoff_direction(previous, beat, layout_beats)
+            for item in (layout_beats[beat.id].items if beat.id in layout_beats else []):
+                # Each independent illustration receives a physical staging edge.
+                # A unique primary can instead follow the previous scene's focus.
+                directions[(beat.id, item.asset_id)] = (
+                    focus if focus is not None and len(beat.primary_asset_ids) == 1
+                    and item.asset_id == beat.primary_asset_ids[0]
+                    else spatial_entry_direction(item)
+                )
         by_beat: dict[str, list[int]] = {}
         for position, cue in enumerate(motion):
             by_beat.setdefault(cue.beat_id, []).append(position)
@@ -170,9 +201,7 @@ class SecondaryArrivalPlanner:
                     beat_cues=beat_cues, layout=layout,
                     sweeps={key: value for key, value in sweeps.items() if key[0] == beat.id},
                     assets_by_id=assets_by_id,
-                    flow_direction=(directions.get(beat.id)
-                                    if len(beat.primary_asset_ids) == 1
-                                    and cue.asset_id == beat.primary_asset_ids[0] else None),
+                    flow_direction=directions.get((beat.id, cue.asset_id)),
                 )
                 if updated is not None:
                     output[position] = updated
@@ -309,7 +338,8 @@ class SecondaryArrivalPlanner:
         if params.get("handoff_from") or params.get("referent_carrier"):
             return "FADE", "referent_continuity", None
         program = params.get("program") or {}
-        if _moves(program) and not _is_nudge(program, item):
+        decorative = flow_direction is not None and _replaceable_decorative_entry(cue)
+        if _moves(program) and not _is_nudge(program, item) and not decorative:
             return "FADE", "certified_gesture_owns_entry", None
         window = float(cue.end) - float(cue.start)
         if window + _EPS < POP_MIN_SECONDS:
@@ -318,7 +348,8 @@ class SecondaryArrivalPlanner:
         for row in cue.segments:
             if row.phase == "ENTRY":
                 if abs(float(row.start) - float(cue.start)) > _EPS or (
-                        _moves(row.program) and not _is_nudge(row.program, item)):
+                        _moves(row.program) and not _is_nudge(row.program, item)
+                        and not decorative):
                     return "FADE", "entry_segment_owns_motion", None
             elif float(row.start) < arrival_end - _EPS:
                 return "FADE", "accent_inside_arrival", None
@@ -337,7 +368,9 @@ class SecondaryArrivalPlanner:
             if pop is not None:
                 self._pop_fallback[(cue.beat_id, cue.asset_id)] = pop
             vertical = bool((slide.params.get("reference_slide") or {}).get("dy"))
-            return "SLIDE", "edge_slide_vertical" if vertical else "edge_slide", slide
+            reason = ("flow_staged_vertical" if vertical else "flow_staged_horizontal") if flow_direction else (
+                "edge_slide_vertical" if vertical else "edge_slide")
+            return "SLIDE", reason, slide
         if pop is not None:
             return "POP", "reference_pop", pop
         return "FADE", "pop_below_visible_floor", None
