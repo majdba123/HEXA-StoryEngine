@@ -5,6 +5,7 @@ These tests exercise the existing production owners rather than a second transit
 from __future__ import annotations
 
 import pytest
+import shutil
 
 from app.boundary import SceneBoundaryPlanner
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
@@ -97,6 +98,7 @@ def test_motion_blur_prioritizes_largest_moving_icon_and_preserves_other() -> No
     assert out[1].params["motion_blur"]["shutter"] > MOTION_BLUR_SHUTTER
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
 def test_vertical_exit_clears_youtube_in_encoded_frames(tmp_path) -> None:
     """A top/bottom choice is actually rendered vertically, not only logged."""
     position = (0.8, 0.87, 0.1, 0.1)
@@ -124,7 +126,6 @@ def test_vertical_exit_includes_reels_letterbox_padding() -> None:
     """A vertical exit must pass the actual 9:16 viewport, not the 16:9 content."""
     padding = ReferencePlanProjector.reference_padding(REELS_9_16)[1]
     assert padding > 0
-    from tests.visual.test_vp4_hero_exit import _exit_scene
     # The default fixture's RIGHT exit is unrelated to this test: verify only
     # that the layout-safe planning margin includes the vertical projection pad.
     planner = SceneBoundaryPlanner(vertical_padding=padding)
