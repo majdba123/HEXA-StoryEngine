@@ -165,7 +165,7 @@ def _icon_hit_frames(settle: float) -> list[dict]:
     """One eased scale-up, short readable plateau, single return. No lateral jiggle."""
     settle = max(0.0, min(1.0, settle))
     frames = [
-        {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 0.93, "easing": "smoothstep"},
+        {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
         {"progress": round(settle * 0.55, 6), "dx": 0.0, "dy": 0.0,
          "scale": 1.07, "easing": "smoothstep"},
         {"progress": round(settle * 0.77, 6), "dx": 0.0, "dy": 0.0,
@@ -478,7 +478,9 @@ class PayoffResolutionDirector:
             return None, "pop_below_visible_floor"
         hit = icon_focus_mode and seconds >= 0.29 and _icon_hit_safe(item, layout)
         if hit:
-            start_scale = 0.93
+            # Begin at rest: a 0.93 -> 1.07 jump over a short authored window
+            # exceeds the encoded ESTABLISH comfort bound for a large icon.
+            start_scale = 1.0
         new_params = dict(params)
         new_params["reference_pop"] = {"start_scale": round(start_scale, 5), "seconds": round(seconds, 6),
                                        "profile": "REFERENCE_POP"}
