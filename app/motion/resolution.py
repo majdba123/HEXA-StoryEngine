@@ -251,6 +251,11 @@ class PayoffResolutionDirector:
                 if subject is None or decision.wash != "none" or decision.priority not in {"P0", "P1", "P2"}:
                     continue
                 cue = output[index[(decision.beat_id, subject)]]
+                if cue.params.get("payoff_icon_hit"):
+                    # One held hit already focuses the result icon. Never stack a
+                    # second post-settle pulse on the same narrative result.
+                    self.decisions[position] = replace(decision, pulse="icon_hit_owns_payoff")
+                    continue
                 if cue.params.get("scene_hero") or cue.params.get("hero_emphasis"):
                     self.decisions[position] = replace(decision, pulse="abstain:hero_owns_pulse")
                     continue
