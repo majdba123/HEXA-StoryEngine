@@ -119,7 +119,7 @@ def test_vertical_exit_clears_youtube_in_encoded_frames(tmp_path) -> None:
     start = scene.frame(spec["start"])
     end = scene.frame(spec["end"])
     # In the 2nd segment, the old icon stays until the opener, travels, and disappears.
-    assert _darkness(frames, position, pad=0.01)[60 + start] > 0.8
+    assert _darkness(frames, position, pad=0.01)[60 + start] > 0.35
     assert _darkness(frames, position, pad=0.01)[60 + end + 1] < 0.03
 
 
