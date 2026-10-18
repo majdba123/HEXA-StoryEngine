@@ -18,6 +18,7 @@ from app.models import (
 )
 from app.motion.hero_travel import HERO_TRAVEL, SMOOTHSTEP_PEAK
 from app.motion.motion_blur import MAX_LENGTH, MIN_LENGTH, MOTION_BLUR_SHUTTER
+from app.motion.visual_flow.direction import focus_handoff_direction
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
 
@@ -375,7 +376,9 @@ class SceneBoundaryPlanner:
             exits = self._exit_schedule(
                 previous=previous, outgoing=outgoing, cues=cues, assets=assets,
                 outgoing_done=outgoing_done, segment=segment, opener_frame=k_open, fps=fps,
-                margin=self.exit_margin,
+                margin=self.exit_margin, vertical_margin=self.vertical_exit_margin,
+                # The outgoing direction complements the new subject's initial offset.
+                flow_hint=focus_handoff_direction(previous, beat, layouts),
                 boxes={item.asset_id: self.footprints.resolve(item, assets.get(item.asset_id)).box
                        for item in outgoing},
             )
@@ -397,6 +400,8 @@ class SceneBoundaryPlanner:
         cues: dict[tuple[str, str], MotionCue], assets: dict[str, VisualAsset],
         outgoing_done: float, segment: BeatSegment, opener_frame: int, fps: int,
         margin: float = _OFFSCREEN_MARGIN, boxes: dict[str, Box] | None = None,
+        vertical_margin: float = _OFFSCREEN_MARGIN,
+        flow_hint: tuple[float, float] | None = None,
     ) -> dict[str, object]:
         """Complete outgoing exits inside the pre-opener interval, or none (clean cut).
 
@@ -458,11 +463,29 @@ class SceneBoundaryPlanner:
         units = []
         for index, members in enumerate(groups):
             frames, shift = cls._complete_exit_path(members, fps=fps, margin=margin)
-            # The last unit (the semantic result) never leaves early: it covers the frame
-            # until the opener, so completed exits can never leave a near-white frame.
+            box = rest_box(members)
+            vector = (shift, 0.0)  # unchanged certified horizontal default
+            if flow_hint is not None:
+                options = ((-box[2] - margin, 0.0), (1.0 - box[0] + margin, 0.0),
+                           (0.0, -box[3] - vertical_margin),
+                           (0.0, 1.0 - box[1] + vertical_margin))
+                target = (-flow_hint[0], -flow_hint[1])
+                options = sorted(options, key=lambda row: (
+                    0 if (row[0] * target[0] + row[1] * target[1]) > 0 else 1,
+                    abs(row[0]) + abs(row[1])))
+                for dx, dy in options:
+                    length = abs(dx) + abs(dy)
+                    seconds = max(HERO_TRAVEL.minimum_seconds,
+                                  SMOOTHSTEP_PEAK * length / HERO_TRAVEL.max_normalized_speed)
+                    option_frames = ceil(seconds * fps - _EPS)
+                    if option_frames <= window:
+                        frames, vector = option_frames, (dx, dy)
+                        break
+            # Last semantic result covers the scene until the next legal opener.
             fits = index != len(groups) - 1 and frames <= window
-            units.append({"members": members, "box": rest_box(members), "frames": frames, "shift": shift,
-                          "exits": False, "why": None if fits else "time", "fits": fits})
+            units.append({"members": members, "box": box, "frames": frames, "shift": shift,
+                          "vector": vector, "exits": False, "why": None if fits else "time",
+                          "fits": fits})
         # Units decide in order (supporting first): earlier units at their decision, later
         # ones still. Each pair is checked once, when the later of the two decides, against
         # the earlier one's real path, so a planned exit never meets another outgoing unit.
@@ -473,6 +496,7 @@ class SceneBoundaryPlanner:
             if cls._exit_path_collides(current, units, opener_frame):
                 current["exits"], current["why"] = False, "path"
         starts: dict[str, float] = {}
+        vectors: dict[str, tuple[float, float]] = {}
         leaving, staying, crossing = [], [], []
         for unit in units:
             ids = sorted(m.asset_id for m in unit["members"])
@@ -484,6 +508,8 @@ class SceneBoundaryPlanner:
             leaving.append(ids)
             begin = (segment.start_frame + opener_frame - unit["frames"]) / fps
             starts.update({member.asset_id: begin for member in unit["members"]})
+            if flow_hint is not None:
+                vectors.update({member.asset_id: unit["vector"] for member in unit["members"]})
         audit = {
             "decision": "complete_exit" if leaving else (
                 "clean_cut:exit_path_crosses_another_outgoing_unit" if crossing
@@ -492,6 +518,9 @@ class SceneBoundaryPlanner:
             "ready_frame": ready_frame, "window_frames": window, "order": leaving, "clean_cut_units": staying}
         if crossing:
             audit["path_blocked_units"] = crossing
+        if vectors:
+            audit["vectors"] = {key: [round(v[0], 6), round(v[1], 6)]
+                                for key, v in sorted(vectors.items())}
         return {"starts": starts, "audit": audit}
 
     @staticmethod
@@ -505,8 +534,10 @@ class SceneBoundaryPlanner:
                 return box
             first = opener_frame - unit["frames"]
             progress = min(1.0, max(0.0, (frame - first) / max(1, unit["frames"] - 1)))
-            offset = unit["shift"] * (3 * progress ** 2 - 2 * progress ** 3)
-            return (box[0] + offset, box[1], box[2] + offset, box[3])
+            x, y = unit.get("vector", (unit["shift"], 0.0))
+            scale = 3 * progress ** 2 - 2 * progress ** 3
+            return (box[0] + x * scale, box[1] + y * scale,
+                    box[2] + x * scale, box[3] + y * scale)
 
         def ratio(a: Box, b: Box) -> float:
             inter = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
