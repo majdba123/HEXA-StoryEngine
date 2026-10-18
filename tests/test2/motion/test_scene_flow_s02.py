@@ -132,3 +132,10 @@ def test_vertical_exit_includes_reels_letterbox_padding() -> None:
     planner = SceneBoundaryPlanner(vertical_padding=padding)
     assert planner.vertical_exit_margin >= padding
     assert planner.exit_margin < planner.vertical_exit_margin
+
+
+def test_large_scene_leader_scale_has_explicit_boost_without_changing_legacy() -> None:
+    from app.motion.hero_travel import _amplitudes
+
+    assert _amplitudes(0.045) == [0.05, 0.045]
+    assert _amplitudes(0.045, boost=True) == [0.07, 0.065, 0.06, 0.05, 0.045]
