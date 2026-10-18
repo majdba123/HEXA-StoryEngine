@@ -297,6 +297,8 @@ class CrossSceneContinuityPlanner:
             return cut("entry_window_owned")
         if HANDOFF_PARAM in cue.params:
             return cut("semantic_handoff_owned")
+        if (cue.params.get("reference_slide") or {}).get("scene_flow"):
+            return cut("scene_flow_already_owns_entry")
         old_box = self.footprints.resolve(old, assets.get(old.asset_id)).box
         new_box = self.footprints.resolve(new, assets.get(new.asset_id)).box
         old_c, new_c = self._centre(old_box), self._centre(new_box)
