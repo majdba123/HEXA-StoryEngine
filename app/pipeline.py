@@ -749,7 +749,7 @@ class StoryEnginePipeline:
             )
             # Visual sprint B1: Motion owns motion blur, decided on the final Motion.
             motion = self.motion_blur.plan(motion, composition, width=target.width, height=target.height,
-                                           fps=target.fps)
+                                           fps=target.fps, assets=assets)
             (workspace / "diagnostics").mkdir(parents=True, exist_ok=True)
             (workspace / "diagnostics" / "motion-blur.json").write_text(
                 json.dumps([row.to_payload() for row in self.motion_blur.decisions], indent=2),
