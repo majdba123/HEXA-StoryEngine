@@ -95,3 +95,14 @@ def test_no_referent_runs_no_transaction() -> None:
     data = build([obj("A01", 0.30, 0.5)], [obj("B01", 0.33, 0.5)])
     out = _run(pipeline, data, text=TextPlan(), boundaries=list(BOUNDARIES))
     assert out is data[3] and calls == {"text": 0, "boundary": 0}
+
+
+def test_no_referent_with_authored_focus_runs_bounded_transaction() -> None:
+    pipeline, calls = _pipeline(text_for=lambda motion: TextPlan(), boundaries_for=lambda motion: [])
+    data = build([obj("A01", 0.25, 0.5)], [obj("B01", 0.55, 0.5)])
+    data[1][0].primary_asset_ids = ["SCENE_001:asset-01"]
+    data[1][1].primary_asset_ids = ["SCENE_002:asset-01"]
+    out = _run(pipeline, data, text=TextPlan(), boundaries=[])
+    assert out != data[3] and calls == {"text": 1, "boundary": 1}
+    assert pipeline.cross_scene.decisions[0].decision == "NARRATIVE_FOCUS"
+    assert all(HANDOFF_PARAM not in cue.params for cue in out)

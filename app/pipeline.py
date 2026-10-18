@@ -721,9 +721,9 @@ class StoryEnginePipeline:
                 text_motion=text_motion,
                 scene_boundaries=scene_boundaries,
             )
-            if self.cross_scene.decisions:
+            if self.cross_scene.boundary_decisions:
                 (diagnostics / "cross-scene-continuity.json").write_text(
-                    json.dumps([row.to_payload() for row in self.cross_scene.decisions], indent=2),
+                    json.dumps([row.to_payload() for row in self.cross_scene.boundary_decisions], indent=2),
                     encoding="utf-8",
                 )
 
@@ -784,6 +784,7 @@ class StoryEnginePipeline:
             assets=assets, duration=shared.transcript.duration, fps=target.fps, text=text,
             text_composition=text_composition, text_motion=text_motion,
             scene_boundaries=scene_boundaries, frame_width=target.width, frame_height=target.height,
+            enable_focus_continuity=True,
         )
         if not any(decision.accepted for decision in self.cross_scene.decisions):
             return motion

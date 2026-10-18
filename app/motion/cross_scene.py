@@ -17,9 +17,10 @@ carrier then:
   footprints already read as one object in one place), or
 * ``ABSTAIN``: the cue is not touched and the certified boundary runs unchanged.
 
-Identity is never inferred: without ``referent_id`` nothing here runs. Non-adjacent recurrence
-is identity only. The renderer receives only runtime asset ids (``handoff_from``), never a
-referent.
+Identity is never inferred. Without ``referent_id``, the production pipeline may make a
+small focus-directed entry from authored primary attention and safe geometry, or record an
+intentional cut. Non-adjacent recurrence is identity only. The renderer receives only runtime
+asset ids (``handoff_from``), never a referent.
 """
 from __future__ import annotations
 
@@ -56,6 +57,7 @@ POSITION_AND_SCALE = "POSITION_AND_SCALE"
 POSITION_ONLY = "POSITION_ONLY"
 NO_GEOMETRY_INHERITANCE = "NO_GEOMETRY_INHERITANCE"
 ABSTAIN = "ABSTAIN"
+NARRATIVE_FOCUS = "NARRATIVE_FOCUS"
 
 HANDOFF_PARAM = "handoff_from"
 CONTINUITY_PROGRAM = "referent_continuity_settle"
@@ -104,7 +106,11 @@ class ContinuityDecision:
         return self.decision != ABSTAIN
 
     def to_payload(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["confidence"] = self.evidence.get(
+            "confidence", 1.0 if self.accepted and self.identity_authority == "REFERENT_ID" else 0.0
+        )
+        return payload
 
 
 class CrossSceneContinuityPlanner:
@@ -112,6 +118,7 @@ class CrossSceneContinuityPlanner:
         self.footprints = AlphaFootprintResolver()
         self.transitions = VisualTransitionPolicy()
         self.decisions: list[ContinuityDecision] = []
+        self.boundary_decisions: list[ContinuityDecision] = []
         self._baseline: dict[tuple[str, str], MotionCue] = {}
 
     # -- public ---------------------------------------------------------------------------
@@ -129,14 +136,16 @@ class CrossSceneContinuityPlanner:
         text_composition: list[TextCompositionBeat] | None = None,
         text_motion: list[TextMotionCue] | None = None,
         scene_boundaries: list[SceneBoundaryRelease] | None = None,
+        enable_focus_continuity: bool = False,
         frame_width: int,
         frame_height: int,
     ) -> list[MotionCue]:
         self.decisions = []
+        self.boundary_decisions = []
         self._baseline = {}
         carriers = self._authored_carriers(package)
-        if not carriers:
-            return motion  # no authored identity: Sprint 7 behaviour cannot exist
+        if not carriers and not enable_focus_continuity:
+            return motion  # legacy callers preserve Sprint 7 identity-only behaviour
         from app.boundary.release import SceneBoundaryPlanner  # boundary owns text boxes
 
         scene_order = {scene.id: int(scene.order) for scene in package.scenes}
@@ -152,6 +161,14 @@ class CrossSceneContinuityPlanner:
             if previous is None or previous.scene_id == beat.scene_id:
                 continue
             if scene_order.get(beat.scene_id, -2) - scene_order.get(previous.scene_id, -9) != 1:
+                if enable_focus_continuity:
+                    self.boundary_decisions.append(ContinuityDecision(
+                        referent_id="", previous_scene_id=previous.scene_id,
+                        current_scene_id=beat.scene_id, previous_beat_id=previous.id,
+                        current_beat_id=beat.id, previous_asset_id=None, current_asset_id=None,
+                        decision=ABSTAIN, reason="safe_cinematic_cut:non_adjacent_scene_order",
+                        identity_authority="NONE", evidence={"confidence": 0.0},
+                    ))
                 continue  # non-adjacent recurrence stays identity metadata only
             before = carriers.get(previous.scene_id, {})
             after = carriers.get(beat.scene_id, {})
@@ -165,8 +182,17 @@ class CrossSceneContinuityPlanner:
                 )
                 for referent_id in sorted(set(before) & set(after))
             ]
-            for decision in self._bound_boundary_energy(decisions):
-                self.decisions.append(decision)
+            bounded = self._bound_boundary_energy(decisions)
+            if enable_focus_continuity and not any(row.accepted for row in bounded):
+                bounded.append(self._decide_focus(
+                    previous=previous, beat=beat, layouts=layouts, cues=cues,
+                    assets=asset_by_id, text_boxes=text_boxes.get(beat.id, []),
+                    frame_width=frame_width, frame_height=frame_height,
+                ))
+            for decision in bounded:
+                self.boundary_decisions.append(decision)
+                if decision.identity_authority != "NONE" or decision.accepted:
+                    self.decisions.append(decision)
                 if decision.accepted:
                     key = (decision.current_beat_id, decision.current_asset_id)
                     self._baseline.setdefault(key, cues[key])
@@ -192,6 +218,12 @@ class CrossSceneContinuityPlanner:
                 })
             decisions.append(decision)
         self.decisions = decisions
+        self.boundary_decisions = [
+            next((row for row in decisions if row.current_beat_id == original.current_beat_id
+                  and row.current_asset_id == original.current_asset_id
+                  and row.referent_id == original.referent_id), original)
+            for original in self.boundary_decisions
+        ]
         return [self._baseline[(cue.beat_id, cue.asset_id)] if (cue.beat_id, cue.asset_id) in restored else cue
                 for cue in motion]
 
@@ -219,6 +251,78 @@ class CrossSceneContinuityPlanner:
             if row.semantic_unit_id == package_asset_id
             and str(row.policy or "").upper() != "SAFE_ABSTENTION"
         })
+
+    def _decide_focus(
+        self, *, previous: StoryBeat, beat: StoryBeat,
+        layouts: dict[str, CompositionBeat], cues: dict[tuple[str, str], MotionCue],
+        assets: dict[str, VisualAsset], text_boxes: list[tuple[float, float, Box]],
+        frame_width: int, frame_height: int,
+    ) -> ContinuityDecision:
+        """Connect authored attention targets without asserting shared object identity."""
+        before = previous.primary_asset_ids
+        after = beat.primary_asset_ids
+        base = dict(referent_id="", previous_scene_id=previous.scene_id,
+                    current_scene_id=beat.scene_id, previous_beat_id=previous.id,
+                    current_beat_id=beat.id, previous_asset_id=before[0] if len(before) == 1 else None,
+                    current_asset_id=after[0] if len(after) == 1 else None,
+                    identity_authority="NONE")
+
+        def cut(reason: str, **evidence) -> ContinuityDecision:
+            return ContinuityDecision(decision=ABSTAIN, reason=f"safe_cinematic_cut:{reason}",
+                                      evidence={"confidence": 0.0, **evidence}, **base)
+
+        if len(before) != 1 or len(after) != 1:
+            return cut("focus_not_unique")
+        old = self._item(layouts.get(previous.id), before[0], previous)
+        new = self._item(layouts.get(beat.id), after[0], beat)
+        cue = cues.get((beat.id, after[0]))
+        if old is None or new is None or cue is None:
+            return cut("focus_not_visible")
+        entry = next((row for row in cue.segments if row.phase == "ENTRY"), None)
+        if entry is None or any(row.phase != "ENTRY" and row.start < entry.end and row.end > entry.start
+                                for row in cue.segments):
+            return cut("entry_window_owned")
+        if HANDOFF_PARAM in cue.params:
+            return cut("semantic_handoff_owned")
+        old_box = self.footprints.resolve(old, assets.get(old.asset_id)).box
+        new_box = self.footprints.resolve(new, assets.get(new.asset_id)).box
+        old_c, new_c = self._centre(old_box), self._centre(new_box)
+        vx, vy = old_c[0] - new_c[0], old_c[1] - new_c[1]
+        distance = hypot(vx, vy)
+        if distance < 0.08 or distance > 0.65:
+            return cut("focus_distance_outside_safe_range", distance=round(distance, 4))
+        # A short directional lead guides attention; it never starts at the old
+        # object's pose and never represents that object as the new one.
+        lead = min(0.04, _ENTRY_SPEED * (entry.end - entry.start))
+        dx, dy = lead * vx / distance, lead * vy / distance
+        if not self._inside_canvas(self._moved(new_box, (new.x, new.y), dx, dy, 1.0)):
+            return cut("lead_outside_canvas")
+        if any(self._intersects(self._moved(new_box, (new.x, new.y), dx, dy, 1.0), box)
+               and not self._intersects(new_box, box) and start <= entry.end and end >= entry.start
+               for start, end, box in text_boxes):
+            return cut("lead_crosses_text")
+        for item in self._active(beat, layouts.get(beat.id)):
+            if item.asset_id == new.asset_id:
+                continue
+            box = self.footprints.resolve(item, assets.get(item.asset_id)).box
+            appears = self._visible_start(beat, cues.get((beat.id, item.asset_id)))
+            if appears <= entry.end and self._intersects(
+                self._moved(new_box, (new.x, new.y), dx, dy, 1.0), box
+            ) and not self._intersects(new_box, box):
+                return cut("lead_crosses_artwork", blocker=item.asset_id)
+        activity = projected_motion_activity_px(dx=dx, dy=dy, scale=1.0,
+                                               item_width=new.width, item_height=new.height,
+                                               frame_width=frame_width, frame_height=frame_height)
+        floor = semantic_readability_floor_px("ENTRY", item_width=new.width, item_height=new.height,
+                                              duration=entry.end - entry.start,
+                                              frame_width=frame_width, frame_height=frame_height)
+        if activity < floor:
+            return cut("lead_below_perceptual_floor", activity_px=round(activity, 2))
+        return ContinuityDecision(decision=NARRATIVE_FOCUS, reason="authored_primary_focus_direction",
+                                  position_delta=(dx, dy), handoff_at=entry.start, settle_at=entry.end,
+                                  incoming_entry_action="FOCUS_DIRECTED_ENTRY",
+                                  evidence={"confidence": 0.7, "old_focus": old_c,
+                                            "new_focus": new_c, "activity_px": round(activity, 2)}, **base)
 
     # -- decision -------------------------------------------------------------------------
     def _decide(
@@ -395,6 +499,16 @@ class CrossSceneContinuityPlanner:
     @staticmethod
     def _adapt_cue(cue: MotionCue, decision: ContinuityDecision) -> MotionCue:
         params = {key: value for key, value in cue.params.items() if key != "entry_opacity"}
+        if decision.decision == NARRATIVE_FOCUS:
+            # Preserve the entry's timing and other semantic segments. This directional
+            # lead is a visual attention cue, never a referent handoff.
+            dx, dy = decision.position_delta
+            program = MotionProgram(name="focus_direction_entry", keyframes=(
+                MotionKeyframe(progress=0.0, dx=dx, dy=dy), MotionKeyframe(progress=1.0),
+            )).to_payload()
+            segments = [row.model_copy(update={"program": program}) if row.phase == "ENTRY" else row
+                        for row in cue.segments]
+            return cue.model_copy(update={"segments": segments})
         params[HANDOFF_PARAM] = {"beat_id": decision.previous_beat_id, "asset_id": decision.previous_asset_id}
         segments = list(cue.segments)
         end = float(cue.end)
@@ -413,6 +527,21 @@ class CrossSceneContinuityPlanner:
                                   program=program, semantic_action="CONTINUE")
             segments = [entry, *(row for row in segments if row.phase != "ENTRY")]
             end = max(end, float(decision.settle_at))
+        elif decision.decision == NO_GEOMETRY_INHERITANCE:
+            # The successor is already at the authored pose. Its fresh-reveal ENTRY
+            # can still contain a pop, slide or scale even after opacity is removed.
+            # Keep the first visible frame and its window, but hold the pose still.
+            entry = next((row for row in segments if row.phase == "ENTRY"), None)
+            if entry is not None:
+                stationary = MotionProgram(
+                    name=CONTINUITY_PROGRAM,
+                    keyframes=(MotionKeyframe(progress=0.0), MotionKeyframe(progress=1.0)),
+                ).to_payload()
+                stationary["continuity"] = "REFERENT_HANDOFF"
+                segments = [
+                    row.model_copy(update={"program": stationary, "semantic_action": "CONTINUE"})
+                    if row is entry else row for row in segments
+                ]
         return cue.model_copy(update={"params": params, "segments": segments, "end": end})
 
     # -- geometry helpers -----------------------------------------------------------------

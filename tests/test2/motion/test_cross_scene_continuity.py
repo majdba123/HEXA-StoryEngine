@@ -89,9 +89,11 @@ def build(*scenes: list[dict], boundaries: dict[int, str] | None = None):
 
 def run(package, story, composition, motion, assets, rows=(), **kwargs):
     planner = CrossSceneContinuityPlanner()
+    frame_width = kwargs.pop("frame_width", 1920)
+    frame_height = kwargs.pop("frame_height", 1080)
     out = planner.plan(package=package, story=story, composition=composition, motion=motion, assets=assets,
                        duration=SCENE * len(story), scene_boundaries=list(rows),
-                       frame_width=1920, frame_height=1080, **kwargs)
+                       frame_width=frame_width, frame_height=frame_height, **kwargs)
     return out, planner.decisions
 
 
@@ -189,6 +191,58 @@ def test_incoming_fresh_entry_is_replaced_by_an_opaque_continuity_entry() -> Non
     assert cue.segments[0].start == pytest.approx(3.5)  # first visible frame unchanged
     original = next(c for c in data[3] if c.beat_id == "beat-002")
     assert cue.segments[1] == original.segments[1]
+
+
+def test_in_place_swap_removes_fresh_entry_motion_without_moving_reveal() -> None:
+    data = build([obj("A01", 0.30, 0.5, referent="REF_P")],
+                 [obj("B01", 0.30, 0.5, referent="REF_P", accents=[("INTERACT", 0.9)])])
+    original = next(cue for cue in data[3] if cue.beat_id == "beat-002")
+    pop = original.segments[0].model_copy(update={"program": {"name": "fresh_pop", "keyframes": [
+        {"progress": 0.0, "dx": -0.06, "dy": 0.0, "scale": 0.7},
+        {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+    ]}})
+    data[3][1] = original.model_copy(update={"segments": [pop, original.segments[1]]})
+
+    out, [decision] = run(*data)
+    assert decision.decision == NO_GEOMETRY_INHERITANCE
+    cue = adapted(out, "beat-002")
+    entry = cue.segments[0]
+    assert (entry.start, entry.end) == (pop.start, pop.end)
+    assert entry.program["name"] == CONTINUITY_PROGRAM
+    assert all((frame["dx"], frame["dy"], frame["scale"]) == (0.0, 0.0, 1.0)
+               for frame in entry.program["keyframes"])
+    assert "entry_opacity" not in cue.params
+    assert cue.segments[1] == original.segments[1]
+
+
+@pytest.mark.parametrize("size", [(1920, 1080), (1080, 1920)])
+def test_missing_identity_uses_directional_focus_without_claiming_referent(size) -> None:
+    data = build([obj("old", 0.25, 0.5)], [obj("new", 0.55, 0.5)])
+    data[1][0].primary_asset_ids = ["SCENE_001:asset-01"]
+    data[1][1].primary_asset_ids = ["SCENE_002:asset-01"]
+    out, [decision] = run(*data, enable_focus_continuity=True,
+                          frame_width=size[0], frame_height=size[1])
+    assert decision.decision == "NARRATIVE_FOCUS"
+    assert decision.identity_authority == "NONE"
+    assert decision.evidence["confidence"] == 0.7
+    cue = next(row for row in out if row.beat_id == "beat-002")
+    assert HANDOFF_PARAM not in cue.params
+    assert cue.segments[0].program["keyframes"][0]["dx"] < 0
+    assert cue.segments[0].program["keyframes"][-1]["dx"] == 0
+    assert cue.segments[0].start == data[3][1].segments[0].start
+
+
+def test_missing_focus_chooses_explicit_safe_cut() -> None:
+    data = build([obj("old", 0.25, 0.5)], [obj("new", 0.55, 0.5)])
+    planner = CrossSceneContinuityPlanner()
+    out = planner.plan(package=data[0], story=data[1], composition=data[2], motion=data[3],
+                       assets=data[4], duration=SCENE * len(data[1]), frame_width=1920,
+                       frame_height=1080, enable_focus_continuity=True)
+    [decision] = planner.boundary_decisions
+    assert decision.decision == ABSTAIN
+    assert decision.reason == "safe_cinematic_cut:focus_not_unique"
+    assert planner.decisions == []
+    assert out == data[3]
 
 
 # 15, 16 ----------------------------------------------------------------------------------

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -23,7 +24,7 @@ from app.models import (
     StoryBeat,
     VisualAsset,
 )
-from app.motion.cross_scene import CONTINUITY_PROGRAM, HANDOFF_PARAM
+from app.motion.cross_scene import CONTINUITY_PROGRAM, HANDOFF_PARAM, NARRATIVE_FOCUS, CrossSceneContinuityPlanner
 from app.render.renderer import FFmpegRenderer
 from app.shared.errors import StageFailedError
 from app.targets import REELS_9_16
@@ -137,6 +138,32 @@ def test_without_handoff_the_certified_bridge_still_runs(tmp_path: Path) -> None
     # (1.1 s), well before its successor appears at 1.3 s: there is a referent gap.
     gap = [i for i in range(31, 39) if red[i].sum() < 500 and blue[i].sum() < 500]
     assert gap
+
+
+@pytest.mark.parametrize("size", [(320, 180), (180, 320)])
+def test_focus_continuity_changes_encoded_entry_without_claiming_identity(tmp_path: Path, size) -> None:
+    baseline = _plan(tmp_path, handoff=False, dx=-0.25)
+    baseline = baseline.model_copy(update={"width": size[0], "height": size[1]})
+    package = SimpleNamespace(scenes=[SimpleNamespace(id="S1", order=0, units=[]),
+                                      SimpleNamespace(id="S2", order=1, units=[])])
+    planner = CrossSceneContinuityPlanner()
+    candidate_motion = planner.plan(
+        package=package, story=baseline.story, composition=baseline.composition,
+        motion=baseline.motion, assets=baseline.assets, duration=baseline.duration,
+        frame_width=size[0], frame_height=size[1], enable_focus_continuity=True,
+    )
+    assert len(planner.decisions) == 1
+    assert planner.decisions[0].decision == NARRATIVE_FOCUS
+    assert planner.decisions[0].identity_authority == "NONE"
+    candidate = baseline.model_copy(update={"motion": candidate_motion})
+    old_frames = _frames(FFmpegRenderer().render(baseline, tmp_path / "baseline.mp4"), *size)
+    new_frames = _frames(FFmpegRenderer().render(candidate, tmp_path / "candidate.mp4"), *size)
+    old_blue, new_blue = _mask(old_frames, BLUE), _mask(new_frames, BLUE)
+    # Same input and reveal frame; the attention lead is visible and settles on
+    # exactly the original Composition position.
+    assert old_blue[38].sum() == new_blue[38].sum() == 0
+    assert abs(_centre_x(old_blue[39]) - _centre_x(new_blue[39])) >= 0.015 * size[0]
+    assert abs(_centre_x(old_blue[-1]) - _centre_x(new_blue[-1])) <= 1.0
 
 
 @pytest.mark.parametrize("spec", [
