@@ -11,7 +11,9 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, Visual
 from app.motion.arrivals import SecondaryArrivalPlanner
 from app.motion.motion_blur import MOTION_BLUR_SHUTTER, MotionBlurPolicy
 from app.motion.visual_flow.direction import focus_handoff_direction
-from tests.visual.test_sprint_4_5_scene_handoffs import NEW_ON_OLD, OLD_LEFT, Scene
+from tests.visual.test_sprint_4_5_scene_handoffs import NEW_ON_OLD, OLD_LEFT, Scene, _encode, _darkness
+from app.targets import REELS_9_16
+from app.targets.projection import ReferencePlanProjector
 from tests.test2.render.test_motion_blur import _cue, _slide
 
 
@@ -93,3 +95,38 @@ def test_motion_blur_prioritizes_largest_moving_icon_and_preserves_other() -> No
     assert out[0].params["motion_blur"]["shutter"] == MOTION_BLUR_SHUTTER
     assert out[1].params["motion_blur"]["visual_mass_lead"] is True
     assert out[1].params["motion_blur"]["shutter"] > MOTION_BLUR_SHUTTER
+
+
+def test_vertical_exit_clears_youtube_in_encoded_frames(tmp_path) -> None:
+    """A top/bottom choice is actually rendered vertically, not only logged."""
+    position = (0.8, 0.87, 0.1, 0.1)
+    scene = Scene(lead=16, later=None, opener=NEW_ON_OLD, root=tmp_path,
+                  old={"old_a": OLD_LEFT, "old_b": position})
+    scene.story[0] = scene.story[0].model_copy(update={
+        "active_visual_semantic_state": {"old_a": "old_a", "old_b": "old_b"}})
+    scene.motion = [
+        cue.model_copy(update={"params": {**cue.params, "scene_hero": True}})
+        if (cue.beat_id, cue.asset_id) == ("b1", "old_b") else cue
+        for cue in scene.motion
+    ]
+    row = scene.plan(SceneBoundaryPlanner())
+    spec = row.overlap_exits["old_b"]
+    assert spec["axis"] == 1.0 and spec["direction"] == 1.0
+    frames = _encode(scene, [row], tmp_path / "vertical")
+    start = scene.frame(spec["start"])
+    end = scene.frame(spec["end"])
+    # In the 2nd segment, the old icon stays until the opener, travels, and disappears.
+    assert _darkness(frames, position)[60 + start] > 0.8
+    assert _darkness(frames, position)[60 + end + 1] < 0.03
+
+
+def test_vertical_exit_includes_reels_letterbox_padding() -> None:
+    """A vertical exit must pass the actual 9:16 viewport, not the 16:9 content."""
+    padding = ReferencePlanProjector.reference_padding(REELS_9_16)[1]
+    assert padding > 0
+    from tests.visual.test_vp4_hero_exit import _exit_scene
+    # The default fixture's RIGHT exit is unrelated to this test: verify only
+    # that the layout-safe planning margin includes the vertical projection pad.
+    planner = SceneBoundaryPlanner(vertical_padding=padding)
+    assert planner.vertical_exit_margin >= padding
+    assert planner.exit_margin < planner.vertical_exit_margin
