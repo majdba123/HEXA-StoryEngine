@@ -3,12 +3,12 @@
 **Working branch:** `feature/storytelling-sprints` (one branch for ALL six sprints).
 **Base snapshot:** `montage` at `624a032c706c6c364b2a2795d67101de15b7ed10` (includes causal-overlap fix).
 **Protected branches:** `montage`, `bayer`. Never change, reset, force-push, or merge them.
-**Current sprint:** S01 — Cross-scene continuity.
+**Current sprint:** S01 — Cross-scene continuity (VERIFIED; S02 remains TODO).
 **Allowed statuses:** TODO / IN_PROGRESS / VERIFIED / BLOCKED. A sprint is VERIFIED only after required checks pass; report encoding gaps honestly.
 
 | ID | Sprint | Status | Implementation commit | Tests / A-B evidence |
 | --- | --- | --- | --- | --- |
-| S01 | Authored cross-scene referent and object continuity | TODO | — | — |
+| S01 | Authored cross-scene referent and object continuity | VERIFIED | `80a0af96c6c8eb642928911e07a98cb0080839a4` | Synthetic encoded 16:9 and 9:16 A/B passed; affected regression suites passed. No real package media available. |
 | S02 | Safe four-direction ENTRY / EXIT with semantic lifetime | TODO | — | — |
 | S03 | Causal source → action → reaction → result visual interactions | TODO | — | — |
 | S04 | Hook selection + primary attention + ordered focus handoff | TODO | — | — |
@@ -36,3 +36,11 @@
 - **S06:** inspect and reuse current blur/payoff code; ensure encoded effect is perceptible where warranted, stays comfortable, and has no major render-time regression; do not duplicate effect passes.
 
 **Definition of done:** For each sprint, compare identical inputs baseline vs candidate, show a clear benefit in eligible scenes, enumerate justified abstentions, pass code and integration checks, provide encoded A/B proof if media is available, and declare remaining limitations explicitly.
+
+## S01 verification — 2026-10-18
+
+- Changed `app/motion/cross_scene.py` and `app/pipeline.py`; added regression coverage in `tests/test2/motion/test_cross_scene_continuity.py`, `tests/test2/pipeline/test_cross_scene_transaction.py`, and `tests/test2/render/test_cross_scene_handoff_encoded.py`.
+- Authored referent handoffs now replace an in-place successor's fresh pop/slide ENTRY with a stationary opaque ENTRY at the same reveal time. A missing referent can use authored primary attention, geometry, and the existing Motion entry window for a speed-bounded directional lead; it never receives `handoff_from` or a shared identity claim. Every production scene boundary records a semantic/focus decision or an explicit safe-cut reason, with confidence in its diagnostic payload. The existing Text/Boundary transaction can revoke a focus candidate.
+- `python -m pytest tests/test2/motion/test_cross_scene_continuity.py tests/test2/pipeline/test_cross_scene_transaction.py -q` (project `.venv`): passed. `python -m pytest tests/test2/render/test_cross_scene_handoff_encoded.py tests/test2/render/test_renderer_handoff_continuity.py tests/test2/motion/test_continuity_contracts.py tests/test2/render/test_transition_regressions.py -q` (project `.venv`): passed. `git diff --check`: passed.
+- Encoded synthetic A/B used identical input scenes and FFmpeg at 320×180 and 180×320. The focus carrier's first visible frame moved at least 1.5% of frame width toward the previous focus, while the final encoded centroid matched baseline within one pixel. Existing full-resolution YouTube 16:9 and Reels 9:16 encoded handoff tests passed. Identity-free boundaries with no unique visible focus, unsafe distance/geometry, text/artwork interference, or occupied entry windows retain the certified cut/bridge.
+- Limitation: no real package/audio media was present in the checkout, so real-package first-ten-second A/B, audio-sync inspection, and user visual acceptance remain unverified. No S02–S06 changes were made.
