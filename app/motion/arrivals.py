@@ -517,10 +517,11 @@ class SecondaryArrivalPlanner:
             gap, sign = (top_gap, -1.0) if top_gap <= bottom_gap else (bottom_gap, 1.0)
             if gap / aspect > SLIDE_EDGE_REACH + _EPS:
                 return None
-        seconds = min(SLIDE_SECONDS, window)
+        seconds = min(0.50 if flow_direction is not None else SLIDE_SECONDS, window)
         if seconds + _EPS < SLIDE_MIN_SECONDS:
             return None
-        distance = min(SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
+        distance = min(0.12 if flow_direction is not None else SLIDE_DISTANCE,
+                       SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
         if distance + _EPS < SLIDE_MIN_DISTANCE:
             return None
         dx, dy = (0.0, sign * distance * aspect) if vertical else (sign * distance, 0.0)
@@ -542,12 +543,14 @@ class SecondaryArrivalPlanner:
                 return None
         params = self._with_opacity(dict(cue.params), cue, seconds)
         params.pop("hero_entry", None)
+        start_scale = 0.93 if flow_direction is not None else 1.0
         params["reference_slide"] = {"dx": round(dx, 6), **({"dy": round(dy, 6)} if vertical else {}),
                                      "seconds": round(seconds, 6),
+                                     **({"start_scale": start_scale} if flow_direction is not None else {}),
                                      "peak_speed": round(SMOOTHSTEP_PEAK * distance / seconds, 4),
                                      "profile": "REFERENCE_SLIDE",
                                      **({"scene_flow": True} if flow_direction is not None else {})}
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
         return self._gesture(cue, params, "reference_slide_arrival",
-                             lambda settle: slide_frames(dx, settle, dy), seconds)
+                             lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale), seconds)
