@@ -5,7 +5,7 @@ timing, Composition and Final Package data are never changed by this module.
 """
 from __future__ import annotations
 
-from app.models import CompositionBeat, StoryBeat
+from app.models import CompositionBeat, LayoutItem, StoryBeat
 from app.targets.context import active_target
 
 
@@ -45,3 +45,22 @@ def focus_handoff_direction(
     if abs(dx) >= abs(dy):
         return (1.0 if dx > 0 else -1.0, 0.0)
     return (0.0, 1.0 if dy > 0 else -1.0)
+
+
+def spatial_entry_direction(item: LayoutItem, *, frame_width: int | None = None,
+                            frame_height: int | None = None) -> tuple[float, float]:
+    """Choose a staging edge using physical pixel distance, never asset names.
+
+    Spatially distributed art naturally enters from left, right, top and bottom.
+    This only guides the entry gesture; collision/readability remains Motion-owned.
+    """
+    target = active_target()
+    width = frame_width if frame_width is not None else target.width
+    height = frame_height if frame_height is not None else target.height
+    options = (
+        (max(0.0, item.x - item.width / 2) * width, (-1.0, 0.0)),
+        (max(0.0, 1 - item.x - item.width / 2) * width, (1.0, 0.0)),
+        (max(0.0, item.y - item.height / 2) * height, (0.0, -1.0)),
+        (max(0.0, 1 - item.y - item.height / 2) * height, (0.0, 1.0)),
+    )
+    return min(options, key=lambda option: option[0])[1]
