@@ -29,6 +29,8 @@ from __future__ import annotations
 from math import hypot
 
 from app.models import LayoutItem, MotionCue, MotionSegment, StoryBeat
+from app.choreography.relation_contract import RelationTimingMode, relation_timing_mode
+from app.motion.rhythm import MIN_FOCUS_OVERLAP_SECONDS
 from app.motion.timing import (
     motion_comfort,
     projected_motion_activity_px,
@@ -102,12 +104,70 @@ def _scaled(program: dict, gain: float) -> dict:
     return {**program, "keyframes": frames}
 
 
+def _causal_overlap_end_floors(
+    cues: list[MotionCue], beat: StoryBeat,
+) -> dict[tuple[str, int], float]:
+    """Preserve already-proven authored INTERACT/REACT overlap during read-hold trimming.
+
+    Motion has synchronized these segments before this pass. Trimming only their ends
+    must not erase that contract. Protect at most the existing overlap (up to the
+    two-frame focus floor), without moving starts, extending Story time, or fabricating
+    overlap for a pair that was already invalid. Ordered cross-event relations remain
+    sequential; they receive no protection.
+    """
+    activations = {row.asset_id: row for row in beat.asset_activations}
+    by_asset = {cue.asset_id: cue for cue in cues}
+    floors: dict[tuple[str, int], float] = {}
+    for cue in cues:
+        for source_index, source in enumerate(cue.segments):
+            if (
+                source.phase != "INTERACT"
+                or source.involvement != "SOURCE"
+                or not source.target_asset_id
+                or source.source_asset_id != cue.asset_id
+            ):
+                continue
+            target_cue = by_asset.get(source.target_asset_id)
+            if target_cue is None:
+                continue
+            if relation_timing_mode(
+                source_activation=activations.get(source.source_asset_id),
+                target_activation=activations.get(source.target_asset_id),
+            ) != RelationTimingMode.OVERLAP_REQUIRED:
+                continue
+            for target_index, target in enumerate(target_cue.segments):
+                if not (
+                    target.phase == "REACT"
+                    and target.semantic_event_id == source.semantic_event_id
+                    and target.source_asset_id == source.source_asset_id
+                    and target.target_asset_id == source.target_asset_id
+                    and target.relationship == source.relationship
+                ):
+                    continue
+                overlap = min(float(source.end), float(target.end)) - max(
+                    float(source.start), float(target.start)
+                )
+                if overlap <= _EPS:
+                    continue  # Original contradiction: retain fail-closed validation.
+                protected = min(overlap, MIN_FOCUS_OVERLAP_SECONDS)
+                source_key = (cue.asset_id, source_index)
+                target_key = (target_cue.asset_id, target_index)
+                floors[source_key] = max(
+                    floors.get(source_key, 0.0), float(target.start) + protected
+                )
+                floors[target_key] = max(
+                    floors.get(target_key, 0.0), float(source.start) + protected
+                )
+    return floors
+
+
 def reserve_scene_read_hold(
     cues: list[MotionCue], *, beat: StoryBeat, hold: float, items: dict[str, LayoutItem],
 ) -> list[MotionCue]:
     deadline = float(beat.end) - max(0.0, float(hold))
     # A Story semantic-event proxy is executed on Story's exact proxy window: never retime it.
     proxies = {(proxy.asset_id, proxy.semantic_event_id) for proxy in beat.semantic_event_proxies}
+    causal_end_floors = _causal_overlap_end_floors(cues, beat)
     output = list(cues)
     for position, cue in enumerate(cues):
         item = items.get(cue.asset_id)
@@ -133,9 +193,15 @@ def reserve_scene_read_hold(
                                       "start": round(start, 4), "deadline": round(deadline, 4)}))
                 continue
             minimum = min(end - start, motion_comfort(segment.phase).minimum_seconds)
-            new_end = max(start + minimum, deadline)
+            causal_floor = causal_end_floors.get((cue.asset_id, index), 0.0)
+            new_end = max(start + minimum, deadline, causal_floor)
             if new_end >= end - _EPS:
-                notes.append((index, {"phase": segment.phase, "decision": "comfort_minimum_reaches_hold",
+                decision = (
+                    "causal_relation_overlap_priority"
+                    if causal_floor > deadline + _EPS and causal_floor >= start + minimum - _EPS
+                    else "comfort_minimum_reaches_hold"
+                )
+                notes.append((index, {"phase": segment.phase, "decision": decision,
                                       "shortfall_ms": round((new_end - deadline) * 1000)}))
                 continue
             duration = new_end - start
@@ -156,8 +222,17 @@ def reserve_scene_read_hold(
             note = {"phase": segment.phase, "decision": "finished_before_read_hold",
                     "end_from": round(end, 4), "end_to": round(new_end, 4), "amplitude_gain": round(gain, 4)}
             if new_end > deadline + _EPS:
-                note.update(decision="shortened_to_comfort_minimum",
-                            shortfall_ms=round((new_end - deadline) * 1000))
+                cause_is_limiting = (
+                    causal_floor > deadline + _EPS
+                    and causal_floor >= start + minimum - _EPS
+                )
+                note.update(
+                    decision=(
+                        "causal_relation_overlap_priority"
+                        if cause_is_limiting else "shortened_to_comfort_minimum"
+                    ),
+                    shortfall_ms=round((new_end - deadline) * 1000),
+                )
             notes.append((index, note))
         # Optional gestures still moving inside the hold yield instead of taking it.
         yielded = [
