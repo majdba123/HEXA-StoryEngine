@@ -3,13 +3,13 @@
 **Working branch:** `feature/storytelling-sprints` (one branch for ALL six sprints).
 **Base snapshot:** `montage` at `624a032c706c6c364b2a2795d67101de15b7ed10` (includes causal-overlap fix).
 **Protected branches:** `montage`, `bayer`. Never change, reset, force-push, or merge them.
-**Current sprint:** S01 — Cross-scene continuity (VERIFIED; S02 remains TODO).
+**Current sprint:** S02 — Four-way visual flow (VERIFIED by synthetic encoded and regression CI; awaiting real-package visual acceptance). Next planned sprint: S03.
 **Allowed statuses:** TODO / IN_PROGRESS / VERIFIED / BLOCKED. A sprint is VERIFIED only after required checks pass; report encoding gaps honestly.
 
 | ID | Sprint | Status | Implementation commit | Tests / A-B evidence |
 | --- | --- | --- | --- | --- |
 | S01 | Authored cross-scene referent and object continuity | VERIFIED | `80a0af96c6c8eb642928911e07a98cb0080839a4` | Synthetic encoded 16:9 and 9:16 A/B passed; affected regression suites passed. No real package media available. |
-| S02 | Safe four-direction ENTRY / EXIT with semantic lifetime | TODO | — | — |
+| S02 | Safe four-direction ENTRY / EXIT with semantic lifetime | VERIFIED (synthetic CI) | `61bb73d3898cdf3d7c37b545b3d4ab8b32e8d13e` | GitHub Actions [run 39170163399](https://github.com/majdba123/HEXA-StoryEngine/actions/runs/39170163399) green: S01, S02 focused FFmpeg encoded vertical exit, causal regressions, broad visual/layer, backward-compatible Final Package; real Black Hat+audio A/B and visual approval pending. |
 | S03 | Causal source → action → reaction → result visual interactions | TODO | — | — |
 | S04 | Hook selection + primary attention + ordered focus handoff | TODO | — | — |
 | S05 | Narration-synchronized visual rhythm, rests, and readable holds | TODO | — | — |
@@ -44,3 +44,10 @@
 - `python -m pytest tests/test2/motion/test_cross_scene_continuity.py tests/test2/pipeline/test_cross_scene_transaction.py -q` (project `.venv`): passed. `python -m pytest tests/test2/render/test_cross_scene_handoff_encoded.py tests/test2/render/test_renderer_handoff_continuity.py tests/test2/motion/test_continuity_contracts.py tests/test2/render/test_transition_regressions.py -q` (project `.venv`): passed. `git diff --check`: passed.
 - Encoded synthetic A/B used identical input scenes and FFmpeg at 320×180 and 180×320. The focus carrier's first visible frame moved at least 1.5% of frame width toward the previous focus, while the final encoded centroid matched baseline within one pixel. Existing full-resolution YouTube 16:9 and Reels 9:16 encoded handoff tests passed. Identity-free boundaries with no unique visible focus, unsafe distance/geometry, text/artwork interference, or occupied entry windows retain the certified cut/bridge.
 - Limitation: no real package/audio media was present in the checkout, so real-package first-ten-second A/B, audio-sync inspection, and user visual acceptance remain unverified. No S02–S06 changes were made.
+
+## S02 verification — 2026-10-19
+
+- **Implementation baseline:** `61bb73d3898cdf3d7c37b545b3d4ab8b32e8d13e`. Scope: `app/motion/visual_flow/direction.py` (small proposed cardinal attention offsets), `app/motion/arrivals.py` (primary four-way safe slide), `app/boundary/release.py` (four-direction safe hero exit and contextual ordinary exits), `app/render/renderer.py` (execute planned X/Y exits), `app/motion/motion_blur.py` (dominant alpha-footprint shutter when multiple assets move), `app/motion/hero_travel.py` (selective larger scale under existing gates), `app/pipeline.py` (target-projection margins and available assets), `app/motion/cross_scene.py` (S01/S02 authority separation), and `tests/test2/motion/test_scene_flow_s02.py`.
+- **Independent verification:** [GitHub Actions 39170163399](https://github.com/majdba123/HEXA-StoryEngine/actions/runs/39170163399), conclusion `success` on the exact implementation SHA. Static checks, S01 encoded A/B, S02 directional entrants/exits/motion-blur and actual FFmpeg-encoded vertical exit, causal-overlap regressions, broad visual/Pass2 regressions and Final Package backward-compatibility tests all passed.
+- **Legacy guarantees:** Original scale candidates and defaults kept for non-eligible scenes, held referent exits fail closed, no hard-coded target dimensions, no Final Package 2.0 schema changes, no scene graph or narration timing edits. Short, unsafe or unowned transitions preserve certified fallback.
+- **Unverified/acceptance limits:** No real Black Hat package plus voice media was rendered side-by-side or auditioned on this runner; a real package A/B for the opening seconds and user visual quality approval is still required. Eligible entries are restrained slides, not guaranteed full-frame travel on all assets; safety gates deliberately abstain on some boundaries. Do not represent this synthetic verification as proof of a particular real-video aesthetic.
