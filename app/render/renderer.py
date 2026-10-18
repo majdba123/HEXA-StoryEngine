@@ -352,6 +352,7 @@ class FFmpegRenderer:
             bridge_start, bridge_end = release[0], release[2]
         bridge_duration = max(0.0, bridge_end - bridge_start)
         planned_exits = self._planned_exit_starts(plan, beat, previous_beat) if release is not None else {}
+        exit_vectors = self._planned_exit_vectors(plan, beat, previous_beat) if release is not None else {}
         exit_blur_spec = self._planned_exit_blur(plan, beat, previous_beat)
         visual_carrier_id = (
             None
@@ -497,6 +498,15 @@ class FFmpegRenderer:
                     exit_end = release[2] - 0.75 / plan.fps
                     if exit_end > exit_begin + 0.5 / plan.fps:
                         horizontal, vertical = self._offcanvas_exit_offset(plan=plan, item=item), 0
+                        vector = exit_vectors.get(item.asset_id)
+                        if vector is not None:
+                            projection = plan.projection
+                            reference_w = (projection.reference_width * projection.scale
+                                           if projection is not None else plan.width)
+                            reference_h = (projection.reference_height * projection.scale
+                                           if projection is not None else plan.height)
+                            horizontal = round(vector[0] * reference_w)
+                            vertical = round(vector[1] * reference_h)
                         progress_expr = self._bridge_progress_expression(
                             start=exit_begin, duration=exit_end - exit_begin,
                         )
@@ -1257,6 +1267,31 @@ class FFmpegRenderer:
         row = next((r for r in plan.scene_boundaries
                     if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
         return dict(row.exit_motion_blur) if row is not None else {}
+
+    @staticmethod
+    def _planned_exit_vectors(
+        plan: RenderPlan, beat: StoryBeat, previous_beat: StoryBeat | None,
+    ) -> dict[str, tuple[float, float]]:
+        """Flow vectors are frame-independent and shared by rigid cutout families.
+
+        Old SceneBoundaryRelease records without flow vectors use the certified
+        nearest-horizontal exit, preserving legacy renders byte-for-byte.
+        """
+        if previous_beat is None:
+            return {}
+        row = next((row for row in plan.scene_boundaries
+                    if row.beat_id == beat.id and row.from_beat_id == previous_beat.id), None)
+        if row is None or row.mode != "CRISP_HANDOFF":
+            return {}
+        audit = row.audit.get("exit") or {}
+        entries = audit.get("vectors") or {}
+        output = {}
+        for asset_id, vector in entries.items():
+            if isinstance(vector, (list, tuple)) and len(vector) == 2:
+                dx, dy = float(vector[0]), float(vector[1])
+                if math.isfinite(dx) and math.isfinite(dy):
+                    output[str(asset_id)] = (dx, dy)
+        return output
 
     @staticmethod
     def _planned_exit_starts(
