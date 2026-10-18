@@ -601,6 +601,16 @@ class StoryEnginePipeline:
             self.emphasis_leaders = EmphasisLeaderPolicy()
             motion = self.emphasis_leaders.plan(story=story, composition=composition, motion=motion,
                                                 assets=assets)
+            # S01: identity-free focus leads belong BEFORE Text/Boundary authoring, so
+            # production never needs a second text/boundary pass merely for focus.
+            # Authored referent handoffs still use the existing late transaction.
+            motion = self.cross_scene.plan(
+                package=shared.package, story=story, composition=composition,
+                motion=motion, assets=assets, duration=shared.transcript.duration,
+                fps=target.fps, text=shared.text, frame_width=target.width,
+                frame_height=target.height, enable_focus_continuity=True, focus_only=True,
+            )
+            focus_boundary_decisions = list(self.cross_scene.boundary_decisions)
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,
                 assets=assets,
@@ -719,11 +729,12 @@ class StoryEnginePipeline:
                 text=text,
                 text_composition=text_composition,
                 text_motion=text_motion,
-                scene_boundaries=scene_boundaries,
+                scene_boundaries=scene_boundaries, enable_focus_continuity=False,
             )
-            if self.cross_scene.boundary_decisions:
+            all_boundary_decisions = [*focus_boundary_decisions, *self.cross_scene.boundary_decisions]
+            if all_boundary_decisions:
                 (diagnostics / "cross-scene-continuity.json").write_text(
-                    json.dumps([row.to_payload() for row in self.cross_scene.boundary_decisions], indent=2),
+                    json.dumps([row.to_payload() for row in all_boundary_decisions], indent=2),
                     encoding="utf-8",
                 )
 
@@ -768,6 +779,7 @@ class StoryEnginePipeline:
         text_composition,
         text_motion,
         scene_boundaries,
+        enable_focus_continuity: bool = True,
     ):
         """Apply referent continuity only if the plan stays transactionally consistent.
 
@@ -784,7 +796,7 @@ class StoryEnginePipeline:
             assets=assets, duration=shared.transcript.duration, fps=target.fps, text=text,
             text_composition=text_composition, text_motion=text_motion,
             scene_boundaries=scene_boundaries, frame_width=target.width, frame_height=target.height,
-            enable_focus_continuity=True,
+            enable_focus_continuity=enable_focus_continuity,
         )
         if not any(decision.accepted for decision in self.cross_scene.decisions):
             return motion
