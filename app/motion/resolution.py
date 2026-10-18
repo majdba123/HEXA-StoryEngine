@@ -135,6 +135,50 @@ def _pop_frames(start_scale: float, settle: float) -> list[dict]:
     return frames
 
 
+def _icon_hit_safe(item: LayoutItem, layout: dict[str, LayoutItem] | None) -> bool:
+    """An icon-only 7% pulse must not invent an overlap or leave the frame."""
+    radius_w, radius_h = float(item.width) * 1.07 / 2, float(item.height) * 1.07 / 2
+    boosted = (float(item.x) - radius_w, float(item.y) - radius_h,
+               float(item.x) + radius_w, float(item.y) + radius_h)
+    if min(boosted[0], boosted[1]) < 0.01 or max(boosted[2], boosted[3]) > 0.99:
+        return False
+    for other in (layout or {}).values():
+        if other.asset_id == item.asset_id:
+            continue
+        normal = (float(item.x) - float(item.width) / 2,
+                  float(item.y) - float(item.height) / 2,
+                  float(item.x) + float(item.width) / 2,
+                  float(item.y) + float(item.height) / 2)
+        outside = (float(other.x) - float(other.width) / 2,
+                   float(other.y) - float(other.height) / 2,
+                   float(other.x) + float(other.width) / 2,
+                   float(other.y) + float(other.height) / 2)
+        def area(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+            return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+                0.0, min(a[3], b[3]) - max(a[1], b[1]))
+        if area(boosted, outside) > area(normal, outside) + 1e-6:
+            return False
+    return True
+
+
+def _icon_hit_frames(settle: float) -> list[dict]:
+    """One eased scale-up, short readable plateau, single return. No lateral jiggle."""
+    settle = max(0.0, min(1.0, settle))
+    frames = [
+        {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 0.93, "easing": "smoothstep"},
+        {"progress": round(settle * 0.55, 6), "dx": 0.0, "dy": 0.0,
+         "scale": 1.07, "easing": "smoothstep"},
+        {"progress": round(settle * 0.77, 6), "dx": 0.0, "dy": 0.0,
+         "scale": 1.07, "easing": "smoothstep"},
+        {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0,
+         "scale": 1.0, "easing": "smoothstep"},
+    ]
+    if settle < 1.0 - _EPS:
+        frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0,
+                       "scale": 1.0, "easing": "smoothstep"})
+    return frames
+
+
 def _static(program: dict | None) -> bool:
     return not any(
         abs(float(f.get("dx", 0.0))) > 1e-9 or abs(float(f.get("dy", 0.0))) > 1e-9
@@ -144,8 +188,9 @@ def _static(program: dict | None) -> bool:
 
 
 class PayoffResolutionDirector:
-    def __init__(self, style: WashStyle = REFERENCE_WASH) -> None:
+    def __init__(self, style: WashStyle = REFERENCE_WASH, *, icon_focus_mode: bool = False) -> None:
         self.style = style
+        self.icon_focus_mode = icon_focus_mode
         self.decisions: list[ResolutionDecision] = []
 
     def plan(
@@ -183,6 +228,12 @@ class PayoffResolutionDirector:
         for position, (score, start, anchor, spec) in sorted(candidates, key=lambda row: (-row[1][0][0], -row[1][0][1],
                                                                                           -row[1][0][2], row[0])):
             decision = self.decisions[position]
+            if self.icon_focus_mode:
+                # Keep the backdrop crisp; focus the actual authored result icon
+                # rather than greying/defocusing unrelated scene artwork.
+                self.decisions[position] = replace(decision, reasons=decision.reasons +
+                                                   ("wash:icon_focused_payoff",))
+                continue
             if any(abs(start - other) < WASH_MIN_GAP_SECONDS - _EPS for other in chosen):
                 self.decisions[position] = replace(decision, reasons=decision.reasons + ("wash:reference_spacing",))
                 continue
@@ -301,7 +352,8 @@ class PayoffResolutionDirector:
             cue = updates.get(asset_id, by_asset[asset_id])
             followers = rigid_followers(cue, cues, layout, assets_by_id)
             popped, why = self._pop(cue, layout.get(asset_id), assets_by_id,
-                                    family_size=1 if followers is not None else 2)
+                                    family_size=1 if followers is not None else 2,
+                                    icon_focus_mode=self.icon_focus_mode, layout=layout)
             if popped is not None:
                 cause = self._cause(event, popped, by_asset=by_asset, layout=layout, family=family)
                 if cause is not None:
@@ -388,7 +440,9 @@ class PayoffResolutionDirector:
 
     @staticmethod
     def _pop(
-        cue: MotionCue, item: LayoutItem | None, assets_by_id: dict[str, VisualAsset], *, family_size: int,
+        cue: MotionCue, item: LayoutItem | None, assets_by_id: dict[str, VisualAsset], *,
+        family_size: int, icon_focus_mode: bool = False,
+        layout: dict[str, LayoutItem] | None = None,
     ) -> tuple[MotionCue | None, str]:
         """Give a resolving subject the reference scale pop when nothing else owns its entry."""
         params = cue.params if isinstance(cue.params, dict) else {}
@@ -417,9 +471,15 @@ class PayoffResolutionDirector:
         if projected_motion_activity_px(dx=0.0, dy=0.0, scale=start_scale, item_width=item.width,
                                         item_height=item.height) < POP_MIN_ACTIVITY_PX:
             return None, "pop_below_visible_floor"
+        hit = icon_focus_mode and seconds >= 0.29 and _icon_hit_safe(item, layout)
+        if hit:
+            start_scale = 0.93
         new_params = dict(params)
         new_params["reference_pop"] = {"start_scale": round(start_scale, 5), "seconds": round(seconds, 6),
                                        "profile": "REFERENCE_POP"}
+        if hit:
+            new_params["payoff_icon_hit"] = {"peak_scale": 1.07, "duration": round(seconds, 6),
+                                             "motion": "held_scale_no_jitter"}
         opacity = params.get("entry_opacity")
         if isinstance(opacity, dict):
             # The pop carries the arrival; the faint first frames shorten to the pop itself.
@@ -429,8 +489,11 @@ class PayoffResolutionDirector:
         if not segments:
             if not _static(params.get("program")):
                 return None, "certified_gesture_owns_entry"
-            new_params["program"] = {**(params.get("program") or {}), "name": "reference_pop_arrival",
-                                     "settle_progress": 1.0, "keyframes": _pop_frames(start_scale, seconds / window)}
+            new_params["program"] = {**(params.get("program") or {}),
+                                     "name": "reference_icon_hit" if hit else "reference_pop_arrival",
+                                     "settle_progress": 1.0,
+                                     "keyframes": (_icon_hit_frames(seconds / window) if hit
+                                                   else _pop_frames(start_scale, seconds / window))}
             return cue.model_copy(update={"params": new_params}), "applied"
         replaced = False
         for position, row in enumerate(segments):
@@ -445,8 +508,10 @@ class PayoffResolutionDirector:
             # A PAYOFF accent that starts with the reveal overrides the entry on screen, so
             # it carries the pop itself (one gesture), keeping its phase and its window.
             segments[position] = row.model_copy(update={"program": {
-                **row.program, "name": f"reference_pop_{row.phase.lower()}", "settle_progress": 1.0,
-                "keyframes": _pop_frames(start_scale, seconds / (float(row.end) - float(row.start)))}})
+                **row.program, "name": f"reference_icon_hit_{row.phase.lower()}" if hit
+                else f"reference_pop_{row.phase.lower()}", "settle_progress": 1.0,
+                "keyframes": (_icon_hit_frames(seconds / (float(row.end) - float(row.start))) if hit
+                              else _pop_frames(start_scale, seconds / (float(row.end) - float(row.start)))}})
             replaced = True
         if not replaced:
             return None, "no_static_entry_to_replace"
