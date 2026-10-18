@@ -85,8 +85,24 @@ def _replaceable_decorative_entry(cue: MotionCue) -> bool:
     """Replace modest generic entry wiggles, never authored event execution."""
     params = cue.params or {}
     semantic = params.get("semantic_focus") or {}
-    if semantic.get("event_flow_execution") not in (None, "NONE"):
+    execution = semantic.get("event_flow_execution")
+    event = semantic.get("event_flow") or {}
+    if execution not in (None, "NONE", "ENTRY_FALLBACK"):
         return False
+    if execution == "ENTRY_FALLBACK":
+        # A non-causal ESTABLISH/ADD event is a visual introduction, not a
+        # protected interaction. Preserve every explicit/cause/result event.
+        if event.get("relation_only") or event.get("relationship") or (
+                event.get("source_asset_id") or event.get("target_asset_id")
+                or event.get("result_asset_id") or event.get("incoming_from_asset_id")
+                or event.get("handoff_to_asset_ids") or event.get("handoff_to_event_ids")
+                or event.get("handoff_to_event_id")):
+            return False
+        phases = event.get("phase_chain") or []
+        if any(row.get("stage") not in ("ESTABLISH", "ADD") or row.get("relationship")
+               or row.get("semantic_action") not in (None, "ESTABLISH", "ADD", "REVEAL")
+               for row in phases):
+            return False
     if params.get("causal_arrival") or params.get("hero_emphasis") or params.get("payoff_resolution"):
         return False
     if any(row.phase != "ENTRY" or row.semantic_action or row.connection
@@ -96,14 +112,17 @@ def _replaceable_decorative_entry(cue: MotionCue) -> bool:
     name = str(program.get("name") or "")
     if name.startswith("density_safe_"):
         name = name[len("density_safe_"):]
-    if not name.startswith("reference_") or name.startswith(("reference_pop", "reference_slide")):
+    if name.startswith("event_chain_"):
+        if execution != "ENTRY_FALLBACK":
+            return False
+    elif not name.startswith("reference_") or name.startswith(("reference_pop", "reference_slide")):
         return False
     frames = program.get("keyframes") or []
     if not frames or "semantic_peak_progress" in program:
         return False
-    return all(abs(float(row.get("dx", 0.0))) <= 0.045
-               and abs(float(row.get("dy", 0.0))) <= 0.045
-               and 0.95 <= float(row.get("scale", 1.0)) <= 1.045
+    return all(abs(float(row.get("dx", 0.0))) <= 0.065
+               and abs(float(row.get("dy", 0.0))) <= 0.065
+               and 0.93 <= float(row.get("scale", 1.0)) <= 1.085
                for row in frames)
 
 
