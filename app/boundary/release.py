@@ -63,7 +63,7 @@ class SceneBoundaryPlanner:
     def __init__(self, *, horizontal_padding: float = 0.0, vertical_padding: float = 0.0) -> None:
         self.classifier = VisualTransitionPolicy()
         self.footprints = AlphaFootprintResolver()
-        # Both margins are needed: a 16:9 frame projected on Reels can have large
+        # Both margins are needed: a wide reference frame projected onto a taller viewport can have large
         # TOP/BOTTOM letterbox regions, not just side padding.
         self.exit_margin = _OFFSCREEN_MARGIN + max(0.0, float(horizontal_padding))
         self.vertical_exit_margin = _OFFSCREEN_MARGIN + max(0.0, float(vertical_padding))
