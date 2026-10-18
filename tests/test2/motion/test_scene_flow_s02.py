@@ -215,7 +215,14 @@ def test_multi_scene_encoded_arrival_differs_visibly_from_abstaining_baseline(tm
     # FFmpeg may quantize the exact reveal frame; require a sustained visible A/B
     # difference during the legal entry, not an arbitrary single frame.
     entry_difference = np.abs(changed[start:start + 14] - original[start:start + 14])
-    assert entry_difference.mean(axis=(1, 2)).max() > 1.0
+    global_diff = np.abs(changed - original).mean(axis=(1, 2))
+    observed_ink = 1.0 - changed.mean(axis=(1, 2)) / 255.0
+    assert entry_difference.mean(axis=(1, 2)).max() > 1.0, (
+        f"start={start}, global_diff_max={global_diff.max():.4f}, "
+        f"global_diff_argmax={global_diff.argmax()}, "
+        f"ink_at_start={observed_ink[start]:.4f}, ink_peak={observed_ink.max():.4f}, "
+        f"first_ink_frames={np.where(observed_ink > 0.002)[0][:20].tolist()}, "
+        f"new_program={incoming.params['program']}")
     # Same composition pose after settle; scenes, duration and assets are unchanged.
     end = scene.frame(incoming.start + 0.45) + 60
     assert np.abs(changed[end + 2] - original[end + 2]).mean() < 2.0
