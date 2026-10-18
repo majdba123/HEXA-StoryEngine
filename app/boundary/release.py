@@ -182,9 +182,14 @@ class SceneBoundaryPlanner:
             and _area(footprints[key]) >= _SOLID_OPENER_AREA
             for key, frame in first.items())
         reasons = []
-        left = unit[2] + self.exit_margin            # move left until the right edge is past 0
-        right = 1.0 - unit[0] + self.exit_margin     # move right until the left edge is past 1
-        for direction, distance in sorted(((-1.0, left), (1.0, right)), key=lambda pair: pair[1]):
+        left = unit[2] + self.exit_margin
+        right = 1.0 - unit[0] + self.exit_margin
+        top = unit[3] + self.exit_margin
+        bottom = 1.0 - unit[1] + self.exit_margin
+        # Four directions; prefer the shortest safe exit while preserving timing.
+        directions = ((0.0, -1.0, top), (0.0, 1.0, bottom),
+                      (-1.0, 0.0, left), (1.0, 0.0, right))
+        for dx_sign, dy_sign, distance in sorted(directions, key=lambda row: (row[2], abs(row[1]))):
             seconds = max(HERO_TRAVEL.minimum_seconds,
                           SMOOTHSTEP_PEAK * distance / HERO_TRAVEL.max_normalized_speed)
             frames = ceil(seconds * fps - _EPS)
@@ -202,8 +207,9 @@ class SceneBoundaryPlanner:
                 continue
             for frame in range(opener, end_frame + 1):
                 progress = (frame - opener) / frames
-                shift = direction * distance * (3 * progress ** 2 - 2 * progress ** 3)
-                moved = (unit[0] + shift, unit[1], unit[2] + shift, unit[3])
+                shift = distance * (3 * progress ** 2 - 2 * progress ** 3)
+                moved = (unit[0] + dx_sign * shift, unit[1] + dy_sign * shift,
+                         unit[2] + dx_sign * shift, unit[3] + dy_sign * shift)
                 if any(first[key] <= frame and self._intersects(moved, footprint)
                        for key, footprint in footprints.items()):
                     blocker = "path_crosses_incoming_artwork"
@@ -221,7 +227,9 @@ class SceneBoundaryPlanner:
                 continue
             leaving = {member.asset_id for member in members}
             exits = {key: value for key, value in row.exit_starts.items() if key not in leaving}
-            spec = {"start": round(start, 6), "end": round(end, 6), "direction": direction}
+            spec = {"start": round(start, 6), "end": round(end, 6),
+                    "direction": dx_sign if dx_sign else dy_sign,
+                    "axis": 1.0 if dy_sign else 0.0}
             return decided("full_frame_exit", exit_starts=exits,
                            overlap_exits={member.asset_id: dict(spec) for member in members},
                            exit_motion_blur=dict(EXIT_MOTION_BLUR))
