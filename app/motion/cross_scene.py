@@ -137,6 +137,7 @@ class CrossSceneContinuityPlanner:
         text_motion: list[TextMotionCue] | None = None,
         scene_boundaries: list[SceneBoundaryRelease] | None = None,
         enable_focus_continuity: bool = False,
+        focus_only: bool = False,
         frame_width: int,
         frame_height: int,
     ) -> list[MotionCue]:
@@ -172,7 +173,19 @@ class CrossSceneContinuityPlanner:
                 continue  # non-adjacent recurrence stays identity metadata only
             before = carriers.get(previous.scene_id, {})
             after = carriers.get(beat.scene_id, {})
-            decisions = [
+            shared_referents = set(before) & set(after)
+            if focus_only and shared_referents:
+                # Authored identity is resolved after Text and Boundary in the existing
+                # safeguarded transaction. Never pre-animate its incoming carrier.
+                self.boundary_decisions.append(ContinuityDecision(
+                    referent_id="", previous_scene_id=previous.scene_id,
+                    current_scene_id=beat.scene_id, previous_beat_id=previous.id,
+                    current_beat_id=beat.id, previous_asset_id=None, current_asset_id=None,
+                    decision=ABSTAIN, reason="safe_cinematic_cut:authored_identity_reserved",
+                    identity_authority="NONE", evidence={"confidence": 0.0},
+                ))
+                continue
+            decisions = [] if focus_only else [
                 self._decide(
                     referent_id=referent_id, previous=previous, beat=beat, segment=segment,
                     previous_unit=before[referent_id], current_unit=after[referent_id],
