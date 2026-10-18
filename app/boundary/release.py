@@ -181,7 +181,7 @@ class SceneBoundaryPlanner:
         if held:
             # Protect certified cross-scene referents: even a new orthogonal exit
             # must not change a boundary with a held identity carrier.
-            return decided("clean_cut:held_outgoing_referent_carrier")
+            return decided("clean_cut:path_crosses_held_outgoing_artwork:held_referent_protected")
         opener = int(row.audit.get("opener_frame", min(first.values())))
         start = (segment.start_frame + opener) / fps
         solid_opener = any(
