@@ -230,3 +230,38 @@ def test_multi_scene_encoded_arrival_differs_visibly_from_abstaining_baseline(tm
     end = scene.frame(incoming.start + 0.45) + 60
     assert np.abs(changed[end + 2] - original[end + 2]).mean() < 2.0
     assert changed.shape == original.shape
+
+
+def test_production_payoff_hits_authoritative_result_icon_without_washing_whole_scene() -> None:
+    from tests.visual.test_vnext2_payoff_resolution import LEFT, RIGHT, _cue, _beat, _assets
+    from app.motion.resolution import PayoffResolutionDirector
+
+    cues = [_cue("support", 0.2, 0.5), _cue("result", 1.0, 1.3)]
+    director = PayoffResolutionDirector(icon_focus_mode=True)
+    output = director.plan(story=[_beat()],
+                           composition=[CompositionBeat(beat_id="b", items=[LEFT, RIGHT])],
+                           motion=cues, assets=_assets("support", "result"))
+    result = next(row for row in output if row.asset_id == "result")
+    assert (result.start, result.end) == (1.0, 1.3)
+    assert result.params["payoff_icon_hit"]["peak_scale"] == 1.07
+    assert "focus_wash" not in result.params
+    frames = result.params["program"]["keyframes"]
+    assert [row["scale"] for row in frames] == [0.93, 1.07, 1.07, 1.0]
+    assert all(row["dx"] == row["dy"] == 0 for row in frames)
+    assert director.decisions[0].wash == "none"
+    assert "wash:icon_focused_payoff" in director.decisions[0].reasons
+
+
+def test_production_payoff_abstains_from_overshoot_if_it_creates_collision() -> None:
+    from tests.visual.test_vnext2_payoff_resolution import LEFT, RIGHT, _cue, _beat, _assets
+    from app.motion.resolution import PayoffResolutionDirector
+
+    neighbour = LEFT.model_copy(update={"x": RIGHT.x - (LEFT.width + RIGHT.width) / 2 - 0.002})
+    director = PayoffResolutionDirector(icon_focus_mode=True)
+    output = director.plan(story=[_beat()],
+                           composition=[CompositionBeat(beat_id="b", items=[neighbour, RIGHT])],
+                           motion=[_cue("support", 0.2, 0.5), _cue("result", 1.0, 1.3)],
+                           assets=_assets("support", "result"))
+    result = next(row for row in output if row.asset_id == "result")
+    assert "payoff_icon_hit" not in result.params
+    assert max(row["scale"] for row in result.params["program"]["keyframes"]) <= 1.0
