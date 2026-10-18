@@ -201,13 +201,16 @@ def test_multi_scene_encoded_arrival_differs_visibly_from_abstaining_baseline(tm
         for row in scene.motion
     ]
     initial = list(scene.motion)
-    original = _encode(scene, [], tmp_path / "baseline")
+    # Supply the same certified outgoing boundary for both encoded candidates.
+    # Without a boundary row this harness does not exercise its normal opener.
+    boundary = scene.plan()
+    original = _encode(scene, [boundary], tmp_path / "baseline")
     planner = SecondaryArrivalPlanner()
     scene.motion = planner.plan(story=scene.story, composition=scene.composition,
                                 motion=initial, assets=scene.assets)
     incoming = next(row for row in scene.motion if row.asset_id == "new_a")
     assert incoming.params["reference_slide"]["scene_flow"] is True
-    changed = _encode(scene, [], tmp_path / "flow")
+    changed = _encode(scene, [boundary], tmp_path / "flow")
     start = scene.frame(incoming.start) + 60
     # FFmpeg may quantize the exact reveal frame; require a sustained visible A/B
     # difference during the legal entry, not an arbitrary single frame.
