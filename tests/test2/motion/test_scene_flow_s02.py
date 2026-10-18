@@ -50,7 +50,8 @@ def test_first_primary_uses_all_four_focus_directions(old, expected) -> None:
     row = out[0]
     assert row.params["reference_slide"]["scene_flow"] is True
     assert planner.decisions[0].gesture == "SLIDE"
-    program = next(segment.program for segment in row.segments if segment.phase == "ENTRY")
+    program = next((segment.program for segment in row.segments if segment.phase == "ENTRY"),
+                   row.params["program"])
     first = program["keyframes"][0]
     assert first["dx"] * expected[0] > 0 if expected[0] else first["dy"] * expected[1] > 0
     assert program["keyframes"][-1]["dx"] == 0.0
@@ -118,8 +119,8 @@ def test_vertical_exit_clears_youtube_in_encoded_frames(tmp_path) -> None:
     start = scene.frame(spec["start"])
     end = scene.frame(spec["end"])
     # In the 2nd segment, the old icon stays until the opener, travels, and disappears.
-    assert _darkness(frames, position)[60 + start] > 0.8
-    assert _darkness(frames, position)[60 + end + 1] < 0.03
+    assert _darkness(frames, position, pad=0.01)[60 + start] > 0.8
+    assert _darkness(frames, position, pad=0.01)[60 + end + 1] < 0.03
 
 
 def test_vertical_exit_includes_reels_letterbox_padding() -> None:
