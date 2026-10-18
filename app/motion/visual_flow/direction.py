@@ -6,6 +6,7 @@ timing, Composition and Final Package data are never changed by this module.
 from __future__ import annotations
 
 from app.models import CompositionBeat, StoryBeat
+from app.targets.context import active_target
 
 
 def focus_handoff_direction(
@@ -13,8 +14,8 @@ def focus_handoff_direction(
     current: StoryBeat,
     layouts: dict[str, CompositionBeat],
     *,
-    frame_width: int = 1920,
-    frame_height: int = 1080,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
 ) -> tuple[float, float] | None:
     """Return an incoming *start offset* in LEFT/RIGHT/TOP/BOTTOM direction.
 
@@ -25,6 +26,9 @@ def focus_handoff_direction(
         return None
     if len(previous.primary_asset_ids) != 1 or len(current.primary_asset_ids) != 1:
         return None
+    target = active_target()
+    frame_width = frame_width if frame_width is not None else target.width
+    frame_height = frame_height if frame_height is not None else target.height
     old_layout, new_layout = layouts.get(previous.id), layouts.get(current.id)
     if old_layout is None or new_layout is None:
         return None
