@@ -1,0 +1,44 @@
+name: Causal Relation Overlap - Isolated Regression Gate
+
+on:
+  push:
+    branches:
+      - feature/fix-causal-relation-overlap
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  motion-and-legacy-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get -o Acquire::Retries=2 update
+          sudo apt-get -o Acquire::Retries=2 install -y ffmpeg
+      - name: Install project and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Compile project and regression test
+        run: python -m compileall -q app tests/visual/test_causal_overlap_read_hold.py
+      - name: Lint project and tests
+        run: ruff check app tests
+      - name: Reproduce and prevent causal overlap regression
+        run: python -m pytest -q tests/visual/test_causal_overlap_read_hold.py tests/visual/test_vp3_read_hold.py
+      - name: Existing semantic relationship and encoded visual regressions
+        run: python -m pytest -q tests/visual/test_sprint_4_2_semantic_relationship_flow.py tests/visual/test_sprint_5_completed_state_hold.py tests/visual/test_vp3_event_owner_entry.py
+      - name: Broad visual and layer regression suites
+        run: python -m pytest -q tests/visual tests/test2
+      - name: Canonical contract and package holdouts
+        run: python -m pytest -q tests/test1 tests/package_holdouts
+      - name: Report checks
+        if: always()
+        run: |
+          echo "## Causal overlap isolated branch checks" >> "$GITHUB_STEP_SUMMARY"
+          echo "Ref: $GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
+          echo "No merge or deployment performed." >> "$GITHUB_STEP_SUMMARY"
