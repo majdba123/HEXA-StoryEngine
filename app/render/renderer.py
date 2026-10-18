@@ -568,6 +568,9 @@ class FFmpegRenderer:
         unit_left = min((self._geometry(plan, row)[2] for row in overlap_items), default=0)
         unit_right = max((self._geometry(plan, row)[2] + self._geometry(plan, row)[0] for row in overlap_items),
                          default=0)
+        unit_top = min((self._geometry(plan, row)[3] for row in overlap_items), default=0)
+        unit_bottom = max((self._geometry(plan, row)[3] + self._geometry(plan, row)[1] for row in overlap_items),
+                          default=0)
         for exit_index, item in enumerate(overlap_items):
             spec = overlap_exits[item.asset_id]
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
@@ -575,7 +578,11 @@ class FFmpegRenderer:
             finish = max(begin + 1.0 / plan.fps, float(spec["end"]) - segment_start)
             margin = max(4, round(4 * (plan.projection.scale if plan.projection else 1.0)))
             # One rigid offset for the whole leaving unit (a Pass2 family moves as one).
+            is_vertical = float(spec.get("axis", 0.0)) > 0.5
             travel = (
+                -(unit_bottom + margin) if float(spec["direction"]) < 0
+                else plan.height - unit_top + margin
+            ) if is_vertical else (
                 -(unit_right + margin) if float(spec["direction"]) < 0
                 else plan.width - unit_left + margin
             )
@@ -587,21 +594,23 @@ class FFmpegRenderer:
                 f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
             )
-            exit_x = f"{target_x}+({travel})*(3*pow({progress},2)-2*pow({progress},3))"
+            travelled = f"({travel})*(3*pow({progress},2)-2*pow({progress},3))"
+            exit_x = str(target_x) if is_vertical else f"{target_x}+{travelled}"
+            exit_y = f"{target_y}+{travelled}" if is_vertical else str(target_y)
             exit_blur = self._motion_blur_windows(
-                plan=plan, spec=exit_blur_spec, x_expr=exit_x, y_expr=str(target_y), scale_expr="1",
+                plan=plan, spec=exit_blur_spec, x_expr=exit_x, y_expr=exit_y, scale_expr="1",
                 box=(box_w, box_h), visible=(0.0, finish), duration=duration,
             )
             if exit_blur:
                 filters.extend(self._motion_blur_filters(
                     windows=exit_blur, source_label=label, sharp_label=f"{label}sharp", scale_chain="null",
                     centred=False, under_label=composite_label, out_label=f"{label}mix", x_expr=exit_x,
-                    y_expr=str(target_y), visible=(0.0, finish), target=target, key=f"ovx{exit_index}",
+                    y_expr=exit_y, visible=(0.0, finish), target=target, key=f"ovx{exit_index}",
                 ))
             else:
                 filters.append(
                     f"[{composite_label}][{label}]overlay="
-                    f"x='{exit_x}':y={target_y}:"
+                    f"x='{exit_x}':y='{exit_y}':"
                     f"enable='between(t,0,{finish:.6f})':eof_action=pass:shortest=0[{label}mix]"
                 )
             composite_label = f"{label}mix"
