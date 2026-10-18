@@ -65,6 +65,23 @@ class MotionBlurPolicy:
     ) -> list[MotionCue]:
         self.decisions = []
         laid_out = {(beat.beat_id, item.asset_id) for beat in composition for item in beat.items}
+        # Assign the strongest visible shutter to the largest laid-out moving icon.
+        # Single-asset scenes keep the certified exposure; split/followers abstain.
+        areas = {(beat.beat_id, item.asset_id): float(item.width) * float(item.height)
+                 for beat in composition for item in beat.items}
+        peaks: dict[tuple[str, str], float] = {}
+        for candidate in motion:
+            params = candidate.params or {}
+            key = (candidate.beat_id, candidate.asset_id)
+            if key in laid_out and self.adapter.supports(candidate) and not params.get("family_follow") \
+                    and not (params.get("render_constraints") or {}).get("geometry_lock"):
+                peaks[key] = self._peak_length(candidate, width=width, height=height, fps=fps)
+        movers: dict[str, list[tuple[str, float]]] = {}
+        for (beat_id, asset_id), length in peaks.items():
+            if length >= MIN_LENGTH:
+                movers.setdefault(beat_id, []).append((asset_id, areas.get((beat_id, asset_id), 0.0)))
+        lead_blur = {(beat_id, max(rows, key=lambda row: (row[1], row[0]))[0])
+                     for beat_id, rows in movers.items() if len(rows) > 1}
         output: list[MotionCue] = []
         for cue in motion:
             params = cue.params if isinstance(cue.params, dict) else {}
@@ -78,14 +95,17 @@ class MotionBlurPolicy:
             elif params.get("family_follow"):
                 reason = "abstain:family_follows_leader_transform"
             else:
-                peak = self._peak_length(cue, width=width, height=height, fps=fps)
+                peak = peaks[(cue.beat_id, cue.asset_id)]
                 reason = "blur:visible_smear" if peak >= MIN_LENGTH else "abstain:below_visible_smear"
             blurred = reason.startswith("blur:")
             self.decisions.append(MotionBlurDecision(cue.beat_id, cue.asset_id, blurred, reason, peak))
             if blurred:
+                dominant = (cue.beat_id, cue.asset_id) in lead_blur
                 cue = cue.model_copy(update={"params": {**params, "motion_blur": {
-                    "owner": "MOTION", "shutter": MOTION_BLUR_SHUTTER, "min_length": MIN_LENGTH,
-                    "max_length": MAX_LENGTH, "peak_length": round(peak, 5)}}})
+                    "owner": "MOTION", "shutter": 0.65 if dominant else MOTION_BLUR_SHUTTER,
+                    "min_length": MIN_LENGTH, "max_length": MAX_LENGTH,
+                    "peak_length": round(peak, 5),
+                    **({"visual_mass_lead": True} if dominant else {})}}})
             output.append(cue)
         return output
 
