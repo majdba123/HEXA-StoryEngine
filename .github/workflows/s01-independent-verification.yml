@@ -1,4 +1,4 @@
-name: S01 Visual Continuity - Independent Verification
+name: S01 and S02 Cinematic Flow - Independent Verification
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: s01-independent-${{ github.ref }}
+  group: visual-sprints-independent-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -48,6 +48,13 @@ jobs:
           tests/test2/render/test_renderer_handoff_continuity.py
           tests/test2/motion/test_continuity_contracts.py
           tests/test2/render/test_transition_regressions.py
+      - name: S02 directional entrances, exits, mass blur and encoded vertical
+        run: >
+          python -m pytest -q -rfEs
+          tests/test2/motion/test_scene_flow_s02.py
+          tests/test2/render/test_motion_blur.py
+          tests/visual/test_vp4_hero_exit.py
+          tests/visual/test_visual_sprint_vertical_slides.py
       - name: Causal relationship regression
         run: >
           python -m pytest -q -rfEs
@@ -61,8 +68,8 @@ jobs:
       - name: Report execution limits
         if: always()
         run: |
-          echo '## S01 independent GitHub verification' >> "$GITHUB_STEP_SUMMARY"
+          echo '## S01 and S02 independent GitHub verification' >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
-          echo '- Includes FFmpeg encoded synthetic 16:9 and 9:16 tests.' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Does not certify a real Black Hat package+audio render.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Includes focused S02 cardinal direction, mass blur and encoded exit regressions.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Does not certify a real Black Hat package+audio render; requires local acceptance.' >> "$GITHUB_STEP_SUMMARY"
           echo '- Isolated branch only; no deployment or merge.' >> "$GITHUB_STEP_SUMMARY"
