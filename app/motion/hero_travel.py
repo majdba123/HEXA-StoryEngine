@@ -61,9 +61,9 @@ SMOOTHSTEP_PEAK = 1.5  # peak derivative of 3p^2 - 2p^3
 _OFFSCREEN_MARGIN = 0.01
 _ANTICIPATION_GAP = 2 / 30  # never share a first frame with the earlier reveal
 _OVERLAP_SLACK = 0.02
-EMPHASIS_RANGE = (0.03, 0.06)  # 6 % only where the readability floor needs it
-# Restrained post-settle amplitudes, strongest first (a premium accent, not a bounce).
-EMPHASIS_CANDIDATES = (0.05, 0.045, 0.04, 0.035, 0.03)
+EMPHASIS_RANGE = (0.03, 0.07)  # visible emphasis, still geometry/read-hold gated
+# A stronger held accent is accepted only if existing collision and text checks pass.
+EMPHASIS_CANDIDATES = (0.07, 0.065, 0.06, 0.05, 0.045, 0.04, 0.035, 0.03)
 # The held gesture: rise over the first 35 %, hold to 65 %, release over the last 35 %.
 EMPHASIS_SECONDS = 0.90
 EMPHASIS_MIN_SECONDS = 0.60
