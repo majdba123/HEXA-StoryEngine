@@ -196,7 +196,8 @@ def test_multi_scene_encoded_arrival_differs_visibly_from_abstaining_baseline(tm
 
     scene = Scene(lead=16, later=None, opener=NEW_CLEAR, root=tmp_path)
     scene.motion = [
-        row.model_copy(update={"end": float(row.start) + 0.45})
+        row.model_copy(update={"end": float(row.start) + 0.45,
+                               "params": {**row.params, "engine_version": 3}})
         if row.beat_id == "b2" else row
         for row in scene.motion
     ]
@@ -210,6 +211,8 @@ def test_multi_scene_encoded_arrival_differs_visibly_from_abstaining_baseline(tm
                                 motion=initial, assets=scene.assets)
     incoming = next(row for row in scene.motion if row.asset_id == "new_a")
     assert incoming.params["reference_slide"]["scene_flow"] is True
+    from app.render.motion import FFmpegMotionAdapter
+    assert FFmpegMotionAdapter.supports(incoming), "A/B fixture must reach the V3 renderer"
     changed = _encode(scene, [boundary], tmp_path / "flow")
     start = scene.frame(incoming.start) + 60
     # FFmpeg may quantize the exact reveal frame; require a sustained visible A/B
