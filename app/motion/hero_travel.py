@@ -46,6 +46,7 @@ from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, St
 
 from .collision import authored_overlap_ratio, box
 from .family import family_of, follow, rigid_followers
+from .visual_flow.direction import focus_handoff_direction
 from .timing import (
     MotionComfortProfile,
     motion_comfort,
@@ -61,9 +62,12 @@ SMOOTHSTEP_PEAK = 1.5  # peak derivative of 3p^2 - 2p^3
 _OFFSCREEN_MARGIN = 0.01
 _ANTICIPATION_GAP = 2 / 30  # never share a first frame with the earlier reveal
 _OVERLAP_SLACK = 0.02
-EMPHASIS_RANGE = (0.03, 0.07)  # visible emphasis, still geometry/read-hold gated
-# A stronger held accent is accepted only if existing collision and text checks pass.
-EMPHASIS_CANDIDATES = (0.07, 0.065, 0.06, 0.05, 0.045, 0.04, 0.035, 0.03)
+EMPHASIS_RANGE = (0.03, 0.06)  # certified default upper bound
+# Existing amplitudes remain stable for old callers, scenes and tests.
+EMPHASIS_CANDIDATES = (0.05, 0.045, 0.04, 0.035, 0.03)
+# Only prominent subjects with a proved cross-scene gaze handoff may grow more.
+FLOW_EMPHASIS_LIMIT = 0.07
+FLOW_EMPHASIS_CANDIDATES = (0.07, 0.065, 0.06, *EMPHASIS_CANDIDATES)
 # The held gesture: rise over the first 35 %, hold to 65 %, release over the last 35 %.
 EMPHASIS_SECONDS = 0.90
 EMPHASIS_MIN_SECONDS = 0.60
@@ -94,10 +98,11 @@ class HeroTravelDecision:
         return {name: getattr(self, name) for name in self.__slots__}
 
 
-def _amplitudes(readable: float) -> list[float]:
-    """Reference amplitudes from strongest to the smallest readable one (inclusive)."""
+def _amplitudes(readable: float, *, boost: bool = False) -> list[float]:
+    """Reference amplitudes; larger focus subjects may use a gated stronger set."""
     floor = max(EMPHASIS_RANGE[0], readable)
-    return sorted({c for c in EMPHASIS_CANDIDATES if c + _EPS >= floor} | {round(floor, 5)}, reverse=True)
+    candidates = FLOW_EMPHASIS_CANDIDATES if boost else EMPHASIS_CANDIDATES
+    return sorted({c for c in candidates if c + _EPS >= floor} | {round(floor, 5)}, reverse=True)
 
 
 def _intersection(a: Box, b: Box) -> float:
@@ -135,6 +140,7 @@ class HeroTravelPlanner:
         self._emphases: dict[tuple[str, str], tuple[LayoutItem, dict[str, LayoutItem]]] = {}
         assets_by_id = {asset.id: asset for asset in assets}
         layouts = {layout.beat_id: {item.asset_id: item for item in layout.items} for layout in composition}
+        layout_beats = {row.beat_id: row for row in composition}
         index = {(cue.beat_id, cue.asset_id): position for position, cue in enumerate(motion)}
         continuing = {  # outgoing carriers a later cue continues (Sprint 7 referents)
             (spec.get("beat_id"), spec.get("asset_id"))
@@ -149,7 +155,7 @@ class HeroTravelPlanner:
             for cue in motion
         ]
         emphasized_previous: str | None = None  # family pulsed in the previous scene
-        for beat in story:
+        for beat_index, beat in enumerate(story):
             cues = [cue for cue in motion if cue.beat_id == beat.id]
             hero_id, reason = self._hero(beat, choreography, cues)
             if hero_id is None:
@@ -191,9 +197,18 @@ class HeroTravelPlanner:
             if emphasized_previous == family:
                 emphasis, why = None, "abstain:same_subject_pulsed_in_previous_scene"
             else:
+                previous = story[beat_index - 1] if beat_index else None
+                # A large, new narrative-focus leader can receive a stronger held
+                # pulse, but the certified default is untouched for other scenes.
+                boosted = (
+                    item is not None and float(item.width) * float(item.height) >= 0.04
+                    and beat.primary_asset_ids == [hero_id]
+                    and focus_handoff_direction(previous, beat, layout_beats) is not None
+                )
                 emphasis, why = self._emphasis(
                     beat=beat, cue=output[position], item=item, cues=cues,
                     layout=layouts.get(beat.id, {}), continues=(beat.id, hero_id) in continuing,
+                    scale_boost=boosted,
                 )
             if emphasis is not None:
                 output[position] = emphasis
@@ -451,7 +466,7 @@ class HeroTravelPlanner:
     @staticmethod
     def _emphasis(
         *, beat: StoryBeat, cue: MotionCue, item: LayoutItem | None, cues: list[MotionCue],
-        layout: dict[str, LayoutItem], continues: bool,
+        layout: dict[str, LayoutItem], continues: bool, scale_boost: bool = False,
     ) -> tuple[MotionCue | None, str]:
         params = cue.params if isinstance(cue.params, dict) else {}
         if item is None:
@@ -477,11 +492,12 @@ class HeroTravelPlanner:
         floor = semantic_readability_floor_px("ESTABLISH", item_width=item.width, item_height=item.height,
                                               duration=duration)
         readable = floor * 1.05 / max(asset_px, 1.0)
-        if readable > EMPHASIS_RANGE[1] + _EPS:
+        upper_limit = FLOW_EMPHASIS_LIMIT if scale_boost else EMPHASIS_RANGE[1]
+        if readable > upper_limit + _EPS:
             return None, f"abstain:readable_emphasis_needs_{readable:.3f}_scale"
         extent = min(float(item.width), float(item.height))
         delta, why = None, "abstain:no_safe_reference_amplitude"
-        for candidate in _amplitudes(readable):
+        for candidate in _amplitudes(readable, boost=scale_boost):
             if candidate * extent / (EMPHASIS_RISE * duration) > motion_comfort("ESTABLISH").max_normalized_speed:
                 why = "abstain:emphasis_exceeds_comfort_speed"
                 continue
