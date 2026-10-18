@@ -232,6 +232,37 @@ def test_missing_identity_uses_directional_focus_without_claiming_referent(size)
     assert cue.segments[0].start == data[3][1].segments[0].start
 
 
+def test_pre_text_focus_only_moves_unrelated_primary_without_claiming_identity() -> None:
+    data = build([obj("old", 0.25, 0.5)], [obj("new", 0.55, 0.5)])
+    data[1][0].primary_asset_ids = ["SCENE_001:asset-01"]
+    data[1][1].primary_asset_ids = ["SCENE_002:asset-01"]
+    planner = CrossSceneContinuityPlanner()
+    out = planner.plan(
+        package=data[0], story=data[1], composition=data[2], motion=data[3],
+        assets=data[4], duration=SCENE * len(data[1]), frame_width=1920,
+        frame_height=1080, enable_focus_continuity=True, focus_only=True,
+    )
+    assert planner.boundary_decisions[0].decision == "NARRATIVE_FOCUS"
+    assert out != data[3]
+    assert all(HANDOFF_PARAM not in cue.params for cue in out)
+
+
+def test_pre_text_focus_only_reserves_authored_identity_for_late_handoff() -> None:
+    data = build([obj("old", 0.25, 0.5, referent="REF_P")],
+                 [obj("new", 0.55, 0.5, referent="REF_P")])
+    data[1][0].primary_asset_ids = ["SCENE_001:asset-01"]
+    data[1][1].primary_asset_ids = ["SCENE_002:asset-01"]
+    planner = CrossSceneContinuityPlanner()
+    out = planner.plan(
+        package=data[0], story=data[1], composition=data[2], motion=data[3],
+        assets=data[4], duration=SCENE * len(data[1]), frame_width=1920,
+        frame_height=1080, enable_focus_continuity=True, focus_only=True,
+    )
+    assert out == data[3]
+    assert planner.decisions == []
+    assert planner.boundary_decisions[0].reason == "safe_cinematic_cut:authored_identity_reserved"
+
+
 def test_missing_focus_chooses_explicit_safe_cut() -> None:
     data = build([obj("old", 0.25, 0.5)], [obj("new", 0.55, 0.5)])
     planner = CrossSceneContinuityPlanner()
