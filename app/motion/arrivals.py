@@ -35,6 +35,7 @@ from app.targets.context import active_target
 
 from .resolution import POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, pop_start_scale
 from .timing import projected_motion_activity_px
+from .visual_flow.direction import focus_handoff_direction
 
 _EPS = 1e-6
 _FRAME = 1 / 30
@@ -136,6 +137,15 @@ class SecondaryArrivalPlanner:
         layouts = {row.beat_id: {item.asset_id: item for item in row.items} for row in composition}
         sweeps = dict(travel_sweeps or {})
         output = list(motion)
+        layout_beats = {row.beat_id: row for row in composition}
+        directions = {}
+        for index, beat in enumerate(story):
+            direction = focus_handoff_direction(
+                story[index - 1] if index else None, beat, layout_beats,
+                frame_width=active_target().width, frame_height=active_target().height,
+            )
+            if direction is not None:
+                directions[beat.id] = direction
         by_beat: dict[str, list[int]] = {}
         for position, cue in enumerate(motion):
             by_beat.setdefault(cue.beat_id, []).append(position)
@@ -160,6 +170,9 @@ class SecondaryArrivalPlanner:
                     beat_cues=beat_cues, layout=layout,
                     sweeps={key: value for key, value in sweeps.items() if key[0] == beat.id},
                     assets_by_id=assets_by_id,
+                    flow_direction=(directions.get(beat.id)
+                                    if len(beat.primary_asset_ids) == 1
+                                    and cue.asset_id == beat.primary_asset_ids[0] else None),
                 )
                 if updated is not None:
                     output[position] = updated
@@ -266,6 +279,7 @@ class SecondaryArrivalPlanner:
         sweeps: dict[tuple[str, str], tuple[float, float, Box]],
         allow_slide: bool = True,
         assets_by_id: dict[str, VisualAsset] | None = None,
+        flow_direction: tuple[float, float] | None = None,
     ) -> tuple[str, str, MotionCue | None]:
         params = cue.params if isinstance(cue.params, dict) else {}
         if item is None:
@@ -315,7 +329,8 @@ class SecondaryArrivalPlanner:
                 return "FADE", "yields_to_hero_emphasis", None
         family = family_of(cue.asset_id, assets_by_id or {})
         others = [row for row in beat_cues if family_of(row.asset_id, assets_by_id or {}) != family]
-        slide = (self._slide(cue, item=item, beat_cues=others, layout=layout, sweeps=sweeps, window=window)
+        slide = (self._slide(cue, item=item, beat_cues=others, layout=layout, sweeps=sweeps,
+                             window=window, flow_direction=flow_direction)
                  if allow_slide else None)
         pop = self._pop(cue, item=item, window=window)
         if slide is not None:
@@ -450,6 +465,7 @@ class SecondaryArrivalPlanner:
         layout: dict[str, LayoutItem],
         sweeps: dict[tuple[str, str], tuple[float, float, Box]],
         window: float,
+        flow_direction: tuple[float, float] | None = None,
     ) -> MotionCue | None:
         final = box(item, (0.0, 0.0, 1.0))
         frame = active_target()
@@ -457,8 +473,13 @@ class SecondaryArrivalPlanner:
         left_gap, right_gap = final[0], 1.0 - final[2]
         gap, sign = (left_gap, -1.0) if left_gap <= right_gap else (right_gap, 1.0)
         vertical = gap > SLIDE_EDGE_REACH + _EPS
-        if vertical:
-            # Near no side edge: the nearer of top/bottom, at the same physical reach.
+        if flow_direction is not None:
+            # Cross-scene primary may enter from four sides even near the centre.
+            # Existing sweep, text, speed and family constraints still govern it.
+            vertical = abs(flow_direction[1]) > 0.5
+            sign = flow_direction[1] if vertical else flow_direction[0]
+        elif vertical:
+            # Legacy edge rule for all other arrivals.
             top_gap, bottom_gap = final[1], 1.0 - final[3]
             gap, sign = (top_gap, -1.0) if top_gap <= bottom_gap else (bottom_gap, 1.0)
             if gap / aspect > SLIDE_EDGE_REACH + _EPS:
@@ -491,7 +512,8 @@ class SecondaryArrivalPlanner:
         params["reference_slide"] = {"dx": round(dx, 6), **({"dy": round(dy, 6)} if vertical else {}),
                                      "seconds": round(seconds, 6),
                                      "peak_speed": round(SMOOTHSTEP_PEAK * distance / seconds, 4),
-                                     "profile": "REFERENCE_SLIDE"}
+                                     "profile": "REFERENCE_SLIDE",
+                                     **({"scene_flow": True} if flow_direction is not None else {})}
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
         return self._gesture(cue, params, "reference_slide_arrival",
