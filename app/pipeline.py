@@ -590,7 +590,7 @@ class StoryEnginePipeline:
             )
             # Cinematic VNext2 PAYOFF: each beat's resolving subject arrives with the
             # reference pop and, where it is safe and spaced, the backdrop recedes.
-            self.resolution = PayoffResolutionDirector()
+            self.resolution = PayoffResolutionDirector(icon_focus_mode=True)
             motion = self.resolution.plan(story=story, composition=composition, motion=motion, assets=assets,
                                           emphasize=self.hero_travel.secondary_emphasis)
             # Every other entering asset gets one reference gesture from its own geometry.
