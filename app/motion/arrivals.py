@@ -167,6 +167,8 @@ class SecondaryArrivalPlanner:
         layout_beats = {row.beat_id: row for row in composition}
         directions: dict[tuple[str, str], tuple[float, float]] = {}
         for index, beat in enumerate(story):
+            if len(story) < 2:
+                continue  # single-beat callers retain the certified local entry grammar
             previous = story[index - 1] if index else None
             focus = focus_handoff_direction(previous, beat, layout_beats)
             for item in (layout_beats[beat.id].items if beat.id in layout_beats else []):
