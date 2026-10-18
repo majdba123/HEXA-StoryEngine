@@ -139,3 +139,78 @@ def test_large_scene_leader_scale_has_explicit_boost_without_changing_legacy() -
 
     assert _amplitudes(0.045) == [0.05, 0.045]
     assert _amplitudes(0.045, boost=True) == [0.07, 0.065, 0.06, 0.05, 0.045]
+
+
+@pytest.mark.parametrize("corners", [True])
+def test_multi_scene_four_way_entries_grow_seven_percent_then_hold(corners) -> None:
+    """Coverage regression: all four independent static icons visibly stage in."""
+    del corners
+    previous = StoryBeat(id="before", scene_id="first", start=0, end=2,
+                         narration="first", action="REVEAL")
+    current = StoryBeat(id="after", scene_id="second", start=2, end=5,
+                        narration="second", action="REVEAL")
+    placements = {
+        "left": (0.12, 0.5), "right": (0.88, 0.5),
+        "top": (0.5, 0.12), "bottom": (0.5, 0.88),
+    }
+    layout = [CompositionBeat(beat_id="after", items=[
+        LayoutItem(asset_id=key, x=x, y=y, width=0.1, height=0.12)
+        for key, (x, y) in placements.items()
+    ])]
+    from pathlib import Path
+    cues = [
+        MotionCue(beat_id="after", asset_id=key, kind="program_v3",
+                  start=2.1 + index * 0.65, end=2.55 + index * 0.65,
+                  params={"engine_version": 3, "semantic_continuity": {"mode": "ENTER"},
+                          "program": {"name": "static", "keyframes": []}})
+        for index, key in enumerate(placements)
+    ]
+    assets = [
+        VisualAsset(id=key, scene_id="second", role="supporting",
+                    image_path=Path("missing.png"), extraction_method="test")
+        for key in placements
+    ]
+    planner = SecondaryArrivalPlanner()
+    out = planner.plan(story=[previous, current], composition=layout, motion=cues, assets=assets)
+    assert [row.gesture for row in planner.decisions] == ["SLIDE"] * 4
+    assert {cue.asset_id: (
+        -1 if cue.params["reference_slide"]["dx"] < 0 else
+        1 if cue.params["reference_slide"]["dx"] > 0 else
+        -2 if cue.params["reference_slide"]["dy"] < 0 else 2
+    ) for cue in out} == {"left": -1, "right": 1, "top": -2, "bottom": 2}
+    for before, after in zip(cues, out):
+        assert (before.start, before.end) == (after.start, after.end)
+        assert after.params["reference_slide"]["scene_flow"] is True
+        assert after.params["reference_slide"]["start_scale"] == 0.93
+        keys = after.params["program"]["keyframes"]
+        assert keys[0]["scale"] == 0.93
+        assert keys[-1]["scale"] == 1.0
+        assert abs(keys[0]["dx"]) >= 0.1 or abs(keys[0]["dy"]) >= 0.1
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+def test_multi_scene_encoded_arrival_differs_visibly_from_abstaining_baseline(tmp_path) -> None:
+    """A/B encodes the exact same scene/media with and without S02.1 Motion."""
+    import numpy as np
+    from tests.visual.test_sprint_4_5_scene_handoffs import NEW_CLEAR
+
+    scene = Scene(lead=16, later=None, opener=NEW_CLEAR, root=tmp_path)
+    scene.motion = [
+        row.model_copy(update={"end": float(row.start) + 0.45})
+        if row.beat_id == "b2" else row
+        for row in scene.motion
+    ]
+    initial = list(scene.motion)
+    original = _encode(scene, [], tmp_path / "baseline")
+    planner = SecondaryArrivalPlanner()
+    scene.motion = planner.plan(story=scene.story, composition=scene.composition,
+                                motion=initial, assets=scene.assets)
+    incoming = next(row for row in scene.motion if row.asset_id == "new_a")
+    assert incoming.params["reference_slide"]["scene_flow"] is True
+    changed = _encode(scene, [], tmp_path / "flow")
+    start = scene.frame(incoming.start) + 60
+    assert np.abs(changed[start + 2] - original[start + 2]).mean() > 1.0
+    # Same composition pose after settle; scenes, duration and assets are unchanged.
+    end = scene.frame(incoming.start + 0.45) + 60
+    assert np.abs(changed[end + 2] - original[end + 2]).mean() < 2.0
+    assert changed.shape == original.shape
