@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from app import __version__
 from app.config import Settings
-from app.desktop.export_preflight import export_root_problem
+from app.desktop.export_preflight import export_root_problem, initialize_windows_export_root
 from app.diagnostics import BuildReportSession
 from app.models import Stage
 from app.pipeline import StoryEnginePipeline
@@ -233,13 +233,21 @@ class MainWindow(QMainWindow):
     def _start_generation(self) -> None:
         package = Path(self.package_edit.text().strip()).expanduser()
         audio = Path(self.audio_edit.text().strip()).expanduser()
-        settings = Settings.from_env()
 
         if not package.exists():
             QMessageBox.warning(self, "HEXA", "اختر Final Package صالح.")
             return
         if not audio.is_file():
             QMessageBox.warning(self, "HEXA", "اختر ملف صوت صالح.")
+            return
+        setup_problem = initialize_windows_export_root()
+        if setup_problem is not None:
+            QMessageBox.warning(self, "HEXA", setup_problem)
+            return
+        try:
+            settings = Settings.from_env()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "HEXA", f"تعذر تحميل إعدادات HEXA:\\n{exc}")
             return
         if settings.export_root is None:
             QMessageBox.warning(
