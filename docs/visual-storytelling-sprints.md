@@ -77,3 +77,29 @@ Not a sprint; a blocker fix that must hold before S03. Root cause, evidence and 
 - Scene exits: 37 of 39 boundaries are HARD_CUT; only 9 hero full-frame exits. Downgrades: opener collides with outgoing artwork 24, overlap window insufficient 9, protected motion 6. The incoming opener typically appears ~3 frames into the scene (release needs ≥ 5). Outgoing scenes hold still a median 0.38–0.56 s after their last motion across the corpus; only 3–6 boundaries per package have ≥ 0.9 s, so tail exits would consume read-holds (user decision).
 - PAYOFF accents (23): 11 reference pops (0.84→1.0), 1 held icon hit, 9 vertical lifts, 2 lateral nudges (beat-017, beat-038).
 - Held icon hit feasibility: relaxing the old fixed `seconds >= 0.29` gate to "whatever the shared contract allows" adds only one hit per package (corpus 1→4), all QA-valid; 8–19 per package abstain with `no_comfortable_hold` because a 7 % boom on a ~0.2-frame icon needs ≥ 0.127 s per ramp under the 0.11/s PAYOFF comfort ceiling while PAYOFF windows are 0.25–0.32 s. A held peak for most results needs either a longer accent window past Story's settle instant or a higher comfort ceiling: a contract decision for the user, not tuning.
+
+## P1 cinematic visual recovery — 2026-10-19 (after the user rejected v4's look)
+
+Owners changed: `app/motion/arrivals.py`, `app/motion/resolution.py`, `app/motion/planner.py`,
+`app/motion/visual_flow/direction.py`, `app/motion/timing.py` (details: handoff, P1 section). No speed ceiling raised,
+no Story instant moved, every new program validated by the shared P0 contract; pre-encode and encoded QA unchanged.
+
+| Evidence | Baseline v4 | P1 | How measured |
+| --- | --- | --- | --- |
+| Observable directional entrances (Black Hat, 149 entering assets) | 34 (23 %) | 68 (46 %) on v5 and on final v6 | NCC tracking of every entering asset in the decoded YouTube MP4 (≥ 40 px travel while visible) |
+| Fade-only appearances | 78 (52 %) | 57 (38 %); 38 of them have Story windows < 0.2 s | same tracker (fade does not move an NCC match) |
+| Encoded directions L / R / B / T | 17 / 8 / 5 / 4 | 24 / 16 / 18 / 10 | same tracker, direction of first visible offset |
+| Opening travel lock / shield / character | 0 / 3 / 2 px | 77 (LEFT) / 161 (RIGHT) / 94 (BOTTOM) px, growing 0.93 → 1.00 | tracker on the real opening encode |
+| Strong planned directional entrances (≥ 77 px), corpus | 6–12 % | 38–40 % | plan audit, all four packages |
+| Lateral PAYOFF nudges, corpus | 5 | 0 | plan audit |
+| Broad grey/defocus windows reported by the reviewer | not present in v4 (sharpness ratio 0.86–1.20, saturation 0.91–1.30 vs context) | unchanged | Laplacian/saturation per frame; the reviewed file's SHA differs from v4 |
+| Pre-encode QA, corpus × 2 targets | 0 | 0 | `EncodedMotionVerifier.preflight` |
+| Real dual-target render | v4 PASS | v5 (`4546c3a5`) PASS; final **v6 (`13bba594`) PASS**: YouTube + Reels, 2912 frames each, audio 97.059 s / video 97.067 s, story/choreography/text fingerprints identical to v4 | production `generate_bundle`, encoded-motion + final-media QA |
+| Local gates on `13bba594` | — | static clean; `tests/visual tests/test2` 1963 / 0 failed; `tests/test1 tests/package_holdouts` 818, 780 passed, 38 corpus-only skips; real-corpus certification A–D 33 passed, 6 opt-in Level E skips | junit |
+| Evidence sheets | — | `E:\HEXA_Exports\_P1_EVIDENCE_2026-10-19\` (v4 vs v5/v6, same timestamps) | decoded frames |
+
+Measured limits (not tuned away): 38 fade-only assets have Story windows of 0.08–0.19 s (below the 6-frame minimum);
+held icon hits stay rare because a 7 % boom needs ≥ 0.127 s per ramp under the 0.11/s PAYOFF ceiling in
+0.25–0.32 s windows; ~39 corpus assets carry an authored relation accent overlapping a carried ENTRY in their first
+0.4 s; 37/39 Black Hat boundaries remain cuts because incoming openers appear ~3 frames into the scene. User visual
+acceptance is pending.

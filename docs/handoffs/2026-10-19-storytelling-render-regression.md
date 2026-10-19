@@ -180,3 +180,40 @@ If user has local changes, don't instruct a destructive checkout/pull. The reque
 'آخر GitHub CI ناجح على النسخة السابقة، لكن الرندر الحقيقي فشل بعدها. التعديل السابق حلّ حالة الـPayoff المعروفة، أما تقرير الخطأ الأخير فلا يزال غير مفحوص. أول خطوة بالمحادثة الجديدة فحص ZIP التشخيص الجديد، ثم إصلاح سببه مع اختبارات تمنع إضاعة وقتك بالرندر. لا تعمل Pull أو تعيد الرندر لغاية ما نراجع هالخطأ.'
 
 Do not claim to have inspected the new ZIP or proved the latest fix. Do not claim continuous background monitoring unless an actual automation is configured.
+
+## P1 — CINEMATIC VISUAL RECOVERY (2026-10-19, after user rejected v4's look) — shipped as v6, user acceptance pending
+
+Baseline = local `E:\HEXA_Exports\HEXA_BLACK_HAT_HACKER_AR\v4` (engine `4d125b42`, package fingerprint `0e65914c…`).
+Its YouTube SHA-256 is `612881ba…`, not the reviewed attachment's `e36ac471…` (same 2912 frames / 97.067 s).
+
+Measured causes (encoded frames + plan):
+- Opening: lock 0 px, shield 3 px, character 2 px of encoded travel (NCC tracker); each asset's Story window
+  (reveal → settle_at) is only 0.25–0.30 s; the arrival fade ran the whole window, so arrivals read as fades.
+- `SecondaryArrivalPlanner`: slides needed ≥ 8 frames and were capped at 0.08 w; non-flow slides had no growth;
+  PAYOFF results only popped; 31 Planner "introduction" entries (10–15 px, windows ~0.6 s) were protected by
+  `semantic_peak_progress` and by progression ordering links treated as relations.
+- Nearest-edge direction sent near-corner art up from the bottom (36 of 59 directional entries).
+- The opening lock's authored INTERACT (lock REVEALS_IDENTITY → character) starts with its reveal and was a
+  21 px out-and-back nudge toward a target that is not yet visible.
+- Grey/defocus windows reported by the reviewer do NOT exist in v4: sharpness ratio 0.86–1.20 and saturation
+  ratio 0.91–1.30 vs ±1.5 s context. v4's softest stretches are legitimate hero full-frame exits.
+
+Changes (no speed ceiling raised, no Story instant moved, every new program validated by `app/motion/contract.py`):
+- `app/motion/arrivals.py`: fade completes within 3 frames; slides from 6 frames, distance up to 0.12 w as the
+  unchanged 0.6 w/s ceiling allows (aspect-aware for every vertical slide); every slide grows 0.93 → 1.00;
+  results without causal evidence may slide from their edge instead of popping (never over a held icon hit);
+  ESTABLISH/ADD introductions with only ordering links are replaceable; a source whose authored INTERACT starts
+  with its reveal approaches its target once (INTERACT comfort, same window).
+- `app/motion/resolution.py`: pop/hit fade completes within 3 frames.
+- `app/motion/visual_flow/direction.py`: lateral preference 1.6 (vertical edge must be clearly closer).
+- `app/motion/timing.py`: `REFERENCE_SLIDE.minimum_seconds` 8 → 6 frames (QA bounds slides by speed only).
+
+Encoded opening A/B (same real inputs, production renderer): lock −77 px from the LEFT, shield +161 px from the
+RIGHT, character 94 px from the BOTTOM, all growing 0.93 → 1.00 and settling exactly on the authored pose;
+encoded motion QA passes. Real Black Hat plan: travelling arrivals 14 → 53, directions B/R/L/T 36/12/8/3 → ~19-28/
+18-20/13/11 (final numbers in tracker), pre-encode QA 0/0 on both targets.
+
+Final state: commits `4546c3a5` (arrival language) and `13bba594` (REACT target travel); real render v6 PASS on both
+targets; decoded-frame audit 68/149 observable directional entrances (v4: 34), fade-only 57 (v4: 78, 38 of them
+Story windows < 0.2 s). Evidence sheets: `E:\HEXA_Exports\_P1_EVIDENCE_2026-10-19\`. Next decision for the user: whether
+to relax any of the measured limits (sub-0.2 s Story windows, PAYOFF comfort vs held boom, exit time taken from holds).
