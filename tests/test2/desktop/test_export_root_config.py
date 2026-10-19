@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings
-from app.desktop.export_preflight import NOT_CONFIGURED, export_root_problem
+from app.desktop.export_preflight import (NOT_CONFIGURED, export_root_problem,
+                                          initialize_windows_export_root)
 from app.final.bundle import ExportBundleWriter, _foreign_windows_drive_path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -126,3 +127,94 @@ def test_bundle_layout_and_versioning_unchanged_under_configured_root(tmp_path: 
     assert second.directory == root / "HEXA_BLACK_HAT_HACKER_AR" / "v2"
     assert first.output_path("YOUTUBE") == first.directory / "HEXA_BLACK_HAT_HACKER_AR_YOUTUBE.mp4"
     assert sorted(p.name for p in root.iterdir()) == ["HEXA_BLACK_HAT_HACKER_AR"]  # nothing else in the root
+
+
+# Windows desktop first-run setup ------------------------------------------------------------
+def test_windows_desktop_bootstrap_persists_export_on_e_and_passes_preflight(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    local = tmp_path / "hexa.settings.json"
+    drive = tmp_path / "mock-drive-e"
+    drive.mkdir()
+    # This simulates a present E drive on Linux CI without writing to the host's drives.
+    local.write_text(json.dumps({"whisper_model": "small", "ui_language": "ar"}), encoding="utf-8")
+    monkeypatch.setattr("app.config.LOCAL_SETTINGS_FILE", local)
+    monkeypatch.delenv("HEXA_EXPORT_ROOT", raising=False)
+    monkeypatch.delenv("HEXA_SETTINGS_FILE", raising=False)
+    monkeypatch.setenv("HEXA_WORK_ROOT", str(tmp_path / "work"))
+    monkeypatch.setenv("HEXA_OUTPUT_ROOT", str(tmp_path / "out"))
+
+    assert initialize_windows_export_root(platform="nt", drive_root=drive, settings_file=local) is None
+    saved = json.loads(local.read_text(encoding="utf-8"))
+    assert saved == {"whisper_model": "small", "ui_language": "ar",
+                     "export_root": str(drive / "HEXA_Exports")}
+    settings = Settings.from_env()
+    assert settings.export_root == drive / "HEXA_Exports"
+    assert export_root_problem(settings) is None
+    assert settings.export_root.is_dir()
+    assert initialize_windows_export_root(platform="nt", drive_root=drive,
+                                          settings_file=local) is None
+    assert json.loads(local.read_text(encoding="utf-8")) == saved
+    assert not (tmp_path / "HEXA_Exports").exists()
+
+
+def test_windows_bootstrap_does_not_override_explicit_paths(tmp_path: Path, monkeypatch) -> None:
+    drive = tmp_path / "mock-drive-e"
+    drive.mkdir()
+    settings_file = tmp_path / "hexa.settings.json"
+    chosen = tmp_path / "chosen-destination"
+    settings_file.write_text(json.dumps({"export_root": str(chosen), "other": 3}), encoding="utf-8")
+    before = settings_file.read_bytes()
+    monkeypatch.delenv("HEXA_EXPORT_ROOT", raising=False)
+    monkeypatch.delenv("HEXA_SETTINGS_FILE", raising=False)
+    assert initialize_windows_export_root(platform="nt", drive_root=drive,
+                                          settings_file=settings_file) is None
+    assert settings_file.read_bytes() == before
+    settings_file.unlink()
+    monkeypatch.setenv("HEXA_EXPORT_ROOT", str(chosen))
+    assert initialize_windows_export_root(platform="nt", drive_root=drive,
+                                          settings_file=settings_file) is None
+    assert not settings_file.exists()
+    monkeypatch.delenv("HEXA_EXPORT_ROOT")
+    monkeypatch.setenv("HEXA_SETTINGS_FILE", str(tmp_path / "operator.json"))
+    assert initialize_windows_export_root(platform="nt", drive_root=drive,
+                                          settings_file=settings_file) is None
+    assert not settings_file.exists()
+
+
+def test_windows_bootstrap_missing_drive_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("HEXA_EXPORT_ROOT", raising=False)
+    monkeypatch.delenv("HEXA_SETTINGS_FILE", raising=False)
+    local = tmp_path / "hexa.settings.json"
+    message = initialize_windows_export_root(platform="nt", drive_root=tmp_path / "absent-drive-e",
+                                             settings_file=local)
+    assert message is not None and "قرص E:" in message and "C:" in message
+    assert not local.exists()
+    assert not (tmp_path / "HEXA_Exports").exists()
+
+
+def test_desktop_bootstrap_skips_non_windows_and_rejects_corrupt_json(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.delenv("HEXA_EXPORT_ROOT", raising=False)
+    monkeypatch.delenv("HEXA_SETTINGS_FILE", raising=False)
+    local = tmp_path / "hexa.settings.json"
+    drive = tmp_path / "mock-drive-e"
+    drive.mkdir()
+    assert initialize_windows_export_root(platform="posix", drive_root=drive,
+                                          settings_file=local) is None
+    assert not local.exists()
+    local.write_text("{not-json", encoding="utf-8")
+    before = local.read_bytes()
+    error = initialize_windows_export_root(platform="nt", drive_root=drive, settings_file=local)
+    assert error is not None and "تعذر قراءة" in error
+    assert local.read_bytes() == before
+
+
+def test_gui_initializes_desktop_export_before_loading_settings() -> None:
+    source = DESKTOP.read_text(encoding="utf-8")
+    start = source.index("def _start_generation")
+    assert source.index("initialize_windows_export_root()", start) < source.index(
+        "Settings.from_env()", start)
+    assert source.index("Settings.from_env()", start) < source.index(
+        "export_root_problem(settings)", start)
