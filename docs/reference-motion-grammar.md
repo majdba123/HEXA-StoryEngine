@@ -34,9 +34,29 @@ median continuous motion run of 13 frames; only one still stretch longer than 1 
 changes on 51 % of frames (its character art is animated on twos). HEXA v6 changes on 56 % with
 a median motion run of 8 frames.
 
-Not observed in the sampled sequences: held 1.07 icon pulses, sideways nudges, grey scene washes,
-defocus pulls. Result emphasis is carried by **arrival timing and placement** (G5→G6), not by a
-pulse on an already visible icon.
+Not observed anywhere in either reference: held 1.07 icon pulses, sideways nudges, in-place
+dips or post-settle pulses. Result emphasis is carried by **arrival, the drawn arrow, the grey
+wash and the large keyword** (G5, G6, G14–G17), never by a pulse on an already visible element.
+
+**Correction (2026-10-20).** The first version of this document also listed grey washes and
+defocus pulls as "not observed". That was wrong: the short sequences sampled for it missed them.
+A full-length, frame-by-frame review of both references (1 fps contact sheets of the whole
+running time, then per-frame sheets of every device) shows they are among the most frequent tools.
+
+## 1b. Full-length review (2026-10-20): the devices a viewer actually sees
+
+| # | Ref, time | Observed | Measured |
+| --- | --- | --- | --- |
+| G14 | A 7.0 s, 47–50 s; B 20–23 s | Kinetic keyword typography | single words set at **12–27 % of the frame height**, white fill, dark outline, soft drop shadow; often the largest object on screen; words appear one by one |
+| G15 | A 40.9–41.2 s, 46.9 s, 66 s | Visible motion blur | a fast element is smeared over about its own size for **3–5 frames** (it is unreadable on the first one), then crisp at rest |
+| G16 | A 40.87–41.17 s; B 4.96–5.20 s | Scene whip instead of a cut | at the moment the new idea's first element appears, the **whole old scene leaves as one block in ~6 frames**, heavily smeared, travelling the same way as the arriving element; the new element arrives smeared from the opposite edge; ~8 frames in total, no hard cut |
+| G17 | A 9–12 s, 17–25 s, 27–28 s, 32–40 s, 61–76 s; B 3 s, 18–23 s, 48–50 s | Keyword arrows | a short, **curved, bold, black hand-drawn arrow** ties almost every keyword to the element it names (or one element to another), drawn with the word, gone with it |
+| G18 | A 26–28 s, 34–35 s, 62–65 s; B 8 s, 12–14 s, 27 s, 29–30 s, 38–40 s, 55–56 s | Grey wash + background defocus | when the key element arrives over a built scene, the backdrop turns light grey (≈ 205/255) and blurs within ~3 frames while the new element (and the presenter) stay crisp; one every **~5–10 s**; held until the scene changes |
+
+Element scale: each reference frame carries one to three large subjects. HEXA's authored scene
+layouts already fill ~90 % of the frame once complete (median union 0.93 W × 0.90 H, Black Hat),
+so "high scale" is matched by large typography (G14) and by not shrinking subjects, not by
+re-laying out the Final Package.
 
 ## 2. Reference → HEXA translation
 
@@ -53,3 +73,14 @@ pulse on an already visible icon.
 Hard limits that the references do not override: narration/Story reveal instants, authored final
 geometry, family rigidity, collision/text safety, the P0 pre-encode and encoded QA. Every new
 profile is a documented, tested contract (`app/motion/contract.py` evaluates it).
+
+## 3. Rebuild R1 (2026-10-20): how each device is applied to every Final Package
+
+| Device | Owner | Rule | Evidence on Black Hat v9 |
+| --- | --- | --- | --- |
+| G14 typography | `composition/text_director.py`, `text/metrics.py` | rungs 2.2–1.15 × the style size are tried first; the shared text/artwork contract accepts or rejects each; never wider than the safe area | 22/35 words above 1.0 ×, 11 at ≥ 1.9 × |
+| G15 blur | `motion/motion_blur.py` | 360° shutter (1.3 for the dominant mover), smear ≤ 22 % of the height | entries visibly smeared over 4–5 frames |
+| G16 whip | `boundary/release.py` (`SCENE_WHIP`) | every crisp change whose old scene has no continuity owner: one rigid block, 6 frames from the unchanged opener, under the incoming art, blurred | 33/39 boundaries |
+| G17 keyword arrows | `render/connection.py`, `render/text.py` | from the placed word's ink box to the named asset's visible artwork; curved bows first; only on a clean route ≥ 90 px; shown with the word | 13 arrows |
+| G18 wash | `motion/resolution.py` (icon pulse off) | existing fail-closed wash rules, spacing 5 s | 7 washes |
+| no in-place gestures | `motion/stillness.py`, `motion/hero_travel.py` | post-settle pulses off; every out-and-back accent becomes a deliberate still segment (QA still rejects weak non-zero motion) | 34 → 0 micro gestures |
