@@ -103,3 +103,28 @@ held icon hits stay rare because a 7 % boom needs ≥ 0.127 s per ramp under the
 0.25–0.32 s windows; ~39 corpus assets carry an authored relation accent overlapping a carried ENTRY in their first
 0.4 s; 37/39 Black Hat boundaries remain cuts because incoming openers appear ~3 frames into the scene. User visual
 acceptance is pending.
+
+## Reference-driven cinematic rebuild (C0–C5) — 2026-10-19/20 (after the user rejected v6)
+
+Grammar measured from the two approved references: `docs/reference-motion-grammar.md` (G1–G13). Commits:
+`6bb467e7` C0+C1, `c6a2691f` C3, `cf0f2af1` C4, `12b2d1fc` scene-opener fix found by Level 5. C2 was dropped
+(no visible effect; see below). No Story instant, narration, final position, asset or text changed.
+
+| Evidence | v6 | Rebuild (v8, `12b2d1fc`) | How measured |
+| --- | --- | --- | --- |
+| C1 opening entries | lock 77 px, shield 161 px, in-frame starts | lock from beyond LEFT, shield from beyond RIGHT, ease-out, blur while fast | decoded opening encode |
+| C3 authored arrows/paths | faded in place (full extent from the first visible frame) | drawn along their causal relation: beat-029 leading edge 141→583→903→1153→1235 px over 8 frames; beat-022 arrow in its 4-frame settle window | decoded ROI per frame |
+| C3 generated connectors | 0.2 s opacity fade | 8-frame write-on, last frame == complete arrow | unit + encoded test |
+| C4 relation results (corpus 4 cues) | 1.0→1.03→1.0 pulse while fading in place | one edge arrival + 0.93→1.0 growth on REACT and PAYOFF; beat-005 moneybag solid at 11.40 s vs 11.50 s | decoded gold-pixel track |
+| Decoded entering assets (YouTube, 149) | DIRECTIONAL 68 / FADE_ONLY 57 | 68 / 56; mean travel 134→146 px; ≥ 300 px entries 2→9 | NCC tracker |
+| Rhythm, first 65.5 s | moving 0.563, median motion run 8 f, 0 beats with ≥ 1 s still | 0.559, 8 f, 0 | `ref_profile.py`, `beat_audit.py` (references 0.51/0.79, run 13 f) |
+| Preservation (8 corpus plans) | — | Story, text, assets, final positions, duration, audio byte-identical | plan diff |
+| Pre-encode QA, corpus × 2 targets | 0 | 0 | `EncodedMotionVerifier.preflight` |
+| Level 5 dual-target render | v6 PASS | first attempt REJECTED (near-white cut frame 71.533 s, beat-032) → fixed → **v8 PASS**, YouTube + Reels 97.059 s, encoded-motion + final-media OK, 743 s total | production `generate_bundle` |
+| Local gates `12b2d1fc` | — | ruff clean; web 63, test1 738 (38 corpus skips), test2 1617, test3 814, certification 6725, holdouts 80, visual 355 — 0 failures; certified real corpus 355 / 0 failed (6 opt-in Level E skips) | junit |
+
+Measured limits: global activity density is unchanged (the gap to the references is whole-character relocation
+between ideas, which needs Story/read-hold authority); boundaries stay authored holds that end on the opener
+(fading them early would erase authored visibility); 26/34 authored relations are touching pairs with no path
+art (no connector is invented); write-ons inside settle windows < 8 frames are fast (beat-022: 4 frames); YouTube
+encode +14 % (geq masks). User visual acceptance is pending.
