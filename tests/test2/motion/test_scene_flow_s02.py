@@ -314,7 +314,7 @@ def test_short_vertical_flow_arrival_respects_encoded_motion_speed(y, expected_s
     """16:9 Y displacement must be normalized in the same units as encoded QA."""
     from pathlib import Path
     from app.models import MotionSegment
-    from app.render.verification import RenderedMotionVerifier
+    from app.render.verification import EncodedMotionVerifier
     from app.motion.timing import REFERENCE_SLIDE
     from app.targets.context import active_target
 
@@ -340,7 +340,7 @@ def test_short_vertical_flow_arrival_respects_encoded_motion_speed(y, expected_s
     assert frames[0]["dy"] * expected_sign > 0
     segment = MotionSegment(phase="ENTRY", start=entry.start, end=entry.end,
                             program=result.params["program"])
-    speed = RenderedMotionVerifier._max_normalized_keyframe_speed(
+    speed = EncodedMotionVerifier._max_normalized_keyframe_speed(
         segment, duration=entry.end - entry.start,
         item_width=item.width, item_height=item.height)
     assert speed <= REFERENCE_SLIDE.max_normalized_speed * 1.08 + 1e-6
