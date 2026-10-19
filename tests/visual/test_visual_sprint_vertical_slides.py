@@ -27,8 +27,10 @@ def test_an_asset_near_the_top_or_bottom_slides_in_vertically_from_that_edge(ite
     assert frames[0]["dx"] == 0.0 and frames[-1]["dy"] == 0.0
     aspect = active_target().width / active_target().height
     seconds = cue.params["reference_slide"]["seconds"]
-    distance = min(SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
-    assert frames[0]["dy"] == pytest.approx(sign * distance * aspect, abs=1e-6)  # same pixels as a side slide
+    # Vertical travel is budgeted in normalized Y (encoded QA's unit), so the speed ceiling,
+    # not the side-slide pixel distance, bounds it (2026-10-19: side slides grew to 0.12 w).
+    distance = min(SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED * seconds / (SMOOTHSTEP_PEAK * aspect))
+    assert frames[0]["dy"] == pytest.approx(sign * distance * aspect, abs=1e-6)
     segment = MotionSegment(phase="ENTRY", start=cue.start, end=cue.end, program=cue.params["program"])
     speed = EncodedMotionVerifier._max_normalized_keyframe_speed(segment, duration=cue.end - cue.start,
                                                                 item_width=item.width, item_height=item.height)

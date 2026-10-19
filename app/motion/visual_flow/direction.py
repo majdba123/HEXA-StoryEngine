@@ -60,7 +60,13 @@ def spatial_entry_direction(item: LayoutItem, *, frame_width: int | None = None,
     options = (
         (max(0.0, item.x - item.width / 2) * width, (-1.0, 0.0)),
         (max(0.0, 1 - item.x - item.width / 2) * width, (1.0, 0.0)),
-        (max(0.0, item.y - item.height / 2) * height, (0.0, -1.0)),
-        (max(0.0, 1 - item.y - item.height / 2) * height, (0.0, 1.0)),
+        # A lateral entrance reads as travel across the frame; a vertical one only wins
+        # when its edge is clearly closer (encoded review 2026-10-19: strict nearest-edge
+        # sent near-corner art up from the bottom, 36 of 59 directional entries).
+        (max(0.0, item.y - item.height / 2) * height * LATERAL_PREFERENCE, (0.0, -1.0)),
+        (max(0.0, 1 - item.y - item.height / 2) * height * LATERAL_PREFERENCE, (0.0, 1.0)),
     )
     return min(options, key=lambda option: option[0])[1]
+
+
+LATERAL_PREFERENCE = 1.6

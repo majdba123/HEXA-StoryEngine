@@ -1,0 +1,3933 @@
+{
+ "story_beat": {
+  "id": "beat-001",
+  "scene_id": "SCENE_001",
+  "start": 0.0,
+  "end": 2.06,
+  "audio_start": 0.1,
+  "audio_end": 2.06,
+  "narration": "الهاكر ذو القبعة السوداء.",
+  "primary_asset_ids": [
+   "SCENE_001:asset-01"
+  ],
+  "support_asset_ids": [
+   "SCENE_001:asset-02",
+   "SCENE_001:asset-03",
+   "SCENE_001:asset-04",
+   "SCENE_001:asset-04:secondary-01",
+   "SCENE_001:asset-03:secondary-01"
+  ],
+  "action": "INTRODUCE",
+  "handoff_from": null,
+  "semantic_targets": [
+   "SCENE_001_A01_hexa_black_hat",
+   "SCENE_001_A02_broken_lock",
+   "SCENE_001_A03_warning_shield"
+  ],
+  "semantic_context": {
+   "story_role": "SETUP",
+   "event_id": null,
+   "event_order": null,
+   "event_trigger": {
+    "phrase": "الهاكر ذو القبعة السوداء.",
+    "occurrence_in_scene": null,
+    "global_char_start": 0,
+    "global_char_end": 25
+   },
+   "scene_purpose": "تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+   "scene_visual_concept": "شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+   "scene_metadata": {
+    "purpose": "تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+    "visual_concept": "شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+    "relation_to_previous": null,
+    "script_char_start": 0,
+    "script_char_end": 25,
+    "semantic_event_count": 2,
+    "semantic_progression": {
+     "type": "THREAT_TO_IDENTITY",
+     "event_order": [
+      "SCENE_001_EVENT_01",
+      "SCENE_001_EVENT_02"
+     ],
+     "extension_metadata": {}
+    }
+   },
+   "event_metadata": {
+    "action": "EXPLAIN",
+    "targets": [
+     "SCENE_001_A01_hexa_black_hat",
+     "SCENE_001_A02_broken_lock",
+     "SCENE_001_A03_warning_shield"
+    ],
+    "trigger": {
+     "global_char_start": 0,
+     "global_char_end": 25,
+     "phrase": "الهاكر ذو القبعة السوداء."
+    }
+   },
+   "entities": [
+    {
+     "unit_id": "SCENE_001_A01_hexa_black_hat",
+     "semantic_name": "شخصية HEXA ترفع القبعة السوداء",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "CHARACTER",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 10,
+      "global_char_end": 24
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_001_A01_hexa_black_hat",
+      "asset_id": "SCENE_001_A01_hexa_black_hat",
+      "scene_id": "SCENE_001",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "شخصية HEXA ترفع القبعة السوداء",
+      "visual_concept": "شخصية MAIN_HEXA ترتدي القبعة السوداء",
+      "semantic_meaning": "شخصية HEXA ترفع القبعة السوداء",
+      "role": "CHARACTER",
+      "semantic_role": "CHARACTER",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "EXPLICIT",
+      "script_text": "القبعة السوداء",
+      "script_span": {
+       "text": "القبعة السوداء",
+       "global_char_start": 10,
+       "global_char_end": 24
+      },
+      "appear_trigger": {
+       "text": "القبعة السوداء",
+       "global_char_start": 10,
+       "global_char_end": 24
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_001_G01",
+      "sequence_order": 1,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.98,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_001_EVENT_02",
+      "anchor_granularity": "EXACT_PHRASE",
+      "visual_focus": "PRIMARY",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.4964114832535885,
+       "cy": 0.5116896918172157,
+       "width": 0.35047846889952156,
+       "height": 0.9149840595111584
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    },
+    {
+     "unit_id": "SCENE_001_A02_broken_lock",
+     "semantic_name": "قفل أحمر مكسور يرمز للاختراق",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "OBJECT",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 0,
+      "global_char_end": 6
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_001_A02_broken_lock",
+      "asset_id": "SCENE_001_A02_broken_lock",
+      "scene_id": "SCENE_001",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "قفل أحمر مكسور يرمز للاختراق",
+      "visual_concept": "قفل أحمر مكسور يرمز للاختراق",
+      "semantic_meaning": "قفل أحمر مكسور يرمز للاختراق",
+      "role": "OBJECT",
+      "semantic_role": "OBJECT",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "SEMANTIC",
+      "script_text": "الهاكر",
+      "script_span": {
+       "text": "الهاكر",
+       "global_char_start": 0,
+       "global_char_end": 6
+      },
+      "appear_trigger": {
+       "text": "الهاكر",
+       "global_char_start": 0,
+       "global_char_end": 6
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_001_G01",
+      "sequence_order": 2,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.92,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_001_EVENT_01",
+      "anchor_granularity": "EXACT_WORD",
+      "visual_focus": "PRIMARY",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.1922846889952153,
+       "cy": 0.27577045696068014,
+       "width": 0.21830143540669855,
+       "height": 0.45164718384697133
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    },
+    {
+     "unit_id": "SCENE_001_A03_warning_shield",
+     "semantic_name": "درع شبكة مع تحذير",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "RESULT",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 0,
+      "global_char_end": 6
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_001_A03_warning_shield",
+      "asset_id": "SCENE_001_A03_warning_shield",
+      "scene_id": "SCENE_001",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "درع شبكة مع تحذير",
+      "visual_concept": "درع شبكة مع تحذير",
+      "semantic_meaning": "درع شبكة مع تحذير",
+      "role": "RESULT",
+      "semantic_role": "RESULT",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "SEMANTIC",
+      "script_text": "الهاكر",
+      "script_span": {
+       "text": "الهاكر",
+       "global_char_start": 0,
+       "global_char_end": 6
+      },
+      "appear_trigger": {
+       "text": "الهاكر",
+       "global_char_start": 0,
+       "global_char_end": 6
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_001_G01",
+      "sequence_order": 3,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.92,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_001_EVENT_01",
+      "anchor_granularity": "EXACT_WORD",
+      "visual_focus": "RESULT",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.8241626794258373,
+       "cy": 0.6780021253985122,
+       "width": 0.21650717703349281,
+       "height": 0.4357066950053135
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    }
+   ],
+   "relations": [
+    {
+     "source_unit_id": "SCENE_001_A02_broken_lock",
+     "target_unit_id": "SCENE_001_A01_hexa_black_hat",
+     "kind": "REVEALS_IDENTITY",
+     "authority": "FINAL_PACKAGE_ASSET_RELATION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": 0,
+     "trigger_char_end": 24,
+     "spoken_start": 0.1,
+     "spoken_end": 2.06,
+     "confidence": 1.0,
+     "causal": true
+    },
+    {
+     "source_unit_id": "SCENE_001_A01_hexa_black_hat",
+     "target_unit_id": "SCENE_001_A02_broken_lock",
+     "kind": "DECLARED_PROGRESSION",
+     "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": null,
+     "trigger_char_end": null,
+     "spoken_start": null,
+     "spoken_end": null,
+     "confidence": 0.96,
+     "causal": false
+    },
+    {
+     "source_unit_id": "SCENE_001_A02_broken_lock",
+     "target_unit_id": "SCENE_001_A03_warning_shield",
+     "kind": "DECLARED_PROGRESSION",
+     "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": null,
+     "trigger_char_end": null,
+     "spoken_start": null,
+     "spoken_end": null,
+     "confidence": 0.96,
+     "causal": false
+    }
+   ],
+   "subject_unit_ids": [
+    "SCENE_001_A02_broken_lock"
+   ],
+   "object_unit_ids": [
+    "SCENE_001_A01_hexa_black_hat"
+   ],
+   "result_unit_ids": [
+    "SCENE_001_A03_warning_shield"
+   ],
+   "focus_unit_ids": [
+    "SCENE_001_A02_broken_lock",
+    "SCENE_001_A01_hexa_black_hat"
+   ],
+   "visual_states": {},
+   "continuity_by_unit": {},
+   "narrative_functions": [
+    "BIND_SEMANTIC_ASSET_INTENT"
+   ],
+   "semantic_intents": [
+    "EXPLAIN"
+   ],
+   "continuity_relation": null,
+   "evidence": [
+    "event_action:EXPLAIN",
+    "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+    "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+    "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+    "event_trigger_chars:0:25",
+    "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+    "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+    "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+    "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+    "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+    "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+    "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+    "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+    "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+    "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_001_A03_warning_shield:RESULT",
+    "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+    "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+    "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+    "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+    "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+    "final_package_asset_level_semantics",
+    "final_package_asset_relations",
+    "final_package_semantic_events",
+    "final_package_event_progression",
+    "final_package_event_leaders"
+   ],
+   "confidence": 1.0,
+   "tension": 0.3
+  },
+  "asset_activations": [
+   {
+    "asset_id": "SCENE_001:asset-02",
+    "semantic_unit_id": "SCENE_001_A03_warning_shield",
+    "trigger_text": "الهاكر",
+    "trigger_char_start": 0,
+    "trigger_char_end": 6,
+    "spoken_start": 0.1,
+    "spoken_end": 0.64,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_001_G01",
+    "sequence_order": 3,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "RESULT",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_001_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "PARTICIPANT",
+     "RESULT"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=RESULT",
+     "semantic_event=SCENE_001_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=PARTICIPANT",
+     "semantic_event_role=RESULT",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_001_A03_warning_shield",
+     "semantic_group=SCENE_001_G01",
+     "sequence_order=3",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=0.06020709078247306",
+     "visual_identity_margin=0.9397929092175267",
+     "semantic_group_sequential_window",
+     "phrase_local_sequence_order",
+     "group_phrase_start=0.100000",
+     "group_phrase_end=0.640000",
+     "assigned_sequence_order=3",
+     "phrase_local_reveal_start=0.343000",
+     "phrase_local_settle_at=0.640000",
+     "assigned_semantic_event_order=1",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 0.64, \"phrase_start\": 0.34299999999999997, \"reveal_start\": 0.34299999999999997, \"semantic_peak\": 0.4915, \"settle_at\": 0.64}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_001:asset-02\", \"beat_id\": \"beat-001\", \"candidate_phrase\": \"الهاكر\", \"chosen_phrase\": \"الهاكر\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_001_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"PARTICIPANT\", \"RESULT\"], \"semantic_group_id\": \"SCENE_001_G01\", \"semantic_text\": \"الهاكر\", \"semantic_unit_id\": \"SCENE_001_A03_warning_shield\", \"sequence_order\": 3, \"source\": \"final_package_binding\", \"spoken_end\": 0.64, \"spoken_start\": 0.1}"
+    ],
+    "phrase_start": 0.34299999999999997,
+    "phrase_end": 0.64,
+    "reveal_start": 0.34299999999999997,
+    "semantic_peak": 0.4915,
+    "settle_at": 0.64,
+    "activation_policy": "OWN_WINDOW"
+   },
+   {
+    "asset_id": "SCENE_001:asset-03",
+    "semantic_unit_id": "SCENE_001_A02_broken_lock",
+    "trigger_text": "الهاكر",
+    "trigger_char_start": 0,
+    "trigger_char_end": 6,
+    "spoken_start": 0.1,
+    "spoken_end": 0.64,
+    "confidence": 0.8284719135797578,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_001_G01",
+    "sequence_order": 2,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_001_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "LEADER",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_001_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_001_A02_broken_lock",
+     "semantic_group=SCENE_001_G01",
+     "sequence_order=2",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=0.828472",
+     "visual_identity_runner_up=0.5447831642677531",
+     "visual_identity_margin=0.2836887493120047",
+     "semantic_group_sequential_window",
+     "phrase_local_sequence_order",
+     "group_phrase_start=0.100000",
+     "group_phrase_end=0.640000",
+     "assigned_sequence_order=2",
+     "phrase_local_reveal_start=0.100000",
+     "phrase_local_settle_at=0.397000",
+     "assigned_semantic_event_order=1",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 0.397, \"phrase_start\": 0.1, \"reveal_start\": 0.1, \"semantic_peak\": 0.24850000000000003, \"settle_at\": 0.397}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_001:asset-03\", \"beat_id\": \"beat-001\", \"candidate_phrase\": \"الهاكر\", \"chosen_phrase\": \"الهاكر\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.8284719135797578, \"semantic_event_id\": \"SCENE_001_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"LEADER\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_001_G01\", \"semantic_text\": \"الهاكر\", \"semantic_unit_id\": \"SCENE_001_A02_broken_lock\", \"sequence_order\": 2, \"source\": \"final_package_binding\", \"spoken_end\": 0.64, \"spoken_start\": 0.1}"
+    ],
+    "phrase_start": 0.1,
+    "phrase_end": 0.397,
+    "reveal_start": 0.1,
+    "semantic_peak": 0.24850000000000003,
+    "settle_at": 0.397,
+    "activation_policy": "OWN_WINDOW"
+   },
+   {
+    "asset_id": "SCENE_001:asset-03:secondary-01",
+    "semantic_unit_id": "SCENE_001_A02_broken_lock",
+    "trigger_text": "الهاكر",
+    "trigger_char_start": 0,
+    "trigger_char_end": 6,
+    "spoken_start": 0.1,
+    "spoken_end": 0.64,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_001_G01",
+    "sequence_order": 2,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_001_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "LEADER",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_001_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_001_A02_broken_lock",
+     "semantic_group=SCENE_001_G01",
+     "sequence_order=2",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator_contained",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=none",
+     "visual_identity_margin=none",
+     "semantic_group_sequential_window",
+     "phrase_local_sequence_order",
+     "group_phrase_start=0.100000",
+     "group_phrase_end=0.640000",
+     "assigned_sequence_order=2",
+     "phrase_local_reveal_start=0.100000",
+     "phrase_local_settle_at=0.397000",
+     "assigned_semantic_event_order=1",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 0.397, \"phrase_start\": 0.1, \"reveal_start\": 0.1, \"semantic_peak\": 0.24850000000000003, \"settle_at\": 0.397}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_001:asset-03:secondary-01\", \"beat_id\": \"beat-001\", \"candidate_phrase\": \"الهاكر\", \"chosen_phrase\": \"الهاكر\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_001_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"LEADER\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_001_G01\", \"semantic_text\": \"الهاكر\", \"semantic_unit_id\": \"SCENE_001_A02_broken_lock\", \"sequence_order\": 2, \"source\": \"final_package_binding\", \"spoken_end\": 0.64, \"spoken_start\": 0.1}"
+    ],
+    "phrase_start": 0.1,
+    "phrase_end": 0.397,
+    "reveal_start": 0.1,
+    "semantic_peak": 0.24850000000000003,
+    "settle_at": 0.397,
+    "activation_policy": "OWN_WINDOW"
+   },
+   {
+    "asset_id": "SCENE_001:asset-04",
+    "semantic_unit_id": "SCENE_001_A02_broken_lock",
+    "trigger_text": "الهاكر",
+    "trigger_char_start": 0,
+    "trigger_char_end": 6,
+    "spoken_start": 0.1,
+    "spoken_end": 0.64,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_001_G01",
+    "sequence_order": 2,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_001_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "LEADER",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_001_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_001_A02_broken_lock",
+     "semantic_group=SCENE_001_G01",
+     "sequence_order=2",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator_contained",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=none",
+     "visual_identity_margin=none",
+     "semantic_group_sequential_window",
+     "phrase_local_sequence_order",
+     "group_phrase_start=0.100000",
+     "group_phrase_end=0.640000",
+     "assigned_sequence_order=2",
+     "phrase_local_reveal_start=0.100000",
+     "phrase_local_settle_at=0.397000",
+     "assigned_semantic_event_order=1",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 0.397, \"phrase_start\": 0.1, \"reveal_start\": 0.1, \"semantic_peak\": 0.24850000000000003, \"settle_at\": 0.397}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_001:asset-04\", \"beat_id\": \"beat-001\", \"candidate_phrase\": \"الهاكر\", \"chosen_phrase\": \"الهاكر\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_001_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"LEADER\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_001_G01\", \"semantic_text\": \"الهاكر\", \"semantic_unit_id\": \"SCENE_001_A02_broken_lock\", \"sequence_order\": 2, \"source\": \"final_package_binding\", \"spoken_end\": 0.64, \"spoken_start\": 0.1}"
+    ],
+    "phrase_start": 0.1,
+    "phrase_end": 0.397,
+    "reveal_start": 0.1,
+    "semantic_peak": 0.24850000000000003,
+    "settle_at": 0.397,
+    "activation_policy": "OWN_WINDOW"
+   },
+   {
+    "asset_id": "SCENE_001:asset-04:secondary-01",
+    "semantic_unit_id": "SCENE_001_A02_broken_lock",
+    "trigger_text": "الهاكر",
+    "trigger_char_start": 0,
+    "trigger_char_end": 6,
+    "spoken_start": 0.1,
+    "spoken_end": 0.64,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_001_G01",
+    "sequence_order": 2,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_001_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "LEADER",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_001_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_001_A02_broken_lock",
+     "semantic_group=SCENE_001_G01",
+     "sequence_order=2",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator_contained",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=none",
+     "visual_identity_margin=none",
+     "semantic_group_sequential_window",
+     "phrase_local_sequence_order",
+     "group_phrase_start=0.100000",
+     "group_phrase_end=0.640000",
+     "assigned_sequence_order=2",
+     "phrase_local_reveal_start=0.100000",
+     "phrase_local_settle_at=0.397000",
+     "assigned_semantic_event_order=1",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 0.397, \"phrase_start\": 0.1, \"reveal_start\": 0.1, \"semantic_peak\": 0.24850000000000003, \"settle_at\": 0.397}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_001:asset-04:secondary-01\", \"beat_id\": \"beat-001\", \"candidate_phrase\": \"الهاكر\", \"chosen_phrase\": \"الهاكر\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_001_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"LEADER\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_001_G01\", \"semantic_text\": \"الهاكر\", \"semantic_unit_id\": \"SCENE_001_A02_broken_lock\", \"sequence_order\": 2, \"source\": \"final_package_binding\", \"spoken_end\": 0.64, \"spoken_start\": 0.1}"
+    ],
+    "phrase_start": 0.1,
+    "phrase_end": 0.397,
+    "reveal_start": 0.1,
+    "semantic_peak": 0.24850000000000003,
+    "settle_at": 0.397,
+    "activation_policy": "OWN_WINDOW"
+   },
+   {
+    "asset_id": "SCENE_001:asset-01",
+    "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+    "trigger_text": "القبعة السوداء",
+    "trigger_char_start": 10,
+    "trigger_char_end": 24,
+    "spoken_start": 0.82,
+    "spoken_end": 2.06,
+    "confidence": 0.98,
+    "source": "unified_final_package",
+    "policy": "EXPLICIT",
+    "semantic_group_id": "SCENE_001_G01",
+    "sequence_order": 1,
+    "binding_type": "EXPLICIT",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_001_EVENT_02",
+    "semantic_event_order": 2,
+    "semantic_event_roles": [
+     "LEADER",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [
+     "SCENE_001_EVENT_01"
+    ],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_001_EVENT_02",
+     "semantic_event_order=2",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_001_A01_hexa_black_hat",
+     "semantic_group=SCENE_001_G01",
+     "sequence_order=1",
+     "binding_type=EXPLICIT",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=0.1592383251297808",
+     "visual_identity_margin=0.8407616748702191",
+     "attention_role=PRIMARY",
+     "attention_focus_ms=250",
+     "attention_decay=settle_hold",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 2.06, \"phrase_start\": 0.82, \"reveal_start\": 0.82, \"semantic_peak\": 0.9574999999999999, \"settle_at\": 1.0699999999999998}",
+     "EARLY_SCENE_COMPLETION",
+     "no_confident_unassigned_late_visual_material",
+     "uncovered_narration_seconds=0.990000",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_001:asset-01\", \"beat_id\": \"beat-001\", \"candidate_phrase\": \"القبعة السوداء\", \"chosen_phrase\": \"القبعة السوداء\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.98, \"semantic_event_id\": \"SCENE_001_EVENT_02\", \"semantic_event_order\": 2, \"semantic_event_roles\": [\"LEADER\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_001_G01\", \"semantic_text\": \"القبعة السوداء\", \"semantic_unit_id\": \"SCENE_001_A01_hexa_black_hat\", \"sequence_order\": 1, \"source\": \"final_package_binding\", \"spoken_end\": 2.06, \"spoken_start\": 0.82}"
+    ],
+    "phrase_start": 0.82,
+    "phrase_end": 2.06,
+    "reveal_start": 0.82,
+    "semantic_peak": 0.9574999999999999,
+    "settle_at": 1.0699999999999998,
+    "activation_policy": "OWN_WINDOW"
+   }
+  ],
+  "semantic_event_proxies": [],
+  "event_authorities": [
+   {
+    "event_id": "SCENE_001_EVENT_01",
+    "sequence_order": 1,
+    "leader_asset_ids": [
+     "SCENE_001:asset-03",
+     "SCENE_001:asset-03:secondary-01",
+     "SCENE_001:asset-04",
+     "SCENE_001:asset-04:secondary-01"
+    ],
+    "participant_asset_ids": [
+     "SCENE_001:asset-02"
+    ],
+    "result_asset_ids": [
+     "SCENE_001:asset-02"
+    ],
+    "context_asset_ids": [],
+    "text_anchor_asset_ids": [
+     "SCENE_001:asset-03",
+     "SCENE_001:asset-03:secondary-01",
+     "SCENE_001:asset-04",
+     "SCENE_001:asset-04:secondary-01"
+    ],
+    "dependency_ids": [],
+    "script_char_start": 0,
+    "script_char_end": 6,
+    "spoken_start": 0.1,
+    "spoken_end": 0.64,
+    "confidence": 0.98,
+    "needs_review": false,
+    "ambiguity_reason": null,
+    "relation_kinds": [],
+    "authority": "FINAL_PACKAGE_SEMANTIC_EVENT"
+   },
+   {
+    "event_id": "SCENE_001_EVENT_02",
+    "sequence_order": 2,
+    "leader_asset_ids": [
+     "SCENE_001:asset-01"
+    ],
+    "participant_asset_ids": [],
+    "result_asset_ids": [],
+    "context_asset_ids": [],
+    "text_anchor_asset_ids": [
+     "SCENE_001:asset-01"
+    ],
+    "dependency_ids": [
+     "SCENE_001_EVENT_01"
+    ],
+    "script_char_start": 10,
+    "script_char_end": 24,
+    "spoken_start": 0.82,
+    "spoken_end": 2.06,
+    "confidence": 0.98,
+    "needs_review": false,
+    "ambiguity_reason": null,
+    "relation_kinds": [],
+    "authority": "FINAL_PACKAGE_SEMANTIC_EVENT"
+   }
+  ],
+  "active_visual_semantic_state": {
+   "SCENE_001:asset-02": "SCENE_001_A03_warning_shield",
+   "SCENE_001:asset-03": "SCENE_001_A02_broken_lock",
+   "SCENE_001:asset-03:secondary-01": "SCENE_001_A02_broken_lock",
+   "SCENE_001:asset-04": "SCENE_001_A02_broken_lock",
+   "SCENE_001:asset-04:secondary-01": "SCENE_001_A02_broken_lock",
+   "SCENE_001:asset-01": "SCENE_001_A01_hexa_black_hat"
+  }
+ },
+ "composition_beat": {
+  "beat_id": "beat-001",
+  "items": [
+   {
+    "asset_id": "SCENE_001:asset-01",
+    "x": 0.496413390010627,
+    "y": 0.5116896918172157,
+    "width": 0.3502922422954305,
+    "height": 0.9149840595111584,
+    "z": 10,
+    "placement_source": "authored_scene_geometry"
+   },
+   {
+    "asset_id": "SCENE_001:asset-02",
+    "x": 0.823990435706695,
+    "y": 0.6780021253985122,
+    "width": 0.2163921360255048,
+    "height": 0.4357066950053135,
+    "z": 11,
+    "placement_source": "authored_scene_geometry"
+   },
+   {
+    "asset_id": "SCENE_001:asset-03",
+    "x": 0.19214930924548349,
+    "y": 0.27577045696068014,
+    "width": 0.21758767268862914,
+    "height": 0.45164718384697133,
+    "z": 12,
+    "placement_source": "authored_scene_geometry"
+   },
+   {
+    "asset_id": "SCENE_001:asset-03:secondary-01",
+    "x": 0.19214930924548349,
+    "y": 0.27577045696068014,
+    "width": 0.21758767268862914,
+    "height": 0.45164718384697133,
+    "z": 13,
+    "placement_source": "authored_scene_geometry"
+   },
+   {
+    "asset_id": "SCENE_001:asset-04",
+    "x": 0.250730605738576,
+    "y": 0.27098831030818277,
+    "width": 0.10162061636556856,
+    "height": 0.30818278427205104,
+    "z": 14,
+    "placement_source": "authored_scene_geometry"
+   },
+   {
+    "asset_id": "SCENE_001:asset-04:secondary-01",
+    "x": 0.250730605738576,
+    "y": 0.27098831030818277,
+    "width": 0.10162061636556856,
+    "height": 0.30818278427205104,
+    "z": 15,
+    "placement_source": "authored_scene_geometry"
+   }
+  ],
+  "state_name": "REVEALED",
+  "semantic_focus_asset_id": "SCENE_001:asset-03",
+  "state_evidence": [
+   "story_semantics",
+   "final_package_geometry",
+   "layout:final_package_geometry",
+   "semantic_staging:baseline:no_relation_evidence",
+   "event_action:EXPLAIN",
+   "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+   "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+   "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+   "event_trigger_chars:0:25",
+   "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+   "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+   "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+   "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+   "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+   "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+   "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+   "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+   "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+   "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+   "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+   "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+   "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+   "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+   "entity_role:SCENE_001_A03_warning_shield:RESULT",
+   "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+   "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+   "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+   "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+   "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+   "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+   "final_package_asset_level_semantics",
+   "final_package_asset_relations",
+   "final_package_semantic_events",
+   "final_package_event_progression",
+   "final_package_event_leaders",
+   "final_package_event_flow_choreography",
+   "relationship:REVEALS_IDENTITY",
+   "state:CONCEALED->REVEALED",
+   "state:CONTEXT->EVIDENCE",
+   "grammar:ENTER",
+   "grammar:READ",
+   "grammar:RELATE",
+   "grammar:ADD",
+   "grammar:RESULT",
+   "layout:authored_geometry_locked"
+  ]
+ },
+ "motion_entering_hero_travel": [
+  {
+   "beat_id": "beat-001",
+   "asset_id": "SCENE_001:asset-03",
+   "kind": "program_v3",
+   "start": 0.1,
+   "end": 0.397,
+   "params": {
+    "engine_version": 3,
+    "semantic_action": "REVEAL",
+    "semantic_settle_time": 0.397,
+    "audio_anchor": 0.1,
+    "spoken_duration": 1.96,
+    "pace_tier": "deliberate",
+    "hook": true,
+    "handoff": false,
+    "attention_reset": false,
+    "variant": 0,
+    "intensity": 0.86,
+    "sequence_index": 0,
+    "sequence_count": 6,
+    "choreography": {
+     "sequence_id": "sequence-001",
+     "phase": "SETUP",
+     "action": "REVEAL",
+     "pattern": "CAUSE_EFFECT_CHAIN",
+     "hook": "OPEN",
+     "hook_mechanism": "CURIOSITY",
+     "tension": 0.32,
+     "relationship": "REVEALS_IDENTITY",
+     "primary_asset_id": "SCENE_001:asset-03",
+     "interaction_asset_id": "SCENE_001:asset-01",
+     "actor_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "emphasis_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "continuity_from": null,
+     "continuity_mode": "NONE",
+     "participant_role": "SUBJECT",
+     "semantic_unit_ids": [
+      "SCENE_001_A01_hexa_black_hat",
+      "SCENE_001_A02_broken_lock",
+      "SCENE_001_A03_warning_shield"
+     ],
+     "state_transitions": [
+      {
+       "asset_id": "SCENE_001:asset-03",
+       "from": "CONCEALED",
+       "to": "REVEALED",
+       "reason": "REVEAL",
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "confidence": 1.0,
+       "meaningful": true
+      },
+      {
+       "asset_id": "SCENE_001:asset-01",
+       "from": "CONTEXT",
+       "to": "EVIDENCE",
+       "reason": "REVEALS_IDENTITY",
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "confidence": 1.0,
+       "meaningful": true
+      }
+     ],
+     "interaction": {
+      "semantic_action": "REVEAL",
+      "relationship": "REVEALS_IDENTITY",
+      "subject_asset_id": "SCENE_001:asset-03",
+      "object_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "confidence": 1.0,
+      "executable": true
+     },
+     "interactions": [
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "REVEALS_IDENTITY",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-01",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_ASSET_RELATION",
+       "confidence": 1.0,
+       "executable": true
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-01",
+       "object_asset_id": "SCENE_001:asset-03",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "object_unit_id": "SCENE_001_A02_broken_lock",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-02",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A03_warning_shield",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      }
+     ],
+     "package_evidence": [
+      "event_action:EXPLAIN",
+      "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+      "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+      "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+      "event_trigger_chars:0:25",
+      "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+      "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+      "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+      "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+      "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+      "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+      "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+      "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A03_warning_shield:RESULT",
+      "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+      "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+      "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+      "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+      "final_package_asset_level_semantics",
+      "final_package_asset_relations",
+      "final_package_semantic_events",
+      "final_package_event_progression",
+      "final_package_event_leaders",
+      "final_package_event_flow_choreography"
+     ],
+     "grammar_stages": [
+      "ENTER",
+      "READ",
+      "RELATE",
+      "ADD",
+      "RESULT"
+     ],
+     "asset_requirements": [
+      {
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "participant_role": "SUBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-03"
+      },
+      {
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "participant_role": "OBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-01"
+      }
+     ],
+     "event_focus_path_asset_ids": [
+      "SCENE_001:asset-03",
+      "SCENE_001:asset-02",
+      "SCENE_001:asset-01"
+     ],
+     "relation_flows": [
+      {
+       "relationship": "REVEALS_IDENTITY",
+       "source_asset_id": "SCENE_001:asset-03",
+       "target_asset_id": "SCENE_001:asset-01",
+       "treatment": "ABSTAIN",
+       "reason": "non_directional_relation",
+       "source_event_id": null,
+       "target_event_id": null
+      }
+     ],
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "event_flow_assignment": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "INTERACT",
+      "step_index": 2,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": "SCENE_001:asset-03",
+      "target_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "relationship": "REVEALS_IDENTITY",
+      "semantic_action": "REVEAL",
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "involvement": "SOURCE",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": 0,
+      "trigger_char_end": 24,
+      "spoken_start": 0.1,
+      "spoken_end": 2.06,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "FOCUS",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       },
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "INTERACT",
+        "step_index": 2,
+        "involvement": "SOURCE",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": "SCENE_001:asset-03",
+        "target_asset_id": "SCENE_001:asset-01",
+        "result_asset_id": null,
+        "relationship": "REVEALS_IDENTITY",
+        "semantic_action": "REVEAL",
+        "authority": "FINAL_PACKAGE_ASSET_RELATION",
+        "trigger_char_start": 0,
+        "trigger_char_end": 24,
+        "spoken_start": 0.1,
+        "spoken_end": 2.06,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     }
+    },
+    "program": {
+     "name": "reference_safe_density_safe_reference_slide_settle",
+     "settle_progress": 1.0,
+     "keyframes": [
+      {
+       "progress": 0.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 0.6180339887498949,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 1.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "smoothstep"
+      }
+     ],
+     "semantic_peak_progress": 0.5
+    },
+    "semantic_focus": {
+     "active": true,
+     "role": "SUBJECT",
+     "source": "event_flow_interaction",
+     "strength": 0.98,
+     "cohort_gain": 1.0,
+     "cohort_role": "leader",
+     "semantic_role": "OBJECT",
+     "focus_duration_ms": 297,
+     "attention_decay": "static_hold",
+     "handoff_residual_strength": 0.4,
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "visual_focus": "PRIMARY",
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "event_flow": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "INTERACT",
+      "step_index": 2,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": "SCENE_001:asset-03",
+      "target_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "relationship": "REVEALS_IDENTITY",
+      "semantic_action": "REVEAL",
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "involvement": "SOURCE",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": 0,
+      "trigger_char_end": 24,
+      "spoken_start": 0.1,
+      "spoken_end": 2.06,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "FOCUS",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       },
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "INTERACT",
+        "step_index": 2,
+        "involvement": "SOURCE",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": "SCENE_001:asset-03",
+        "target_asset_id": "SCENE_001:asset-01",
+        "result_asset_id": null,
+        "relationship": "REVEALS_IDENTITY",
+        "semantic_action": "REVEAL",
+        "authority": "FINAL_PACKAGE_ASSET_RELATION",
+        "trigger_char_start": 0,
+        "trigger_char_end": 24,
+        "spoken_start": 0.1,
+        "spoken_end": 2.06,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     },
+     "event_flow_execution": "EXPLICIT_TIMELINE",
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "trigger_char_start": 0,
+     "trigger_char_end": 6
+    },
+    "motion_order": {
+     "source": "final_package_sequence_order",
+     "semantic_group_id": "SCENE_001_G01",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock",
+     "sequence_order": 2,
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "internal_index": 0,
+     "internal_count": 1,
+     "stagger_applied": false
+    },
+    "semantic_peak_time": 0.24850000000000003,
+    "semantic_continuity": {
+     "mode": "ENTER",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock"
+    },
+    "semantic_lifetime": {
+     "mode": "SCENE_ACTIVE_UNTIL_SCENE_END",
+     "keep_visible_through": 2.06,
+     "release_deadline": 2.06,
+     "future_event_ids": [
+      "SCENE_001_EVENT_02"
+     ],
+     "reasons": [
+      "scene_active_until_scene_end"
+     ]
+    },
+    "reference_motion_adjusted": true,
+    "entry_grammar": {
+     "opacity": false,
+     "reason": "opens_scene"
+    }
+   },
+   "segments": [
+    {
+     "phase": "INTERACT",
+     "start": 0.1,
+     "end": 0.5,
+     "program": {
+      "name": "reference_focus_handoff",
+      "settle_progress": 0.6006951183233984,
+      "keyframes": [
+       {
+        "progress": 0.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.37125,
+        "dx": 0.010723408184357883,
+        "dy": 0.005230751899251154,
+        "scale": 1.0214999999999999,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.6006951183233984,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       },
+       {
+        "progress": 1.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       }
+      ],
+      "semantic_peak_progress": 0.37125,
+      "semantic_active_duration": 0.24027804732935937
+     },
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_action": "REVEAL",
+     "relationship": "REVEALS_IDENTITY",
+     "involvement": "SOURCE",
+     "source_asset_id": "SCENE_001:asset-03",
+     "target_asset_id": "SCENE_001:asset-01",
+     "result_asset_id": null,
+     "handoff_deadline": 2.06,
+     "connection": false
+    }
+   ]
+  },
+  {
+   "beat_id": "beat-001",
+   "asset_id": "SCENE_001:asset-03:secondary-01",
+   "kind": "program_v3",
+   "start": 0.1,
+   "end": 0.397,
+   "params": {
+    "engine_version": 3,
+    "semantic_action": "REVEAL",
+    "semantic_settle_time": 0.397,
+    "audio_anchor": 0.1,
+    "spoken_duration": 1.96,
+    "pace_tier": "deliberate",
+    "hook": true,
+    "handoff": false,
+    "attention_reset": false,
+    "variant": 0,
+    "intensity": 0.86,
+    "sequence_index": 1,
+    "sequence_count": 6,
+    "choreography": {
+     "sequence_id": "sequence-001",
+     "phase": "SETUP",
+     "action": "REVEAL",
+     "pattern": "CAUSE_EFFECT_CHAIN",
+     "hook": "OPEN",
+     "hook_mechanism": "CURIOSITY",
+     "tension": 0.32,
+     "relationship": "REVEALS_IDENTITY",
+     "primary_asset_id": "SCENE_001:asset-03",
+     "interaction_asset_id": "SCENE_001:asset-01",
+     "actor_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "emphasis_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "continuity_from": null,
+     "continuity_mode": "NONE",
+     "participant_role": "SUPPORT",
+     "semantic_unit_ids": [
+      "SCENE_001_A01_hexa_black_hat",
+      "SCENE_001_A02_broken_lock",
+      "SCENE_001_A03_warning_shield"
+     ],
+     "state_transitions": [
+      {
+       "asset_id": "SCENE_001:asset-03",
+       "from": "CONCEALED",
+       "to": "REVEALED",
+       "reason": "REVEAL",
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "confidence": 1.0,
+       "meaningful": true
+      },
+      {
+       "asset_id": "SCENE_001:asset-01",
+       "from": "CONTEXT",
+       "to": "EVIDENCE",
+       "reason": "REVEALS_IDENTITY",
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "confidence": 1.0,
+       "meaningful": true
+      }
+     ],
+     "interaction": {
+      "semantic_action": "REVEAL",
+      "relationship": "REVEALS_IDENTITY",
+      "subject_asset_id": "SCENE_001:asset-03",
+      "object_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "confidence": 1.0,
+      "executable": true
+     },
+     "interactions": [
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "REVEALS_IDENTITY",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-01",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_ASSET_RELATION",
+       "confidence": 1.0,
+       "executable": true
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-01",
+       "object_asset_id": "SCENE_001:asset-03",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "object_unit_id": "SCENE_001_A02_broken_lock",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-02",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A03_warning_shield",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      }
+     ],
+     "package_evidence": [
+      "event_action:EXPLAIN",
+      "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+      "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+      "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+      "event_trigger_chars:0:25",
+      "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+      "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+      "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+      "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+      "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+      "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+      "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+      "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A03_warning_shield:RESULT",
+      "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+      "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+      "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+      "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+      "final_package_asset_level_semantics",
+      "final_package_asset_relations",
+      "final_package_semantic_events",
+      "final_package_event_progression",
+      "final_package_event_leaders",
+      "final_package_event_flow_choreography"
+     ],
+     "grammar_stages": [
+      "ENTER",
+      "READ",
+      "RELATE",
+      "ADD",
+      "RESULT"
+     ],
+     "asset_requirements": [
+      {
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "participant_role": "SUBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-03"
+      },
+      {
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "participant_role": "OBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-01"
+      }
+     ],
+     "event_focus_path_asset_ids": [
+      "SCENE_001:asset-03",
+      "SCENE_001:asset-02",
+      "SCENE_001:asset-01"
+     ],
+     "relation_flows": [
+      {
+       "relationship": "REVEALS_IDENTITY",
+       "source_asset_id": "SCENE_001:asset-03",
+       "target_asset_id": "SCENE_001:asset-01",
+       "treatment": "ABSTAIN",
+       "reason": "non_directional_relation",
+       "source_event_id": null,
+       "target_event_id": null
+      }
+     ],
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "event_flow_assignment": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "PARTICIPANT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "PARTICIPANT",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     }
+    },
+    "program": {
+     "name": "family_secondary_footprint_locked_reveal",
+     "settle_progress": 1.0,
+     "keyframes": [
+      {
+       "progress": 0.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 0.6180339887498949,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 1.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "smoothstep"
+      }
+     ],
+     "semantic_peak_progress": 0.5
+    },
+    "semantic_focus": {
+     "active": true,
+     "role": "OBJECT",
+     "source": "event_flow_establish",
+     "strength": 0.98,
+     "cohort_gain": 1.0,
+     "cohort_role": "leader_member",
+     "semantic_role": "OBJECT",
+     "focus_duration_ms": 297,
+     "attention_decay": "static_hold",
+     "handoff_residual_strength": 0.4,
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "visual_focus": "PRIMARY",
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "event_flow": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "PARTICIPANT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "PARTICIPANT",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     },
+     "event_flow_execution": "ENTRY_FALLBACK",
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "trigger_char_start": 0,
+     "trigger_char_end": 6
+    },
+    "motion_order": {
+     "source": "final_package_sequence_order",
+     "semantic_group_id": "SCENE_001_G01",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock",
+     "sequence_order": 2,
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "internal_index": 0,
+     "internal_count": 1,
+     "stagger_applied": false
+    },
+    "render_constraints": {
+     "geometry_lock": "authored_footprint",
+     "reveal_mode": "alpha_only"
+    },
+    "semantic_peak_time": 0.24850000000000003,
+    "semantic_continuity": {
+     "mode": "ENTER",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock"
+    },
+    "semantic_lifetime": {
+     "mode": "SCENE_ACTIVE_UNTIL_SCENE_END",
+     "keep_visible_through": 2.06,
+     "release_deadline": 2.06,
+     "future_event_ids": [
+      "SCENE_001_EVENT_02"
+     ],
+     "reasons": [
+      "scene_active_until_scene_end"
+     ]
+    },
+    "entry_grammar": {
+     "opacity": false,
+     "reason": "opens_scene"
+    }
+   },
+   "segments": [
+    {
+     "phase": "ENTRY",
+     "start": 0.1,
+     "end": 0.397,
+     "program": {
+      "name": "family_secondary_footprint_locked_reveal",
+      "settle_progress": 1.0,
+      "keyframes": [
+       {
+        "progress": 0.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.6180339887498949,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 1.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       }
+      ]
+     },
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_action": null,
+     "relationship": null,
+     "involvement": "PARTICIPANT",
+     "source_asset_id": null,
+     "target_asset_id": null,
+     "result_asset_id": null,
+     "handoff_deadline": 0.82,
+     "connection": false
+    }
+   ]
+  },
+  {
+   "beat_id": "beat-001",
+   "asset_id": "SCENE_001:asset-04",
+   "kind": "program_v3",
+   "start": 0.1,
+   "end": 0.397,
+   "params": {
+    "engine_version": 3,
+    "semantic_action": "REVEAL",
+    "semantic_settle_time": 0.397,
+    "audio_anchor": 0.1,
+    "spoken_duration": 1.96,
+    "pace_tier": "deliberate",
+    "hook": true,
+    "handoff": false,
+    "attention_reset": false,
+    "variant": 0,
+    "intensity": 0.86,
+    "sequence_index": 2,
+    "sequence_count": 6,
+    "choreography": {
+     "sequence_id": "sequence-001",
+     "phase": "SETUP",
+     "action": "REVEAL",
+     "pattern": "CAUSE_EFFECT_CHAIN",
+     "hook": "OPEN",
+     "hook_mechanism": "CURIOSITY",
+     "tension": 0.32,
+     "relationship": "REVEALS_IDENTITY",
+     "primary_asset_id": "SCENE_001:asset-03",
+     "interaction_asset_id": "SCENE_001:asset-01",
+     "actor_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "emphasis_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "continuity_from": null,
+     "continuity_mode": "NONE",
+     "participant_role": "SUPPORT",
+     "semantic_unit_ids": [
+      "SCENE_001_A01_hexa_black_hat",
+      "SCENE_001_A02_broken_lock",
+      "SCENE_001_A03_warning_shield"
+     ],
+     "state_transitions": [
+      {
+       "asset_id": "SCENE_001:asset-03",
+       "from": "CONCEALED",
+       "to": "REVEALED",
+       "reason": "REVEAL",
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "confidence": 1.0,
+       "meaningful": true
+      },
+      {
+       "asset_id": "SCENE_001:asset-01",
+       "from": "CONTEXT",
+       "to": "EVIDENCE",
+       "reason": "REVEALS_IDENTITY",
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "confidence": 1.0,
+       "meaningful": true
+      }
+     ],
+     "interaction": {
+      "semantic_action": "REVEAL",
+      "relationship": "REVEALS_IDENTITY",
+      "subject_asset_id": "SCENE_001:asset-03",
+      "object_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "confidence": 1.0,
+      "executable": true
+     },
+     "interactions": [
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "REVEALS_IDENTITY",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-01",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_ASSET_RELATION",
+       "confidence": 1.0,
+       "executable": true
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-01",
+       "object_asset_id": "SCENE_001:asset-03",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "object_unit_id": "SCENE_001_A02_broken_lock",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-02",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A03_warning_shield",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      }
+     ],
+     "package_evidence": [
+      "event_action:EXPLAIN",
+      "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+      "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+      "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+      "event_trigger_chars:0:25",
+      "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+      "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+      "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+      "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+      "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+      "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+      "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+      "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A03_warning_shield:RESULT",
+      "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+      "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+      "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+      "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+      "final_package_asset_level_semantics",
+      "final_package_asset_relations",
+      "final_package_semantic_events",
+      "final_package_event_progression",
+      "final_package_event_leaders",
+      "final_package_event_flow_choreography"
+     ],
+     "grammar_stages": [
+      "ENTER",
+      "READ",
+      "RELATE",
+      "ADD",
+      "RESULT"
+     ],
+     "asset_requirements": [
+      {
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "participant_role": "SUBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-03"
+      },
+      {
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "participant_role": "OBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-01"
+      }
+     ],
+     "event_focus_path_asset_ids": [
+      "SCENE_001:asset-03",
+      "SCENE_001:asset-02",
+      "SCENE_001:asset-01"
+     ],
+     "relation_flows": [
+      {
+       "relationship": "REVEALS_IDENTITY",
+       "source_asset_id": "SCENE_001:asset-03",
+       "target_asset_id": "SCENE_001:asset-01",
+       "treatment": "ABSTAIN",
+       "reason": "non_directional_relation",
+       "source_event_id": null,
+       "target_event_id": null
+      }
+     ],
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "event_flow_assignment": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "PARTICIPANT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "PARTICIPANT",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     }
+    },
+    "program": {
+     "name": "reference_safe_density_safe_event_chain_establish_reference_pop_reveal",
+     "settle_progress": 1.0,
+     "keyframes": [
+      {
+       "progress": 0.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 0.5,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_out_cubic"
+      },
+      {
+       "progress": 1.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_out_cubic"
+      }
+     ],
+     "semantic_peak_progress": 0.5
+    },
+    "semantic_focus": {
+     "active": true,
+     "role": "OBJECT",
+     "source": "event_flow_establish",
+     "strength": 0.98,
+     "cohort_gain": 1.0,
+     "cohort_role": "leader_member",
+     "semantic_role": "OBJECT",
+     "focus_duration_ms": 297,
+     "attention_decay": "static_hold",
+     "handoff_residual_strength": 0.4,
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "visual_focus": "PRIMARY",
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "event_flow": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "PARTICIPANT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "PARTICIPANT",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     },
+     "event_flow_execution": "ENTRY_FALLBACK",
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "trigger_char_start": 0,
+     "trigger_char_end": 6
+    },
+    "motion_order": {
+     "source": "final_package_sequence_order",
+     "semantic_group_id": "SCENE_001_G01",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock",
+     "sequence_order": 2,
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "internal_index": 0,
+     "internal_count": 1,
+     "stagger_applied": false
+    },
+    "semantic_peak_time": 0.24850000000000003,
+    "semantic_continuity": {
+     "mode": "ENTER",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock"
+    },
+    "semantic_lifetime": {
+     "mode": "SCENE_ACTIVE_UNTIL_SCENE_END",
+     "keep_visible_through": 2.06,
+     "release_deadline": 2.06,
+     "future_event_ids": [
+      "SCENE_001_EVENT_02"
+     ],
+     "reasons": [
+      "scene_active_until_scene_end"
+     ]
+    },
+    "reference_motion_adjusted": true,
+    "entry_opacity": {
+     "initial": 0.14,
+     "start": 0.1,
+     "settle": 0.397
+    },
+    "entry_grammar": {
+     "opacity": true,
+     "scale_in": false
+    }
+   },
+   "segments": [
+    {
+     "phase": "ENTRY",
+     "start": 0.1,
+     "end": 0.397,
+     "program": {
+      "name": "reference_pop_reveal_readable",
+      "settle_progress": 0.78,
+      "keyframes": [
+       {
+        "progress": 0.0,
+        "dx": 0.0,
+        "dy": 0.018,
+        "scale": 0.92,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.48206651122491806,
+        "dx": 0.0,
+        "dy": 0.006875388202501891,
+        "scale": 0.9694427190999919,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.78,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       },
+       {
+        "progress": 1.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       }
+      ]
+     },
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_action": null,
+     "relationship": null,
+     "involvement": "PARTICIPANT",
+     "source_asset_id": null,
+     "target_asset_id": null,
+     "result_asset_id": null,
+     "handoff_deadline": 0.82,
+     "connection": false
+    }
+   ]
+  },
+  {
+   "beat_id": "beat-001",
+   "asset_id": "SCENE_001:asset-04:secondary-01",
+   "kind": "program_v3",
+   "start": 0.1,
+   "end": 0.397,
+   "params": {
+    "engine_version": 3,
+    "semantic_action": "REVEAL",
+    "semantic_settle_time": 0.397,
+    "audio_anchor": 0.1,
+    "spoken_duration": 1.96,
+    "pace_tier": "deliberate",
+    "hook": true,
+    "handoff": false,
+    "attention_reset": false,
+    "variant": 0,
+    "intensity": 0.86,
+    "sequence_index": 3,
+    "sequence_count": 6,
+    "choreography": {
+     "sequence_id": "sequence-001",
+     "phase": "SETUP",
+     "action": "REVEAL",
+     "pattern": "CAUSE_EFFECT_CHAIN",
+     "hook": "OPEN",
+     "hook_mechanism": "CURIOSITY",
+     "tension": 0.32,
+     "relationship": "REVEALS_IDENTITY",
+     "primary_asset_id": "SCENE_001:asset-03",
+     "interaction_asset_id": "SCENE_001:asset-01",
+     "actor_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "emphasis_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "continuity_from": null,
+     "continuity_mode": "NONE",
+     "participant_role": "SUPPORT",
+     "semantic_unit_ids": [
+      "SCENE_001_A01_hexa_black_hat",
+      "SCENE_001_A02_broken_lock",
+      "SCENE_001_A03_warning_shield"
+     ],
+     "state_transitions": [
+      {
+       "asset_id": "SCENE_001:asset-03",
+       "from": "CONCEALED",
+       "to": "REVEALED",
+       "reason": "REVEAL",
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "confidence": 1.0,
+       "meaningful": true
+      },
+      {
+       "asset_id": "SCENE_001:asset-01",
+       "from": "CONTEXT",
+       "to": "EVIDENCE",
+       "reason": "REVEALS_IDENTITY",
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "confidence": 1.0,
+       "meaningful": true
+      }
+     ],
+     "interaction": {
+      "semantic_action": "REVEAL",
+      "relationship": "REVEALS_IDENTITY",
+      "subject_asset_id": "SCENE_001:asset-03",
+      "object_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "confidence": 1.0,
+      "executable": true
+     },
+     "interactions": [
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "REVEALS_IDENTITY",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-01",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_ASSET_RELATION",
+       "confidence": 1.0,
+       "executable": true
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-01",
+       "object_asset_id": "SCENE_001:asset-03",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "object_unit_id": "SCENE_001_A02_broken_lock",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-02",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A03_warning_shield",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      }
+     ],
+     "package_evidence": [
+      "event_action:EXPLAIN",
+      "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+      "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+      "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+      "event_trigger_chars:0:25",
+      "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+      "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+      "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+      "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+      "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+      "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+      "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+      "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A03_warning_shield:RESULT",
+      "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+      "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+      "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+      "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+      "final_package_asset_level_semantics",
+      "final_package_asset_relations",
+      "final_package_semantic_events",
+      "final_package_event_progression",
+      "final_package_event_leaders",
+      "final_package_event_flow_choreography"
+     ],
+     "grammar_stages": [
+      "ENTER",
+      "READ",
+      "RELATE",
+      "ADD",
+      "RESULT"
+     ],
+     "asset_requirements": [
+      {
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "participant_role": "SUBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-03"
+      },
+      {
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "participant_role": "OBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-01"
+      }
+     ],
+     "event_focus_path_asset_ids": [
+      "SCENE_001:asset-03",
+      "SCENE_001:asset-02",
+      "SCENE_001:asset-01"
+     ],
+     "relation_flows": [
+      {
+       "relationship": "REVEALS_IDENTITY",
+       "source_asset_id": "SCENE_001:asset-03",
+       "target_asset_id": "SCENE_001:asset-01",
+       "treatment": "ABSTAIN",
+       "reason": "non_directional_relation",
+       "source_event_id": null,
+       "target_event_id": null
+      }
+     ],
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "event_flow_assignment": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "PARTICIPANT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "PARTICIPANT",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     }
+    },
+    "program": {
+     "name": "family_secondary_footprint_locked_reveal",
+     "settle_progress": 1.0,
+     "keyframes": [
+      {
+       "progress": 0.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 0.6180339887498949,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 1.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "smoothstep"
+      }
+     ],
+     "semantic_peak_progress": 0.5
+    },
+    "semantic_focus": {
+     "active": true,
+     "role": "OBJECT",
+     "source": "event_flow_establish",
+     "strength": 0.98,
+     "cohort_gain": 1.0,
+     "cohort_role": "leader_member",
+     "semantic_role": "OBJECT",
+     "focus_duration_ms": 297,
+     "attention_decay": "static_hold",
+     "handoff_residual_strength": 0.4,
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "visual_focus": "PRIMARY",
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "event_flow": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-03",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "PARTICIPANT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": null,
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "PARTICIPANT",
+        "focus_asset_id": "SCENE_001:asset-03",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     },
+     "event_flow_execution": "ENTRY_FALLBACK",
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "trigger_char_start": 0,
+     "trigger_char_end": 6
+    },
+    "motion_order": {
+     "source": "final_package_sequence_order",
+     "semantic_group_id": "SCENE_001_G01",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock",
+     "sequence_order": 2,
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [],
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "internal_index": 0,
+     "internal_count": 1,
+     "stagger_applied": false
+    },
+    "render_constraints": {
+     "geometry_lock": "authored_footprint",
+     "reveal_mode": "alpha_only"
+    },
+    "semantic_peak_time": 0.24850000000000003,
+    "semantic_continuity": {
+     "mode": "ENTER",
+     "semantic_unit_id": "SCENE_001_A02_broken_lock"
+    },
+    "semantic_lifetime": {
+     "mode": "SCENE_ACTIVE_UNTIL_SCENE_END",
+     "keep_visible_through": 2.06,
+     "release_deadline": 2.06,
+     "future_event_ids": [
+      "SCENE_001_EVENT_02"
+     ],
+     "reasons": [
+      "scene_active_until_scene_end"
+     ]
+    },
+    "entry_opacity": {
+     "initial": 0.14,
+     "start": 0.1,
+     "settle": 0.397
+    },
+    "entry_grammar": {
+     "opacity": true,
+     "scale_in": false
+    }
+   },
+   "segments": [
+    {
+     "phase": "ENTRY",
+     "start": 0.1,
+     "end": 0.397,
+     "program": {
+      "name": "family_secondary_footprint_locked_reveal",
+      "settle_progress": 1.0,
+      "keyframes": [
+       {
+        "progress": 0.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.6180339887498949,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 1.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       }
+      ]
+     },
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_action": null,
+     "relationship": null,
+     "involvement": "PARTICIPANT",
+     "source_asset_id": null,
+     "target_asset_id": null,
+     "result_asset_id": null,
+     "handoff_deadline": 0.82,
+     "connection": false
+    }
+   ]
+  },
+  {
+   "beat_id": "beat-001",
+   "asset_id": "SCENE_001:asset-02",
+   "kind": "program_v3",
+   "start": 0.34299999999999997,
+   "end": 0.64,
+   "params": {
+    "engine_version": 3,
+    "semantic_action": "REVEAL",
+    "semantic_settle_time": 0.64,
+    "audio_anchor": 0.1,
+    "spoken_duration": 1.96,
+    "pace_tier": "deliberate",
+    "hook": true,
+    "handoff": false,
+    "attention_reset": false,
+    "variant": 0,
+    "intensity": 0.86,
+    "sequence_index": 4,
+    "sequence_count": 6,
+    "choreography": {
+     "sequence_id": "sequence-001",
+     "phase": "SETUP",
+     "action": "REVEAL",
+     "pattern": "CAUSE_EFFECT_CHAIN",
+     "hook": "OPEN",
+     "hook_mechanism": "CURIOSITY",
+     "tension": 0.32,
+     "relationship": "REVEALS_IDENTITY",
+     "primary_asset_id": "SCENE_001:asset-03",
+     "interaction_asset_id": "SCENE_001:asset-01",
+     "actor_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "emphasis_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "continuity_from": null,
+     "continuity_mode": "NONE",
+     "participant_role": "OBJECT",
+     "semantic_unit_ids": [
+      "SCENE_001_A01_hexa_black_hat",
+      "SCENE_001_A02_broken_lock",
+      "SCENE_001_A03_warning_shield"
+     ],
+     "state_transitions": [
+      {
+       "asset_id": "SCENE_001:asset-03",
+       "from": "CONCEALED",
+       "to": "REVEALED",
+       "reason": "REVEAL",
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "confidence": 1.0,
+       "meaningful": true
+      },
+      {
+       "asset_id": "SCENE_001:asset-01",
+       "from": "CONTEXT",
+       "to": "EVIDENCE",
+       "reason": "REVEALS_IDENTITY",
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "confidence": 1.0,
+       "meaningful": true
+      }
+     ],
+     "interaction": {
+      "semantic_action": "REVEAL",
+      "relationship": "REVEALS_IDENTITY",
+      "subject_asset_id": "SCENE_001:asset-03",
+      "object_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "confidence": 1.0,
+      "executable": true
+     },
+     "interactions": [
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "REVEALS_IDENTITY",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-01",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_ASSET_RELATION",
+       "confidence": 1.0,
+       "executable": true
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-01",
+       "object_asset_id": "SCENE_001:asset-03",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "object_unit_id": "SCENE_001_A02_broken_lock",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-02",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A03_warning_shield",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      }
+     ],
+     "package_evidence": [
+      "event_action:EXPLAIN",
+      "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+      "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+      "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+      "event_trigger_chars:0:25",
+      "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+      "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+      "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+      "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+      "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+      "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+      "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+      "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A03_warning_shield:RESULT",
+      "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+      "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+      "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+      "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+      "final_package_asset_level_semantics",
+      "final_package_asset_relations",
+      "final_package_semantic_events",
+      "final_package_event_progression",
+      "final_package_event_leaders",
+      "final_package_event_flow_choreography"
+     ],
+     "grammar_stages": [
+      "ENTER",
+      "READ",
+      "RELATE",
+      "ADD",
+      "RESULT"
+     ],
+     "asset_requirements": [
+      {
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "participant_role": "SUBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-03"
+      },
+      {
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "participant_role": "OBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-01"
+      }
+     ],
+     "event_focus_path_asset_ids": [
+      "SCENE_001:asset-03",
+      "SCENE_001:asset-02",
+      "SCENE_001:asset-01"
+     ],
+     "relation_flows": [
+      {
+       "relationship": "REVEALS_IDENTITY",
+       "source_asset_id": "SCENE_001:asset-03",
+       "target_asset_id": "SCENE_001:asset-01",
+       "treatment": "ABSTAIN",
+       "reason": "non_directional_relation",
+       "source_event_id": null,
+       "target_event_id": null
+      }
+     ],
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "event_flow_assignment": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "PAYOFF",
+      "step_index": 3,
+      "focus_asset_id": "SCENE_001:asset-02",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": "SCENE_001:asset-02",
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "RESULT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": "SCENE_001:asset-03",
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ADD",
+        "step_index": 1,
+        "involvement": "FOCUS",
+        "focus_asset_id": "SCENE_001:asset-02",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       },
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "PAYOFF",
+        "step_index": 3,
+        "involvement": "RESULT",
+        "focus_asset_id": "SCENE_001:asset-02",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": "SCENE_001:asset-02",
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     }
+    },
+    "program": {
+     "name": "reference_safe_density_safe_reference_pop_reveal",
+     "settle_progress": 1.0,
+     "keyframes": [
+      {
+       "progress": 0.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 0.6180339887498949,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_in_out_cubic"
+      },
+      {
+       "progress": 1.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "smoothstep"
+      }
+     ],
+     "semantic_peak_progress": 0.5
+    },
+    "semantic_focus": {
+     "active": true,
+     "role": "RESULT",
+     "source": "event_flow_payoff",
+     "strength": 1.0,
+     "cohort_gain": 1.0,
+     "cohort_role": "independent",
+     "semantic_role": "RESULT",
+     "focus_duration_ms": 297,
+     "attention_decay": "static_hold",
+     "handoff_residual_strength": 0.4,
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "visual_focus": "RESULT",
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "PARTICIPANT",
+      "RESULT"
+     ],
+     "semantic_event_dependency_ids": [],
+     "event_flow": {
+      "event_id": "SCENE_001_EVENT_01",
+      "event_order": 1,
+      "stage": "PAYOFF",
+      "step_index": 3,
+      "focus_asset_id": "SCENE_001:asset-02",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": "SCENE_001:asset-02",
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "RESULT",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "DEPENDENCY",
+      "incoming_from_asset_id": "SCENE_001:asset-03",
+      "handoff_to_event_ids": [
+       "SCENE_001_EVENT_02"
+      ],
+      "handoff_to_asset_ids": [
+       "SCENE_001:asset-01"
+      ],
+      "handoff_to_event_id": "SCENE_001_EVENT_02",
+      "handoff_to_asset_id": "SCENE_001:asset-01",
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "ADD",
+        "step_index": 1,
+        "involvement": "FOCUS",
+        "focus_asset_id": "SCENE_001:asset-02",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       },
+       {
+        "event_id": "SCENE_001_EVENT_01",
+        "event_order": 1,
+        "stage": "PAYOFF",
+        "step_index": 3,
+        "involvement": "RESULT",
+        "focus_asset_id": "SCENE_001:asset-02",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": "SCENE_001:asset-02",
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     },
+     "event_flow_execution": "EXPLICIT_TIMELINE",
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "trigger_char_start": 0,
+     "trigger_char_end": 6
+    },
+    "motion_order": {
+     "source": "final_package_sequence_order",
+     "semantic_group_id": "SCENE_001_G01",
+     "semantic_unit_id": "SCENE_001_A03_warning_shield",
+     "sequence_order": 3,
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_event_order": 1,
+     "semantic_event_roles": [
+      "PARTICIPANT",
+      "RESULT"
+     ],
+     "semantic_event_dependency_ids": [],
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "internal_index": 0,
+     "internal_count": 1,
+     "stagger_applied": false
+    },
+    "semantic_peak_time": 0.4915,
+    "semantic_continuity": {
+     "mode": "ENTER",
+     "semantic_unit_id": "SCENE_001_A03_warning_shield"
+    },
+    "semantic_lifetime": {
+     "mode": "SCENE_ACTIVE_UNTIL_SCENE_END",
+     "keep_visible_through": 2.06,
+     "release_deadline": 2.06,
+     "future_event_ids": [
+      "SCENE_001_EVENT_02"
+     ],
+     "reasons": [
+      "scene_active_until_scene_end"
+     ]
+    },
+    "reference_motion_adjusted": true,
+    "entry_opacity": {
+     "initial": 0.14,
+     "start": 0.34299999999999997,
+     "settle": 0.64
+    },
+    "entry_grammar": {
+     "opacity": true,
+     "scale_in": false
+    }
+   },
+   "segments": [
+    {
+     "phase": "PAYOFF",
+     "start": 0.34299999999999997,
+     "end": 0.5832780473293594,
+     "program": {
+      "name": "reference_result_enter",
+      "settle_progress": 1.0,
+      "keyframes": [
+       {
+        "progress": 0.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 0.6180339887498948,
+        "dx": 0.0,
+        "dy": -0.01009558520622953,
+        "scale": 1.0466541224263326,
+        "easing": "ease_in_out_cubic"
+       },
+       {
+        "progress": 1.0,
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "easing": "smoothstep"
+       }
+      ],
+      "semantic_peak_progress": 0.6180339887498948,
+      "semantic_active_duration": 0.24027804732935942
+     },
+     "semantic_event_id": "SCENE_001_EVENT_01",
+     "semantic_action": null,
+     "relationship": null,
+     "involvement": "RESULT",
+     "source_asset_id": null,
+     "target_asset_id": null,
+     "result_asset_id": "SCENE_001:asset-02",
+     "handoff_deadline": 0.82,
+     "connection": false
+    }
+   ]
+  },
+  {
+   "beat_id": "beat-001",
+   "asset_id": "SCENE_001:asset-01",
+   "kind": "program_v3",
+   "start": 0.82,
+   "end": 1.0699999999999998,
+   "params": {
+    "engine_version": 3,
+    "semantic_action": "REVEAL",
+    "semantic_settle_time": 1.0699999999999998,
+    "audio_anchor": 0.1,
+    "spoken_duration": 1.96,
+    "pace_tier": "deliberate",
+    "hook": true,
+    "handoff": false,
+    "attention_reset": false,
+    "variant": 0,
+    "intensity": 0.86,
+    "sequence_index": 5,
+    "sequence_count": 6,
+    "choreography": {
+     "sequence_id": "sequence-001",
+     "phase": "SETUP",
+     "action": "REVEAL",
+     "pattern": "CAUSE_EFFECT_CHAIN",
+     "hook": "OPEN",
+     "hook_mechanism": "CURIOSITY",
+     "tension": 0.32,
+     "relationship": "REVEALS_IDENTITY",
+     "primary_asset_id": "SCENE_001:asset-03",
+     "interaction_asset_id": "SCENE_001:asset-01",
+     "actor_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "emphasis_asset_ids": [
+      "SCENE_001:asset-01"
+     ],
+     "continuity_from": null,
+     "continuity_mode": "NONE",
+     "participant_role": "ACTOR",
+     "semantic_unit_ids": [
+      "SCENE_001_A01_hexa_black_hat",
+      "SCENE_001_A02_broken_lock",
+      "SCENE_001_A03_warning_shield"
+     ],
+     "state_transitions": [
+      {
+       "asset_id": "SCENE_001:asset-03",
+       "from": "CONCEALED",
+       "to": "REVEALED",
+       "reason": "REVEAL",
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "confidence": 1.0,
+       "meaningful": true
+      },
+      {
+       "asset_id": "SCENE_001:asset-01",
+       "from": "CONTEXT",
+       "to": "EVIDENCE",
+       "reason": "REVEALS_IDENTITY",
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "confidence": 1.0,
+       "meaningful": true
+      }
+     ],
+     "interaction": {
+      "semantic_action": "REVEAL",
+      "relationship": "REVEALS_IDENTITY",
+      "subject_asset_id": "SCENE_001:asset-03",
+      "object_asset_id": "SCENE_001:asset-01",
+      "result_asset_id": null,
+      "authority": "FINAL_PACKAGE_ASSET_RELATION",
+      "confidence": 1.0,
+      "executable": true
+     },
+     "interactions": [
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "REVEALS_IDENTITY",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-01",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_ASSET_RELATION",
+       "confidence": 1.0,
+       "executable": true
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-01",
+       "object_asset_id": "SCENE_001:asset-03",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "object_unit_id": "SCENE_001_A02_broken_lock",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      },
+      {
+       "semantic_action": "REVEAL",
+       "relationship": "DECLARED_PROGRESSION",
+       "subject_asset_id": "SCENE_001:asset-03",
+       "object_asset_id": "SCENE_001:asset-02",
+       "result_asset_id": null,
+       "subject_unit_id": "SCENE_001_A02_broken_lock",
+       "object_unit_id": "SCENE_001_A03_warning_shield",
+       "result_unit_id": null,
+       "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+       "confidence": 0.96,
+       "executable": false
+      }
+     ],
+     "package_evidence": [
+      "event_action:EXPLAIN",
+      "scene_visual_concept:شخصية HEXA ترفع القبعة السوداء، قفل أحمر مكسور يرمز للاختراق، درع شبكة مع تحذير",
+      "scene_purpose:تجسيد المعنى السردي للمقطع: الهاكر ذو القبعة السوداء.",
+      "event_trigger_phrase:الهاكر ذو القبعة السوداء.",
+      "event_trigger_chars:0:25",
+      "entity:SCENE_001_A01_hexa_black_hat:شخصية HEXA ترفع القبعة السوداء",
+      "entity_type:SCENE_001_A01_hexa_black_hat:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A01_hexa_black_hat:CHARACTER",
+      "entity_narrative_function:SCENE_001_A01_hexa_black_hat:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A01_hexa_black_hat:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A01_hexa_black_hat:10:24",
+      "entity:SCENE_001_A02_broken_lock:قفل أحمر مكسور يرمز للاختراق",
+      "entity_type:SCENE_001_A02_broken_lock:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A02_broken_lock:OBJECT",
+      "entity_narrative_function:SCENE_001_A02_broken_lock:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A02_broken_lock:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A02_broken_lock:0:6",
+      "entity:SCENE_001_A03_warning_shield:درع شبكة مع تحذير",
+      "entity_type:SCENE_001_A03_warning_shield:VISUAL_ASSET_INTENT",
+      "entity_role:SCENE_001_A03_warning_shield:RESULT",
+      "entity_narrative_function:SCENE_001_A03_warning_shield:BIND_SEMANTIC_ASSET_INTENT",
+      "entity_semantic_intent:SCENE_001_A03_warning_shield:EXPLAIN",
+      "entity_appear_chars:SCENE_001_A03_warning_shield:0:6",
+      "relation:SCENE_001_A02_broken_lock:REVEALS_IDENTITY:SCENE_001_A01_hexa_black_hat",
+      "relation:SCENE_001_A01_hexa_black_hat:DECLARED_PROGRESSION:SCENE_001_A02_broken_lock",
+      "relation:SCENE_001_A02_broken_lock:DECLARED_PROGRESSION:SCENE_001_A03_warning_shield",
+      "final_package_asset_level_semantics",
+      "final_package_asset_relations",
+      "final_package_semantic_events",
+      "final_package_event_progression",
+      "final_package_event_leaders",
+      "final_package_event_flow_choreography"
+     ],
+     "grammar_stages": [
+      "ENTER",
+      "READ",
+      "RELATE",
+      "ADD",
+      "RESULT"
+     ],
+     "asset_requirements": [
+      {
+       "semantic_unit_id": "SCENE_001_A02_broken_lock",
+       "participant_role": "SUBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-03"
+      },
+      {
+       "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+       "participant_role": "OBJECT",
+       "required_for_action": "REVEAL",
+       "satisfied": true,
+       "bound_asset_id": "SCENE_001:asset-01"
+      }
+     ],
+     "event_focus_path_asset_ids": [
+      "SCENE_001:asset-03",
+      "SCENE_001:asset-02",
+      "SCENE_001:asset-01"
+     ],
+     "relation_flows": [
+      {
+       "relationship": "REVEALS_IDENTITY",
+       "source_asset_id": "SCENE_001:asset-03",
+       "target_asset_id": "SCENE_001:asset-01",
+       "treatment": "ABSTAIN",
+       "reason": "non_directional_relation",
+       "source_event_id": null,
+       "target_event_id": null
+      }
+     ],
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "event_flow_assignment": {
+      "event_id": "SCENE_001_EVENT_02",
+      "event_order": 2,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-01",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "FOCUS",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "NONE",
+      "incoming_from_asset_id": "SCENE_001:asset-02",
+      "handoff_to_event_ids": [],
+      "handoff_to_asset_ids": [],
+      "handoff_to_event_id": null,
+      "handoff_to_asset_id": null,
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_02",
+        "event_order": 2,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "FOCUS",
+        "focus_asset_id": "SCENE_001:asset-01",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     }
+    },
+    "program": {
+     "name": "reference_entry_scale_in",
+     "settle_progress": 1.0,
+     "keyframes": [
+      {
+       "progress": 0.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 0.94,
+       "easing": "ease_out_cubic"
+      },
+      {
+       "progress": 1.0,
+       "dx": 0.0,
+       "dy": 0.0,
+       "scale": 1.0,
+       "easing": "ease_out_cubic"
+      }
+     ],
+     "semantic_peak_progress": 0.55
+    },
+    "semantic_focus": {
+     "active": true,
+     "role": "PRIMARY",
+     "source": "event_flow_establish",
+     "strength": 0.98,
+     "cohort_gain": 1.0,
+     "cohort_role": "independent",
+     "semantic_role": "CHARACTER",
+     "focus_duration_ms": 250,
+     "attention_decay": "static_hold",
+     "handoff_residual_strength": 0.4,
+     "rhythm": {
+      "raw_pace_tier": "deliberate",
+      "pace_tier": "deliberate",
+      "minimum_read_hold_ms": 350,
+      "accent_gap_ms": 134,
+      "max_parallel_entry_accents": 1,
+      "smoothing_reason": "authored_attention_contrast"
+     },
+     "visual_focus": "PRIMARY",
+     "semantic_event_id": "SCENE_001_EVENT_02",
+     "semantic_event_order": 2,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [
+      "SCENE_001_EVENT_01"
+     ],
+     "event_flow": {
+      "event_id": "SCENE_001_EVENT_02",
+      "event_order": 2,
+      "stage": "ESTABLISH",
+      "step_index": 0,
+      "focus_asset_id": "SCENE_001:asset-01",
+      "source_asset_id": null,
+      "target_asset_id": null,
+      "result_asset_id": null,
+      "relationship": null,
+      "semantic_action": null,
+      "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+      "involvement": "FOCUS",
+      "progression_type": "THREAT_TO_IDENTITY",
+      "handoff_mode": "NONE",
+      "incoming_from_asset_id": "SCENE_001:asset-02",
+      "handoff_to_event_ids": [],
+      "handoff_to_asset_ids": [],
+      "handoff_to_event_id": null,
+      "handoff_to_asset_id": null,
+      "trigger_char_start": null,
+      "trigger_char_end": null,
+      "spoken_start": null,
+      "spoken_end": null,
+      "reveal_start": null,
+      "semantic_peak": null,
+      "settle_at": null,
+      "phase_chain": [
+       {
+        "event_id": "SCENE_001_EVENT_02",
+        "event_order": 2,
+        "stage": "ESTABLISH",
+        "step_index": 0,
+        "involvement": "FOCUS",
+        "focus_asset_id": "SCENE_001:asset-01",
+        "source_asset_id": null,
+        "target_asset_id": null,
+        "result_asset_id": null,
+        "relationship": null,
+        "semantic_action": null,
+        "authority": "FINAL_PACKAGE_SEMANTIC_EVENT",
+        "trigger_char_start": null,
+        "trigger_char_end": null,
+        "spoken_start": null,
+        "spoken_end": null,
+        "reveal_start": null,
+        "semantic_peak": null,
+        "settle_at": null
+       }
+      ],
+      "relation_only": false
+     },
+     "event_flow_execution": "ENTRY_FALLBACK",
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "trigger_char_start": 10,
+     "trigger_char_end": 24
+    },
+    "motion_order": {
+     "source": "final_package_sequence_order",
+     "semantic_group_id": "SCENE_001_G01",
+     "semantic_unit_id": "SCENE_001_A01_hexa_black_hat",
+     "sequence_order": 1,
+     "semantic_event_id": "SCENE_001_EVENT_02",
+     "semantic_event_order": 2,
+     "semantic_event_roles": [
+      "LEADER",
+      "TEXT_ANCHOR"
+     ],
+     "semantic_event_dependency_ids": [
+      "SCENE_001_EVENT_01"
+     ],
+     "compound_visual_classification": "SEPARABLE_SAFE",
+     "internal_index": 0,
+     "internal_count": 1,
+     "stagger_applied": false
+    },
+    "semantic_peak_time": 0.9574999999999999,
+    "semantic_continuity": {
+     "mode": "ENTER",
+     "semantic_unit_id": "SCENE_001_A01_hexa_black_hat"
+    },
+    "character_emphasis": {
+     "applied": false,
+     "reason": "no_safe_headroom",
+     "free_seconds": 0.6,
+     "window": [
+      0.82,
+      1.42
+     ]
+    },
+    "supporting_deemphasis": {
+     "applied": false,
+     "reason": "too_many_supporting"
+    },
+    "reference_motion_adjusted": true,
+    "entry_opacity": {
+     "initial": 0.14,
+     "start": 0.82,
+     "settle": 1.0699999999999998
+    },
+    "entry_grammar": {
+     "opacity": true,
+     "scale_in": true
+    }
+   },
+   "segments": []
+  }
+ ],
+ "choreography_primary_asset_id": "SCENE_001:asset-03",
+ "referent_carriers": [],
+ "horizontal_padding": 0.09523809523809523,
+ "text_boxes": [
+  [
+   0.1,
+   0.74,
+   [
+    0.3359431455897981,
+    0.20903931459903247,
+    0.515943145589798,
+    0.3425015993223278
+   ]
+  ],
+  [
+   0.82,
+   2.06,
+   [
+    0.045,
+    0.6624999999999998,
+    0.28621051614897236,
+    0.7724999999999999
+   ]
+  ]
+ ],
+ "assets": [
+  {
+   "id": "SCENE_001:asset-01",
+   "scene_id": "SCENE_001",
+   "role": "primary",
+   "image_path": "SCENE_001-asset-01.png",
+   "source_bbox": [
+    537,
+    51,
+    586,
+    861
+   ],
+   "confidence": 0.98,
+   "extraction_method": "component_mask",
+   "independent": true,
+   "compound": false,
+   "component_count": 1,
+   "source_area_ratio": 0.15712377141288153,
+   "source_canvas_width": 1672,
+   "source_canvas_height": 941,
+   "can_animate_independently": true,
+   "parent_asset_id": null,
+   "asset_family_id": "SCENE_001:asset-01",
+   "render_as_family_canvas": false
+  },
+  {
+   "id": "SCENE_001:asset-02",
+   "scene_id": "SCENE_001",
+   "role": "supporting",
+   "image_path": "SCENE_001-asset-02.png",
+   "source_bbox": [
+    1197,
+    433,
+    362,
+    410
+   ],
+   "confidence": 0.92,
+   "extraction_method": "component_mask",
+   "independent": true,
+   "compound": false,
+   "component_count": 1,
+   "source_area_ratio": 0.0662490021304832,
+   "source_canvas_width": 1672,
+   "source_canvas_height": 941,
+   "can_animate_independently": true,
+   "parent_asset_id": null,
+   "asset_family_id": "SCENE_001:asset-02",
+   "render_as_family_canvas": false
+  },
+  {
+   "id": "SCENE_001:asset-03",
+   "scene_id": "SCENE_001",
+   "role": "supporting",
+   "image_path": "SCENE_001-asset-03-main.png",
+   "source_bbox": [
+    139,
+    47,
+    364,
+    425
+   ],
+   "confidence": 0.92,
+   "extraction_method": "component_mask+pass2_main",
+   "independent": true,
+   "compound": true,
+   "component_count": 2,
+   "source_area_ratio": 0.04038062004116809,
+   "source_canvas_width": 1672,
+   "source_canvas_height": 941,
+   "can_animate_independently": true,
+   "parent_asset_id": null,
+   "asset_family_id": "SCENE_001:asset-03",
+   "render_as_family_canvas": true
+  },
+  {
+   "id": "SCENE_001:asset-03:secondary-01",
+   "scene_id": "SCENE_001",
+   "role": "secondary_object",
+   "image_path": "SCENE_001-asset-03-secondary-01.png",
+   "source_bbox": [
+    139,
+    47,
+    364,
+    425
+   ],
+   "confidence": 0.92,
+   "extraction_method": "component_mask+pass2_secondary",
+   "independent": true,
+   "compound": false,
+   "component_count": 1,
+   "source_area_ratio": 0.0010322360774881328,
+   "source_canvas_width": 1672,
+   "source_canvas_height": 941,
+   "can_animate_independently": true,
+   "parent_asset_id": "SCENE_001:asset-03",
+   "asset_family_id": "SCENE_001:asset-03",
+   "render_as_family_canvas": true
+  },
+  {
+   "id": "SCENE_001:asset-04",
+   "scene_id": "SCENE_001",
+   "role": "supporting",
+   "image_path": "SCENE_001-asset-04-main.png",
+   "source_bbox": [
+    334,
+    110,
+    170,
+    290
+   ],
+   "confidence": 0.92,
+   "extraction_method": "component_mask+pass2_main",
+   "independent": true,
+   "compound": true,
+   "component_count": 2,
+   "source_area_ratio": 0.01001506768155023,
+   "source_canvas_width": 1672,
+   "source_canvas_height": 941,
+   "can_animate_independently": true,
+   "parent_asset_id": null,
+   "asset_family_id": "SCENE_001:asset-04",
+   "render_as_family_canvas": true
+  },
+  {
+   "id": "SCENE_001:asset-04:secondary-01",
+   "scene_id": "SCENE_001",
+   "role": "secondary_object",
+   "image_path": "SCENE_001-asset-04-secondary-01.png",
+   "source_bbox": [
+    334,
+    110,
+    170,
+    290
+   ],
+   "confidence": 0.92,
+   "extraction_method": "component_mask+pass2_secondary",
+   "independent": true,
+   "compound": false,
+   "component_count": 1,
+   "source_area_ratio": 0.0017839448725381105,
+   "source_canvas_width": 1672,
+   "source_canvas_height": 941,
+   "can_animate_independently": true,
+   "parent_asset_id": "SCENE_001:asset-04",
+   "asset_family_id": "SCENE_001:asset-04",
+   "render_as_family_canvas": true
+  }
+ ],
+ "duration": 97.05941,
+ "provenance": {
+  "source": "real Black Hat Unified Final Package 2.0 (UNVERIFIED(1).zip) + narration",
+  "captured_at": "2026-10-19",
+  "stage": "beat-001 state entering HeroTravelPlanner.plan inside StoryEnginePipeline._plan_target (YOUTUBE_16_9)",
+  "baseline_encoded": "v4 opening: lock 0 px, shield 3 px, character 2 px of tracked travel (fade + pop only)"
+ }
+}

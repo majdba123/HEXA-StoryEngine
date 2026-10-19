@@ -30,11 +30,12 @@ from app.assets import AssetManager
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 
 from .collision import authored_overlap_ratio, box
+from .contract import segment_contract_violations
 from .family import family_of, follow, rigid_followers
 from app.targets.context import active_target
 
 from .resolution import POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, pop_start_scale
-from .timing import projected_motion_activity_px
+from .timing import motion_comfort, projected_motion_activity_px
 from .visual_flow.direction import focus_handoff_direction, spatial_entry_direction
 
 _EPS = 1e-6
@@ -42,12 +43,21 @@ _FRAME = 1 / 30
 # Edge slide. The references slide 0.10-0.15 frame widths in 4-13 frames at up to 1.2 w/s;
 # reviewed HEXA renders found that rushed, so a slide is a short calm settle into place:
 # at most 0.08 w, at most 0.6 w/s peak, never shorter than 8 frames (else a pop or fade).
-SLIDE_DISTANCE = 0.08        # frame widths
+# Encoded review (2026-10-19): 0.08 w settles under a full-length fade read as "appears in
+# place". Travel now uses what the unchanged 0.6 w/s ceiling allows inside the Story window,
+# up to the references' 0.12 w, from the pop minimum (6 frames) on, and is drawn opaque.
+SLIDE_DISTANCE = 0.12        # frame widths (references: 0.10-0.15)
 SLIDE_MIN_DISTANCE = 0.04
 SLIDE_EDGE_REACH = 0.16      # an asset whose box is this close to a side edge slides
 SLIDE_SECONDS = 12 / 30
-SLIDE_MIN_SECONDS = 8 / 30
+SLIDE_MIN_SECONDS = 6 / 30   # = POP_MIN_SECONDS; speed, not duration, bounds comfort
 SLIDE_MAX_PEAK_SPEED = 0.6   # w/s
+SLIDE_START_SCALE = 0.93     # every travelling arrival also grows into its authored size
+# The arrival is the movement, not a fade: the opacity ramp only softens the first frames.
+ARRIVAL_OPACITY_SECONDS = 3 / 30
+# A source whose authored INTERACT starts with its reveal approaches its target once.
+APPROACH_DISTANCE = 0.06     # normalized; the INTERACT comfort ceiling usually binds first
+APPROACH_MIN_PX = 40.0
 SMOOTHSTEP_PEAK = 1.5
 _OVERLAP_SLACK = 0.02
 
@@ -91,12 +101,14 @@ def _replaceable_decorative_entry(cue: MotionCue) -> bool:
         return False
     if execution == "ENTRY_FALLBACK":
         # A non-causal ESTABLISH/ADD event is a visual introduction, not a
-        # protected interaction. Preserve every explicit/cause/result event.
+        # protected interaction. Preserve every explicit/cause/result event. The
+        # incoming/handoff links of a declared progression only record ORDER (this item
+        # follows that one), which the Story reveal instants already enforce; they do not
+        # make the introduction an interaction (encoded review 2026-10-19: these entries
+        # kept 10-15 px wiggles inside ~0.6 s windows).
         if event.get("relation_only") or event.get("relationship") or (
                 event.get("source_asset_id") or event.get("target_asset_id")
-                or event.get("result_asset_id") or event.get("incoming_from_asset_id")
-                or event.get("handoff_to_asset_ids") or event.get("handoff_to_event_ids")
-                or event.get("handoff_to_event_id")):
+                or event.get("result_asset_id")):
             return False
         phases = event.get("phase_chain") or []
         if any(row.get("stage") not in ("ESTABLISH", "ADD") or row.get("relationship")
@@ -118,7 +130,10 @@ def _replaceable_decorative_entry(cue: MotionCue) -> bool:
     elif not name.startswith("reference_") or name.startswith(("reference_pop", "reference_slide")):
         return False
     frames = program.get("keyframes") or []
-    if not frames or "semantic_peak_progress" in program:
+    # The peak of a non-relational ESTABLISH/ADD introduction is its own reveal's Story
+    # peak; the replacing slide spans the same window (fastest mid-window) and keeps it.
+    introduction = name.startswith("event_chain_") and execution == "ENTRY_FALLBACK"
+    if not frames or ("semantic_peak_progress" in program and not introduction):
         return False
     return all(abs(float(row.get("dx", 0.0))) <= 0.065
                and abs(float(row.get("dy", 0.0))) <= 0.065
@@ -348,6 +363,20 @@ class SecondaryArrivalPlanner:
                 if slide is not None:
                     self._pop_fallback[(cue.beat_id, cue.asset_id)] = cue
                     return "SLIDE", "causal_slide", slide
+            if allow_slide and not params.get("payoff_icon_hit") and not isinstance(causal, dict):
+                # Without causal evidence (with it, only the cause -> result direction is
+                # truthful) a resolving result still enters from its own edge
+                # (or the scene flow) instead of only popping in place; a held icon hit
+                # keeps the PAYOFF. Same slide limits, validated by the shared contract.
+                family = family_of(cue.asset_id, assets_by_id or {})
+                others = [row for row in beat_cues if family_of(row.asset_id, assets_by_id or {}) != family]
+                slide = self._slide(cue, item=item, beat_cues=others, layout=layout, sweeps=sweeps,
+                                    window=float(cue.end) - float(cue.start), flow_direction=flow_direction,
+                                    result=True)
+                if slide is not None:
+                    self._pop_fallback[(cue.beat_id, cue.asset_id)] = cue
+                    return "SLIDE", "payoff_resolution:edge_slide", slide
+            if isinstance(causal, dict) and allow_slide:
                 return "POP", f"payoff_resolution:causal_{why}", None
             return "POP", "payoff_resolution", None
         if (params.get("render_constraints") or {}).get("geometry_lock"):
@@ -379,6 +408,16 @@ class SecondaryArrivalPlanner:
                         and not decorative):
                     return "FADE", "entry_segment_owns_motion", None
             elif float(row.start) < arrival_end - _EPS:
+                if allow_slide and self._approach_owner(cue, row):
+                    family = family_of(cue.asset_id, assets_by_id or {})
+                    others = [other for other in beat_cues
+                              if family_of(other.asset_id, assets_by_id or {}) != family]
+                    approached, why = self._relation_approach(
+                        cue, row, item=item, target=layout.get(str(row.target_asset_id)),
+                        beat_cues=others, layout=layout, sweeps=sweeps)
+                    if approached is not None:
+                        return "SLIDE", "relation_approach", approached
+                    return "FADE", f"accent_inside_arrival:approach_{why}", None
                 return "FADE", "accent_inside_arrival", None
         for other in beat_cues:
             pulse = (other.params or {}).get("hero_emphasis") if other.asset_id != cue.asset_id else None
@@ -401,6 +440,80 @@ class SecondaryArrivalPlanner:
         if pop is not None:
             return "POP", "reference_pop", pop
         return "FADE", "pop_below_visible_floor", None
+
+    @staticmethod
+    def _approach_owner(cue: MotionCue, row) -> bool:
+        """The entering asset's own reveal starts an authored INTERACT it is the SOURCE of."""
+        return (row.phase == "INTERACT" and abs(float(row.start) - float(cue.start)) <= _EPS
+                and row.source_asset_id == cue.asset_id and bool(row.target_asset_id)
+                and row.target_asset_id != cue.asset_id and not row.connection
+                and not any(other.phase != "INTERACT" and float(other.start) < float(row.end) - _EPS
+                            for other in cue.segments if other is not row))
+
+    def _relation_approach(
+        self,
+        cue: MotionCue,
+        row,
+        *,
+        item: LayoutItem,
+        target: LayoutItem | None,
+        beat_cues: list[MotionCue],
+        layout: dict[str, LayoutItem],
+        sweeps: dict[tuple[str, str], tuple[float, float, Box]],
+    ) -> tuple[MotionCue | None, str]:
+        """Draw a source's INTERACT that starts with its reveal as ONE approach toward its
+        authored target (it enters from the side away from the target and rests in place)
+        instead of a small out-and-back nudge. Phase, window and event are unchanged; the
+        distance is what the INTERACT comfort ceiling allows over the window, and the
+        program is committed only when the shared segment contract holds."""
+        if target is None:
+            return None, "target_not_laid_out"
+        frame = active_target()
+        width, height = frame.width, frame.height
+        ux, uy = (target.x - item.x) * width, (target.y - item.y) * height
+        span = (ux * ux + uy * uy) ** 0.5
+        if span < 1.0:
+            return None, "target_at_source"
+        duration = float(row.end) - float(row.start)
+        # One keyframe interval: its mean speed is exactly what encoded QA measures.
+        normalized = min(APPROACH_DISTANCE, 0.98 * motion_comfort("INTERACT").max_normalized_speed * duration)
+        sx, sy = -ux / span / width, -uy / span / height  # start offset, per pixel
+        unit = (sx * sx + sy * sy) ** 0.5
+        dx, dy = sx / unit * normalized, sy / unit * normalized
+        if (dx * dx * width * width + dy * dy * height * height) ** 0.5 < APPROACH_MIN_PX:
+            return None, "window_too_short"
+        final, begin = box(item, (0.0, 0.0, 1.0)), box(item, (dx, dy, 1.0))
+        sweep = (min(begin[0], final[0]), min(begin[1], final[1]), max(begin[2], final[2]), max(begin[3], final[3]))
+        start, end = float(row.start), float(row.end)
+        for other in beat_cues:
+            if other.asset_id == cue.asset_id or float(other.start) >= end - _EPS:
+                continue
+            other_item = layout.get(other.asset_id)
+            if other_item is None:
+                continue
+            allowed = authored_overlap_ratio(item, other_item) + _OVERLAP_SLACK
+            target_box = box(other_item, (0.0, 0.0, 1.0))
+            if _inter(sweep, target_box) / max(1e-9, min(_area(final), _area(target_box))) > allowed:
+                return None, "path_crosses_visible_asset"
+        for (_, asset_id), (t0, t1, path) in sweeps.items():
+            if asset_id != cue.asset_id and t0 < end - _EPS and t1 > start + _EPS and _inter(sweep, path) > 0:
+                return None, "path_crosses_hero_travel"
+        program = {**row.program, "name": "reference_relation_approach", "settle_progress": 1.0,
+                   "semantic_active_duration": round(duration, 6),
+                   "keyframes": [{"progress": 0.0, "dx": round(dx, 6), "dy": round(dy, 6),
+                                  "scale": SLIDE_START_SCALE, "easing": "smoothstep"},
+                                 {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]}
+        params = self._with_opacity(dict(cue.params), cue, duration)
+        if segment_contract_violations(phase="INTERACT", program=program, params=params, segment_duration=duration,
+                                       item_width=item.width, item_height=item.height):
+            return None, "contract"
+        params["relation_approach"] = {"dx": round(dx, 6), "dy": round(dy, 6), "seconds": round(duration, 6),
+                                       "target_asset_id": row.target_asset_id}
+        params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "APPROACH"}
+        self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
+        segments = [other.model_copy(update={"program": program}) if other is row else other
+                    for other in cue.segments]
+        return cue.model_copy(update={"params": params, "segments": segments}), "applied"
 
     def _causal_slide(
         self,
@@ -499,7 +612,8 @@ class SecondaryArrivalPlanner:
         opacity = params.get("entry_opacity")
         if isinstance(opacity, dict):
             params["entry_opacity"] = {**opacity, "settle": round(
-                min(float(opacity.get("settle", cue.end)), float(cue.start) + max(seconds, 3 * _FRAME)), 6)}
+                min(float(opacity.get("settle", cue.end)),
+                    float(cue.start) + min(max(seconds, 3 * _FRAME), ARRIVAL_OPACITY_SECONDS)), 6)}
         return params
 
     def _pop(self, cue: MotionCue, *, item: LayoutItem, window: float) -> MotionCue | None:
@@ -526,6 +640,7 @@ class SecondaryArrivalPlanner:
         sweeps: dict[tuple[str, str], tuple[float, float, Box]],
         window: float,
         flow_direction: tuple[float, float] | None = None,
+        result: bool = False,
     ) -> MotionCue | None:
         final = box(item, (0.0, 0.0, 1.0))
         frame = active_target()
@@ -551,6 +666,7 @@ class SecondaryArrivalPlanner:
         entry_windows = [
             float(row.end) - float(row.start)
             for row in cue.segments if row.phase == "ENTRY"
+            or (result and abs(float(row.start) - float(cue.start)) <= _EPS)
         ]
         available_window = min([window, *entry_windows])
         seconds = min(0.50 if flow_direction is not None else SLIDE_SECONDS, available_window)
@@ -558,7 +674,7 @@ class SecondaryArrivalPlanner:
             return None
         distance = min(0.12 if flow_direction is not None else SLIDE_DISTANCE,
                        SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
-        if flow_direction is not None and vertical:
+        if vertical:
             # Vertical offsets are converted into normalized canvas Y (dy=distance*aspect).
             # A width-only velocity cap would undercount Y motion by the aspect ratio,
             # causing RenderedMotionVerifier to reject otherwise valid real exports.
@@ -586,14 +702,46 @@ class SecondaryArrivalPlanner:
                 return None
         params = self._with_opacity(dict(cue.params), cue, seconds)
         params.pop("hero_entry", None)
-        start_scale = 0.93 if flow_direction is not None else 1.0
+        start_scale = SLIDE_START_SCALE
         params["reference_slide"] = {"dx": round(dx, 6), **({"dy": round(dy, 6)} if vertical else {}),
-                                     "seconds": round(seconds, 6),
-                                     **({"start_scale": start_scale} if flow_direction is not None else {}),
+                                     "seconds": round(seconds, 6), "start_scale": start_scale,
                                      "peak_speed": round(SMOOTHSTEP_PEAK * distance / seconds, 4),
                                      "profile": "REFERENCE_SLIDE",
                                      **({"scene_flow": True} if flow_direction is not None else {})}
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
+        if result:
+            moved = self._result_slide(cue, item=item, params=params, seconds=seconds,
+                                       frames=lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale))
+            if moved is not None:
+                self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
+            return moved
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
         return self._gesture(cue, params, "reference_slide_arrival",
                              lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale), seconds)
+
+    @staticmethod
+    def _result_slide(cue: MotionCue, *, item: LayoutItem, params: dict, seconds: float, frames) -> MotionCue | None:
+        """The result's reveal programs (ENTRY / PAYOFF starting with the reveal) carry the
+        slide instead of the pop; committed only when the shared segment contract holds."""
+        params = {k: v for k, v in params.items() if k != "reference_pop"}
+        params["payoff_resolution"] = {**(params.get("payoff_resolution") or {}), "arrival": "edge_slide"}
+        start, window = float(cue.start), float(cue.end) - float(cue.start)
+        params["program"] = {**(params.get("program") or {}), "name": "reference_slide_arrival",
+                             "settle_progress": 1.0, "keyframes": frames(seconds / window)}
+        segments = []
+        for row in cue.segments:
+            if abs(float(row.start) - start) <= _EPS and row.phase in {"ENTRY", "PAYOFF"}:
+                duration = float(row.end) - float(row.start)
+                program = {**row.program, "name": f"reference_slide_{row.phase.lower()}",
+                           "settle_progress": 1.0, "keyframes": frames(seconds / duration)}
+                if segment_contract_violations(phase=row.phase, program=program, params=params,
+                                               segment_duration=duration, item_width=item.width,
+                                               item_height=item.height):
+                    return None
+                row = row.model_copy(update={"program": program})
+            segments.append(row)
+        if not cue.segments and segment_contract_violations(
+                phase="ENTRY", program=params["program"], params=params, segment_duration=window,
+                item_width=item.width, item_height=item.height, base_entry=True):
+            return None
+        return cue.model_copy(update={"params": params, "segments": segments})

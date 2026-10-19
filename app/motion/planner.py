@@ -2225,6 +2225,11 @@ class MotionPlanner:
         dx = max(-0.075, min(0.075, dx * strength))
         dy = max(-0.075, min(0.075, dy * strength))
         scale = 1.0 + (scale - 1.0) * strength
+        if (phase.stage == EventFlowStage.PAYOFF and not phase.relationship
+                and not phase.source_asset_id and not phase.target_asset_id and abs(dx) > 1e-9):
+            # A resolved result is presented, never shaken sideways: the same normalized
+            # accent rises instead (encoded review 2026-10-19 rejected lateral payoffs).
+            dx, dy = 0.0, -min(0.075, hypot(dx, dy))
         dx, dy, scale = cls._enforce_event_readability(
             phase=phase,
             item=item,

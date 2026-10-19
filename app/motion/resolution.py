@@ -554,9 +554,9 @@ class PayoffResolutionDirector:
                                        "profile": "REFERENCE_POP"}
         opacity = params.get("entry_opacity")
         if isinstance(opacity, dict):
-            # The pop carries the arrival; the faint first frames shorten to the pop itself.
+            # The pop or hit carries the arrival: the fade only softens its first 3 frames.
             new_params["entry_opacity"] = {**opacity, "settle": round(
-                min(float(opacity.get("settle", cue.end)), float(cue.start) + max(seconds, 3 * _FRAME)), 6)}
+                min(float(opacity.get("settle", cue.end)), float(cue.start) + 3 * _FRAME), 6)}
 
         def build(phase: str, base: dict, duration: float, *, base_entry: bool) -> tuple[dict | None, str]:
             if base_entry:

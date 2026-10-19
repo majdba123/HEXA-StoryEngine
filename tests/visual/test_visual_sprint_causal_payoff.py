@@ -123,10 +123,22 @@ def test_a_cause_too_close_for_a_calm_slide_keeps_the_pop() -> None:
     assert cue.params["reference_pop"]
 
 
-def test_a_payoff_window_shorter_than_a_calm_slide_keeps_the_pop() -> None:
-    short = _resolved("ENABLES").model_copy(update={"segments": [
-        MotionSegment(phase="PAYOFF", start=1.2, end=1.2 + 7.5 / 30, program={"name": "reference_pop_payoff",
+def _short_payoff(frames: float):
+    return _resolved("ENABLES").model_copy(update={"segments": [
+        MotionSegment(phase="PAYOFF", start=1.2, end=1.2 + frames / 30, program={"name": "reference_pop_payoff",
                       "keyframes": [{"progress": 0.0, "scale": 0.84}, {"progress": 1.0, "scale": 1.0}]})]})
-    planner, cue = _arrival(short, [CAUSE, RESULT])
+
+
+def test_a_payoff_window_shorter_than_a_calm_slide_keeps_the_pop() -> None:
+    planner, cue = _arrival(_short_payoff(5.5), [CAUSE, RESULT])
     decision = next(d for d in planner.decisions if d.asset_id == "result")
     assert (decision.gesture, decision.reason) == ("POP", "payoff_resolution:causal_window_below_slide_minimum")
+
+
+def test_a_short_payoff_window_still_slides_within_the_calm_speed_ceiling() -> None:
+    """2026-10-19: the 0.6 w/s ceiling (unchanged) bounds a short window; its distance shrinks."""
+    planner, cue = _arrival(_short_payoff(7.5), [CAUSE, RESULT])
+    decision = next(d for d in planner.decisions if d.asset_id == "result")
+    assert (decision.gesture, decision.reason) == ("SLIDE", "causal_slide")
+    slide = cue.params["reference_slide"]
+    assert slide["peak_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-6
