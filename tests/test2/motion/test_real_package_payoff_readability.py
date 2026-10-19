@@ -14,7 +14,7 @@ from app.choreography import EventFlowStage
 from app.models import LayoutItem, MotionSegment
 from app.motion.event_flow import MotionEventPhase
 from app.motion.planner import MotionPlanner
-from app.motion.timing import semantic_readability_floor
+from app.motion.timing import GOLDEN_MINOR, semantic_readability_floor
 from app.render.verification import EncodedMotionVerifier
 
 
@@ -31,7 +31,7 @@ def _payoff() -> MotionEventPhase:
 def test_real_black_hat_036_payoff_scale_reaches_shared_readability_floor() -> None:
     item = LayoutItem(asset_id="SCENE_036:asset-04", x=0.5, y=0.5,
                       width=0.1584, height=0.16)
-    duration, readability = 0.42, 0.201
+    duration, readability = 0.42, 0.0134 / (0.11 * GOLDEN_MINOR)
     floor = semantic_readability_floor(
         "PAYOFF", item_width=item.width, item_height=item.height,
         duration=readability)
@@ -60,10 +60,10 @@ def test_real_black_hat_036_payoff_scale_reaches_shared_readability_floor() -> N
 def test_tiny_payoff_uses_upward_not_sideways_fallback_if_scale_is_insufficient() -> None:
     item = LayoutItem(asset_id="tiny-result", x=0.5, y=0.5, width=0.08, height=0.08)
     floor = semantic_readability_floor(
-        "PAYOFF", item_width=item.width, item_height=item.height, duration=0.201)
+        "PAYOFF", item_width=item.width, item_height=item.height, duration=0.0134 / (0.11 * GOLDEN_MINOR))
     dx, dy, scale = MotionPlanner._enforce_event_readability(
         phase=_payoff(), item=item, dx=0.0, dy=0.0, scale=1.0,
-        duration=0.42, readability_duration=0.201)
+        duration=0.42, readability_duration=0.0134 / (0.11 * GOLDEN_MINOR))
     assert dx == 0.0
     assert dy < 0
     assert max(hypot(dx, dy), abs(scale - 1.0) * item.width) >= floor
