@@ -72,8 +72,8 @@ def test_tiny_payoff_uses_upward_not_sideways_fallback_if_scale_is_insufficient(
 def test_sufficient_existing_payoff_is_not_amplified() -> None:
     item = LayoutItem(asset_id="existing-result", x=0.5, y=0.5, width=0.3, height=0.25)
     dx, dy, scale = MotionPlanner._enforce_event_readability(
-        phase=_payoff(), item=item, dx=0.02, dy=0.0, scale=1.05,
+        phase=_payoff(), item=item, dx=0.014, dy=0.0, scale=1.05,
         duration=0.42, readability_duration=0.201)
-    assert dx == pytest.approx(0.02, abs=1e-7)
+    assert dx == pytest.approx(0.014, abs=1e-7)
     assert dy == 0.0
     assert scale <= 1.095
