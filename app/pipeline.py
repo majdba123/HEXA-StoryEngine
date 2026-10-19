@@ -774,6 +774,10 @@ class StoryEnginePipeline:
                     encoding="utf-8",
                 )
 
+            # A cue restored to its pre-text baseline (revoked travel) may carry an older
+            # micro gesture: stillness is the last word on the final Motion. Removing motion
+            # never invalidates the Text and Boundary decisions made above.
+            motion = self.stillness.apply(motion)
             # Locked Pass2 layers draw with their family primary's transform (one unit).
             motion = bind_families(
                 motion, {row.beat_id: {item.asset_id: item for item in row.items} for row in composition},
