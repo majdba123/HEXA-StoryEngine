@@ -50,3 +50,51 @@ def test_a_relational_payoff_keeps_its_authored_direction() -> None:
         energy=1.0, cohort_gain=1.0, duration=0.42)
     assert max(abs(f.dx) for f in program.keyframes) > 0.0
     assert max(hypot(f.dx, f.dy) for f in program.keyframes) > 0.0
+
+
+def _relation_cue(asset: str, phase: str, *, source: str, target: str, start: float = 1.0, seconds: float = 0.4):
+    from app.models import MotionSegment
+    from tests.visual.test_vnext2_arrivals import _cue
+
+    nudge = {"name": "reference_focus_handoff", "settle_progress": 0.6, "semantic_peak_progress": 0.37,
+             "keyframes": [{"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+                           {"progress": 0.37, "dx": 0.011, "dy": 0.0, "scale": 1.02},
+                           {"progress": 0.6, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+                           {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0}]}
+    row = MotionSegment(phase=phase, start=start, end=start + seconds, program=nudge, source_asset_id=source,
+                        target_asset_id=target, relationship="ENABLES")
+    return _cue(asset, start, start + seconds, segments=[row])
+
+
+@pytest.mark.parametrize("phase,asset,partner_x,expected_sign", [
+    ("INTERACT", "source", 0.80, -1.0),   # the source approaches a target on its right: enters from the LEFT
+    ("REACT", "target", 0.20, -1.0),      # the target moves away from a source on its left: enters from the LEFT
+])
+def test_a_relation_accent_at_the_reveal_becomes_one_travel_along_the_relation(
+        phase: str, asset: str, partner_x: float, expected_sign: float) -> None:
+    from app.models import CompositionBeat
+    from app.motion.arrivals import SecondaryArrivalPlanner
+    from tests.visual.test_vnext2_arrivals import _assets
+
+    partner = "target" if asset == "source" else "source"
+    item = LayoutItem(asset_id=asset, x=0.5, y=0.45, width=0.16, height=0.22)
+    other = LayoutItem(asset_id=partner, x=partner_x, y=0.45, width=0.12, height=0.18)
+    cue = _relation_cue(asset, phase, source="source", target="target")
+    planner = SecondaryArrivalPlanner()
+    out = planner.plan(story=[_beat("b", 0.0, 3.0), _beat("n", 3.0, 5.0)],
+                       composition=[CompositionBeat(beat_id="b", items=[item, other])],
+                       motion=[cue], assets=_assets(asset, partner))
+    moved = next(row for row in out if row.asset_id == asset)
+    segment = moved.segments[0]
+    first = segment.program["keyframes"][0]
+    assert segment.phase == phase and (segment.start, segment.end) == (1.0, 1.4)   # same event, same window
+    assert first["dx"] * expected_sign > 0.02 and first["scale"] < 1.0                # one travel, growing
+    assert all(f["dx"] * expected_sign >= -1e-9 for f in segment.program["keyframes"]), "no out-and-back"
+    assert segment_contract_violations(phase=phase, program=segment.program, params=moved.params,
+                                       segment_duration=0.4, item_width=item.width, item_height=item.height) == []
+
+
+def _beat(beat_id: str, start: float, end: float):
+    from app.models import StoryBeat
+
+    return StoryBeat(id=beat_id, scene_id=f"s-{beat_id}", start=start, end=end, narration="x", action="REVEAL")

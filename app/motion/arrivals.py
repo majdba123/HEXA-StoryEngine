@@ -408,12 +408,13 @@ class SecondaryArrivalPlanner:
                         and not decorative):
                     return "FADE", "entry_segment_owns_motion", None
             elif float(row.start) < arrival_end - _EPS:
-                if allow_slide and self._approach_owner(cue, row):
+                partner = self._approach_partner(cue, row) if allow_slide else None
+                if partner is not None:
                     family = family_of(cue.asset_id, assets_by_id or {})
                     others = [other for other in beat_cues
                               if family_of(other.asset_id, assets_by_id or {}) != family]
                     approached, why = self._relation_approach(
-                        cue, row, item=item, target=layout.get(str(row.target_asset_id)),
+                        cue, row, item=item, target=layout.get(partner),
                         beat_cues=others, layout=layout, sweeps=sweeps)
                     if approached is not None:
                         return "SLIDE", "relation_approach", approached
@@ -442,13 +443,21 @@ class SecondaryArrivalPlanner:
         return "FADE", "pop_below_visible_floor", None
 
     @staticmethod
-    def _approach_owner(cue: MotionCue, row) -> bool:
-        """The entering asset's own reveal starts an authored INTERACT it is the SOURCE of."""
-        return (row.phase == "INTERACT" and abs(float(row.start) - float(cue.start)) <= _EPS
-                and row.source_asset_id == cue.asset_id and bool(row.target_asset_id)
-                and row.target_asset_id != cue.asset_id and not row.connection
-                and not any(other.phase != "INTERACT" and float(other.start) < float(row.end) - _EPS
-                            for other in cue.segments if other is not row))
+    def _approach_partner(cue: MotionCue, row) -> str | None:
+        """The authored partner when the entering asset's own reveal starts a relation accent:
+        the TARGET of an INTERACT it is the SOURCE of, or the SOURCE of a REACT it is the
+        TARGET of. None otherwise."""
+        if abs(float(row.start) - float(cue.start)) > _EPS or row.connection or any(
+                other.phase != row.phase and float(other.start) < float(row.end) - _EPS
+                for other in cue.segments if other is not row):
+            return None
+        if row.phase == "INTERACT" and row.source_asset_id == cue.asset_id:
+            partner = row.target_asset_id
+        elif row.phase == "REACT" and row.target_asset_id == cue.asset_id:
+            partner = row.source_asset_id
+        else:
+            return None
+        return partner if partner and partner != cue.asset_id else None
 
     def _relation_approach(
         self,
@@ -461,22 +470,24 @@ class SecondaryArrivalPlanner:
         layout: dict[str, LayoutItem],
         sweeps: dict[tuple[str, str], tuple[float, float, Box]],
     ) -> tuple[MotionCue | None, str]:
-        """Draw a source's INTERACT that starts with its reveal as ONE approach toward its
-        authored target (it enters from the side away from the target and rests in place)
-        instead of a small out-and-back nudge. Phase, window and event are unchanged; the
-        distance is what the INTERACT comfort ceiling allows over the window, and the
-        program is committed only when the shared segment contract holds."""
+        """Draw a relation accent that starts with the reveal as ONE travel along the authored
+        source -> target direction instead of a small out-and-back nudge: an INTERACT source
+        approaches its target, a REACT target arrives moving away from its source. Phase,
+        window and event are unchanged; the distance is what that phase's comfort ceiling
+        allows over the window, and the program is committed only when the shared segment
+        contract holds. ``target`` is the authored partner's layout."""
         if target is None:
-            return None, "target_not_laid_out"
+            return None, "partner_not_laid_out"
         frame = active_target()
         width, height = frame.width, frame.height
-        ux, uy = (target.x - item.x) * width, (target.y - item.y) * height
+        sign = 1.0 if row.phase == "INTERACT" else -1.0  # travel direction: source -> target
+        ux, uy = sign * (target.x - item.x) * width, sign * (target.y - item.y) * height
         span = (ux * ux + uy * uy) ** 0.5
         if span < 1.0:
-            return None, "target_at_source"
+            return None, "partner_at_asset"
         duration = float(row.end) - float(row.start)
         # One keyframe interval: its mean speed is exactly what encoded QA measures.
-        normalized = min(APPROACH_DISTANCE, 0.98 * motion_comfort("INTERACT").max_normalized_speed * duration)
+        normalized = min(APPROACH_DISTANCE, 0.98 * motion_comfort(row.phase).max_normalized_speed * duration)
         sx, sy = -ux / span / width, -uy / span / height  # start offset, per pixel
         unit = (sx * sx + sy * sy) ** 0.5
         dx, dy = sx / unit * normalized, sy / unit * normalized
@@ -504,10 +515,11 @@ class SecondaryArrivalPlanner:
                                   "scale": SLIDE_START_SCALE, "easing": "smoothstep"},
                                  {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]}
         params = self._with_opacity(dict(cue.params), cue, duration)
-        if segment_contract_violations(phase="INTERACT", program=program, params=params, segment_duration=duration,
+        if segment_contract_violations(phase=row.phase, program=program, params=params, segment_duration=duration,
                                        item_width=item.width, item_height=item.height):
             return None, "contract"
         params["relation_approach"] = {"dx": round(dx, 6), "dy": round(dy, 6), "seconds": round(duration, 6),
+                                       "phase": row.phase, "partner_asset_id": target.asset_id,
                                        "target_asset_id": row.target_asset_id}
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "APPROACH"}
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
