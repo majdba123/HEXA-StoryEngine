@@ -1,0 +1,923 @@
+{
+ "source": "HEXA_BLACK_HAT_HACKER_AR final package, YOUTUBE_16_9 plan, beat-022 (captured 2026-10-19)",
+ "beat": {
+  "id": "beat-022",
+  "scene_id": "SCENE_022",
+  "start": 47.389,
+  "end": 50.17,
+  "audio_start": 47.469,
+  "audio_end": 50.17,
+  "narration": "ممكن يحاول ينتقل منه إلى أنظمة ثانية.",
+  "primary_asset_ids": [
+   "SCENE_022:asset-01"
+  ],
+  "support_asset_ids": [
+   "SCENE_022:asset-02",
+   "SCENE_022:asset-03",
+   "SCENE_022:asset-04",
+   "SCENE_022:asset-05",
+   "SCENE_022:asset-03:secondary-01"
+  ],
+  "action": "REVEAL_DETAIL",
+  "handoff_from": "SCENE_021:asset-01",
+  "semantic_targets": [
+   "SCENE_022_A01_hexa_lateral_move",
+   "SCENE_022_A02_first_server",
+   "SCENE_022_A03_second_server",
+   "SCENE_022_A04_move_path"
+  ],
+  "semantic_context": {
+   "story_role": "CONTEXT",
+   "event_id": null,
+   "event_order": null,
+   "event_trigger": {
+    "phrase": "ممكن يحاول ينتقل منه إلى أنظمة ثانية.",
+    "occurrence_in_scene": null,
+    "global_char_start": 594,
+    "global_char_end": 631
+   },
+   "scene_purpose": "تجسيد المعنى السردي للمقطع: ممكن يحاول ينتقل منه إلى أنظمة ثانية.",
+   "scene_visual_concept": "HEXA يوضح الانتقال الجانبي، النظام الأول المخترق، نظام ثانٍ هدف الانتقال، مسار انتقال بين النظامين",
+   "scene_metadata": {
+    "purpose": "تجسيد المعنى السردي للمقطع: ممكن يحاول ينتقل منه إلى أنظمة ثانية.",
+    "visual_concept": "HEXA يوضح الانتقال الجانبي، النظام الأول المخترق، نظام ثانٍ هدف الانتقال، مسار انتقال بين النظامين",
+    "relation_to_previous": "CONTINUES_NARRATIVE",
+    "script_char_start": 594,
+    "script_char_end": 631,
+    "semantic_event_count": 2,
+    "semantic_progression": {
+     "type": "FIRST_SYSTEM_TO_SECOND_SYSTEM",
+     "event_order": [
+      "SCENE_022_EVENT_01",
+      "SCENE_022_EVENT_02"
+     ],
+     "extension_metadata": {}
+    }
+   },
+   "event_metadata": {
+    "action": "EXPLAIN",
+    "targets": [
+     "SCENE_022_A01_hexa_lateral_move",
+     "SCENE_022_A02_first_server",
+     "SCENE_022_A03_second_server",
+     "SCENE_022_A04_move_path"
+    ],
+    "trigger": {
+     "global_char_start": 594,
+     "global_char_end": 631,
+     "phrase": "ممكن يحاول ينتقل منه إلى أنظمة ثانية."
+    }
+   },
+   "entities": [
+    {
+     "unit_id": "SCENE_022_A01_hexa_lateral_move",
+     "semantic_name": "HEXA يوضح الانتقال الجانبي",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "CHARACTER",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 605,
+      "global_char_end": 610
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_022_A01_hexa_lateral_move",
+      "asset_id": "SCENE_022_A01_hexa_lateral_move",
+      "scene_id": "SCENE_022",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "HEXA يوضح الانتقال الجانبي",
+      "visual_concept": "HEXA يوضح الانتقال الجانبي",
+      "semantic_meaning": "HEXA يوضح الانتقال الجانبي",
+      "role": "CHARACTER",
+      "semantic_role": "CHARACTER",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "SEMANTIC",
+      "script_text": "ينتقل",
+      "script_span": {
+       "text": "ينتقل",
+       "global_char_start": 605,
+       "global_char_end": 610
+      },
+      "appear_trigger": {
+       "text": "ينتقل",
+       "global_char_start": 605,
+       "global_char_end": 610
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_022_G01",
+      "sequence_order": 1,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.92,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_022_EVENT_01",
+      "anchor_granularity": "EXACT_WORD",
+      "visual_focus": "SUPPORT",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.812200956937799,
+       "cy": 0.5270988310308182,
+       "width": 0.35047846889952156,
+       "height": 0.7630180658873539
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    },
+    {
+     "unit_id": "SCENE_022_A02_first_server",
+     "semantic_name": "النظام الأول المخترق",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "OBJECT",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 611,
+      "global_char_end": 614
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_022_A02_first_server",
+      "asset_id": "SCENE_022_A02_first_server",
+      "scene_id": "SCENE_022",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "النظام الأول المخترق",
+      "visual_concept": "النظام الأول المخترق",
+      "semantic_meaning": "النظام الأول المخترق",
+      "role": "OBJECT",
+      "semantic_role": "OBJECT",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "EXPLICIT",
+      "script_text": "منه",
+      "script_span": {
+       "text": "منه",
+       "global_char_start": 611,
+       "global_char_end": 614
+      },
+      "appear_trigger": {
+       "text": "منه",
+       "global_char_start": 611,
+       "global_char_end": 614
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_022_G01",
+      "sequence_order": 2,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.98,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_022_EVENT_01",
+      "anchor_granularity": "EXACT_WORD",
+      "visual_focus": "PRIMARY",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.15370813397129188,
+       "cy": 0.730605738575983,
+       "width": 0.2595693779904306,
+       "height": 0.4197662061636557
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    },
+    {
+     "unit_id": "SCENE_022_A03_second_server",
+     "semantic_name": "نظام ثانٍ هدف الانتقال",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "RESULT",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 619,
+      "global_char_end": 630
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_022_A03_second_server",
+      "asset_id": "SCENE_022_A03_second_server",
+      "scene_id": "SCENE_022",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "نظام ثانٍ هدف الانتقال",
+      "visual_concept": "نظام ثانٍ هدف الانتقال",
+      "semantic_meaning": "نظام ثانٍ هدف الانتقال",
+      "role": "RESULT",
+      "semantic_role": "RESULT",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "EXPLICIT",
+      "script_text": "أنظمة ثانية",
+      "script_span": {
+       "text": "أنظمة ثانية",
+       "global_char_start": 619,
+       "global_char_end": 630
+      },
+      "appear_trigger": {
+       "text": "أنظمة ثانية",
+       "global_char_start": 619,
+       "global_char_end": 630
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_022_G01",
+      "sequence_order": 3,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.98,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_022_EVENT_02",
+      "anchor_granularity": "EXACT_PHRASE",
+      "visual_focus": "PRIMARY",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.4937200956937799,
+       "cy": 0.28905419766206164,
+       "width": 0.298444976076555,
+       "height": 0.5079702444208289
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    },
+    {
+     "unit_id": "SCENE_022_A04_move_path",
+     "semantic_name": "مسار انتقال بين النظامين",
+     "entity_type": "VISUAL_ASSET_INTENT",
+     "role": "ACTION",
+     "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+     "semantic_intent": "EXPLAIN",
+     "appear_trigger": {
+      "phrase": null,
+      "occurrence_in_scene": null,
+      "global_char_start": 605,
+      "global_char_end": 630
+     },
+     "focus_trigger": null,
+     "exit_trigger": null,
+     "package_metadata": {
+      "unit_id": "SCENE_022_A04_move_path",
+      "asset_id": "SCENE_022_A04_move_path",
+      "scene_id": "SCENE_022",
+      "type": "VISUAL_ASSET_INTENT",
+      "source_asset_id": null,
+      "semantic_name": "مسار انتقال بين النظامين",
+      "visual_concept": "مسار انتقال بين النظامين",
+      "semantic_meaning": "مسار انتقال بين النظامين",
+      "role": "ACTION",
+      "semantic_role": "ACTION",
+      "semantic_intent": "EXPLAIN",
+      "narrative_function": "BIND_SEMANTIC_ASSET_INTENT",
+      "binding_type": "SEMANTIC",
+      "script_text": "ينتقل منه إلى أنظمة ثانية",
+      "script_span": {
+       "text": "ينتقل منه إلى أنظمة ثانية",
+       "global_char_start": 605,
+       "global_char_end": 630
+      },
+      "appear_trigger": {
+       "text": "ينتقل منه إلى أنظمة ثانية",
+       "global_char_start": 605,
+       "global_char_end": 630
+      },
+      "focus_trigger": null,
+      "exit_trigger": null,
+      "semantic_group_id": "SCENE_022_G01",
+      "sequence_order": 4,
+      "parent_asset_id": null,
+      "children_asset_ids": [],
+      "confidence": 0.92,
+      "interaction_target": null,
+      "relationship": null,
+      "semantic_event_id": "SCENE_022_EVENT_01",
+      "anchor_granularity": "EXACT_PHRASE",
+      "visual_focus": "SUPPORT",
+      "visual_state": null,
+      "continuity": null,
+      "compound_visual_classification": "SEPARABLE_SAFE",
+      "internal_progression_unavailable": false,
+      "needs_review": false,
+      "ambiguity_reason": null,
+      "visual_locator": {
+       "coordinate_space": "normalized_scene",
+       "cx": 0.41866028708133973,
+       "cy": 0.6742826780021254,
+       "width": 0.2535885167464115,
+       "height": 0.27523910733262485
+      },
+      "extension_metadata": {
+       "source_asset_id": null
+      }
+     }
+    }
+   ],
+   "relations": [
+    {
+     "source_unit_id": "SCENE_022_A02_first_server",
+     "target_unit_id": "SCENE_022_A03_second_server",
+     "kind": "LEADS_TO",
+     "authority": "FINAL_PACKAGE_ASSET_RELATION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": 611,
+     "trigger_char_end": 630,
+     "spoken_start": 48.59,
+     "spoken_end": 50.17,
+     "confidence": 1.0,
+     "causal": true
+    },
+    {
+     "source_unit_id": "SCENE_022_A01_hexa_lateral_move",
+     "target_unit_id": "SCENE_022_A02_first_server",
+     "kind": "DECLARED_PROGRESSION",
+     "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": null,
+     "trigger_char_end": null,
+     "spoken_start": null,
+     "spoken_end": null,
+     "confidence": 0.96,
+     "causal": false
+    },
+    {
+     "source_unit_id": "SCENE_022_A02_first_server",
+     "target_unit_id": "SCENE_022_A03_second_server",
+     "kind": "DECLARED_PROGRESSION",
+     "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": null,
+     "trigger_char_end": null,
+     "spoken_start": null,
+     "spoken_end": null,
+     "confidence": 0.96,
+     "causal": false
+    },
+    {
+     "source_unit_id": "SCENE_022_A03_second_server",
+     "target_unit_id": "SCENE_022_A04_move_path",
+     "kind": "DECLARED_PROGRESSION",
+     "authority": "FINAL_PACKAGE_VISUAL_PROGRESSION",
+     "result_unit_id": null,
+     "trigger_text": null,
+     "trigger_char_start": null,
+     "trigger_char_end": null,
+     "spoken_start": null,
+     "spoken_end": null,
+     "confidence": 0.96,
+     "causal": false
+    }
+   ],
+   "subject_unit_ids": [
+    "SCENE_022_A02_first_server"
+   ],
+   "object_unit_ids": [
+    "SCENE_022_A03_second_server"
+   ],
+   "result_unit_ids": [
+    "SCENE_022_A03_second_server"
+   ],
+   "focus_unit_ids": [
+    "SCENE_022_A02_first_server",
+    "SCENE_022_A03_second_server"
+   ],
+   "visual_states": {},
+   "continuity_by_unit": {},
+   "narrative_functions": [
+    "BIND_SEMANTIC_ASSET_INTENT"
+   ],
+   "semantic_intents": [
+    "EXPLAIN"
+   ],
+   "continuity_relation": "CONTINUES_NARRATIVE",
+   "evidence": [
+    "event_action:EXPLAIN",
+    "scene_relation:CONTINUES_NARRATIVE",
+    "scene_visual_concept:HEXA يوضح الانتقال الجانبي، النظام الأول المخترق، نظام ثانٍ هدف الانتقال، مسار انتقال بين النظامين",
+    "scene_purpose:تجسيد المعنى السردي للمقطع: ممكن يحاول ينتقل منه إلى أنظمة ثانية.",
+    "event_trigger_phrase:ممكن يحاول ينتقل منه إلى أنظمة ثانية.",
+    "event_trigger_chars:594:631",
+    "entity:SCENE_022_A01_hexa_lateral_move:HEXA يوضح الانتقال الجانبي",
+    "entity_type:SCENE_022_A01_hexa_lateral_move:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_022_A01_hexa_lateral_move:CHARACTER",
+    "entity_narrative_function:SCENE_022_A01_hexa_lateral_move:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_022_A01_hexa_lateral_move:EXPLAIN",
+    "entity_appear_chars:SCENE_022_A01_hexa_lateral_move:605:610",
+    "entity:SCENE_022_A02_first_server:النظام الأول المخترق",
+    "entity_type:SCENE_022_A02_first_server:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_022_A02_first_server:OBJECT",
+    "entity_narrative_function:SCENE_022_A02_first_server:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_022_A02_first_server:EXPLAIN",
+    "entity_appear_chars:SCENE_022_A02_first_server:611:614",
+    "entity:SCENE_022_A03_second_server:نظام ثانٍ هدف الانتقال",
+    "entity_type:SCENE_022_A03_second_server:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_022_A03_second_server:RESULT",
+    "entity_narrative_function:SCENE_022_A03_second_server:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_022_A03_second_server:EXPLAIN",
+    "entity_appear_chars:SCENE_022_A03_second_server:619:630",
+    "entity:SCENE_022_A04_move_path:مسار انتقال بين النظامين",
+    "entity_type:SCENE_022_A04_move_path:VISUAL_ASSET_INTENT",
+    "entity_role:SCENE_022_A04_move_path:ACTION",
+    "entity_narrative_function:SCENE_022_A04_move_path:BIND_SEMANTIC_ASSET_INTENT",
+    "entity_semantic_intent:SCENE_022_A04_move_path:EXPLAIN",
+    "entity_appear_chars:SCENE_022_A04_move_path:605:630",
+    "relation:SCENE_022_A02_first_server:LEADS_TO:SCENE_022_A03_second_server",
+    "relation:SCENE_022_A01_hexa_lateral_move:DECLARED_PROGRESSION:SCENE_022_A02_first_server",
+    "relation:SCENE_022_A02_first_server:DECLARED_PROGRESSION:SCENE_022_A03_second_server",
+    "relation:SCENE_022_A03_second_server:DECLARED_PROGRESSION:SCENE_022_A04_move_path",
+    "final_package_asset_level_semantics",
+    "final_package_asset_relations",
+    "final_package_semantic_events",
+    "final_package_event_progression",
+    "final_package_event_leaders"
+   ],
+   "confidence": 1.0,
+   "tension": 0.3
+  },
+  "asset_activations": [
+   {
+    "asset_id": "SCENE_022:asset-01",
+    "semantic_unit_id": "SCENE_022_A01_hexa_lateral_move",
+    "trigger_text": "ينتقل",
+    "trigger_char_start": 605,
+    "trigger_char_end": 610,
+    "spoken_start": 48.17,
+    "spoken_end": 48.57,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_022_G01",
+    "sequence_order": 1,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "SUPPORT",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_022_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "PARTICIPANT"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=SUPPORT",
+     "semantic_event=SCENE_022_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=PARTICIPANT",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_022_A01_hexa_lateral_move",
+     "semantic_group=SCENE_022_G01",
+     "sequence_order=1",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=0.047210425496681335",
+     "visual_identity_margin=0.9527895745033187",
+     "attention_role=SUPPORT",
+     "attention_focus_ms=144",
+     "attention_decay=settle_hold",
+     "next_semantic_hit=48.590000",
+     "handoff_policy=narration_first",
+     "opening_spoken_coverage",
+     "opening_establishment_first_semantic_cohort",
+     "opening_establish_lead=0.701000",
+     "opening_establish_authority=SCENE_PRELUDE",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 48.57, \"phrase_start\": 48.17, \"reveal_start\": 47.469, \"semantic_peak\": 48.2492, \"settle_at\": 48.314}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_022:asset-01\", \"beat_id\": \"beat-022\", \"candidate_phrase\": \"ينتقل\", \"chosen_phrase\": \"ينتقل\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_022_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"PARTICIPANT\"], \"semantic_group_id\": \"SCENE_022_G01\", \"semantic_text\": \"ينتقل\", \"semantic_unit_id\": \"SCENE_022_A01_hexa_lateral_move\", \"sequence_order\": 1, \"source\": \"final_package_binding\", \"spoken_end\": 48.57, \"spoken_start\": 48.17}"
+    ]
+   },
+   {
+    "asset_id": "SCENE_022:asset-03:secondary-01",
+    "semantic_unit_id": "SCENE_022_A04_move_path",
+    "trigger_text": "ينتقل منه إلى أنظمة ثانية",
+    "trigger_char_start": 605,
+    "trigger_char_end": 630,
+    "spoken_start": 48.17,
+    "spoken_end": 50.17,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_022_G01",
+    "sequence_order": 4,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "SUPPORT",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_022_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "PARTICIPANT"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=SUPPORT",
+     "semantic_event=SCENE_022_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=PARTICIPANT",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_022_A04_move_path",
+     "semantic_group=SCENE_022_G01",
+     "sequence_order=4",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator_contained",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=none",
+     "visual_identity_margin=none",
+     "attention_role=SUPPORT",
+     "attention_focus_ms=144",
+     "attention_decay=settle_hold",
+     "next_semantic_hit=48.590000",
+     "handoff_policy=narration_first",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 50.17, \"phrase_start\": 48.17, \"reveal_start\": 48.17, \"semantic_peak\": 48.2492, \"settle_at\": 48.314}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_022:asset-03:secondary-01\", \"beat_id\": \"beat-022\", \"candidate_phrase\": \"ينتقل منه إلى أنظمة ثانية\", \"chosen_phrase\": \"ينتقل منه إلى أنظمة ثانية\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_022_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"PARTICIPANT\"], \"semantic_group_id\": \"SCENE_022_G01\", \"semantic_text\": \"ينتقل منه إلى أنظمة ثانية\", \"semantic_unit_id\": \"SCENE_022_A04_move_path\", \"sequence_order\": 4, \"source\": \"final_package_binding\", \"spoken_end\": 50.17, \"spoken_start\": 48.17}"
+    ]
+   },
+   {
+    "asset_id": "SCENE_022:asset-04",
+    "semantic_unit_id": "SCENE_022_A04_move_path",
+    "trigger_text": "ينتقل منه إلى أنظمة ثانية",
+    "trigger_char_start": 605,
+    "trigger_char_end": 630,
+    "spoken_start": 48.17,
+    "spoken_end": 50.17,
+    "confidence": 0.7441056181503432,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_022_G01",
+    "sequence_order": 4,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "SUPPORT",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_022_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "PARTICIPANT"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=SUPPORT",
+     "semantic_event=SCENE_022_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=PARTICIPANT",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_022_A04_move_path",
+     "semantic_group=SCENE_022_G01",
+     "sequence_order=4",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=0.744106",
+     "visual_identity_runner_up=0.4098189389696433",
+     "visual_identity_margin=0.3342866791806999",
+     "attention_role=SUPPORT",
+     "attention_focus_ms=144",
+     "attention_decay=settle_hold",
+     "next_semantic_hit=48.590000",
+     "handoff_policy=narration_first",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 50.17, \"phrase_start\": 48.17, \"reveal_start\": 48.17, \"semantic_peak\": 48.2492, \"settle_at\": 48.314}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_022:asset-04\", \"beat_id\": \"beat-022\", \"candidate_phrase\": \"ينتقل منه إلى أنظمة ثانية\", \"chosen_phrase\": \"ينتقل منه إلى أنظمة ثانية\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.7441056181503432, \"semantic_event_id\": \"SCENE_022_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"PARTICIPANT\"], \"semantic_group_id\": \"SCENE_022_G01\", \"semantic_text\": \"ينتقل منه إلى أنظمة ثانية\", \"semantic_unit_id\": \"SCENE_022_A04_move_path\", \"sequence_order\": 4, \"source\": \"final_package_binding\", \"spoken_end\": 50.17, \"spoken_start\": 48.17}"
+    ]
+   },
+   {
+    "asset_id": "SCENE_022:asset-05",
+    "semantic_unit_id": "SCENE_022_A04_move_path",
+    "trigger_text": "ينتقل منه إلى أنظمة ثانية",
+    "trigger_char_start": 605,
+    "trigger_char_end": 630,
+    "spoken_start": 48.17,
+    "spoken_end": 50.17,
+    "confidence": 0.92,
+    "source": "unified_final_package",
+    "policy": "SEMANTIC",
+    "semantic_group_id": "SCENE_022_G01",
+    "sequence_order": 4,
+    "binding_type": "SEMANTIC",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "SUPPORT",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_022_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "PARTICIPANT"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=SUPPORT",
+     "semantic_event=SCENE_022_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=PARTICIPANT",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_022_A04_move_path",
+     "semantic_group=SCENE_022_G01",
+     "sequence_order=4",
+     "binding_type=SEMANTIC",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator_contained",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=none",
+     "visual_identity_margin=none",
+     "attention_role=SUPPORT",
+     "attention_focus_ms=144",
+     "attention_decay=settle_hold",
+     "next_semantic_hit=48.590000",
+     "handoff_policy=narration_first",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 50.17, \"phrase_start\": 48.17, \"reveal_start\": 48.17, \"semantic_peak\": 48.2492, \"settle_at\": 48.314}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_022:asset-05\", \"beat_id\": \"beat-022\", \"candidate_phrase\": \"ينتقل منه إلى أنظمة ثانية\", \"chosen_phrase\": \"ينتقل منه إلى أنظمة ثانية\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.92, \"semantic_event_id\": \"SCENE_022_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"PARTICIPANT\"], \"semantic_group_id\": \"SCENE_022_G01\", \"semantic_text\": \"ينتقل منه إلى أنظمة ثانية\", \"semantic_unit_id\": \"SCENE_022_A04_move_path\", \"sequence_order\": 4, \"source\": \"final_package_binding\", \"spoken_end\": 50.17, \"spoken_start\": 48.17}"
+    ]
+   },
+   {
+    "asset_id": "SCENE_022:asset-03",
+    "semantic_unit_id": "SCENE_022_A02_first_server",
+    "trigger_text": "منه",
+    "trigger_char_start": 611,
+    "trigger_char_end": 614,
+    "spoken_start": 48.59,
+    "spoken_end": 48.83,
+    "confidence": 0.9787990490927821,
+    "source": "unified_final_package",
+    "policy": "EXPLICIT",
+    "semantic_group_id": "SCENE_022_G01",
+    "sequence_order": 2,
+    "binding_type": "EXPLICIT",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_022_EVENT_01",
+    "semantic_event_order": 1,
+    "semantic_event_roles": [
+     "LEADER",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_022_EVENT_01",
+     "semantic_event_order=1",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_022_A02_first_server",
+     "semantic_group=SCENE_022_G01",
+     "sequence_order=2",
+     "binding_type=EXPLICIT",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=0.978799",
+     "visual_identity_runner_up=0.15782251378164483",
+     "visual_identity_margin=0.8209765353111373",
+     "attention_role=PRIMARY",
+     "attention_focus_ms=197",
+     "attention_decay=settle_hold",
+     "next_semantic_hit=49.050000",
+     "handoff_policy=narration_first",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 48.83, \"phrase_start\": 48.59, \"reveal_start\": 48.59, \"semantic_peak\": 48.69824, \"settle_at\": 48.7868}",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_022:asset-03\", \"beat_id\": \"beat-022\", \"candidate_phrase\": \"منه\", \"chosen_phrase\": \"منه\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.9787990490927821, \"semantic_event_id\": \"SCENE_022_EVENT_01\", \"semantic_event_order\": 1, \"semantic_event_roles\": [\"LEADER\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_022_G01\", \"semantic_text\": \"منه\", \"semantic_unit_id\": \"SCENE_022_A02_first_server\", \"sequence_order\": 2, \"source\": \"final_package_binding\", \"spoken_end\": 48.83, \"spoken_start\": 48.59}"
+    ]
+   },
+   {
+    "asset_id": "SCENE_022:asset-02",
+    "semantic_unit_id": "SCENE_022_A03_second_server",
+    "trigger_text": "أنظمة ثانية",
+    "trigger_char_start": 619,
+    "trigger_char_end": 630,
+    "spoken_start": 49.05,
+    "spoken_end": 50.17,
+    "confidence": 0.98,
+    "source": "unified_final_package",
+    "policy": "EXPLICIT",
+    "semantic_group_id": "SCENE_022_G01",
+    "sequence_order": 3,
+    "binding_type": "EXPLICIT",
+    "semantic_parent_id": null,
+    "group_animation_policy": "SEQUENTIAL_WITHIN_PHRASE",
+    "visual_focus": "PRIMARY",
+    "visual_state": null,
+    "continuity": null,
+    "semantic_event_id": "SCENE_022_EVENT_02",
+    "semantic_event_order": 2,
+    "semantic_event_roles": [
+     "LEADER",
+     "RESULT",
+     "TEXT_ANCHOR"
+    ],
+    "semantic_event_dependency_ids": [
+     "SCENE_022_EVENT_01"
+    ],
+    "compound_visual_classification": "SEPARABLE_SAFE",
+    "internal_progression_unavailable": false,
+    "evidence": [
+     "asset_level_final_package_binding",
+     "exact_final_package_script_text",
+     "exact_final_package_script_span",
+     "visual_focus=PRIMARY",
+     "semantic_event=SCENE_022_EVENT_02",
+     "semantic_event_order=2",
+     "semantic_event_role=LEADER",
+     "semantic_event_role=RESULT",
+     "semantic_event_role=TEXT_ANCHOR",
+     "compound_visual=SEPARABLE_SAFE",
+     "semantic_intent=SCENE_022_A03_second_server",
+     "semantic_group=SCENE_022_G01",
+     "sequence_order=3",
+     "binding_type=EXPLICIT",
+     "binder_confidence=1.000000",
+     "visual_identity_binding",
+     "visual_identity_source=visual_locator",
+     "visual_identity_score=1.000000",
+     "visual_identity_runner_up=0.059639358683187364",
+     "visual_identity_margin=0.9403606413168126",
+     "attention_role=RESULT",
+     "attention_focus_ms=288",
+     "attention_decay=settle_hold",
+     "story_activation_v2:{\"activation_policy\": \"OWN_WINDOW\", \"phrase_end\": 50.17, \"phrase_start\": 49.05, \"reveal_start\": 49.05, \"semantic_peak\": 49.2084, \"settle_at\": 49.337999999999994}",
+     "EARLY_SCENE_COMPLETION",
+     "no_confident_unassigned_late_visual_material",
+     "uncovered_narration_seconds=0.832000",
+     "semantic_match_diagnostic:{\"asset_id\": \"SCENE_022:asset-02\", \"beat_id\": \"beat-022\", \"candidate_phrase\": \"أنظمة ثانية\", \"chosen_phrase\": \"أنظمة ثانية\", \"compound_visual_classification\": \"SEPARABLE_SAFE\", \"margin\": null, \"phrase_index\": null, \"reason\": null, \"runner_up_score\": null, \"score\": 0.98, \"semantic_event_id\": \"SCENE_022_EVENT_02\", \"semantic_event_order\": 2, \"semantic_event_roles\": [\"LEADER\", \"RESULT\", \"TEXT_ANCHOR\"], \"semantic_group_id\": \"SCENE_022_G01\", \"semantic_text\": \"أنظمة ثانية\", \"semantic_unit_id\": \"SCENE_022_A03_second_server\", \"sequence_order\": 3, \"source\": \"final_package_binding\", \"spoken_end\": 50.17, \"spoken_start\": 49.05}"
+    ]
+   }
+  ],
+  "semantic_event_proxies": [],
+  "event_authorities": [
+   {
+    "event_id": "SCENE_022_EVENT_01",
+    "sequence_order": 1,
+    "leader_asset_ids": [
+     "SCENE_022:asset-03"
+    ],
+    "participant_asset_ids": [
+     "SCENE_022:asset-01",
+     "SCENE_022:asset-03:secondary-01",
+     "SCENE_022:asset-04",
+     "SCENE_022:asset-05"
+    ],
+    "result_asset_ids": [],
+    "context_asset_ids": [],
+    "text_anchor_asset_ids": [
+     "SCENE_022:asset-03"
+    ],
+    "dependency_ids": [],
+    "script_char_start": 605,
+    "script_char_end": 630,
+    "spoken_start": 48.17,
+    "spoken_end": 50.17,
+    "confidence": 0.98,
+    "needs_review": false,
+    "ambiguity_reason": null,
+    "relation_kinds": [],
+    "authority": "FINAL_PACKAGE_SEMANTIC_EVENT"
+   },
+   {
+    "event_id": "SCENE_022_EVENT_02",
+    "sequence_order": 2,
+    "leader_asset_ids": [
+     "SCENE_022:asset-02"
+    ],
+    "participant_asset_ids": [],
+    "result_asset_ids": [
+     "SCENE_022:asset-02"
+    ],
+    "context_asset_ids": [],
+    "text_anchor_asset_ids": [
+     "SCENE_022:asset-02"
+    ],
+    "dependency_ids": [
+     "SCENE_022_EVENT_01"
+    ],
+    "script_char_start": 619,
+    "script_char_end": 630,
+    "spoken_start": 49.05,
+    "spoken_end": 50.17,
+    "confidence": 0.98,
+    "needs_review": false,
+    "ambiguity_reason": null,
+    "relation_kinds": [],
+    "authority": "FINAL_PACKAGE_SEMANTIC_EVENT"
+   }
+  ],
+  "active_visual_semantic_state": {
+   "SCENE_022:asset-01": "SCENE_022_A01_hexa_lateral_move",
+   "SCENE_022:asset-03:secondary-01": "SCENE_022_A04_move_path",
+   "SCENE_022:asset-04": "SCENE_022_A04_move_path",
+   "SCENE_022:asset-05": "SCENE_022_A04_move_path",
+   "SCENE_022:asset-03": "SCENE_022_A02_first_server",
+   "SCENE_022:asset-02": "SCENE_022_A03_second_server"
+  }
+ },
+ "centers": {
+  "SCENE_022:asset-01": [
+   1559.5,
+   569.0
+  ],
+  "SCENE_022:asset-02": [
+   948.5,
+   312.5
+  ],
+  "SCENE_022:asset-03": [
+   348.0,
+   788.5
+  ],
+  "SCENE_022:asset-03:secondary-01": [
+   348.0,
+   788.5
+  ],
+  "SCENE_022:asset-04": [
+   892.5,
+   721.5
+  ],
+  "SCENE_022:asset-05": [
+   701.0,
+   835.5
+  ]
+ },
+ "parent_of": {
+  "SCENE_022:asset-01": null,
+  "SCENE_022:asset-02": null,
+  "SCENE_022:asset-03": null,
+  "SCENE_022:asset-03:secondary-01": "SCENE_022:asset-03",
+  "SCENE_022:asset-04": null,
+  "SCENE_022:asset-05": null
+ }
+}

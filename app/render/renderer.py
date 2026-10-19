@@ -13,8 +13,9 @@ from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
-from app.render.connection import connection_specs, draw_connection, fade_seconds
+from app.render.connection import connection_specs, draw_connection_sequence
 from app.render.expression import compile_expression
+from app.render.write_on import authored_path_directions, write_on_filter, write_on_frame_count
 from app.render.motion import FFmpegMotionAdapter
 from app.render.resources import RenderConcurrencyPolicy
 from app.render.text import TextRenderer
@@ -193,7 +194,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text(?:-under)?\.ass|-connection-\d+\.png|-blur-\d+-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-\d+-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -418,14 +419,22 @@ class FFmpegRenderer:
             duration=duration,
             spatial_scale=plan.projection.scale if plan.projection else 1.0,
         )
+        # Reference grammar G5: authored arrow/path artwork writes on along its relation.
+        path_directions = authored_path_directions(beat, {
+            item.asset_id: (geometry[2] + geometry[0] / 2.0, geometry[3] + geometry[1] / 2.0)
+            for item in ordered_items
+            for geometry in (self._geometry(plan, item),)
+        }, parent_of={item.asset_id: assets[item.asset_id].parent_asset_id for item in ordered_items},
+            images={item.asset_id: assets[item.asset_id].image_path for item in ordered_items})
         connection_inputs = len(ordered_items) + len(outgoing_items) + len(handoff_items)
         for connection_index, connection in enumerate(connections):
-            png = draw_connection(
+            # Reference grammar G5: the arrow writes on (numbered frames), then holds.
+            pattern, _frames = draw_connection_sequence(
                 connection, (plan.width, plan.height),
-                target.parent / f"{target.stem}-connection-{connection_index}.png",
-                spatial_scale=plan.projection.scale if plan.projection else 1.0,
+                target.parent / f"{target.stem}-connection-{connection_index}",
+                spatial_scale=plan.projection.scale if plan.projection else 1.0, fps=plan.fps,
             )
-            command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(png)])
+            command.extend(["-framerate", str(plan.fps), "-start_number", "0", "-i", pattern])
 
         overlap_inputs = connection_inputs + len(connections)
         for item in overlap_items:
@@ -744,6 +753,15 @@ class FFmpegRenderer:
                     fps=plan.fps,
                 )
             )
+            if (
+                item.asset_id in path_directions
+                and not (persistent or visual_carrier or item.asset_id in handoffs.values())
+            ):
+                entry_fade = self._path_write_on_filter(
+                    cue, image_path=assets[item.asset_id].image_path, box=(box_w, box_h),
+                    direction=path_directions[item.asset_id], segment_start=segment_start,
+                    effective_reveal_start=effective_reveal_start, fps=plan.fps,
+                ) or entry_fade
             filters.append(
                 f"[{layer_index}:v]format=rgba,setsar=1,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
@@ -870,7 +888,8 @@ class FFmpegRenderer:
             label = f"connection{connection_index}"
             filters.append(
                 f"[{connection_inputs + connection_index}:v]format=rgba,"
-                f"fade=t=in:st={connection.start:.6f}:d={fade_seconds(connection):.6f}:alpha=1,"
+                f"tpad=start_duration={connection.start:.6f}:start_mode=add:color=black@0.0:"
+                f"stop_mode=clone:stop_duration={duration:.6f},"
                 f"trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
             )
             next_label = f"connmix{connection_index}"
@@ -1637,6 +1656,32 @@ class FFmpegRenderer:
         if not windows:
             return 0.0, min(0.12, duration)
         return min(windows, key=lambda row: row[0])
+
+    @classmethod
+    def _path_write_on_filter(
+        cls,
+        cue: MotionCue | None,
+        *,
+        image_path: Path,
+        box: tuple[int, int],
+        direction: tuple[float, float],
+        segment_start: float,
+        effective_reveal_start: float,
+        fps: int,
+    ) -> str:
+        """Write-on mask for an authored path inside Motion's reveal -> settle window, or ""
+        to keep the normal entry (no settle authority, or the window is too short)."""
+        params = cue.params if cue is not None and isinstance(cue.params, dict) else {}
+        settle = params.get("semantic_settle_time")
+        if type(settle) not in (int, float):
+            return ""
+        first_frame = cls._first_visible_frame(effective_reveal_start, fps)
+        settle_frame = cls._first_visible_frame(float(settle) - segment_start, fps)
+        frames = write_on_frame_count(first_frame, settle_frame)
+        if not frames:
+            return ""
+        return write_on_filter(image_path=image_path, box=box, direction=direction,
+                               first_frame=first_frame, frames=frames)
 
     @classmethod
     def _entry_opacity_filter(
