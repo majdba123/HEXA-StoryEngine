@@ -57,6 +57,12 @@ script) imports `bayer` code. Guard added (below).
 target (`SCENE_036:asset-04` PAYOFF: 1.00 → 1.079 → held → 1.00, ramps 0.122 s); story, composition, text and
 boundaries are identical. Corpus and encoded acceptance: see the P0 evidence table in `docs/visual-storytelling-sprints.md`.
 
+**Corpus preflight (real narration, no encode):** old code fails White Hat 0, Gray Hat 2+2 (`MOTION_TOO_FAST` icon hits), Script Kiddie 1+1 (icon hit flattened to a static PAYOFF by EmphasisLeaderPolicy); new code 0 on all 8 target plans. Real-corpus certification Levels A–D: 33 passed, 0 failed (Level E opt-in, skipped).
+
+**Real encoded acceptance PASSED** on `4d125b42`: `E:\HEXA_Exports\HEXA_BLACK_HAT_HACKER_AR4` (YouTube + Reels, encoded-motion and final-media PASS, 768.5 s). Bundles v1–v3 were all this same failure (jobs 4f865cc1, f96ba7e0, 0922ffec).
+
+**Still pending:** user visual acceptance of v4. P1 visual changes were audited (tracker) but intentionally not shipped: the remaining gains inside the current contracts are small, and the large ones (more exits, held payoff booms, motion for sub-0.2 s Story windows) each need a user decision on read-hold time, Story settle ownership or the PAYOFF comfort ceiling.
+
 ---
 
 **Checkpoint:** 2026-10-19, after the user's SECOND post-fix Black Hat export failure.
