@@ -18,8 +18,9 @@ TOP = LayoutItem(asset_id="high", x=0.5, y=0.17, width=0.2, height=0.3)      # t
 
 @pytest.mark.parametrize("item,sign", [(BOTTOM, 1.0), (TOP, -1.0)])
 def test_an_asset_near_the_top_or_bottom_slides_in_vertically_from_that_edge(item: LayoutItem, sign: float) -> None:
-    planner, out = _run([_cue(item.asset_id, 1.0, 1.3)], [item])
-    decision = planner.decisions[0]
+    # Something else opens the scene, so this travel budget is not capped by the opener rule.
+    planner, out = _run([_cue("edge", 0.3, 0.6), _cue(item.asset_id, 1.0, 1.3)], [EDGE, item])
+    decision = next(row for row in planner.decisions if row.asset_id == item.asset_id)
     assert (decision.gesture, decision.reason) == ("SLIDE", "edge_slide_vertical")
     cue = out[item.asset_id]
     assert (cue.start, cue.end) == (1.0, 1.3)                                   # Story instants unchanged

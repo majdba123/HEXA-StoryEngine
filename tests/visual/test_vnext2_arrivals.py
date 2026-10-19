@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.models import CompositionBeat, LayoutItem, MotionCue, MotionSegment, StoryBeat, VisualAsset
-from app.motion.arrivals import SLIDE_MAX_PEAK_SPEED, SMOOTHSTEP_PEAK, SecondaryArrivalPlanner
+from app.motion.arrivals import OPENER_VISIBLE_SHARE, SLIDE_MAX_PEAK_SPEED, SMOOTHSTEP_PEAK, SecondaryArrivalPlanner
 from app.motion.collision import box
 from app.motion.resolution import POP_START_SCALE
 from app.motion.timing import REFERENCE_SLIDE
@@ -58,6 +58,25 @@ def test_an_asset_near_a_side_edge_slides_in_from_that_edge_at_reference_speed()
     assert speed <= REFERENCE_SLIDE.max_normalized_speed
     # Reference profile (docs/reference-motion-grammar.md): the mean speed is what encoded QA measures.
     assert abs(frames[0]["dx"]) / cue.params["reference_slide"]["seconds"] <= SLIDE_MAX_PEAK_SPEED + 1e-6
+
+
+def _on_frame_share(item: LayoutItem, dx: float) -> float:
+    left, right = item.x - item.width / 2 + dx, item.x + item.width / 2 + dx
+    return max(0.0, min(1.0, right) - max(0.0, left)) / item.width
+
+
+def test_a_scene_opener_is_already_partly_on_frame_on_its_reveal_frame() -> None:
+    """Level 5 (real Black Hat beat-032, 71.53 s): the scene's first element slid in from
+    fully beyond the edge, so the cut landed on a blank frame and the final-media gate
+    rejected the export (near-white handoff frame). The opener now starts with
+    OPENER_VISIBLE_SHARE of itself on frame; a later element still starts beyond the edge."""
+    planner, out = _run([_cue("edge", 1.0, 1.4)], [EDGE])
+    opener = out["edge"].params["program"]["keyframes"][0]["dx"]
+    assert opener < 0 and _on_frame_share(EDGE, opener) >= OPENER_VISIBLE_SHARE - 1e-6
+    earlier = LayoutItem(asset_id="first", x=0.75, y=0.3, width=0.2, height=0.2)
+    _, out = _run([_cue("first", 0.4, 0.7), _cue("edge", 1.0, 1.4)], [earlier, EDGE])
+    later = out["edge"].params["program"]["keyframes"][0]["dx"]
+    assert _on_frame_share(EDGE, later) == 0.0  # not the opener: enters from beyond the edge
 
 
 def test_a_centred_asset_pops_and_a_tiny_one_keeps_its_fade() -> None:

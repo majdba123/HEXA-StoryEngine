@@ -60,6 +60,8 @@ SLIDE_MAX_PEAK_SPEED = 0.8   # w/s: REFERENCE_SLIDE.max_normalized_speed (encode
 SLIDE_MEAN_SPEED = 0.98 * SLIDE_MAX_PEAK_SPEED
 SLIDE_EASING = "ease_out_cubic"
 _OFFFRAME_MARGIN = 0.01
+# Share of a scene opener's extent (along its slide axis) already on frame at its reveal.
+OPENER_VISIBLE_SHARE = 0.35
 SLIDE_START_SCALE = 0.93     # every travelling arrival also grows into its authored size
 # The arrival is the movement, not a fade: the opacity ramp only softens the first frames.
 ARRIVAL_OPACITY_SECONDS = 3 / 30
@@ -661,6 +663,19 @@ class SecondaryArrivalPlanner:
         return self._gesture(cue, params, "reference_pop_arrival",
                              lambda settle: pop_frames(start_scale, settle), seconds)
 
+    @staticmethod
+    def _opens_scene(cue: MotionCue, beat_cues: list[MotionCue]) -> bool:
+        """True when nothing of this beat is on screen before or with ``cue``'s reveal."""
+        for other in beat_cues:
+            if other is cue or other.asset_id == cue.asset_id:
+                continue
+            params = other.params if isinstance(other.params, dict) else {}
+            if (params.get("semantic_continuity") or {}).get("mode", "ENTER") != "ENTER":
+                return False  # carried across the boundary: already visible
+            if float(other.start) < float(cue.start) - _EPS:
+                return False  # revealed earlier (elements revealed together all open it)
+        return True
+
     def _slide(
         self,
         cue: MotionCue,
@@ -714,6 +729,12 @@ class SecondaryArrivalPlanner:
             offframe = (final[2] if sign < 0 else 1.0 - final[0]) + _OFFFRAME_MARGIN
             reach = SLIDE_MEAN_SPEED * seconds
         longest = min(SLIDE_DISTANCE, offframe, reach)
+        if self._opens_scene(cue, beat_cues):
+            # The scene's first visible element must be on its reveal frame (references: an
+            # entering object is already partly in frame on its first frame). Starting fully
+            # beyond the edge would cut to a blank frame (final-media near-white gate).
+            extent = (final[3] - final[1]) / aspect if vertical else final[2] - final[0]
+            longest = min(longest, offframe - _OFFFRAME_MARGIN - OPENER_VISIBLE_SHARE * extent)
         start, end = float(cue.start), float(cue.start) + seconds
         chosen = None
         # A long path that would cross visible artwork shortens before the slide is dropped.
