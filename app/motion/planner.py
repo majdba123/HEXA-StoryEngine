@@ -2461,6 +2461,47 @@ class MotionPlanner:
             desired_scale = min(0.075 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
                 scale = 1.0 + desired_scale
+
+            # The shared PAYOFF contract is max(translation, scale * asset extent).
+            # A pure scale accent on a small result can look attractive but still
+            # fall below the semantic readability floor (observed in real Black Hat
+            # scene 36). The older code guaranteed only translation >= floor, yet
+            # intentionally kept a zero-vector PAYOFF at zero translation. Resolve
+            # that mismatch here, before FFmpeg, with the same contract as QA.
+            if floor > 0.0:
+                activity = max(hypot(dx, dy), abs(scale - 1.0) * asset_extent)
+                if activity + 1e-9 < floor:
+                    required_scale_delta = floor / asset_extent
+                    if required_scale_delta <= scale_cap + 1e-9:
+                        # A little margin survives serialized keyframe rounding
+                        # without exceeding the authorized size/speed ceiling.
+                        scale = 1.0 + min(scale_cap, max(
+                            abs(scale - 1.0), required_scale_delta + 1e-4))
+                    else:
+                        # Tiny subjects may not reach the floor through scaling
+                        # alone. Preserve any authored direction; only then use
+                        # a restrained upward accent rather than sideways jitter.
+                        magnitude = hypot(dx, dy)
+                        if magnitude > 1e-9:
+                            gain = min(max_displacement, floor + 1e-5) / magnitude
+                            dx *= gain
+                            dy *= gain
+                        else:
+                            dy = -min(max_displacement, floor + 1e-5)
+                    activity = max(hypot(dx, dy), abs(scale - 1.0) * asset_extent)
+                    if activity + 1e-9 < floor:
+                        raise StageFailedError(
+                            "PAYOFF cannot meet semantic readability before rendering",
+                            details={
+                                "code": "MOTION_INFEASIBLE_BEFORE_RENDER",
+                                "phase": phase_name,
+                                "event_id": phase.event_id,
+                                "asset_id": item.asset_id,
+                                "expected_normalized": round(activity, 6),
+                                "readability_floor": round(floor, 6),
+                                "comfort_ceiling": round(max_displacement, 6),
+                            },
+                        )
         elif phase.stage == EventFlowStage.REACT:
             desired_scale = min(0.045 * temporal_gain, scale_cap)
             if abs(scale - 1.0) < desired_scale:
