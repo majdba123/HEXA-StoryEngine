@@ -8,7 +8,12 @@ validates again as its first step.
 """
 from __future__ import annotations
 
-from app.config import Settings
+import json
+import os
+import uuid
+from pathlib import Path
+
+from app.config import LOCAL_SETTINGS_FILE, Settings
 from app.final.bundle import ExportRoot
 from app.shared.errors import StageFailedError
 
@@ -40,4 +45,54 @@ def export_root_problem(settings: Settings) -> str | None:
             "export root must be an absolute path": "المسار يجب أن يكون كاملًا (مثل E:\\HEXA_Exports).",
         }.get(str(exc), str(exc))
         return f"تعذر استخدام مجلد التصدير:\n{path}\n{reason}\nلم يبدأ التوليد."
+    return None
+
+
+def initialize_windows_export_root(
+    *,
+    platform: str | None = None,
+    drive_root: Path | None = None,
+    settings_file: Path | None = None,
+) -> str | None:
+    """One-time, desktop-only setup for Windows users saving results on E:.
+
+    Save the chosen location in the ignored machine-local settings, never in the
+    repository and never as an implicit pipeline fallback. Explicit environment
+    variables and configured paths always win. Missing E: fails visibly; do not
+    quietly export to C: or create a bogus relative Windows path on non-Windows.
+    """
+    if (platform or os.name) != "nt":
+        return None
+    if os.getenv("HEXA_EXPORT_ROOT") or os.getenv("HEXA_SETTINGS_FILE"):
+        return None
+
+    path = settings_file or LOCAL_SETTINGS_FILE
+    drive = drive_root or Path("E:/")
+    try:
+        if path.exists():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return f"إعدادات HEXA غير صالحة:\n{path}\nيجب أن يكون الملف كائن JSON."
+        else:
+            payload = {}
+    except (OSError, ValueError) as exc:
+        return f"تعذر قراءة إعدادات HEXA:\n{path}\n{exc}"
+
+    if payload.get("export_root"):
+        return None
+    if not drive.is_dir():
+        return ("قرص E: غير موجود أو غير متصل.\n"
+                "وصل القرص ثم أعد المحاولة. لن يتم حفظ النتائج على C: تلقائيًا.")
+
+    destination = drive / "HEXA_Exports"
+    updated = {**payload, "export_root": str(destination)}
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n",
+                             encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError as exc:
+        return f"تعذر حفظ إعداد مجلد التصدير:\n{path}\n{exc}"
+    finally:
+        temporary.unlink(missing_ok=True)
     return None
