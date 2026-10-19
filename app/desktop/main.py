@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         try:
             settings = Settings.from_env()
         except (OSError, ValueError, RuntimeError) as exc:
-            QMessageBox.warning(self, "HEXA", f"تعذر تحميل إعدادات HEXA:\\n{exc}")
+            QMessageBox.warning(self, "HEXA", f"تعذر تحميل إعدادات HEXA:\n{exc}")
             return
         if settings.export_root is None:
             QMessageBox.warning(
