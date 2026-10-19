@@ -538,7 +538,16 @@ class SecondaryArrivalPlanner:
             gap, sign = (top_gap, -1.0) if top_gap <= bottom_gap else (bottom_gap, 1.0)
             if gap / aspect > SLIDE_EDGE_REACH + _EPS:
                 return None
-        seconds = min(0.50 if flow_direction is not None else SLIDE_SECONDS, window)
+        # The actual renderer draws the ENTRY segment, not the base cue, when
+        # segments exist. Never compress a half-second slide into a shorter
+        # authored ENTRY window: that creates motion above the encoded comfort
+        # speed and can abort an otherwise valid Final Package export.
+        entry_windows = [
+            float(row.end) - float(row.start)
+            for row in cue.segments if row.phase == "ENTRY"
+        ]
+        available_window = min([window, *entry_windows])
+        seconds = min(0.50 if flow_direction is not None else SLIDE_SECONDS, available_window)
         if seconds + _EPS < SLIDE_MIN_SECONDS:
             return None
         distance = min(0.12 if flow_direction is not None else SLIDE_DISTANCE,
