@@ -94,6 +94,11 @@ def comfort_profile_for(phase: str, *, program_name: str, params: Mapping | None
     if (phase in {"ENTRY", "PAYOFF"} and isinstance(params.get("reference_slide"), Mapping)
             and program_name.startswith("reference_slide")):
         return REFERENCE_SLIDE
+    if (phase in {"INTERACT", "REACT"} and isinstance(params.get("relation_approach"), Mapping)
+            and program_name.startswith("reference_relation_approach")):
+        # A relation accent executed as the asset's own entrance (arrivals relation approach)
+        # travels under the reference entry profile, not the in-place accent ceiling.
+        return REFERENCE_SLIDE
     return motion_comfort(phase)
 
 

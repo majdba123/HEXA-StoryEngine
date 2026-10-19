@@ -30,10 +30,10 @@ _MOTION_COMFORT: dict[str, MotionComfortProfile] = {
 # frame heights per second (reference q90), over 6-9 frames - the references' own 3-5 frame
 # pops read as rushed in reviewed HEXA renders.
 REFERENCE_POP = MotionComfortProfile(target_seconds=9 / 30, minimum_seconds=6 / 30, max_normalized_speed=0.85)
-# Edge slide (cues marked ``reference_slide``): a calm settle, at most 0.6 frame widths per
-# second over 6-12 frames (the references' 0.8-1.2 w/s slides read as rushed); the speed
-# ceiling, not the duration, keeps a short Story window calm (its distance shrinks).
-REFERENCE_SLIDE = MotionComfortProfile(target_seconds=12 / 30, minimum_seconds=6 / 30, max_normalized_speed=0.6)
+# Edge slide (cues marked ``reference_slide``): mean speed at most 0.8 frame widths per
+# second over 6-12 frames, eased out (fast entrance, long settle). Measured on the approved
+# references (docs/reference-motion-grammar.md G1-G4): mean 0.62-0.77 W/s, peak 1.2-2.3 W/s.
+REFERENCE_SLIDE = MotionComfortProfile(target_seconds=12 / 30, minimum_seconds=6 / 30, max_normalized_speed=0.8)
 
 
 def motion_comfort(phase: str) -> MotionComfortProfile:

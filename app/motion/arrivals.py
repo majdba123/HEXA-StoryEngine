@@ -35,7 +35,7 @@ from .family import family_of, follow, rigid_followers
 from app.targets.context import active_target
 
 from .resolution import POP_MIN_ACTIVITY_PX, POP_MIN_SECONDS, POP_SECONDS, pop_start_scale
-from .timing import motion_comfort, projected_motion_activity_px
+from .timing import projected_motion_activity_px
 from .visual_flow.direction import focus_handoff_direction, spatial_entry_direction
 
 _EPS = 1e-6
@@ -43,15 +43,20 @@ _FRAME = 1 / 30
 # Edge slide. The references slide 0.10-0.15 frame widths in 4-13 frames at up to 1.2 w/s;
 # reviewed HEXA renders found that rushed, so a slide is a short calm settle into place:
 # at most 0.08 w, at most 0.6 w/s peak, never shorter than 8 frames (else a pop or fade).
-# Encoded review (2026-10-19): 0.08 w settles under a full-length fade read as "appears in
-# place". Travel now uses what the unchanged 0.6 w/s ceiling allows inside the Story window,
-# up to the references' 0.12 w, from the pop minimum (6 frames) on, and is drawn opaque.
-SLIDE_DISTANCE = 0.12        # frame widths (references: 0.10-0.15)
+# Reference grammar (docs/reference-motion-grammar.md, G1-G4, G10, G11): elements enter from
+# beyond the frame edge, fastest at the entrance and decelerating (ease-out), travelling
+# 0.25-0.35 W in 10-13 frames at a mean 0.62-0.77 W/s, sharp at rest. Travel uses what the
+# Story window allows up to fully off-frame, from the pop minimum (6 frames) on, opaque.
+SLIDE_DISTANCE = 0.35        # frame widths: the longest measured reference travel
+SLIDE_LEGACY_DISTANCE = 0.12 # last fallback when a longer path would cross visible artwork
 SLIDE_MIN_DISTANCE = 0.04
 SLIDE_EDGE_REACH = 0.16      # an asset whose box is this close to a side edge slides
 SLIDE_SECONDS = 12 / 30
 SLIDE_MIN_SECONDS = 6 / 30   # = POP_MIN_SECONDS; speed, not duration, bounds comfort
-SLIDE_MAX_PEAK_SPEED = 0.6   # w/s
+SLIDE_MAX_PEAK_SPEED = 0.8   # w/s: REFERENCE_SLIDE.max_normalized_speed (encoded QA: mean speed)
+SLIDE_MEAN_SPEED = 0.98 * SLIDE_MAX_PEAK_SPEED
+SLIDE_EASING = "ease_out_cubic"
+_OFFFRAME_MARGIN = 0.01
 SLIDE_START_SCALE = 0.93     # every travelling arrival also grows into its authored size
 # The arrival is the movement, not a fade: the opacity ramp only softens the first frames.
 ARRIVAL_OPACITY_SECONDS = 3 / 30
@@ -168,10 +173,11 @@ def pop_frames(start_scale: float, settle: float) -> list[dict]:
     return frames
 
 
-def slide_frames(dx: float, settle: float, dy: float = 0.0, *, start_scale: float = 1.0) -> list[dict]:
+def slide_frames(dx: float, settle: float, dy: float = 0.0, *, start_scale: float = 1.0,
+                 easing: str = "smoothstep") -> list[dict]:
     settle = max(0.0, min(1.0, settle))
     frames = [{"progress": 0.0, "dx": round(dx, 6), "dy": round(dy, 6), "scale": start_scale,
-               "easing": "smoothstep"},
+               "easing": easing},
               {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]
     if settle < 1.0 - _EPS:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"})
@@ -486,41 +492,43 @@ class SecondaryArrivalPlanner:
         if span < 1.0:
             return None, "partner_at_asset"
         duration = float(row.end) - float(row.start)
-        # One keyframe interval: its mean speed is exactly what encoded QA measures.
-        normalized = min(APPROACH_DISTANCE, 0.98 * motion_comfort(row.phase).max_normalized_speed * duration)
+        # The segment is this asset's entrance: it travels like a reference edge entry (mean
+        # speed of the REFERENCE_SLIDE profile, eased out) along the authored relation, and
+        # shortens before abstaining when a long path would cross visible artwork.
         sx, sy = -ux / span / width, -uy / span / height  # start offset, per pixel
         unit = (sx * sx + sy * sy) ** 0.5
-        dx, dy = sx / unit * normalized, sy / unit * normalized
-        if (dx * dx * width * width + dy * dy * height * height) ** 0.5 < APPROACH_MIN_PX:
-            return None, "window_too_short"
-        final, begin = box(item, (0.0, 0.0, 1.0)), box(item, (dx, dy, 1.0))
-        sweep = (min(begin[0], final[0]), min(begin[1], final[1]), max(begin[2], final[2]), max(begin[3], final[3]))
         start, end = float(row.start), float(row.end)
-        for other in beat_cues:
-            if other.asset_id == cue.asset_id or float(other.start) >= end - _EPS:
+        longest = min(SLIDE_DISTANCE, SLIDE_MEAN_SPEED * duration)
+        final = box(item, (0.0, 0.0, 1.0))
+        chosen, why = None, "window_too_short"
+        for normalized in (longest, longest * 0.6, min(longest, APPROACH_DISTANCE)):
+            dx, dy = sx / unit * normalized, sy / unit * normalized
+            if (dx * dx * width * width + dy * dy * height * height) ** 0.5 < APPROACH_MIN_PX:
                 continue
-            other_item = layout.get(other.asset_id)
-            if other_item is None:
-                continue
-            allowed = authored_overlap_ratio(item, other_item) + _OVERLAP_SLACK
-            target_box = box(other_item, (0.0, 0.0, 1.0))
-            if _inter(sweep, target_box) / max(1e-9, min(_area(final), _area(target_box))) > allowed:
-                return None, "path_crosses_visible_asset"
-        for (_, asset_id), (t0, t1, path) in sweeps.items():
-            if asset_id != cue.asset_id and t0 < end - _EPS and t1 > start + _EPS and _inter(sweep, path) > 0:
-                return None, "path_crosses_hero_travel"
+            begin = box(item, (dx, dy, 1.0))
+            sweep = (min(begin[0], final[0]), min(begin[1], final[1]),
+                     max(begin[2], final[2]), max(begin[3], final[3]))
+            if self._sweep_clear(cue, item=item, final=final, sweep=sweep, start=start, end=end,
+                                 beat_cues=beat_cues, layout=layout, sweeps=sweeps):
+                chosen = (dx, dy, sweep)
+                break
+            why = "path_crosses_visible_asset"
+        if chosen is None:
+            return None, why
+        dx, dy, sweep = chosen
         program = {**row.program, "name": "reference_relation_approach", "settle_progress": 1.0,
                    "semantic_active_duration": round(duration, 6),
                    "keyframes": [{"progress": 0.0, "dx": round(dx, 6), "dy": round(dy, 6),
-                                  "scale": SLIDE_START_SCALE, "easing": "smoothstep"},
+                                  "scale": SLIDE_START_SCALE, "easing": SLIDE_EASING},
                                  {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"}]}
         params = self._with_opacity(dict(cue.params), cue, duration)
-        if segment_contract_violations(phase=row.phase, program=program, params=params, segment_duration=duration,
-                                       item_width=item.width, item_height=item.height):
-            return None, "contract"
+        # The marker is what authorizes the entry profile in the shared contract.
         params["relation_approach"] = {"dx": round(dx, 6), "dy": round(dy, 6), "seconds": round(duration, 6),
                                        "phase": row.phase, "partner_asset_id": target.asset_id,
                                        "target_asset_id": row.target_asset_id}
+        if segment_contract_violations(phase=row.phase, program=program, params=params, segment_duration=duration,
+                                       item_width=item.width, item_height=item.height):
+            return None, "contract"
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "APPROACH"}
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
         segments = [other.model_copy(update={"program": program}) if other is row else other
@@ -560,11 +568,19 @@ class SecondaryArrivalPlanner:
         seconds = min(SLIDE_SECONDS, window)
         if seconds + _EPS < SLIDE_MIN_SECONDS:
             return None, "window_below_slide_minimum"
-        distance_px = min(SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK) * width
+        distance_px = min(SLIDE_DISTANCE, SLIDE_MEAN_SPEED * seconds) * width
         distance_px = min(distance_px, 0.5 * span)
         if distance_px + _EPS < SLIDE_MIN_DISTANCE * width:
             return None, "cause_too_close"
         dx, dy = -dx_px / span * distance_px / width, -dy_px / span * distance_px / height
+        # Encoded QA measures hypot(dx, dy) in normalized units (dy in frame heights): keep that
+        # mean speed inside the slide profile for vertical and diagonal causes too.
+        normalized = (dx * dx + dy * dy) ** 0.5
+        if normalized > SLIDE_MEAN_SPEED * seconds:
+            shrink = SLIDE_MEAN_SPEED * seconds / normalized
+            dx, dy, distance_px = dx * shrink, dy * shrink, distance_px * shrink
+            if distance_px + _EPS < SLIDE_MIN_DISTANCE * width:
+                return None, "cause_too_close"
         final, begin = box(item, (0.0, 0.0, 1.0)), box(item, (dx, dy, 1.0))
         sweep = (min(begin[0], final[0]), min(begin[1], final[1]), max(begin[2], final[2]), max(begin[3], final[3]))
         end = start + seconds
@@ -583,14 +599,14 @@ class SecondaryArrivalPlanner:
                 return None, "path_crosses_hero_travel"
         params = self._with_opacity({k: v for k, v in cue.params.items() if k != "reference_pop"}, cue, seconds)
         params["reference_slide"] = {"dx": round(dx, 6), "dy": round(dy, 6), "seconds": round(seconds, 6),
-                                     "peak_speed": round(SMOOTHSTEP_PEAK * distance_px / width / seconds, 4),
+                                     "mean_speed": round(distance_px / width / seconds, 4), "easing": SLIDE_EASING,
                                      "profile": "REFERENCE_SLIDE", "from_cause": params["causal_arrival"]}
         params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
         params["payoff_resolution"] = {**(params.get("payoff_resolution") or {}), "arrival": "causal_slide"}
         self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
 
         def frames(settle: float) -> list[dict]:
-            return slide_frames(dx, settle, dy)
+            return slide_frames(dx, settle, dy, easing=SLIDE_EASING)
 
         window_all = float(cue.end) - start
         params["program"] = {**(params.get("program") or {}), "name": "reference_slide_arrival",
@@ -684,21 +700,62 @@ class SecondaryArrivalPlanner:
         seconds = min(0.50 if flow_direction is not None else SLIDE_SECONDS, available_window)
         if seconds + _EPS < SLIDE_MIN_SECONDS:
             return None
-        distance = min(0.12 if flow_direction is not None else SLIDE_DISTANCE,
-                       SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
+        # Reference grammar G1/G2 (docs/reference-motion-grammar.md): enter from beyond the
+        # nearest frame edge when the Story window allows it, decelerating (ease-out) at a
+        # mean speed inside the measured reference profile; mean speed is distance / seconds,
+        # exactly what encoded QA measures on the two-keyframe program.
         if vertical:
-            # Vertical offsets are converted into normalized canvas Y (dy=distance*aspect).
-            # A width-only velocity cap would undercount Y motion by the aspect ratio,
-            # causing RenderedMotionVerifier to reject otherwise valid real exports.
-            # Budget the actual normalized Y velocity, not just the physical X reach.
-            distance = min(distance,
-                           SLIDE_MAX_PEAK_SPEED * seconds / (SMOOTHSTEP_PEAK * aspect))
-        if distance + _EPS < SLIDE_MIN_DISTANCE:
-            return None
-        dx, dy = (0.0, sign * distance * aspect) if vertical else (sign * distance, 0.0)
-        begin = box(item, (dx, dy, 1.0))
-        sweep = (min(begin[0], final[0]), min(begin[1], final[1]), max(begin[2], final[2]), max(begin[3], final[3]))
+            offframe = ((final[3] if sign < 0 else 1.0 - final[1]) + _OFFFRAME_MARGIN) / aspect
+            reach = SLIDE_MEAN_SPEED * seconds / aspect
+        else:
+            offframe = (final[2] if sign < 0 else 1.0 - final[0]) + _OFFFRAME_MARGIN
+            reach = SLIDE_MEAN_SPEED * seconds
+        longest = min(SLIDE_DISTANCE, offframe, reach)
         start, end = float(cue.start), float(cue.start) + seconds
+        chosen = None
+        # A long path that would cross visible artwork shortens before the slide is dropped.
+        for distance in (longest, longest * 0.6, min(longest, SLIDE_LEGACY_DISTANCE)):
+            if distance + _EPS < SLIDE_MIN_DISTANCE:
+                continue
+            dx, dy = (0.0, sign * distance * aspect) if vertical else (sign * distance, 0.0)
+            begin = box(item, (dx, dy, 1.0))
+            sweep = (min(begin[0], final[0]), min(begin[1], final[1]),
+                     max(begin[2], final[2]), max(begin[3], final[3]))
+            if self._sweep_clear(cue, item=item, final=final, sweep=sweep, start=start, end=end,
+                                 beat_cues=beat_cues, layout=layout, sweeps=sweeps):
+                chosen = (distance, dx, dy, sweep)
+                break
+        if chosen is None:
+            return None
+        distance, dx, dy, sweep = chosen
+        params = self._with_opacity(dict(cue.params), cue, seconds)
+        params.pop("hero_entry", None)
+        start_scale = SLIDE_START_SCALE
+        params["reference_slide"] = {"dx": round(dx, 6), **({"dy": round(dy, 6)} if vertical else {}),
+                                     "seconds": round(seconds, 6), "start_scale": start_scale,
+                                     "mean_speed": round(distance / seconds, 4), "easing": SLIDE_EASING,
+                                     "from_offframe": distance + 1e-9 >= offframe - _OFFFRAME_MARGIN,
+                                     "profile": "REFERENCE_SLIDE",
+                                     **({"scene_flow": True} if flow_direction is not None else {})}
+        params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
+        if result:
+            moved = self._result_slide(cue, item=item, params=params, seconds=seconds,
+                                       frames=lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale,
+                                                                          easing=SLIDE_EASING))
+            if moved is not None:
+                self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
+            return moved
+        self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
+        return self._gesture(cue, params, "reference_slide_arrival",
+                             lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale,
+                                                         easing=SLIDE_EASING), seconds)
+
+    @staticmethod
+    def _sweep_clear(cue: MotionCue, *, item: LayoutItem, final: Box, sweep: Box, start: float, end: float,
+                     beat_cues: list[MotionCue], layout: dict[str, LayoutItem],
+                     sweeps: dict[tuple[str, str], tuple[float, float, Box]]) -> bool:
+        """The swept path crosses no asset visible meanwhile (authored overlap allowed) and
+        no hero travel path."""
         for other in beat_cues:
             if other.asset_id == cue.asset_id or float(other.start) >= end - _EPS:
                 continue
@@ -708,28 +765,9 @@ class SecondaryArrivalPlanner:
             target = box(other_item, (0.0, 0.0, 1.0))
             allowed = authored_overlap_ratio(item, other_item) + _OVERLAP_SLACK
             if _inter(sweep, target) / max(1e-9, min(_area(final), _area(target))) > allowed:
-                return None
-        for (_, asset_id), (t0, t1, path) in sweeps.items():
-            if asset_id != cue.asset_id and t0 < end - _EPS and t1 > start + _EPS and _inter(sweep, path) > 0:
-                return None
-        params = self._with_opacity(dict(cue.params), cue, seconds)
-        params.pop("hero_entry", None)
-        start_scale = SLIDE_START_SCALE
-        params["reference_slide"] = {"dx": round(dx, 6), **({"dy": round(dy, 6)} if vertical else {}),
-                                     "seconds": round(seconds, 6), "start_scale": start_scale,
-                                     "peak_speed": round(SMOOTHSTEP_PEAK * distance / seconds, 4),
-                                     "profile": "REFERENCE_SLIDE",
-                                     **({"scene_flow": True} if flow_direction is not None else {})}
-        params["entry_grammar"] = {**(params.get("entry_grammar") or {}), "arrival": "SLIDE"}
-        if result:
-            moved = self._result_slide(cue, item=item, params=params, seconds=seconds,
-                                       frames=lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale))
-            if moved is not None:
-                self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
-            return moved
-        self._slides[(cue.beat_id, cue.asset_id)] = (start, end, sweep)
-        return self._gesture(cue, params, "reference_slide_arrival",
-                             lambda settle: slide_frames(dx, settle, dy, start_scale=start_scale), seconds)
+                return False
+        return not any(asset_id != cue.asset_id and t0 < end - _EPS and t1 > start + _EPS
+                       and _inter(sweep, path) > 0 for (_, asset_id), (t0, t1, path) in sweeps.items())
 
     @staticmethod
     def _result_slide(cue: MotionCue, *, item: LayoutItem, params: dict, seconds: float, frames) -> MotionCue | None:

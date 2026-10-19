@@ -60,6 +60,13 @@ def test_opening_lock_and_shield_travel_laterally_and_the_character_rises(tmp_pa
     assert lock["dx"] < -0.02 and shield["dx"] > 0.04 and character["dy"] > 0.04
     assert lock["scale"] == shield["scale"] == character["scale"] == SLIDE_START_SCALE
     assert cues[LOCK].params["relation_approach"]["target_asset_id"] == CHARACTER
+    # Reference grammar G1/G2 (Sprint C1): the edge assets start beyond the frame edge and
+    # decelerate into place (ease-out), as measured on the approved references.
+    layout = {item.asset_id: item for item in _plan.composition[0].items}
+    lock_box, shield_box = layout[LOCK], layout[SHIELD]
+    assert lock_box.x - lock_box.width / 2 + lock["dx"] < 0.0, "lock starts partly beyond the LEFT edge"
+    assert shield_box.x + shield_box.width / 2 + shield["dx"] > 1.0, "shield starts beyond the RIGHT edge"
+    assert lock["easing"] == shield["easing"] == "ease_out_cubic"
     for key in (LOCK, SHIELD, CHARACTER):
         program = _entry_program(cues[key])
         assert program["keyframes"][-1] | {"easing": None} == {"progress": 1.0, "dx": 0.0, "dy": 0.0,

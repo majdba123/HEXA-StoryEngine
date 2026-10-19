@@ -51,12 +51,13 @@ def test_an_asset_near_a_side_edge_slides_in_from_that_edge_at_reference_speed()
     assert (cue.start, cue.end) == (1.0, 1.3)                           # Story instants unchanged
     frames = cue.params["program"]["keyframes"]
     assert frames[0]["dx"] < 0 and frames[-1]["dx"] == 0.0               # enters from the left edge
-    assert cue.params["reference_slide"]["peak_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-9
+    assert cue.params["reference_slide"]["mean_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-9
     segment = MotionSegment(phase="ENTRY", start=cue.start, end=cue.end, program=cue.params["program"])
     speed = EncodedMotionVerifier._max_normalized_keyframe_speed(segment, duration=cue.end - cue.start,
                                                                 item_width=EDGE.width, item_height=EDGE.height)
     assert speed <= REFERENCE_SLIDE.max_normalized_speed
-    assert SMOOTHSTEP_PEAK * abs(frames[0]["dx"]) / cue.params["reference_slide"]["seconds"] <= SLIDE_MAX_PEAK_SPEED + 1e-6
+    # Reference profile (docs/reference-motion-grammar.md): the mean speed is what encoded QA measures.
+    assert abs(frames[0]["dx"]) / cue.params["reference_slide"]["seconds"] <= SLIDE_MAX_PEAK_SPEED + 1e-6
 
 
 def test_a_centred_asset_pops_and_a_tiny_one_keeps_its_fade() -> None:
@@ -128,10 +129,11 @@ def test_pops_and_slides_are_calm_smoothstep_gestures_without_overshoot() -> Non
     assert {d.asset_id: d.gesture for d in planner.decisions} == {"center": "POP", "edge": "SLIDE"}
     for cue in out.values():
         frames = cue.params["program"]["keyframes"]
-        assert frames[0]["easing"] == "smoothstep"                      # zero speed at both ends
+        # pops ease in and out; slides enter fast and decelerate (reference grammar G1/G2)
+        assert frames[0]["easing"] == ("ease_out_cubic" if cue.asset_id == "edge" else "smoothstep")
         assert max(f["scale"] for f in frames) <= 1.0                     # never grows past rest
     pop = out["center"].params["program"]["keyframes"]
     seconds = out["center"].params["reference_pop"]["seconds"]
     assert POP_MIN_SECONDS - 1e-9 <= seconds <= POP_SECONDS + 1e-9
     assert SMOOTHSTEP_PEAK * (1.0 - pop[0]["scale"]) / seconds <= 1.0 + 1e-9  # peak scale rate per second
-    assert out["edge"].params["reference_slide"]["peak_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-9 <= 0.6 + 1e-9
+    assert out["edge"].params["reference_slide"]["mean_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-9 <= 0.8 + 1e-9

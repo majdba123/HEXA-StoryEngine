@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.models import LayoutItem, MotionSegment, StoryBeat, StoryEventAuthority
-from app.motion.arrivals import SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED, SMOOTHSTEP_PEAK
+from app.motion.arrivals import SLIDE_DISTANCE, SLIDE_MAX_PEAK_SPEED
 from app.motion.timing import REFERENCE_SLIDE
 from app.render.verification import EncodedMotionVerifier
 from app.targets.context import active_target
@@ -76,7 +76,8 @@ def test_the_result_arrives_moving_away_from_its_cause_without_growing() -> None
     assert cosine == pytest.approx(1.0, abs=1e-6)              # it starts on the side of its cause
     distance = (start[0] ** 2 + start[1] ** 2) ** 0.5 / target.width
     assert distance <= SLIDE_DISTANCE + 1e-5                                  # offsets kept to 6 decimals
-    assert SMOOTHSTEP_PEAK * distance / slide["seconds"] <= SLIDE_MAX_PEAK_SPEED + 1e-4
+    mean = (slide["dx"] ** 2 + slide["dy"] ** 2) ** 0.5 / slide["seconds"]   # encoded QA unit
+    assert mean <= SLIDE_MAX_PEAK_SPEED + 1e-4
     for program in [cue.params["program"]] + [row.program for row in cue.segments]:
         assert all(frame["scale"] == 1.0 for frame in program["keyframes"])   # no enlargement
     assert (cue.start, cue.end) == (1.2, 1.6)                                  # Story instants unchanged
@@ -141,4 +142,4 @@ def test_a_short_payoff_window_still_slides_within_the_calm_speed_ceiling() -> N
     decision = next(d for d in planner.decisions if d.asset_id == "result")
     assert (decision.gesture, decision.reason) == ("SLIDE", "causal_slide")
     slide = cue.params["reference_slide"]
-    assert slide["peak_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-6
+    assert slide["mean_speed"] <= SLIDE_MAX_PEAK_SPEED + 1e-6

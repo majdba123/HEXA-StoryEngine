@@ -117,7 +117,8 @@ def test_a_payoff_subject_gets_no_secondary_pulse_when_another_asset_already_lea
 
 # -- calm pacing contract ---------------------------------------------------------------------
 def test_encoded_qa_enforces_the_same_calm_limits_motion_plans_with() -> None:
-    assert REFERENCE_SLIDE.max_normalized_speed == SLIDE_MAX_PEAK_SPEED <= 0.6
+    # Measured reference mean 0.62-0.77 W/s (docs/reference-motion-grammar.md G1-G4).
+    assert REFERENCE_SLIDE.max_normalized_speed == SLIDE_MAX_PEAK_SPEED <= 0.8
     assert (REFERENCE_SLIDE.minimum_seconds, REFERENCE_SLIDE.target_seconds) == (SLIDE_MIN_SECONDS, SLIDE_SECONDS)
     assert (REFERENCE_POP.minimum_seconds, REFERENCE_POP.target_seconds) == (POP_MIN_SECONDS, POP_SECONDS)
     assert HERO_TRAVEL.max_normalized_speed <= 1.0 and HERO_TRAVEL.minimum_seconds >= 0.40
