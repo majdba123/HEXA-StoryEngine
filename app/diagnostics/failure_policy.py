@@ -447,6 +447,12 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         FailureDisposition.PREVENT,
         "Planner must respect the shared motion comfort ceiling",
     ),
+    "PRE_ENCODE_MOTION_CONTRACT_FAILED": _policy(
+        "PRE_ENCODE_MOTION_CONTRACT_FAILED",
+        "motion",
+        FailureDisposition.PREVENT,
+        "A final target RenderPlan that already breaks the shared encoded-motion contract must fail before FFmpeg encode",
+    ),
     "MOTION_BELOW_PERCEPTUAL_FLOOR": _policy(
         "MOTION_BELOW_PERCEPTUAL_FLOOR",
         "motion",

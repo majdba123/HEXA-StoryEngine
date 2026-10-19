@@ -2,6 +2,8 @@
 setlocal
 cd /d "%~dp0"
 set PYTHONUTF8=1
+rem The engine verifies at startup that it imported this checkout (shared venv guard).
+set "HEXA_SOURCE_ROOT=%~dp0."
 set "HEXA_READY_MARKER=.venv\\.hexa-desktop-ready-v4"
 
 if not exist ".venv\Scripts\python.exe" (

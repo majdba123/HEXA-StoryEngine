@@ -640,3 +640,58 @@ def test_renderer_cleanup_is_resolution_independent(tmp_path: Path) -> None:
         keep.write_bytes(b"src")
         FFmpegRenderer.cleanup_intermediates(out, source_paths={keep})
         assert keep.is_file() and not (segments / "0001-beat-001.mp4").exists()
+
+
+@needs_ffmpeg
+def test_pre_encode_motion_qa_rejects_any_target_before_the_first_encode(
+    bundle_run, tmp_path: Path, monkeypatch,
+) -> None:
+    """A final plan that encoded QA is already certain to reject never starts an encode.
+
+    Production defect class (Black Hat job f96ba7e0): a downstream pass left an invalid
+    program in the final RenderPlan and it was found only after the YouTube encode. Here
+    the *second* target carries such a program: neither target may encode and no bundle
+    version may be reserved."""
+    pipeline = StoryEnginePipeline(_settings(tmp_path, bundle_run["export_root"]))
+    real_project = pipeline.reference_projector.project
+    corrupted: dict[str, str] = {}
+
+    def project(reference, target, workspace):
+        plan = real_project(reference, target, workspace)
+        for cue in plan.motion:
+            if (cue.params.get("render_constraints") or {}).get("geometry_lock"):
+                continue
+            for segment in cue.segments:
+                frames = segment.program.get("keyframes") or []
+                if "compound_unit" in str(segment.program.get("name")) or not any(
+                        abs(float(f.get("dx", 0.0))) + abs(float(f.get("dy", 0.0))) > 1e-4 for f in frames):
+                    continue
+                for frame in frames:  # 12x the authored path: far past the comfort ceiling
+                    frame["dx"] = float(frame.get("dx", 0.0)) * 12
+                    frame["dy"] = float(frame.get("dy", 0.0)) * 12
+                corrupted.update(target=target.target_id, asset=cue.asset_id, phase=segment.phase)
+                return plan
+        raise AssertionError("fixture has no moving segment to corrupt")
+
+    def no_encode(*_args, **_kwargs):
+        raise AssertionError("an encode started for a plan that pre-encode QA rejects")
+
+    monkeypatch.setattr(pipeline.reference_projector, "project", project)
+    monkeypatch.setattr(pipeline.renderer, "render", no_encode)
+    package_dir = bundle_run["export_root"] / bundle_run["first"].slug
+    before = sorted(p.name for p in package_dir.iterdir())
+    with pytest.raises(StageFailedError) as error:
+        pipeline.generate_bundle(package_path=bundle_run["package"], audio_path=bundle_run["audio"],
+                                 job_id="pre-encode-gate")
+    details = error.value.details
+    assert details["code"] == "PRE_ENCODE_MOTION_CONTRACT_FAILED" and details["phase"] == "pre_encode"
+    assert details["failed_targets"] == [corrupted["target"]] == ["REELS_9_16"]
+    assert "MOTION_TOO_FAST" in details["violation_codes"]
+    evidence = next(row for row in details["violations"] if row["asset_id"] == corrupted["asset"])
+    assert evidence["phase"] == corrupted["phase"] and evidence["keyframes"]
+    assert sorted(p.name for p in package_dir.iterdir()) == before, "no bundle version reserved"
+    workspace = tmp_path / "work" / "pre-encode-gate"
+    reference_qa = json.loads((workspace / "diagnostics" / "pre-encode-motion-qa.json").read_text(encoding="utf-8"))
+    reels_qa = json.loads((workspace / "targets" / "REELS_9_16" / "diagnostics" / "pre-encode-motion-qa.json")
+                          .read_text(encoding="utf-8"))
+    assert reference_qa["ok"] is True and reels_qa["ok"] is False

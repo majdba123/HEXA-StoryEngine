@@ -30,6 +30,7 @@ from app.diagnostics import BuildReportSession
 from app.models import Stage
 from app.pipeline import StoryEnginePipeline
 from app.shared.errors import GenerationCancelledError
+from app.shared.runtime_integrity import RuntimeSourceMismatchError, require_launch_source
 
 
 class GenerationWorker(QObject):
@@ -444,6 +445,12 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("HEXA StoryEngine")
     app.setApplicationVersion(__version__)
+    try:
+        # HEXA.bat declares its own checkout; never run another checkout's engine.
+        require_launch_source()
+    except RuntimeSourceMismatchError as exc:
+        QMessageBox.critical(None, "HEXA StoryEngine", str(exc))
+        return 2
     window = MainWindow()
     window.show()
     return app.exec()

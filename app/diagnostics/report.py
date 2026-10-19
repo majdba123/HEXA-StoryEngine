@@ -20,6 +20,7 @@ from app.models import Stage
 from app.diagnostics.failure_policy import failure_policy
 from app.shared.errors import HexaError
 from app.shared.process import run_hidden
+from app.shared.runtime_integrity import runtime_identity
 
 
 class BuildReportSession:
@@ -173,6 +174,9 @@ class BuildReportSession:
             "platform": platform.platform(),
             "python": sys.version.replace("\n", " "),
             "python_executable": self._display_path(Path(sys.executable)),
+            # Which checkout really ran: the executable above is shown resolved (through
+            # any venv junction); the imported source and editable target are explicit.
+            "runtime_source": self._runtime_source(),
             "ffmpeg": self._binary_version(self.settings.ffmpeg_bin),
             "ffprobe": self._binary_version(self.settings.ffprobe_bin),
             "nvidia_gpu": self._nvidia_info(),
@@ -267,6 +271,17 @@ class BuildReportSession:
         except (OSError, subprocess.SubprocessError):
             return ""
         return (result.stdout or result.stderr or "").strip()
+
+    def _runtime_source(self) -> dict[str, Any]:
+        try:
+            identity = runtime_identity()
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never fail the report
+            return {"error": type(exc).__name__}
+        home = str(Path.home())
+        return {
+            key: ("~" + value[len(home):] if isinstance(value, str) and value.startswith(home + os.sep) else value)
+            for key, value in identity.items()
+        }
 
     def _display_path(self, path: Path) -> str:
         value = str(path.expanduser().resolve())

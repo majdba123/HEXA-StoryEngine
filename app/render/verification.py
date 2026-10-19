@@ -9,17 +9,19 @@ import cv2
 import numpy as np
 
 from app.models import LayoutItem, MotionSegment, RenderPlan
-from app.motion.hero_travel import HERO_TRAVEL
+from app.motion.contract import (
+    SEMANTIC_ACCENT_PHASES,
+    comfort_speed_violation,
+    keyframe_activity_normalized,
+    keyframe_peak_speed_normalized,
+    semantic_accent_floor_violation,
+)
 from app.motion.timing import (
     GOLDEN_MINOR,
-    REFERENCE_POP,
-    REFERENCE_SLIDE,
     encoded_motion_renderability_floor_px,
     max_comfort_displacement,
-    motion_comfort,
     projected_motion_activity_px,
     semantic_readability_duration,
-    semantic_readability_floor,
     semantic_readability_floor_px,
 )
 from app.shared.failure_identity import violation_failure_details
@@ -83,10 +85,46 @@ class EncodedMotionVerifier:
     # the currently inspected semantic segments.
     _FRAME_CACHE_LIMIT = 12
 
+    def preflight(self, plan: RenderPlan) -> RenderedMotionReport:
+        """Metadata-only QA of a final RenderPlan, before any FFmpeg encode.
+
+        Runs exactly the checks ``inspect`` applies before it opens the video (shared
+        readability floor, comfort speed, renderability), so a plan that encoded QA is
+        already certain to reject is rejected without spending encode time.
+        """
+        checked, skipped, violations, _ = self._analyze_plan(plan)
+        return RenderedMotionReport(
+            checked_segments=checked,
+            skipped_static_segments=skipped,
+            violations=tuple(violations),
+        )
+
     def inspect(self, *, video: Path, plan: RenderPlan) -> RenderedMotionReport:
         if not video.is_file() or video.stat().st_size == 0:
             raise StageFailedError("rendered motion QA video is missing")
 
+        checked, skipped, violations, evidence_work = self._analyze_plan(plan)
+
+        # Phase 2 decodes the encoded video once in frame order. Only requested frames
+        # are retrieved into BGR; all other frames use grab(), which keeps H.264 decode
+        # linear and bounded while preserving the exact evidence frames and thresholds.
+        if evidence_work:
+            self._inspect_encoded_evidence(
+                video=video,
+                evidence_work=evidence_work,
+                violations=violations,
+            )
+
+        return RenderedMotionReport(
+            checked_segments=checked,
+            skipped_static_segments=skipped,
+            violations=tuple(violations),
+        )
+
+    def _analyze_plan(
+        self, plan: RenderPlan,
+    ) -> tuple[int, int, list[RenderedMotionViolation], list[_RenderedEvidenceWork]]:
+        """Phase 1: metadata-only contract checks plus the exact encoded-evidence requests."""
         layouts = {
             (beat.beat_id, item.asset_id): item
             for beat in plan.composition
@@ -204,28 +242,21 @@ class EncodedMotionVerifier:
                     active_duration=semantic_active_duration,
                 )
 
-                if enforce_floor and segment.phase in {"INTERACT", "REACT", "PAYOFF"}:
-                    normalized_activity = self._expected_activity_normalized(
-                        reference_segment,
+                if enforce_floor and segment.phase in SEMANTIC_ACCENT_PHASES:
+                    floor_violation = semantic_accent_floor_violation(
+                        phase=segment.phase,
+                        program=reference_segment.program,
+                        segment_duration=duration,
                         item_width=reference_item_width,
                         item_height=reference_item_height,
                     )
-                    normalized_floor = semantic_readability_floor(
-                        segment.phase,
-                        item_width=reference_item_width,
-                        item_height=reference_item_height,
-                        duration=readability_duration,
-                    )
-                    if normalized_activity + 1e-9 < normalized_floor:
+                    if floor_violation is not None:
                         violations.append(RenderedMotionViolation(
-                            code="MOTION_BELOW_PERCEPTUAL_FLOOR",
+                            code=floor_violation.code,
                             beat_id=cue.beat_id,
                             asset_id=cue.asset_id,
                             phase=segment.phase,
-                            detail=(
-                                f"expected normalized motion {normalized_activity:.5f} "
-                                f"is below shared readability floor {normalized_floor:.5f}"
-                            ),
+                            detail=floor_violation.detail,
                         ))
                         continue
                 elif enforce_floor:
@@ -251,37 +282,24 @@ class EncodedMotionVerifier:
                         continue
 
                 if enforce_speed:
-                    normalized_speed = self._max_normalized_keyframe_speed(
-                        reference_segment,
-                        duration=duration,
+                    # Authorized contracts (hero travel, reference pop/slide) select their
+                    # own ceiling inside the shared contract; everything else uses the
+                    # phase comfort profile.
+                    speed_violation = comfort_speed_violation(
+                        phase=segment.phase,
+                        program=reference_segment.program,
+                        params=cue.params if isinstance(cue.params, dict) else None,
+                        segment_duration=duration,
                         item_width=reference_item_width,
                         item_height=reference_item_height,
                     )
-                    profile = motion_comfort(segment.phase)
-                    if segment.phase == "ENTRY" and isinstance(cue.params, dict) and isinstance(
-                            cue.params.get("hero_travel"), dict):
-                        profile = HERO_TRAVEL  # authorized hero travel contract, ENTRY only
-                    elif (segment.phase in {"ENTRY", "PAYOFF"} and isinstance(cue.params, dict)
-                          and isinstance(cue.params.get("reference_pop"), dict)
-                          and program_name.startswith("reference_pop")):
-                        profile = REFERENCE_POP  # reference-measured arrival pop (VNext2)
-                    elif (segment.phase in {"ENTRY", "PAYOFF"} and isinstance(cue.params, dict)
-                          and isinstance(cue.params.get("reference_slide"), dict)
-                          and program_name.startswith("reference_slide")):
-                        # reference-measured slide (VNext2); a resolving result's causal slide
-                        # replaces its PAYOFF pop and keeps the same slide limits
-                        profile = REFERENCE_SLIDE
-                    speed_limit = profile.max_normalized_speed * 1.08
-                    if normalized_speed > speed_limit + 1e-6:
+                    if speed_violation is not None:
                         violations.append(RenderedMotionViolation(
-                            code="MOTION_TOO_FAST",
+                            code=speed_violation.code,
                             beat_id=cue.beat_id,
                             asset_id=cue.asset_id,
                             phase=segment.phase,
-                            detail=(
-                                f"expected normalized peak speed {normalized_speed:.4f}/s "
-                                f"exceeds comfort limit {speed_limit:.4f}/s"
-                            ),
+                            detail=speed_violation.detail,
                         ))
                         continue
 
@@ -340,22 +358,7 @@ class EncodedMotionVerifier:
                     baseline_index=baseline_index,
                     candidate_indices=tuple(sorted(candidate_indices)),
                 ))
-
-        # Phase 2 decodes the encoded video once in frame order. Only requested frames
-        # are retrieved into BGR; all other frames use grab(), which keeps H.264 decode
-        # linear and bounded while preserving the exact evidence frames and thresholds.
-        if evidence_work:
-            self._inspect_encoded_evidence(
-                video=video,
-                evidence_work=evidence_work,
-                violations=violations,
-            )
-
-        return RenderedMotionReport(
-            checked_segments=checked,
-            skipped_static_segments=skipped,
-            violations=tuple(violations),
-        )
+        return checked, skipped, violations, evidence_work
 
     @classmethod
     def _inspect_encoded_evidence(
@@ -530,23 +533,9 @@ class EncodedMotionVerifier:
     ) -> float:
         """Measure authored semantic activity in Planner's Composition-space units."""
         keyframes = segment.program.get("keyframes")
-        if not isinstance(keyframes, list) or not keyframes:
+        if not isinstance(keyframes, list):
             return 0.0
-        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
-        best = 0.0
-        for frame in keyframes:
-            if not isinstance(frame, dict):
-                continue
-            try:
-                translation = float(np.hypot(
-                    float(frame.get("dx", 0.0)),
-                    float(frame.get("dy", 0.0)),
-                ))
-                scale = abs(float(frame.get("scale", 1.0)) - 1.0) * asset_extent
-            except (TypeError, ValueError):
-                continue
-            best = max(best, translation, scale)
-        return best
+        return keyframe_activity_normalized(keyframes, item_width=item_width, item_height=item_height)
 
     @staticmethod
     def _directional_comfort_budget_px(
@@ -633,34 +622,11 @@ class EncodedMotionVerifier:
         scale converted through the asset's normalized extent.
         """
         keyframes = segment.program.get("keyframes")
-        if not isinstance(keyframes, list) or len(keyframes) < 2:
+        if not isinstance(keyframes, list):
             return 0.0
-        asset_extent = max(1e-6, min(float(item_width), float(item_height)))
-        rows: list[tuple[float, float, float, float]] = []
-        for frame in keyframes:
-            try:
-                rows.append((
-                    float(frame.get("progress", 0.0)),
-                    float(frame.get("dx", 0.0)),
-                    float(frame.get("dy", 0.0)),
-                    float(frame.get("scale", 1.0)),
-                ))
-            except (TypeError, ValueError):
-                continue
-        rows.sort(key=lambda row: row[0])
-        peak_speed = 0.0
-        for left, right in zip(rows, rows[1:]):
-            seconds = max(1e-6, (right[0] - left[0]) * duration)
-            translation = float(np.hypot(
-                right[1] - left[1],
-                right[2] - left[2],
-            ))
-            scale_motion = abs(right[3] - left[3]) * asset_extent
-            peak_speed = max(
-                peak_speed,
-                max(translation, scale_motion) / seconds,
-            )
-        return peak_speed
+        return keyframe_peak_speed_normalized(
+            keyframes, duration=duration, item_width=item_width, item_height=item_height,
+        )
 
     @staticmethod
     def _max_keyframe_speed_px(
@@ -796,6 +762,58 @@ class EncodedMotionVerifier:
                 "violations": [asdict(row) for row in report.violations],
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
+        )
+
+    @staticmethod
+    def violation_evidence(plan: RenderPlan, violation: RenderedMotionViolation) -> dict[str, object]:
+        """The final program a pre-encode violation refers to, for diagnosis at its owner."""
+        cue = next((row for row in plan.motion
+                    if row.beat_id == violation.beat_id and row.asset_id == violation.asset_id), None)
+        item = next((row for beat in plan.composition if beat.beat_id == violation.beat_id
+                     for row in beat.items if row.asset_id == violation.asset_id), None)
+        evidence: dict[str, object] = {**asdict(violation), "target_id": plan.target_id}
+        if item is not None:
+            evidence["item"] = {key: getattr(item, key) for key in ("x", "y", "width", "height")}
+        if cue is None:
+            return evidence
+        params = cue.params if isinstance(cue.params, dict) else {}
+        segment = next((row for row in cue.segments if row.phase == violation.phase), None)
+        program = segment.program if segment is not None else params.get("program") or {}
+        evidence.update({
+            "segment_start": float(segment.start) if segment is not None else float(cue.start),
+            "segment_end": float(segment.end) if segment is not None else float(cue.end),
+            "program_name": program.get("name"),
+            "keyframes": program.get("keyframes"),
+            # Passes leave their mark on a cue: the owner of the final program is among
+            # them (for example ``payoff_resolution`` for a replaced PAYOFF accent).
+            "authoring_marks": sorted(key for key in (
+                "payoff_resolution", "payoff_icon_hit", "reference_pop", "reference_slide",
+                "hero_travel", "hero_emphasis", "scene_hero", "family_follow", "motion_blur",
+                "reference_motion_adjusted", "entry_grammar", "causal_arrival",
+            ) if params.get(key)),
+        })
+        return evidence
+
+    @classmethod
+    def require_preflight(cls, checks: dict[str, tuple[RenderPlan, RenderedMotionReport]]) -> None:
+        """Fail closed before any encode when a final target plan already breaks the
+        encoded-motion contract. Every target is reported, not only the first."""
+        failed = {target: pair for target, pair in checks.items() if not pair[1].ok}
+        if not failed:
+            return
+        violations = [row for _plan, report in failed.values() for row in report.violations]
+        raise StageFailedError(
+            "final RenderPlan failed pre-encode motion QA",
+            details={
+                **violation_failure_details(violations, aggregate_code="PRE_ENCODE_MOTION_CONTRACT_FAILED"),
+                # The QA identities stay in violation_codes; the failure itself is a
+                # pre-encode prevention, owned by Motion, not post-render evidence.
+                "code": "PRE_ENCODE_MOTION_CONTRACT_FAILED",
+                "phase": "pre_encode",
+                "failed_targets": sorted(failed),
+                "violations": [cls.violation_evidence(plan, row)
+                               for plan, report in failed.values() for row in report.violations[:12]],
+            },
         )
 
     @staticmethod

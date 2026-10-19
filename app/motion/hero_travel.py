@@ -251,7 +251,9 @@ class HeroTravelPlanner:
             reason = None
             if opener.params.get("hero_emphasis"):
                 reason = "opener_already_pulses"
-            elif pulsed or any(row.semantic_action == "EMPHASIZE" for cue in cues for row in cue.segments):
+            elif (pulsed or any(row.semantic_action == "EMPHASIZE" for cue in cues for row in cue.segments)
+                  # A resolved result's held icon hit already owns this beat's emphasis.
+                  or any(cue.params.get("payoff_icon_hit") for cue in cues)):
                 reason = "beat_already_has_emphasis_leader"  # one emphasis leader per beat
             elif (opener.params.get("render_constraints") or {}).get("geometry_lock"):
                 reason = "locked_layer"

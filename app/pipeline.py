@@ -219,6 +219,8 @@ class StoryEnginePipeline:
         plan = self._plan_target(
             shared, target, workspace, progress=progress, cancelled=cancelled, announce=False,
         )
+        self._require_pre_encode_motion_qa({target.target_id: plan}, {target.target_id: workspace},
+                                           progress=progress, at=0.70)
         output_file = self._output_path(shared.package.package_id, output_name)
         result = self._render_target(
             shared, target, plan, workspace, output_file, audio_path,
@@ -306,6 +308,10 @@ class StoryEnginePipeline:
                         "differences": differences[:20],
                     },
                 )
+        # Every final target plan passes the metadata half of encoded-motion QA before the
+        # first encode: no target spends minutes encoding while another (or itself) is
+        # already certain to fail, and no bundle version is reserved for it.
+        self._require_pre_encode_motion_qa(plans, workspaces, progress=progress, at=0.555)
 
         slug = export_slug(shared.package.project_slug or shared.package.package_id)
         writer = ExportBundleWriter(export_root.root)
@@ -354,6 +360,25 @@ class StoryEnginePipeline:
             manifest_path=manifest_path,
             outputs=outputs,
         )
+
+    def _require_pre_encode_motion_qa(
+        self,
+        plans: dict[str, RenderPlan],
+        workspaces: dict[str, Path],
+        *,
+        progress: ProgressCallback | None,
+        at: float,
+    ) -> None:
+        """Run encoded-motion QA's metadata contract on every final plan before encoding."""
+        self._progress(progress, Stage.render, at, "Verifying final motion plans before encoding")
+        checks = {}
+        for target_id, plan in plans.items():
+            report = self.encoded_motion_verifier.preflight(plan)
+            self.encoded_motion_verifier.write(
+                report, workspaces[target_id] / "diagnostics" / "pre-encode-motion-qa.json",
+            )
+            checks[target_id] = (plan, report)
+        self.encoded_motion_verifier.require_preflight(checks)
 
     # -- shared semantic stages -----------------------------------------------------------
     def _preflight(

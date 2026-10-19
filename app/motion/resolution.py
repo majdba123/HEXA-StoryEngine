@@ -39,6 +39,8 @@ from app.choreography.interactions import is_connectable_relation
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
 
 from .collision import box
+from .contract import accent_readability_floor, comfort_profile_for, segment_contract_violations
+from .emphasis_leader import PULSES, grows
 from .family import follow, rigid_followers
 from .timing import projected_motion_activity_px
 
@@ -56,6 +58,16 @@ POP_MIN_SECONDS = 6 / 30
 POP_MAX_GROWTH = 0.85  # frame heights per second
 POP_MAX_SCALE_RATE = 1.0  # peak relative growth per second (smoothstep peak = 1.5 x mean)
 POP_MIN_ACTIVITY_PX = 20.0
+
+# Icon-focused PAYOFF hit: rest -> ~1.07 -> brief held peak -> rest, owned by the result
+# icon. A hit that replaces a Planner PAYOFF must still meet that window's shared
+# readability floor (the peak may rise to ICON_HIT_MAX_PEAK_SCALE for it) and every ramp
+# keeps the window's comfort ceiling. When no such hit fits, the reference pop is used;
+# when that would also break the shared contract, the Planner's validated program stays.
+ICON_HIT_PEAK_SCALE = 1.07
+ICON_HIT_MAX_PEAK_SCALE = 1.08
+ICON_HIT_MIN_RAMP = 0.30  # share of the hit spent on each ramp
+ICON_HIT_MIN_HOLD_SECONDS = _FRAME
 
 # Backdrop wash (reference grey-wash runs: median luminance of the washed frame 168-212).
 WASH_RAMP_SECONDS = 6 / 30
@@ -135,9 +147,10 @@ def _pop_frames(start_scale: float, settle: float) -> list[dict]:
     return frames
 
 
-def _icon_hit_safe(item: LayoutItem, layout: dict[str, LayoutItem] | None) -> bool:
-    """An icon-only 7% pulse must not invent an overlap or leave the frame."""
-    radius_w, radius_h = float(item.width) * 1.07 / 2, float(item.height) * 1.07 / 2
+def _icon_hit_safe(item: LayoutItem, layout: dict[str, LayoutItem] | None,
+                   peak: float = ICON_HIT_PEAK_SCALE) -> bool:
+    """An icon-only pulse must not invent an overlap or leave the frame at its peak."""
+    radius_w, radius_h = float(item.width) * peak / 2, float(item.height) * peak / 2
     boosted = (float(item.x) - radius_w, float(item.y) - radius_h,
                float(item.x) + radius_w, float(item.y) + radius_h)
     if min(boosted[0], boosted[1]) < 0.01 or max(boosted[2], boosted[3]) > 0.99:
@@ -161,15 +174,19 @@ def _icon_hit_safe(item: LayoutItem, layout: dict[str, LayoutItem] | None) -> bo
     return True
 
 
-def _icon_hit_frames(settle: float) -> list[dict]:
-    """One eased scale-up, short readable plateau, single return. No lateral jiggle."""
+def _icon_hit_frames(settle: float, *, peak: float = ICON_HIT_PEAK_SCALE, ramp: float = 0.55) -> list[dict]:
+    """One eased scale-up, short readable plateau, single return. No lateral jiggle.
+
+    ``ramp`` is the share of the hit (``settle``) spent growing and, again, returning."""
     settle = max(0.0, min(1.0, settle))
+    ramp = max(0.0, min(0.5, ramp))
+    peak = round(peak, 5)
     frames = [
         {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "smoothstep"},
-        {"progress": round(settle * 0.55, 6), "dx": 0.0, "dy": 0.0,
-         "scale": 1.07, "easing": "smoothstep"},
-        {"progress": round(settle * 0.77, 6), "dx": 0.0, "dy": 0.0,
-         "scale": 1.07, "easing": "smoothstep"},
+        {"progress": round(settle * ramp, 6), "dx": 0.0, "dy": 0.0,
+         "scale": peak, "easing": "smoothstep"},
+        {"progress": round(settle * (1.0 - ramp), 6), "dx": 0.0, "dy": 0.0,
+         "scale": peak, "easing": "smoothstep"},
         {"progress": round(settle, 6), "dx": 0.0, "dy": 0.0,
          "scale": 1.0, "easing": "smoothstep"},
     ]
@@ -177,6 +194,29 @@ def _icon_hit_frames(settle: float) -> list[dict]:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0,
                        "scale": 1.0, "easing": "smoothstep"})
     return frames
+
+
+def _icon_hit_keyframes(
+    *, phase: str, window: float, settle: float, item: LayoutItem, params: dict, name: str,
+) -> tuple[list[dict] | None, str]:
+    """A held icon hit for a ``window``-second program that rests from ``settle`` on.
+
+    The peak is ICON_HIT_PEAK_SCALE, or the smallest larger peak that meets the shared
+    readability floor of this window (accent phases); each ramp keeps the comfort ceiling
+    rendered QA applies to this program. None when no such hit fits."""
+    extent = max(1e-6, min(float(item.width), float(item.height)))
+    hit_seconds = max(1e-6, float(window) * float(settle))
+    floor = accent_readability_floor(phase, segment_duration=window, active_duration=window,
+                                     item_width=item.width, item_height=item.height)
+    # A 0.1 % margin keeps the committed (rounded) peak on the readable side of the floor.
+    delta = max(ICON_HIT_PEAK_SCALE - 1.0, floor / extent * 1.001)
+    if 1.0 + delta > ICON_HIT_MAX_PEAK_SCALE + 1e-9:
+        return None, "below_readability_floor"
+    speed = comfort_profile_for(phase, program_name=name, params=params).max_normalized_speed
+    ramp = max(ICON_HIT_MIN_RAMP, delta * extent / max(speed * hit_seconds, 1e-9))
+    if (1.0 - 2.0 * ramp) * hit_seconds < ICON_HIT_MIN_HOLD_SECONDS - _EPS:
+        return None, "no_comfortable_hold"
+    return _icon_hit_frames(settle, peak=1.0 + delta, ramp=ramp), "applied"
 
 
 def _static(program: dict | None) -> bool:
@@ -353,13 +393,21 @@ class PayoffResolutionDirector:
 
         updates: dict[str, MotionCue] = {}
         arrival = "none"
+        # EmphasisLeaderPolicy gives a beat's single growth slot to an explicit pulse first;
+        # a held hit beside one would be flattened to a static (unreadable) PAYOFF. The
+        # reference pop never grows above rest, so it is used instead.
+        pulsed = any(row.semantic_action in PULSES and grows(row.program) for cue in cues for row in cue.segments)
+        if self.icon_focus_mode and pulsed:
+            reasons.append("icon_hit:beat_has_emphasis_pulse")
         for asset_id in sorted(results):
             cue = updates.get(asset_id, by_asset[asset_id])
             followers = rigid_followers(cue, cues, layout, assets_by_id)
             popped, why = self._pop(cue, layout.get(asset_id), assets_by_id,
                                     family_size=1 if followers is not None else 2,
-                                    icon_focus_mode=self.icon_focus_mode, layout=layout)
+                                    icon_focus_mode=self.icon_focus_mode and not pulsed, layout=layout)
             if popped is not None:
+                if why != "applied":
+                    reasons.append(f"{asset_id}:{why}")  # e.g. icon hit abstained, pop kept
                 cause = self._cause(event, popped, by_asset=by_asset, layout=layout, family=family)
                 if cause is not None:
                     popped = popped.model_copy(update={"params": {**popped.params, "causal_arrival": cause}})
@@ -476,50 +524,101 @@ class PayoffResolutionDirector:
         if projected_motion_activity_px(dx=0.0, dy=0.0, scale=start_scale, item_width=item.width,
                                         item_height=item.height) < POP_MIN_ACTIVITY_PX:
             return None, "pop_below_visible_floor"
-        hit = icon_focus_mode and seconds >= 0.29 and _icon_hit_safe(item, layout)
-        if hit:
+        hit_reason = None
+        if icon_focus_mode and seconds >= 0.29:
             # Begin at rest: a 0.93 -> 1.07 jump over a short authored window
             # exceeds the encoded ESTABLISH comfort bound for a large icon.
-            start_scale = 1.0
+            hit, hit_reason = PayoffResolutionDirector._replace_entry(
+                cue, item, layout, seconds=seconds, start_scale=1.0, hit=True)
+            if hit is not None:
+                return hit, "applied"
+        popped, why = PayoffResolutionDirector._replace_entry(
+            cue, item, layout, seconds=seconds, start_scale=start_scale, hit=False)
+        if hit_reason is not None and hit_reason != why:
+            # Record why the held hit abstained next to what the reference pop did.
+            why = f"{why}:icon_hit_{hit_reason}" if popped is not None else f"{why}+icon_hit_{hit_reason}"
+        return popped, why
+
+    @staticmethod
+    def _replace_entry(
+        cue: MotionCue, item: LayoutItem, layout: dict[str, LayoutItem] | None, *,
+        seconds: float, start_scale: float, hit: bool,
+    ) -> tuple[MotionCue | None, str]:
+        """Replace the reveal's static entry (or the PAYOFF accent that starts with it) by
+        one pop or one held icon hit. A replacement is committed only when it satisfies the
+        shared segment contract rendered QA applies; otherwise the original cue stays."""
+        params = cue.params if isinstance(cue.params, dict) else {}
+        window = float(cue.end) - float(cue.start)
         new_params = dict(params)
         new_params["reference_pop"] = {"start_scale": round(start_scale, 5), "seconds": round(seconds, 6),
                                        "profile": "REFERENCE_POP"}
-        if hit:
-            new_params["payoff_icon_hit"] = {"peak_scale": 1.07, "duration": round(seconds, 6),
-                                             "motion": "held_scale_no_jitter"}
         opacity = params.get("entry_opacity")
         if isinstance(opacity, dict):
             # The pop carries the arrival; the faint first frames shorten to the pop itself.
             new_params["entry_opacity"] = {**opacity, "settle": round(
                 min(float(opacity.get("settle", cue.end)), float(cue.start) + max(seconds, 3 * _FRAME)), 6)}
+
+        def build(phase: str, base: dict, duration: float, *, base_entry: bool) -> tuple[dict | None, str]:
+            if base_entry:
+                name = "reference_icon_hit" if hit else "reference_pop_arrival"
+            else:
+                name = f"reference_icon_hit_{phase.lower()}" if hit else f"reference_pop_{phase.lower()}"
+            program = {**base, "name": name, "settle_progress": 1.0}
+            if hit:
+                # A PAYOFF accent is judged over its whole window: the hit fills it.
+                settle = 1.0 if phase == "PAYOFF" and not base_entry else seconds / duration
+                frames, why = _icon_hit_keyframes(phase="ENTRY" if base_entry else phase, window=duration,
+                                                  settle=settle, item=item, params=new_params, name=name)
+                if frames is None:
+                    return None, why
+                if not _icon_hit_safe(item, layout, max(row["scale"] for row in frames)):
+                    return None, "unsafe_overlap_or_frame"
+                program["keyframes"] = frames
+                if phase == "PAYOFF" and not base_entry:
+                    program["semantic_active_duration"] = round(duration, 6)
+            else:
+                program["keyframes"] = _pop_frames(start_scale, seconds / duration)
+            broken = segment_contract_violations(
+                phase="ENTRY" if base_entry else phase, program=program, params=new_params,
+                segment_duration=duration, item_width=item.width, item_height=item.height,
+                base_entry=base_entry)
+            if broken:
+                return None, "contract_" + "+".join(sorted({row.code for row in broken})).lower()
+            return program, "applied"
+
         segments = list(cue.segments)
+        peak = 1.0
         if not segments:
             if not _static(params.get("program")):
                 return None, "certified_gesture_owns_entry"
-            new_params["program"] = {**(params.get("program") or {}),
-                                     "name": "reference_icon_hit" if hit else "reference_pop_arrival",
-                                     "settle_progress": 1.0,
-                                     "keyframes": (_icon_hit_frames(seconds / window) if hit
-                                                   else _pop_frames(start_scale, seconds / window))}
-            return cue.model_copy(update={"params": new_params}), "applied"
-        replaced = False
-        for position, row in enumerate(segments):
-            if float(row.start) >= float(cue.start) + seconds - _EPS:
-                continue
-            if row.phase not in {"ENTRY", "PAYOFF"}:
-                return None, "accent_inside_arrival"
-            if abs(float(row.start) - float(cue.start)) > _EPS:
-                return None, "segment_starts_inside_arrival"
-            if row.phase == "ENTRY" and not _static(row.program):
-                return None, "certified_gesture_owns_entry"
-            # A PAYOFF accent that starts with the reveal overrides the entry on screen, so
-            # it carries the pop itself (one gesture), keeping its phase and its window.
-            segments[position] = row.model_copy(update={"program": {
-                **row.program, "name": f"reference_icon_hit_{row.phase.lower()}" if hit
-                else f"reference_pop_{row.phase.lower()}", "settle_progress": 1.0,
-                "keyframes": (_icon_hit_frames(seconds / (float(row.end) - float(row.start))) if hit
-                              else _pop_frames(start_scale, seconds / (float(row.end) - float(row.start))))}})
-            replaced = True
-        if not replaced:
-            return None, "no_static_entry_to_replace"
+            program, why = build("ENTRY", dict(params.get("program") or {}), window, base_entry=True)
+            if program is None:
+                return None, why
+            new_params["program"] = program
+            peak = max(row["scale"] for row in program["keyframes"])
+        else:
+            replaced = False
+            for position, row in enumerate(segments):
+                if float(row.start) >= float(cue.start) + seconds - _EPS:
+                    continue
+                if row.phase not in {"ENTRY", "PAYOFF"}:
+                    return None, "accent_inside_arrival"
+                if abs(float(row.start) - float(cue.start)) > _EPS:
+                    return None, "segment_starts_inside_arrival"
+                if row.phase == "ENTRY" and not _static(row.program):
+                    return None, "certified_gesture_owns_entry"
+                # A PAYOFF accent that starts with the reveal overrides the entry on screen, so
+                # it carries the pop itself (one gesture), keeping its phase and its window.
+                program, why = build(row.phase, dict(row.program), float(row.end) - float(row.start),
+                                     base_entry=False)
+                if program is None:
+                    return None, why
+                segments[position] = row.model_copy(update={"program": program})
+                peak = max([peak] + [frame["scale"] for frame in program["keyframes"]])
+                replaced = True
+            if not replaced:
+                return None, "no_static_entry_to_replace"
+        if hit:
+            new_params["payoff_icon_hit"] = {"peak_scale": round(peak, 5), "duration": round(seconds, 6),
+                                             "motion": "held_scale_no_jitter"}
         return cue.model_copy(update={"params": new_params, "segments": segments}), "applied"
