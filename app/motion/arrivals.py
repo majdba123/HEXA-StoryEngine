@@ -363,6 +363,12 @@ class SecondaryArrivalPlanner:
         if _moves(program) and not _is_nudge(program, item) and not decorative:
             return "FADE", "certified_gesture_owns_entry", None
         window = float(cue.end) - float(cue.start)
+        if flow_direction is not None:
+            # An authored carried ENTRY segment may end well before cue.end.
+            # Limit *both* Slide and Pop to its real render window, otherwise
+            # the renderer compresses the movement and violates Motion QA.
+            window = min([window, *(float(row.end) - float(row.start)
+                                    for row in cue.segments if row.phase == "ENTRY")])
         if window + _EPS < POP_MIN_SECONDS:
             return "FADE", "window_below_pop_minimum", None
         arrival_end = float(cue.start) + min(max(SLIDE_SECONDS, POP_SECONDS), window)
