@@ -307,3 +307,43 @@ def test_scene_arrival_never_overruns_actual_carried_entry_segment(
         speed = EncodedMotionVerifier._max_normalized_keyframe_speed(
             entry, duration=entry_seconds, item_width=item.width, item_height=item.height)
         assert speed <= REFERENCE_SLIDE.max_normalized_speed * 1.08 + 1e-6
+
+
+@pytest.mark.parametrize("y,expected_sign", [(0.10, -1.0), (0.90, 1.0)])
+def test_short_vertical_flow_arrival_respects_encoded_motion_speed(y, expected_sign) -> None:
+    """16:9 Y displacement must be normalized in the same units as encoded QA."""
+    from pathlib import Path
+    from app.models import MotionSegment
+    from app.render.verification import RenderedMotionVerifier
+    from app.motion.timing import REFERENCE_SLIDE
+    from app.targets.context import active_target
+
+    story = [
+        StoryBeat(id="prior", scene_id="prior-scene", start=0.0, end=2.0,
+                  narration="previous", action="REVEAL"),
+        StoryBeat(id="next", scene_id="next-scene", start=2.0, end=3.0,
+                  narration="next", action="REVEAL"),
+    ]
+    item = LayoutItem(asset_id="icon", x=0.5, y=y, width=0.16, height=0.14)
+    entry = MotionCue(beat_id="next", asset_id="icon", kind="program_v3", start=2.1,
+                      end=2.4, params={"engine_version": 3,
+                                      "semantic_continuity": {"mode": "ENTER"},
+                                      "program": {"name": "static", "keyframes": []}})
+    asset = VisualAsset(id="icon", scene_id="next-scene", role="supporting",
+                        image_path=Path("missing.png"), extraction_method="test")
+    planner = SecondaryArrivalPlanner()
+    result = planner.plan(story=story,
+                          composition=[CompositionBeat(beat_id="next", items=[item])],
+                          motion=[entry], assets=[asset])[0]
+    assert planner.decisions[0].gesture == "SLIDE"
+    frames = result.params["program"]["keyframes"]
+    assert frames[0]["dy"] * expected_sign > 0
+    segment = MotionSegment(phase="ENTRY", start=entry.start, end=entry.end,
+                            program=result.params["program"])
+    speed = RenderedMotionVerifier._max_normalized_keyframe_speed(
+        segment, duration=entry.end - entry.start,
+        item_width=item.width, item_height=item.height)
+    assert speed <= REFERENCE_SLIDE.max_normalized_speed * 1.08 + 1e-6
+    assert abs(frames[0]["dy"]) > 0.04
+    assert frames[0]["scale"] == 0.93 and frames[-1]["scale"] == 1.0
+    assert active_target().width > active_target().height
