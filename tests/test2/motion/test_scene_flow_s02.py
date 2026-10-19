@@ -246,8 +246,8 @@ def test_production_payoff_hits_authoritative_result_icon_without_washing_whole_
     assert result.params["payoff_icon_hit"]["peak_scale"] == 1.07
     assert "focus_wash" not in result.params
     frames = result.params["program"]["keyframes"]
-    assert [row["scale"] for row in frames] == [0.93, 1.07, 1.07, 1.0]
-    assert all(row["dx"] == row["dy"] == 0 for row in frames)
+    assert [row["scale"] for row in frames] == [1.0, 1.07, 1.07, 1.0]
+    # Existing REST size is the safe start: a 0.93-to-1.07 jump in 0.3s exceeds motion comfort.\n    assert all(row["dx"] == row["dy"] == 0 for row in frames)
     assert director.decisions[0].wash == "none"
     assert "wash:icon_focused_payoff" in director.decisions[0].reasons
 
