@@ -265,3 +265,45 @@ def test_production_payoff_abstains_from_overshoot_if_it_creates_collision() -> 
     result = next(row for row in output if row.asset_id == "result")
     assert "payoff_icon_hit" not in result.params
     assert max(row["scale"] for row in result.params["program"]["keyframes"]) <= 1.0
+
+
+@pytest.mark.parametrize("entry_seconds,expected", [(0.15, "FADE"), (0.30, "SLIDE")])
+def test_scene_arrival_never_overruns_actual_carried_entry_segment(
+    entry_seconds: float, expected: str,
+) -> None:
+    """An ENTRY shorter than cue.end must not be compressed to illegal speed."""
+    from pathlib import Path
+    from app.models import MotionSegment
+    from app.motion.timing import REFERENCE_SLIDE
+    from app.render.verification import EncodedMotionVerifier
+
+    previous = StoryBeat(id="p", scene_id="prev", start=0, end=2,
+                         narration="before", action="REVEAL")
+    beat = StoryBeat(id="b", scene_id="next", start=2, end=4,
+                     narration="after", action="REVEAL", primary_asset_ids=["a"])
+    item = LayoutItem(asset_id="a", x=0.12, y=0.5, width=0.15, height=0.20)
+    static = {"name": "static", "keyframes": [{"progress": 0.0, "dx": 0.0,
+              "dy": 0.0, "scale": 1.0}, {"progress": 1.0, "dx": 0.0,
+              "dy": 0.0, "scale": 1.0}]}
+    segment = MotionSegment(phase="ENTRY", start=2.1, end=2.1 + entry_seconds,
+                            program=static)
+    cue = MotionCue(beat_id="b", asset_id="a", kind="program_v3", start=2.1, end=2.8,
+                    segments=[segment], params={"engine_version": 3, "program": static,
+                    "semantic_continuity": {"mode": "ENTER"}})
+    planner = SecondaryArrivalPlanner()
+    result = planner.plan(story=[previous, beat],
+                          composition=[CompositionBeat(beat_id="b", items=[item])],
+                          motion=[cue], assets=[VisualAsset(
+                              id="a", scene_id="next", role="primary",
+                              image_path=Path("missing.png"), extraction_method="test")])[0]
+    assert planner.decisions[0].gesture == expected
+    if expected == "FADE":
+        assert "reference_slide" not in result.params
+        assert "reference_pop" not in result.params
+    else:
+        seconds = result.params["reference_slide"]["seconds"]
+        assert seconds <= entry_seconds + 1e-6
+        entry = next(row for row in result.segments if row.phase == "ENTRY")
+        speed = EncodedMotionVerifier._max_normalized_keyframe_speed(
+            entry, duration=entry_seconds, item_width=item.width, item_height=item.height)
+        assert speed <= REFERENCE_SLIDE.max_normalized_speed * 1.08 + 1e-6
