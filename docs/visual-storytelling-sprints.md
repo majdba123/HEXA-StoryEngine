@@ -1,5 +1,7 @@
 # HEXA StoryEngine — Visual Storytelling Sprint Tracker
 
+> **ACTIVE REAL-PACKAGE RENDER BLOCKER (2026-10-19):** Read [Storytelling / Real-Render Failure Handoff](handoffs/2026-10-19-storytelling-render-regression.md) before any further code changes or user render. S02's green synthetic CI does **NOT** mean Black Hat real export succeeded; a new user diagnostic `HEXA-diagnostic-f96ba7e0.zip` remains untriaged. Preserve all scenes and QA checks. Do not ask the user to rerender until diagnosis and validation.
+
 **Working branch:** `feature/storytelling-sprints` (one branch for ALL six sprints).
 **Base snapshot:** `montage` at `624a032c706c6c364b2a2795d67101de15b7ed10` (includes causal-overlap fix).
 **Protected branches:** `montage`, `bayer`. Never change, reset, force-push, or merge them.
