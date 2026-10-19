@@ -88,10 +88,12 @@ def comfort_profile_for(phase: str, *, program_name: str, params: Mapping | None
     phase = str(phase).upper()
     if phase == "ENTRY" and isinstance(params.get("hero_travel"), Mapping):
         return HERO_TRAVEL
-    if (phase in {"ENTRY", "PAYOFF"} and isinstance(params.get("reference_pop"), Mapping)
+    if (phase in {"ENTRY", "PAYOFF", "REACT"} and isinstance(params.get("reference_pop"), Mapping)
             and program_name.startswith("reference_pop")):
+        # A target that reacts with its own reveal arrives as that pop (resolution._pop only
+        # gives REACT a pop when it starts with the reveal): an entrance, like its PAYOFF.
         return REFERENCE_POP
-    if (phase in {"ENTRY", "PAYOFF"} and isinstance(params.get("reference_slide"), Mapping)
+    if (phase in {"ENTRY", "PAYOFF", "REACT"} and isinstance(params.get("reference_slide"), Mapping)
             and program_name.startswith("reference_slide")):
         return REFERENCE_SLIDE
     if (phase in {"INTERACT", "REACT"} and isinstance(params.get("relation_approach"), Mapping)

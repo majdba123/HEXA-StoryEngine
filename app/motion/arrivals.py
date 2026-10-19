@@ -40,6 +40,9 @@ from .visual_flow.direction import focus_handoff_direction, spatial_entry_direct
 
 _EPS = 1e-6
 _FRAME = 1 / 30
+# Programs that start with a result's reveal and so carry its one arrival gesture. A REACT
+# is among them only when the PAYOFF resolution gave it the pop (it reacts with its reveal).
+_REVEAL_PHASES = frozenset({"ENTRY", "PAYOFF", "REACT"})
 # Edge slide. The references slide 0.10-0.15 frame widths in 4-13 frames at up to 1.2 w/s;
 # reviewed HEXA renders found that rushed, so a slide is a short calm settle into place:
 # at most 0.08 w, at most 0.6 w/s peak, never shorter than 8 frames (else a pop or fade).
@@ -615,7 +618,7 @@ class SecondaryArrivalPlanner:
             row.model_copy(update={"program": {**row.program, "name": f"reference_slide_{row.phase.lower()}",
                                                "settle_progress": 1.0, "keyframes": frames(
                                                    seconds / (float(row.end) - float(row.start)))}})
-            if abs(float(row.start) - start) <= _EPS and row.phase in {"ENTRY", "PAYOFF"} else row
+            if abs(float(row.start) - start) <= _EPS and row.phase in _REVEAL_PHASES else row
             for row in cue.segments
         ]
         return cue.model_copy(update={"params": params, "segments": segments}), "applied"
@@ -780,7 +783,7 @@ class SecondaryArrivalPlanner:
                              "settle_progress": 1.0, "keyframes": frames(seconds / window)}
         segments = []
         for row in cue.segments:
-            if abs(float(row.start) - start) <= _EPS and row.phase in {"ENTRY", "PAYOFF"}:
+            if abs(float(row.start) - start) <= _EPS and row.phase in _REVEAL_PHASES:
                 duration = float(row.end) - float(row.start)
                 program = {**row.program, "name": f"reference_slide_{row.phase.lower()}",
                            "settle_progress": 1.0, "keyframes": frames(seconds / duration)}

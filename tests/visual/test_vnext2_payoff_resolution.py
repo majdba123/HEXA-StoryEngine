@@ -134,6 +134,44 @@ def test_a_pop_never_fights_a_relation_segment_and_payoff_accents_carry_the_pop(
     assert row.program["name"] == "reference_pop_payoff" and row.program["keyframes"][0]["scale"] < 1.0
 
 
+_PULSE = {"name": "reference_result_enter", "keyframes": [
+    {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0}, {"progress": 0.6, "dx": -0.008, "dy": 0.01, "scale": 1.034},
+    {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0}]}
+
+
+def test_a_target_that_reacts_with_its_reveal_arrives_with_the_reference_pop() -> None:
+    """C4 / reference G6 (real Black Hat beat-005 chip): a result whose REACT starts with its
+    reveal used to fade in at full size under a 1.03 out-and-back pulse. The reaction is its
+    arrival: REACT and PAYOFF both carry one pop (grow into place, then still), same phases,
+    same windows, same relation fields."""
+    react = MotionSegment(phase="REACT", start=1.0, end=1.29, program=_PULSE, source_asset_id="support",
+                          target_asset_id="result", relationship="ENABLES", involvement="TARGET")
+    payoff = MotionSegment(phase="PAYOFF", start=1.0, end=1.29, program=_PULSE, involvement="RESULT")
+    # The real chip's Composition box (0.38 W x 0.54 H): its pop is judged as an entrance
+    # (REFERENCE_POP), like the PAYOFF it shares the window with, not as an in-place accent.
+    chip = LayoutItem(asset_id="result", x=0.43, y=0.30, width=0.38, height=0.54, z=1)
+    director, out = _run([_cue("support", 0.2, 0.5), _cue("result", 1.0, 1.29, segments=[react, payoff])],
+                         [_beat()], {"b": [LEFT, chip]})
+    rows = {row.phase: row for row in out[("b", "result")].segments}
+    for phase, before in (("REACT", react), ("PAYOFF", payoff)):
+        row = rows[phase]
+        assert (row.start, row.end) == (before.start, before.end)
+        frames = row.program["keyframes"]
+        assert frames[0]["scale"] < 1.0 and frames[-1]["scale"] == 1.0          # grows into place
+        assert max(frame["scale"] for frame in frames) <= 1.0 + POP_MAX_GROWTH  # no held pulse
+    assert rows["REACT"].relationship == "ENABLES" and rows["REACT"].source_asset_id == "support"
+    assert rows["REACT"].program["keyframes"] == rows["PAYOFF"].program["keyframes"]  # one gesture
+
+
+def test_a_reaction_after_the_reveal_still_owns_its_motion() -> None:
+    react = MotionSegment(phase="REACT", start=1.1, end=1.29, program=_PULSE, source_asset_id="support",
+                          target_asset_id="result", relationship="ENABLES", involvement="TARGET")
+    director, out = _run([_cue("support", 0.2, 0.5), _cue("result", 1.0, 1.29, segments=[react])],
+                         [_beat()], {"b": [LEFT, RIGHT]})
+    assert director.decisions[0].arrival.startswith("kept:")
+    assert out[("b", "result")].segments[0].program == _PULSE
+
+
 def test_secondary_pulse_goes_to_a_resolved_subject_without_a_wash() -> None:
     calls = []
 

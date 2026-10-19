@@ -512,7 +512,11 @@ class PayoffResolutionDirector:
         asset = assets_by_id.get(cue.asset_id)
         if asset is not None and asset.parent_asset_id:
             return None, "child_asset"
-        if any(row.phase not in {"ENTRY", "PAYOFF", "ESTABLISH"} for row in cue.segments):
+        # A target that reacts with its own reveal arrives as that reaction (reference G6:
+        # the result grows into place at the arrow tip); any other relation segment owns it.
+        if any(row.phase not in {"ENTRY", "PAYOFF", "ESTABLISH"}
+               and not (row.phase == "REACT" and abs(float(row.start) - float(cue.start)) <= _EPS)
+               for row in cue.segments):
             return None, "relation_segment_owns_motion"
         window = float(cue.end) - float(cue.start)
         # Every program that starts with the reveal draws the same pop: the shortest bounds it.
@@ -601,7 +605,7 @@ class PayoffResolutionDirector:
             for position, row in enumerate(segments):
                 if float(row.start) >= float(cue.start) + seconds - _EPS:
                     continue
-                if row.phase not in {"ENTRY", "PAYOFF"}:
+                if row.phase not in {"ENTRY", "PAYOFF", "REACT"}:
                     return None, "accent_inside_arrival"
                 if abs(float(row.start) - float(cue.start)) > _EPS:
                     return None, "segment_starts_inside_arrival"
