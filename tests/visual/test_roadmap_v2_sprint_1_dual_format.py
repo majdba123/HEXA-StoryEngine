@@ -661,15 +661,20 @@ def test_pre_encode_motion_qa_rejects_any_target_before_the_first_encode(
         for cue in plan.motion:
             if (cue.params.get("render_constraints") or {}).get("geometry_lock"):
                 continue
-            for segment in cue.segments:
-                frames = segment.program.get("keyframes") or []
-                if "compound_unit" in str(segment.program.get("name")) or not any(
+            # Reference stillness leaves accents still: a moving entry (segment or the base
+            # program QA checks when a cue has no segments) is the program to corrupt.
+            programs = [(segment.phase, segment.program) for segment in cue.segments]
+            if not cue.segments and isinstance(cue.params.get("program"), dict):
+                programs.append(("ENTRY", cue.params["program"]))
+            for phase, program in programs:
+                frames = program.get("keyframes") or []
+                if "compound_unit" in str(program.get("name")) or not any(
                         abs(float(f.get("dx", 0.0))) + abs(float(f.get("dy", 0.0))) > 1e-4 for f in frames):
                     continue
                 for frame in frames:  # 12x the authored path: far past the comfort ceiling
                     frame["dx"] = float(frame.get("dx", 0.0)) * 12
                     frame["dy"] = float(frame.get("dy", 0.0)) * 12
-                corrupted.update(target=target.target_id, asset=cue.asset_id, phase=segment.phase)
+                corrupted.update(target=target.target_id, asset=cue.asset_id, phase=phase)
                 return plan
         raise AssertionError("fixture has no moving segment to corrupt")
 

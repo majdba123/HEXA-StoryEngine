@@ -681,3 +681,11 @@ def test_owner_coupling_never_steers_the_scene_lane_of_later_cues() -> None:
     lane = source[source.index("preferred_zone_by_scene[beat.scene_id] ="):].splitlines()[1]
     assert "certified.zone" in lane and "result.zone" not in lane
     assert "certified.visual_overlap <= 0.015" in source
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)

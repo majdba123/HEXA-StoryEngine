@@ -208,3 +208,11 @@ def test_a_pulse_revoked_by_composed_text_restores_the_cue_exactly() -> None:
     hero = next(c for c in revoked if c.asset_id == "hero")
     assert "hero_emphasis" not in hero.params and hero.segments == []
     assert next(d for d in planner.decisions if d.asset_id == "hero").emphasis.startswith("revoked:")
+
+
+@pytest.fixture(autouse=True)
+def _pulse_machinery(monkeypatch):
+    """These tests pin the post-settle pulse rules; production keeps pulses off (reference)."""
+    import app.motion.hero_travel as hero_travel
+
+    monkeypatch.setattr(hero_travel, "POST_SETTLE_PULSES", True)

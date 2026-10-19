@@ -127,3 +127,11 @@ def test_encoded_qa_enforces_the_same_calm_limits_motion_plans_with() -> None:
 def test_planned_programs_stay_json_round_trippable() -> None:
     cue = _cue("hero", 1.0, 1.3)
     assert json.loads(cue.model_dump_json())["params"]["program"]["keyframes"][0]["scale"] == 1.0
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)

@@ -91,3 +91,11 @@ def test_encoded_hold_keeps_old_artwork_solid_then_cuts_on_original_opener(tmp_p
     assert abs(held[60 + 10:] - faded[60 + 10:]).mean() < 0.5
     assert abs(_darkness(held, NEW_ON_OLD)[60 + 10]
                - _darkness(faded, NEW_ON_OLD)[60 + 10]) < 0.02
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)

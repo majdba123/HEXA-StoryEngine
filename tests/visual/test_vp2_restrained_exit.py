@@ -168,3 +168,11 @@ def test_without_a_unit_in_the_way_the_same_exit_is_planned() -> None:
                                                                                          "headset": "headset"}})
     row = scene.plan()
     assert set(row.exit_starts) == {"man"} and "path_blocked_units" not in row.audit["exit"]
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)

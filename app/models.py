@@ -430,7 +430,7 @@ class TextLayoutItem(BaseModel):
     x: float
     y: float
     max_width: float
-    font_scale: float = Field(default=1.0, ge=0.50, le=1.0)
+    font_scale: float = Field(default=1.0, ge=0.50, le=2.2)  # app.text.metrics.MAX_FONT_SCALE
     z: int = 50
     anchor_asset_id: str | None = None
     placement: str = "safe_top"

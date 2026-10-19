@@ -42,7 +42,13 @@ PRODUCTION_FACES = (
 PRODUCTION_FONT_FILE = PRODUCTION_FACES[0].file
 PRODUCTION_FONT_FAMILY = PRODUCTION_FACES[0].family
 # Render tokens shared with the ASS document: drop shadow offset in reference pixels.
-TEXT_SHADOW_PX = 1.2
+# The approved references set every keyword on a clearly visible soft drop shadow.
+TEXT_SHADOW_PX = 4.0
+# Typography scale range relative to the style size. The references set keywords at
+# 12-27 % of the frame height (docs/reference-motion-grammar.md G14); the upper rungs
+# are used only where the shared text/artwork contract finds free space for them.
+MIN_FONT_SCALE = 0.40
+MAX_FONT_SCALE = 2.2
 
 # Bidi isolates/marks (LRI, RLI, FSI, PDI, LRM, RLM, ALM): invisible, never measured.
 _ISOLATES = frozenset(chr(code) for code in (0x2066, 0x2067, 0x2068, 0x2069, 0x200E, 0x200F, 0x061C))
@@ -160,7 +166,7 @@ class TextTypographyMetrics:
         if not value or face is None:
             return None
         base_size, outline = self.style_spec(style_id, semantic_type)
-        scale = max(0.40, min(1.0, float(font_scale)))
+        scale = max(MIN_FONT_SCALE, min(MAX_FONT_SCALE, float(font_scale)))
         size = max(1, round(self.font_size(face, base_size) * pixel_scale))
         border = outline * pixel_scale
         shadow = TEXT_SHADOW_PX * pixel_scale

@@ -7,7 +7,7 @@ from app.layout.footprint import AlphaFootprintResolver
 from app.composition.occupancy import VisualOccupancyMap
 from app.composition.text_constraints import TextLayoutContract
 from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextLayoutItem, VisualAsset
-from app.text.metrics import TextTypographyMetrics
+from app.text.metrics import MAX_FONT_SCALE, TextTypographyMetrics
 from app.story.windows import StoryAssetActivation
 from app.targets import active_target
 
@@ -18,6 +18,7 @@ Box = tuple[float, float, float, float]
 # The approved references draw labels large and close to their subject; below about
 # two thirds of the production size a label becomes hard to read on a small screen.
 READABLE_FONT_SCALE = 0.68
+REFERENCE_FONT_SCALES = tuple(value for value in (2.2, 1.9, 1.6, 1.35, 1.15) if value <= MAX_FONT_SCALE)
 # A legible label may move this far (normalized centre distance) from its subject.
 READABLE_ANCHOR_REACH = 0.30
 
@@ -135,6 +136,8 @@ class TextPlacementDirector:
 
         scored = []
         for font_scale in self._font_scales(cue):
+            if font_scale > 1.0 and not self._fits_safe_width(cue, font_scale):
+                continue  # a larger rung is offered only when the whole line fits
             width, height = self.estimated_box(cue, scale=font_scale)
             candidates = self._candidate_field(width, height, anchor)
             for candidate in candidates:
@@ -317,7 +320,18 @@ class TextPlacementDirector:
             if cue.priority >= 85
             else (1.0, 0.90, 0.82, 0.76, 0.68, 0.62, 0.56)
         )
-        return (*base, 0.52, 0.50)
+        # Reference kinetic typography (G14): keywords are set large wherever the frame
+        # has room; the contract still rejects any rung that touches artwork or text.
+        return (*REFERENCE_FONT_SCALES, *base, 0.52, 0.50)
+
+    @staticmethod
+    def _fits_safe_width(cue: TextCue, scale: float) -> bool:
+        metrics = TextTypographyMetrics()
+        pixel_width, _ = metrics.measure(
+            cue.text, style_id=cue.style_id, semantic_type=cue.semantic_type, font_scale=scale)
+        target = active_target()
+        margins = target.safe_zones.text_margins
+        return (pixel_width + 28.0) / max(1, target.width) <= 1.0 - (margins.left + margins.right)
 
     def _candidate_field(
         self,

@@ -23,10 +23,15 @@ from app.models import CompositionBeat, MotionCue, VisualAsset
 from app.render.expression import compile_expression
 from app.render.motion import FFmpegMotionAdapter
 
-MOTION_BLUR_SHUTTER = 0.5          # fraction of the frame interval (180 degrees)
+# Reference grammar G15 (docs/reference-motion-grammar.md): in the approved references a
+# fast element is smeared over roughly its whole per-frame travel (a 360-degree look) for
+# 3-5 frames, up to about its own size on scene whips. A 180-degree shutter capped at 6 %
+# of the height left one barely visible frame per entry, so the look is matched instead.
+MOTION_BLUR_SHUTTER = 1.0          # fraction of the frame interval (360 degrees)
+LEAD_SHUTTER = 1.3                 # the scene's dominant mover is exaggerated, as in the references
 # Smear lengths as fractions of the content height (the target's reference frame):
 MIN_LENGTH = 0.0019                # shorter smears are invisible (about two lines)
-MAX_LENGTH = 0.06                  # never smear an element into an unreadable streak
+MAX_LENGTH = 0.22                  # reference whips smear ~ an element's own size, never longer
 CUT_LENGTH = 4 * MAX_LENGTH        # a larger jump within one exposure is a cut, not motion
 
 
@@ -109,7 +114,7 @@ class MotionBlurPolicy:
             if blurred:
                 dominant = (cue.beat_id, cue.asset_id) in lead_blur
                 cue = cue.model_copy(update={"params": {**params, "motion_blur": {
-                    "owner": "MOTION", "shutter": 0.65 if dominant else MOTION_BLUR_SHUTTER,
+                    "owner": "MOTION", "shutter": LEAD_SHUTTER if dominant else MOTION_BLUR_SHUTTER,
                     "min_length": MIN_LENGTH, "max_length": MAX_LENGTH,
                     "peak_length": round(peak, 5),
                     **({"visual_mass_lead": True} if dominant else {})}}})

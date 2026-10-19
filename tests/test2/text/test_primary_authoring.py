@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.composition.text_director import TextPlacementDirector
+from app.composition.text_director import REFERENCE_FONT_SCALES, TextPlacementDirector
 from app.models import TextCompositionBeat, TextCue, TextLayoutItem, TextPlan
 from app.pipeline import StoryEnginePipeline
 from app.shared.errors import StageFailedError
@@ -120,6 +120,8 @@ def test_higher_priority_simultaneous_text_is_the_accepted_primary_cue() -> None
 
 def test_primary_typography_ladder_includes_absolute_model_floor() -> None:
     scales = TextPlacementDirector._font_scales(_cue("text-a", 90))
-    assert scales[0] == 1.0
+    # Reference kinetic typography is tried first; the authored ladder follows from 1.0.
+    assert scales[:len(REFERENCE_FONT_SCALES)] == REFERENCE_FONT_SCALES
+    assert scales[len(REFERENCE_FONT_SCALES)] == 1.0
     assert scales[-1] == 0.50
     assert min(scales) == 0.50

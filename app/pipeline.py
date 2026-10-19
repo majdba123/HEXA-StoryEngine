@@ -38,6 +38,7 @@ from app.motion.motion_blur import MotionBlurPolicy
 from app.motion.family import bind_families
 from app.motion.resolution import PayoffResolutionDirector
 from app.motion.semantic_reference import MotionSemanticReference
+from app.motion.stillness import ReferenceStillnessPolicy
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.render import RenderPlanner
@@ -615,7 +616,9 @@ class StoryEnginePipeline:
             )
             # Cinematic VNext2 PAYOFF: each beat's resolving subject arrives with the
             # reference pop and, where it is safe and spaced, the backdrop recedes.
-            self.resolution = PayoffResolutionDirector(icon_focus_mode=True)
+            # Reference grammar: the result is resolved by the grey wash + arrival, never by
+            # a held icon pulse (not present in the approved references).
+            self.resolution = PayoffResolutionDirector(icon_focus_mode=False)
             motion = self.resolution.plan(story=story, composition=composition, motion=motion, assets=assets,
                                           emphasize=self.hero_travel.secondary_emphasis)
             # Every other entering asset gets one reference gesture from its own geometry.
@@ -640,6 +643,10 @@ class StoryEnginePipeline:
                 frame_height=target.height, enable_focus_continuity=True, focus_only=True,
             )
             focus_boundary_decisions = list(self.cross_scene.boundary_decisions)
+            # Reference grammar G18: subjects at rest stay still; the remaining in-place
+            # out-and-back accents become deliberate still segments (timing/meaning kept).
+            self.stillness = ReferenceStillnessPolicy()
+            motion = self.stillness.apply(motion)
             self.handoff_contracts.require_motion_for_text_and_render(
                 story=story,
                 assets=assets,

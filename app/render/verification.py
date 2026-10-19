@@ -16,6 +16,7 @@ from app.motion.contract import (
     keyframe_peak_speed_normalized,
     semantic_accent_floor_violation,
 )
+from app.motion.stillness import is_reference_still
 from app.motion.timing import (
     GOLDEN_MINOR,
     encoded_motion_renderability_floor_px,
@@ -222,11 +223,15 @@ class EncodedMotionVerifier:
                     and program_name.startswith("static_reveal_")
                     and expected_px <= 1e-9
                 )
+                # Reference grammar G18: a deliberate still accent (identity keyframes only)
+                # has no motion to be "too weak"; any non-zero accent keeps the floor.
+                still_accent = is_reference_still(segment.program) and expected_px <= 1e-9
                 enforce_floor = (
                     "compound_unit" not in program_name
                     and not collision_limited
                     and not qa_base_entry
                     and not static_entry
+                    and not still_accent
                 )
                 enforce_speed = "compound_unit" not in program_name
 

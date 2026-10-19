@@ -96,7 +96,8 @@ def test_policy_blurs_visible_travel_and_abstains_otherwise() -> None:
     spec = out[0].params["motion_blur"]
     assert spec["owner"] == "MOTION" and spec["shutter"] == MOTION_BLUR_SHUTTER
     # peak smear of a 0.3-width smoothstep slide in 0.5 s at 180 degrees: 1.5 * 0.3 * 1920 / 0.5 / 60 px
-    assert spec["peak_length"] * 1080 == pytest.approx(1.5 * 0.3 * 1920 / 0.5 / 60, rel=0.03)
+    # peak speed (1.5 x mean of 0.3 W over 0.5 s) times the exposure (shutter / fps)
+    assert spec["peak_length"] * 1080 == pytest.approx(1.5 * 0.3 * 1920 / 0.5 * MOTION_BLUR_SHUTTER / 30, rel=0.03)
     assert all("motion_blur" not in cue.params for cue in out[1:])
 
 

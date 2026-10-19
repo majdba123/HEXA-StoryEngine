@@ -29,7 +29,7 @@ from app.models import (
 )
 from app.render.text import TextRenderer
 from app.text import TextPlanner
-from app.text.metrics import PRODUCTION_FONT_DIR, PRODUCTION_FONT_FAMILY, TextTypographyMetrics
+from app.text.metrics import TEXT_SHADOW_PX, PRODUCTION_FONT_DIR, PRODUCTION_FONT_FAMILY, TextTypographyMetrics
 from app.text.semantic import TextSemanticSelector
 from app.text.timing import TextVisibilityPolicy
 from tests.support.canonical_package import canonical_package
@@ -377,7 +377,7 @@ def test_measurement_scales_glyphs_but_not_outline() -> None:
     metrics = TextTypographyMetrics()
     full = metrics.layout("ثغرة", style_id="emphasis", font_scale=1.0)
     half = metrics.layout("ثغرة", style_id="emphasis", font_scale=0.5)
-    border = 2 * 9.0 + 1.2
+    border = 2 * 9.0 + TEXT_SHADOW_PX  # outline both sides plus the drop shadow
     assert (half.width - border) == pytest.approx((full.width - border) * 0.5, rel=1e-6)
 
 

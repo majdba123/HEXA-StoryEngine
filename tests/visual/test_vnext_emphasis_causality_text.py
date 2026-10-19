@@ -128,3 +128,11 @@ def test_emphasis_keeps_the_exact_readable_amplitude_when_stronger_ones_clip() -
     assert _amplitudes(0.045) == [0.05, 0.045]
     assert _amplitudes(0.042) == [0.05, 0.045, 0.042]
     assert _amplitudes(0.01)[-1] == 0.03 and _amplitudes(0.01)[0] == 0.05
+
+
+@pytest.fixture(autouse=True)
+def _pulse_machinery(monkeypatch):
+    """These tests pin the post-settle pulse rules; production keeps pulses off (reference)."""
+    import app.motion.hero_travel as hero_travel
+
+    monkeypatch.setattr(hero_travel, "POST_SETTLE_PULSES", True)

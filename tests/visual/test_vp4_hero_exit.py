@@ -86,3 +86,11 @@ def test_exit_never_slides_past_a_held_referent_carrier() -> None:
     row = scene.plan()
     assert row.overlap_exits == {}
     assert "path_crosses_held_outgoing_artwork" in row.audit["hero_exit"]
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)

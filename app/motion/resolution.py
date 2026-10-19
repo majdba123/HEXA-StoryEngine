@@ -72,7 +72,8 @@ ICON_HIT_MIN_HOLD_SECONDS = _FRAME
 # Backdrop wash (reference grey-wash runs: median luminance of the washed frame 168-212).
 WASH_RAMP_SECONDS = 6 / 30
 WASH_MIN_HOLD_SECONDS = 0.55
-WASH_MIN_GAP_SECONDS = 7.0
+# The full-length references wash the backdrop every ~5-10 s (2026-10-20 review).
+WASH_MIN_GAP_SECONDS = 5.0
 WASH_MAX_LAG_SECONDS = 4 / 30
 WASH_FOCUS_OVERLAP = 0.02
 

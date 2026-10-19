@@ -74,6 +74,10 @@ EMPHASIS_MIN_SECONDS = 0.60
 EMPHASIS_RISE, EMPHASIS_HOLD_END = 0.35, 0.65
 # A scene opener that holds the frame alone at least this long gets the reference pulse.
 HOLD_ALONE_SECONDS = 1.0
+# Reference grammar (docs/reference-motion-grammar.md, 2026-10-20 full-length review): the
+# approved references never pulse a subject that is already at rest. Emphasis is carried
+# by arrival, a drawn arrow and the grey wash, so every post-settle pulse abstains.
+POST_SETTLE_PULSES = False
 _EMPHASIS_PAUSE = 6 / 30  # the settled subject is recognised before it is emphasised
 _HOLD_GRID_MARGIN = 2 / 30
 _YIELD_ACTIONS = {"DEEMPHASIZE", "FOCUS_HANDOFF"}
@@ -471,6 +475,8 @@ class HeroTravelPlanner:
         layout: dict[str, LayoutItem], continues: bool, scale_boost: bool = False,
     ) -> tuple[MotionCue | None, str]:
         params = cue.params if isinstance(cue.params, dict) else {}
+        if not POST_SETTLE_PULSES:
+            return None, "abstain:reference_has_no_held_pulse"
         if item is None:
             return None, "abstain:no_composition_item"
         if (params.get("render_constraints") or {}).get("geometry_lock") or continues:

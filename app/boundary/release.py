@@ -40,6 +40,14 @@ _EPS = 1e-6
 # exposure Motion uses for the elements it moves (visual sprint B3).
 EXIT_MOTION_BLUR = {"owner": "BOUNDARY", "shutter": MOTION_BLUR_SHUTTER,
                     "min_length": MIN_LENGTH, "max_length": MAX_LENGTH}
+# Reference grammar G16 (docs/reference-motion-grammar.md): the approved references never
+# hard-cut between ideas. At the moment the new scene's first element appears, the whole
+# old scene leaves as one block in ~6 frames, smeared, travelling the same way as the
+# arriving element (a camera-like whip), so the eye is carried from one idea to the next.
+WHIP_FRAMES = 6
+# Production switch for the whip; the certified hero-exit / crisp / cut machinery below it
+# stays intact (and tested) for every boundary the whip abstains from.
+SCENE_WHIP = True
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
 _PROTECTED_PHASES = frozenset({"INTERACT", "REACT", "PAYOFF"})
@@ -93,11 +101,93 @@ class SceneBoundaryPlanner:
                 segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
             )
-            output.append(self._hero_overlap_exit(
+            whip = self._scene_whip(row, segment, layouts=layouts, cues=cues, fps=fps) if SCENE_WHIP else None
+            output.append(whip if whip is not None else self._hero_overlap_exit(
                 row, segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
             ))
         return output
+
+    def _scene_whip(
+        self,
+        row: SceneBoundaryRelease,
+        segment: BeatSegment,
+        *,
+        layouts: dict[str, CompositionBeat],
+        cues: dict[tuple[str, str], MotionCue],
+        fps: int,
+    ) -> SceneBoundaryRelease | None:
+        """The whole outgoing scene whips out as one block when the new scene opens (G16).
+
+        Only on a planned crisp change (HARD_CUT / CRISP_HANDOFF / HOLD_TO_OPENER) and only
+        when nothing of the old scene continues (no persistent artwork, referent carrier or
+        handoff source, no receding wash): continuity owners keep their certified path. The
+        old scene stays still until the unchanged opener frame, then leaves within
+        WHIP_FRAMES under the incoming artwork, blurred; Story, narration and every incoming
+        instant are unchanged. None keeps the existing boundary behaviour."""
+        beat, previous = segment.beat, segment.previous_beat
+        assert previous is not None
+        if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} or row.reason.startswith("abstain:"):
+            return None
+        if any(beat_id == previous.id and isinstance(cue.params.get("focus_wash"), dict)
+               for (beat_id, _), cue in cues.items()):
+            return None
+        layout, previous_layout = layouts.get(beat.id), layouts.get(previous.id)
+        incoming = self._active_items(beat, layout)
+        if previous_layout is None or not previous_layout.items or not incoming:
+            return None
+        legacy = self.classifier.decide(previous, previous_layout, layout, current_beat=beat)
+        continuing = {
+            spec.get("asset_id") for (beat_id, _), cue in cues.items()
+            if beat_id == beat.id and isinstance(spec := cue.params.get("handoff_from"), dict)
+        }
+        for item in previous_layout.items:
+            cue = cues.get((previous.id, item.asset_id))
+            if (item.asset_id not in legacy.carry_outgoing_asset_ids
+                    or item.asset_id in legacy.persistent_asset_ids or item.asset_id in continuing
+                    or (cue is not None and cue.params.get("referent_carrier"))):
+                return None
+        start_time = segment.start_frame / fps
+        first = {item.asset_id: first_visible_frame(
+            self._visible_start(beat, cues.get((beat.id, item.asset_id))) - start_time, fps)
+            for item in incoming}
+        opener = int(row.audit.get("opener_frame", min(first.values())))
+        end_frame = opener + WHIP_FRAMES
+        if end_frame >= segment.frame_count:
+            return None
+        axis, direction = self._whip_direction(beat, cues, first, opener)
+        spec = {"start": round((segment.start_frame + opener) / fps, 6),
+                "end": round((segment.start_frame + end_frame) / fps, 6),
+                "direction": direction, "axis": axis}
+        leaving = {item.asset_id for item in previous_layout.items}
+        return row.model_copy(update={
+            "exit_starts": {key: value for key, value in row.exit_starts.items() if key not in leaving},
+            "overlap_exits": {asset_id: dict(spec) for asset_id in sorted(leaving)},
+            "exit_motion_blur": dict(EXIT_MOTION_BLUR),
+            "audit": {**row.audit, "hero_exit": "scene_whip",
+                      "scene_whip": {"frames": WHIP_FRAMES, "units": len(leaving),
+                                     "axis": "vertical" if axis else "horizontal", "direction": direction}},
+        })
+
+    @staticmethod
+    def _whip_direction(
+        beat: StoryBeat, cues: dict[tuple[str, str], MotionCue], first: dict[str, int], opener: int,
+    ) -> tuple[float, float]:
+        """(axis, direction) of the whip: the way the opener itself travels, else up."""
+        for asset_id, frame in sorted(first.items()):
+            if frame != opener:
+                continue
+            cue = cues.get((beat.id, asset_id))
+            program = (cue.params or {}).get("program") if cue is not None else None
+            frames = program.get("keyframes") if isinstance(program, dict) else None
+            if not frames:
+                continue
+            dx, dy = float(frames[0].get("dx", 0.0)), float(frames[0].get("dy", 0.0))
+            if abs(dy) > abs(dx) and abs(dy) > 1e-6:
+                return 1.0, -1.0 if dy > 0 else 1.0   # rises from below: the old scene goes up
+            if abs(dx) > 1e-6:
+                return 0.0, -1.0 if dx > 0 else 1.0
+        return 1.0, -1.0
 
     def _hero_overlap_exit(
         self,

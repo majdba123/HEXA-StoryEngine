@@ -347,3 +347,11 @@ def test_short_vertical_flow_arrival_respects_encoded_motion_speed(y, expected_s
     assert abs(frames[0]["dy"]) > 0.04
     assert frames[0]["scale"] == 0.93 and frames[-1]["scale"] == 1.0
     assert active_target().width > active_target().height
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)

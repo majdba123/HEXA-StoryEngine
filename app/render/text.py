@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import RenderPlan, StoryBeat, TextCue, TextLayoutItem, TextMotionCue
+from app.render.connection import LabelAnchor
 from app.text.metrics import (
+    MAX_FONT_SCALE,
+    MIN_FONT_SCALE,
     PRODUCTION_FONT_DIR,
     PRODUCTION_FONT_FAMILY,
     TEXT_SHADOW_PX,
@@ -29,7 +32,7 @@ class TextRenderTheme:
     warning: str = "&H00FFFFFF"
     light_outline: str = "&H00000000" # black outline
     dark_outline: str = "&H00000000"  # black outline
-    shadow: str = "&H36000000"        # restrained black shadow
+    shadow: str = "&H70000000"        # soft grey drop shadow (reference keyword style)
 
 
 class TextRenderer:
@@ -217,6 +220,64 @@ class TextRenderer:
             ))
         return events
 
+    def label_anchors(self, plan: RenderPlan, beat: StoryBeat) -> list[LabelAnchor]:
+        """Resting ink box (output pixels) and visible window of every placed keyword that
+        names an asset: the same geometry ``_events_for_beat`` draws (G17 label arrows)."""
+        layout_beat = next((row for row in plan.text_composition if row.beat_id == beat.id), None)
+        if layout_beat is None:
+            return []
+        cues = {cue.id: cue for cue in plan.text.cues if cue.beat_id == beat.id}
+        motions = {cue.text_cue_id: cue for cue in plan.text_motion if cue.beat_id == beat.id}
+        styles = {style.id: style for style in plan.text.styles}
+        projection = plan.projection
+        anchors: list[LabelAnchor] = []
+        for item in layout_beat.items:
+            cue, motion = cues.get(item.text_cue_id), motions.get(item.text_cue_id)
+            if cue is None or motion is None or not item.anchor_asset_id:
+                continue
+            face = self.metrics.face_for(cue.text)
+            if face is None:
+                continue
+            style = styles.get(cue.style_id)
+            style_id = style.id if style else cue.style_id
+            rtl = self._contains_arabic(cue.text)
+            geometry_plan, geometry_item = plan, item
+            if projection is not None:
+                geometry_plan = plan.model_copy(update={
+                    "width": projection.reference_width, "height": projection.reference_height,
+                    "projection": None,
+                })
+                geometry_item = item.model_copy(update={
+                    "x": (item.x * plan.width - projection.offset_x)
+                         / (projection.reference_width * projection.scale),
+                    "y": (item.y * plan.height - projection.offset_y)
+                         / (projection.reference_height * projection.scale),
+                    "max_width": item.max_width * plan.width
+                                 / (projection.reference_width * projection.scale),
+                })
+            edge_x, ink_center_y, scale = self._safe_text_geometry(
+                plan=geometry_plan, cue_text=cue.text, semantic_type=cue.semantic_type,
+                style_id=style_id, item=geometry_item, rtl=rtl,
+                entry_strength=float(motion.params.get("entry_strength", 0.0)),
+            )
+            layout = self.metrics.layout(cue.text, style_id=style_id, semantic_type=cue.semantic_type,
+                                         font_scale=scale, rtl=rtl, face=face)
+            if layout is None:
+                continue
+            left = edge_x - layout.width if rtl else edge_x
+            box = (left, ink_center_y - layout.height / 2.0,
+                   left + layout.width, ink_center_y + layout.height / 2.0)
+            if projection is not None:
+                box = tuple(
+                    (projection.offset_x if index % 2 == 0 else projection.offset_y) + value * projection.scale
+                    for index, value in enumerate(box)
+                )
+            anchors.append(LabelAnchor(
+                asset_id=item.anchor_asset_id, box=box, start=float(motion.start),
+                end=float(motion.params.get("visible_end", motion.end)),
+            ))
+        return anchors
+
     def _cue_events(
         self,
         *,
@@ -235,7 +296,7 @@ class TextRenderer:
         duration: float,
         frame: float = 1.0 / 30.0,
     ) -> list[str]:
-        font_scale = max(0.40, min(1.0, float(font_scale)))
+        font_scale = max(MIN_FONT_SCALE, min(MAX_FONT_SCALE, float(font_scale)))
         params = motion.params
         visible_end = float(params.get("visible_end", motion.end))
         event_global_start = max(motion.start, segment_start)
@@ -425,7 +486,7 @@ class TextRenderer:
         strength = max(0.0, min(1.0, float(entry_strength)))
         entry_x = 14.0 + round(10.0 * strength)
         entry_y = 10.0 + round(5.0 * strength)
-        scale = max(0.40, min(1.0, float(item.font_scale)))
+        scale = max(MIN_FONT_SCALE, min(MAX_FONT_SCALE, float(item.font_scale)))
         available_width = max(1.0, width - margin_x * 2.0 - entry_x)
 
         def layout_at(value: float):
@@ -437,7 +498,7 @@ class TextRenderer:
         for _ in range(3):
             if layout is None or layout.width <= available_width + 0.5:
                 break
-            scale = max(0.40, scale * available_width / max(1.0, layout.width) * 0.985)
+            scale = max(MIN_FONT_SCALE, scale * available_width / max(1.0, layout.width) * 0.985)
             layout = layout_at(scale)
         if layout is None:
             return width * item.x, height * item.y, scale
@@ -498,7 +559,7 @@ class TextRenderer:
         from where the phrase is, so adding a word never makes the line jump.
         """
         alignment = 4  # middle-left: ink lands exactly where the shared measurement puts it
-        scale = max(40, min(100, round(font_scale * 100)))
+        scale = max(round(MIN_FONT_SCALE * 100), min(round(MAX_FONT_SCALE * 100), round(font_scale * 100)))
         size_tag = f"\\fscx{scale}\\fscy{scale}"
         dx, dy, duration = TextRenderer._entry_gesture(
             rtl=rtl, pixel_scale=pixel_scale, entry_strength=entry_strength,

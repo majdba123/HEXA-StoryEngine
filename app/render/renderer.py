@@ -9,11 +9,12 @@ from pathlib import Path
 
 from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
+from app.assets import AssetManager
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
-from app.render.connection import connection_specs, draw_connection_sequence
+from app.render.connection import connection_specs, draw_connection_sequence, label_arrow_specs, visible_rect
 from app.render.expression import compile_expression
 from app.render.write_on import authored_path_directions, write_on_filter, write_on_frame_count
 from app.render.motion import FFmpegMotionAdapter
@@ -194,7 +195,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text(?:-under)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-\d+-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-[a-z]*\d+-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -371,7 +372,10 @@ class FFmpegRenderer:
             is_opening=previous_beat is None,
             ordered_items=ordered_items,
             persistent_ids=persistent_ids,
-            covered=bridge_duration > 0 or visual_carrier_id is not None or bool(handoffs),
+            # A planned whip/exit block is drawn still from the first frame until it leaves
+            # at the opener, so it carries the frames before the first reveal.
+            covered=(bridge_duration > 0 or visual_carrier_id is not None or bool(handoffs)
+                     or bool(overlap_items)),
             incoming_start=incoming_start,
             fps=plan.fps,
         )
@@ -417,6 +421,27 @@ class FFmpegRenderer:
             },
             segment_start=segment_start,
             duration=duration,
+            spatial_scale=plan.projection.scale if plan.projection else 1.0,
+        )
+        # Reference grammar G17: each placed keyword points at the artwork it names.
+        connections += label_arrow_specs(
+            labels=self.text_renderer.label_anchors(plan, beat),
+            visible={
+                item.asset_id: visible_rect((
+                    float(geometry[2]), float(geometry[3]),
+                    float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]),
+                ), assets[item.asset_id].image_path)
+                for item in ordered_items
+                for geometry in (self._geometry(plan, item),)
+            },
+            revealed={
+                item.asset_id: float(motion[(beat.id, item.asset_id)].start)
+                for item in ordered_items if (beat.id, item.asset_id) in motion
+            },
+            family={item.asset_id: AssetManager.family_id(assets[item.asset_id]) for item in ordered_items},
+            segment_start=segment_start,
+            duration=duration,
+            frame=(plan.width, plan.height),
             spatial_scale=plan.projection.scale if plan.projection else 1.0,
         )
         # Reference grammar G5: authored arrow/path artwork writes on along its relation.
@@ -895,7 +920,7 @@ class FFmpegRenderer:
             next_label = f"connmix{connection_index}"
             filters.append(
                 f"[{composite_label}][{label}]overlay=x=0:y=0:"
-                f"enable='between(t,{connection.start:.6f},{duration:.6f})':"
+                f"enable='between(t,{connection.start:.6f},{min(duration, connection.end):.6f})':"
                 f"eof_action=pass:shortest=0[{next_label}]"
             )
             composite_label = next_label

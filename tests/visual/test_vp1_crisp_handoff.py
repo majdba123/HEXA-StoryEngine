@@ -123,3 +123,11 @@ def test_encoded_crisp_handoff_preserves_old_art_and_does_not_reveal_early(tmp_p
     assert _darkness(crisp, NEW_LATER)[60 + 9] == pytest.approx(0, abs=0.01)
     assert _darkness(crisp, OLD_RIGHT)[60 + 10] < 0.01
     assert abs(crisp[60 + 10:] - faded[60 + 10:]).mean() < 0.5
+
+
+@pytest.fixture(autouse=True)
+def _certified_boundary_machinery(monkeypatch):
+    """These tests pin the hero-exit / crisp / cut machinery the scene whip falls back to."""
+    import app.boundary.release as release
+
+    monkeypatch.setattr(release, "SCENE_WHIP", False)
