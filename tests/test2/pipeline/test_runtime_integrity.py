@@ -7,6 +7,7 @@ main checkout's interpreter while the traceback (and code) came from the worktre
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,8 @@ def test_source_root_is_the_imported_app_package_checkout() -> None:
 
 
 def test_launch_from_the_imported_checkout_is_accepted() -> None:
-    require_launch_source({SOURCE_ROOT_ENV: str(source_root()) + "\\."})
+    # HEXA.bat passes "%~dp0." (trailing separator + dot); use this platform's separator.
+    require_launch_source({SOURCE_ROOT_ENV: f"{source_root()}{os.sep}."})
     require_launch_source({})  # no declaring launcher: nothing to compare
 
 
