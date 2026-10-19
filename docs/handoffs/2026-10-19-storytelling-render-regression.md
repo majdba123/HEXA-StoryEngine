@@ -1,5 +1,64 @@
 # HEXA StoryEngine — Storytelling / Real-Render Failure Handoff
 
+## 0. RESOLUTION UPDATE — 2026-10-19 (P0 production recovery)
+
+This section supersedes "root cause UNKNOWN" below. Sections 1–7 are kept as history.
+
+**Diagnostic inspected.** `HEXA-diagnostic-f96ba7e0.zip` (report.json, report.md, workspace-manifest.json) and the
+job's retained work directory `.hexa/work/f96ba7e0…` (real final `render-plan.json` for both targets, stage diagnostics).
+Job `f96ba7e0452e4937918fca085fb59ade`, commit `65f44df`, YouTube encoded, then `MOTION_BELOW_PERCEPTUAL_FLOOR`
+`beat-036` / `SCENE_036:asset-04` / PAYOFF, 0.01188 < 0.01340.
+
+**Root cause (proven).** `app/motion/resolution.py` `PayoffResolutionDirector._pop()` replaced the complete PAYOFF
+program that `MotionPlanner` had already validated with a fixed icon hit (1.00 → 1.07 → 1.07 → 1.00, return in 23 % of
+0.3 s). It checked only a pixel threshold computed from a start scale it then discarded. Violated invariant: *a downstream
+pass that replaces a semantic segment program must satisfy the same shared readability/comfort contract that encoded QA
+applies to that segment.* Evidence from the real package re-planned on this machine (identical counts: Pass1 149 / 40
+scenes, Pass2 167, 40 beats), fingerprinting the asset after every pass:
+- `MotionPlanner.plan`: PAYOFF `reference_result_enter`, scale 1.075 + upward dy −0.01340 → activity 0.01340 ≥ floor
+  (the previous `_enforce_event_readability` patch DID run and was valid).
+- `PayoffResolutionDirector.plan`: program replaced by `reference_icon_hit_payoff`, dy 0, peak 1.07 →
+  0.07 × 0.16977 (item width) = **0.01188**. Its 2-frame return also ran 0.172/s against the 0.119/s PAYOFF ceiling
+  (masked because QA reports the first violation per segment).
+- Every later pass, RenderPlan compile and the Reels projection left it unchanged; YouTube and Reels failed identically.
+- Floor: segment 0.31895 s → comfort budget 0.31895 × 0.382 × 0.11 = 0.01340.
+- The earlier regression passed because it called the Planner directly with an inferred item width (0.1584 × 0.075
+  coincidentally also equals 0.01188); it never ran the downstream chain.
+- Engine-level, not package-specific: the old `_pop()` produced a QA-rejected program in 8 of 12 cases of a
+  size/duration matrix (every icon hit on an asset wider than ~0.12 of the frame broke `MOTION_TOO_FAST`).
+- The failure was detectable before encoding: the metadata-only half of `EncodedMotionVerifier.inspect()` run on the
+  real final plan reproduces it exactly, ~2.5 minutes of YouTube encode earlier.
+
+**Runtime/source check (no defect in the failing run).** The worktree's `.venv` is a directory junction to the main
+checkout's venv; the diagnostic resolves the junction, so it showed the main checkout's `pythonw.exe`. The executed code
+was the worktree at `65f44df` (traceback paths and line numbers match). Latent hazard found: that venv's editable install
+points at the protected `bayer` checkout, so any launch outside the worktree directory (or the `hexa-desktop.exe` console
+script) imports `bayer` code. Guard added (below).
+
+**Fix (production files).**
+- `app/motion/contract.py` (new): the single metadata segment contract (activity, peak speed, authorized comfort
+  profile, accent floor, pixel floor) shared by authoring and QA; no new thresholds.
+- `app/render/verification.py`: metadata phase extracted to `_analyze_plan`; new `preflight(plan)`; `inspect()` uses the
+  same analysis; `require_preflight()` fails closed with per-violation program evidence (`PRE_ENCODE_MOTION_CONTRACT_FAILED`).
+- `app/motion/resolution.py`: the held icon hit is built for its real window (peak = max(1.07, that window's floor),
+  capped at 1.08; ramps keep the comfort ceiling) and every pop/hit replacement is validated with the shared contract
+  before it may replace the Planner program; fallback order hit → reference pop → keep the Planner's validated program,
+  with the reason recorded in `payoff-resolution.json`.
+- `app/pipeline.py`: pre-encode motion QA for every final target plan (YouTube and Reels) after planning/projection and
+  before the bundle is reserved or any encode starts; also on the legacy single-target path. Encoded QA after render is
+  unchanged.
+- `app/diagnostics/failure_policy.py`: `PRE_ENCODE_MOTION_CONTRACT_FAILED` (owner motion, PREVENT).
+- `app/shared/runtime_integrity.py` (new), `app/desktop/main.py`, `HEXA.bat`, `app/diagnostics/report.py`: the
+  launcher declares its checkout; the app refuses to start if it imported another one; diagnostics record the imported
+  source root, the invoked interpreter and the editable-install target.
+
+**Real Black Hat result (same package + MP3 as the failed job, no encode):** baseline code → 1 violation on each target
+(the exact production failure); fixed code → **0 violations on YouTube and Reels**. Exactly one of 167 cues changed per
+target (`SCENE_036:asset-04` PAYOFF: 1.00 → 1.079 → held → 1.00, ramps 0.122 s); story, composition, text and
+boundaries are identical. Corpus and encoded acceptance: see the P0 evidence table in `docs/visual-storytelling-sprints.md`.
+
+---
+
 **Checkpoint:** 2026-10-19, after the user's SECOND post-fix Black Hat export failure.
 **Repository:** `majdba123/HEXA-StoryEngine`.
 **Only authorized working branch:** `feature/storytelling-sprints`.
