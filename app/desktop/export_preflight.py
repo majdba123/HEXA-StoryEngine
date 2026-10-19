@@ -94,5 +94,8 @@ def initialize_windows_export_root(
     except OSError as exc:
         return f"تعذر حفظ إعداد مجلد التصدير:\n{path}\n{exc}"
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass  # the actionable settings-write error takes precedence
     return None
