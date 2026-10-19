@@ -558,6 +558,13 @@ class SecondaryArrivalPlanner:
             return None
         distance = min(0.12 if flow_direction is not None else SLIDE_DISTANCE,
                        SLIDE_MAX_PEAK_SPEED * seconds / SMOOTHSTEP_PEAK)
+        if flow_direction is not None and vertical:
+            # Vertical offsets are converted into normalized canvas Y (dy=distance*aspect).
+            # A width-only velocity cap would undercount Y motion by the aspect ratio,
+            # causing RenderedMotionVerifier to reject otherwise valid real exports.
+            # Budget the actual normalized Y velocity, not just the physical X reach.
+            distance = min(distance,
+                           SLIDE_MAX_PEAK_SPEED * seconds / (SMOOTHSTEP_PEAK * aspect))
         if distance + _EPS < SLIDE_MIN_DISTANCE:
             return None
         dx, dy = (0.0, sign * distance * aspect) if vertical else (sign * distance, 0.0)
