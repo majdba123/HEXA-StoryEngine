@@ -101,3 +101,20 @@ being talked about never pulsed. A per-frame review of the references showed thr
 
 Measured on the corpus (pre-encode QA 0/8): landings 72/64/89/70, fades 25/26/27/23, whips
 8/12/10/13, keyword arrows (Black Hat) 10 of length 104–257 px, spoken pulses 4/1/4/1.
+
+## 5. Element interaction (2026-10-20, user: "the elements must interact with each other")
+
+References A 16.3–16.9 s (the arrow leaves the character, then the cross lands at its tip) and
+A 60 s (gear → vault): when a relation between two elements is narrated, the cause acts, an arrow
+carries the relation, and the effect appears or answers at the arrow's tip.
+
+| Case (Final Package causal, directional relation) | What the viewer sees | Owner |
+| --- | --- | --- |
+| cause revealed before the effect (the usual order) | the cause pulses, a short arrow writes on toward the effect's place in the 8 frames before it appears, the effect lands (high scale) at the tip | `motion/interaction.py` schedule + pulse, `render/connection.relation_arrow_specs` |
+| effect revealed first, or both together | once both have settled: the cause pulses, the arrow writes on, the effect pulses as the head arrives | same |
+| touching pair / no clean route | no arrow; the pulses carry the relation | same |
+
+Arrows run silhouette to silhouette (≤ 22 % of the width), never across a third drawing or a
+keyword, and stay until the scene changes. Black Hat: 6 of 7 relations now draw an arrow
+(v11: 1); cause pulses 6/7 (Black Hat), 4/13, 5/8, 3/6 (White Hat, Gray Hat, Script Kiddie).
+Decoded: beat-005 chip pulses 11.07 s, arrow 11.13–11.30 s, money bag lands at the tip 11.33 s.
