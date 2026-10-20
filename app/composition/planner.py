@@ -5,10 +5,11 @@ from collections import defaultdict
 from app.choreography import ChoreographyPlan
 from app.director import SceneDirection
 from app.layout import ConstraintLayoutSolver
-from app.models import CompositionBeat, LayoutItem, StoryBeat, VisualAsset
+from app.models import CompositionBeat, LayoutItem, StoryBeat, TextPlan, VisualAsset
 from app.shared.errors import StageFailedError
 from app.targets import VisualTargetProfile, active_target, composition_policy
 
+from .focus_staging import FocusStagingPlanner
 from .geometry import AuthoredGeometryMapper
 from .semantic_staging import SemanticStagingPlanner
 from .states import CompositionStateDirector
@@ -40,6 +41,9 @@ class CompositionPlanner:
         self.solver = solver or ConstraintLayoutSolver()
         self.geometry = AuthoredGeometryMapper()
         self.staging = SemanticStagingPlanner(footprints=self.solver.footprints)
+        self.focus = FocusStagingPlanner(footprints=self.solver.footprints)
+        self.focus_evidence: dict[str, str] = {}
+        self.focus_anchor: dict[str, str | None] = {}
 
     def plan(
         self,
@@ -47,6 +51,7 @@ class CompositionPlanner:
         assets: list[VisualAsset] | None = None,
         choreography: ChoreographyPlan | None = None,
         directions: list[SceneDirection] | None = None,
+        text: TextPlan | None = None,
     ) -> list[CompositionBeat]:
         all_assets = list(assets or [])
         by_scene: dict[str, list[VisualAsset]] = defaultdict(list)
@@ -54,11 +59,17 @@ class CompositionPlanner:
             by_scene[asset.scene_id].append(asset)
         direction_by_beat = {row.beat_id: row for row in (directions or [])}
         self.target_evidence: dict[str, str] = {}
-        staged = self._stage_scenes(beats, by_scene, choreography)
+        spoken: dict[str, set[str]] = defaultdict(set)
+        scene_of = {beat.id: beat.scene_id for beat in beats}
+        for cue in (text.cues if text is not None else []):
+            if cue.anchor_asset_id and cue.beat_id in scene_of:
+                spoken[scene_of[cue.beat_id]].add(cue.anchor_asset_id)
+        staged = self._stage_scenes(beats, by_scene, choreography, direction_by_beat, spoken)
 
         output: list[CompositionBeat] = []
         for beat in beats:
             items, staging_evidence = staged[beat.scene_id]
+            anchor_id = self.focus_anchor.get(beat.scene_id)
             direction = direction_by_beat.get(beat.id)
             evidence = list(direction.evidence) if direction else []
             evidence.append("layout:final_package_geometry")
@@ -68,6 +79,7 @@ class CompositionPlanner:
                 items=items,
                 state_evidence=list(dict.fromkeys(evidence)),
                 semantic_focus_asset_id=direction.primary_asset_id if direction else None,
+                visual_anchor_asset_id=anchor_id,
             ))
 
         # State direction may annotate semantic state/focus, but it is forbidden from
@@ -83,8 +95,11 @@ class CompositionPlanner:
         beats: list[StoryBeat],
         by_scene: dict[str, list[VisualAsset]],
         choreography: ChoreographyPlan | None,
+        direction_by_beat: dict[str, SceneDirection] | None = None,
+        spoken: dict[str, set[str]] | None = None,
     ) -> dict[str, tuple[list[LayoutItem], str]]:
-        """Resolve target projection and Sprint 4.3 staging once per scene (all its beats)."""
+        """Resolve target projection, Sprint 4.3 staging and focus staging once per scene
+        (all its beats share the decision)."""
         policy = composition_policy(self.target or active_target())
         directives: dict[str, list] = defaultdict(list)
         for beat in beats:
@@ -98,7 +113,16 @@ class CompositionPlanner:
                 self._scene_layout(scene_assets), scene_assets, directives[scene_id],
             )
             result = self.staging.stage(projection.items, scene_assets, directives[scene_id])
-            staged[scene_id] = (result.items, result.evidence)
+            scene_beats = [beat for beat in beats if beat.scene_id == scene_id]
+            direction = (direction_by_beat or {}).get(scene_beats[0].id) if scene_beats else None
+            directive = directives[scene_id][0] if directives[scene_id] else None
+            focus_id = (direction.primary_asset_id if direction is not None else None) or (
+                directive.primary_asset_id if directive is not None else None)
+            focus = self.focus.stage(result.items, scene_assets, scene_beats, focus_id,
+                                     (spoken or {}).get(scene_id, set()))
+            self.focus_evidence[scene_id] = focus.evidence
+            self.focus_anchor[scene_id] = focus.anchor_id
+            staged[scene_id] = (focus.items, f"{result.evidence};{focus.evidence}")
             self.target_evidence[scene_id] = projection.evidence
         return staged
 

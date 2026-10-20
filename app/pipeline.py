@@ -581,7 +581,7 @@ class StoryEnginePipeline:
         with visual_target(target):
             self._check_cancel(cancelled)
             self._progress(progress, Stage.composition, at(0.54), f"{prefix}Composing authored visuals")
-            composition = self.composition.plan(story, assets, choreography, shared.directions)
+            composition = self.composition.plan(story, assets, choreography, shared.directions, text=shared.text)
             self.handoff_contracts.require_composition_for_motion(
                 story=story, assets=assets, composition=composition
             )

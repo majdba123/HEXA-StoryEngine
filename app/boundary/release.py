@@ -21,6 +21,7 @@ from app.motion.motion_blur import MAX_LENGTH, MIN_LENGTH, MOTION_BLUR_SHUTTER
 from app.motion.visual_flow.direction import focus_handoff_direction
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
+from app.shared.narration import continues_sentence  # noqa: F401  (re-exported for callers)
 from app.text.timing.visibility import KEYWORD_HOLD_SECONDS
 
 # Sprint 4.5: reference-derived scene release. Measured reference boundaries fade the
@@ -64,7 +65,6 @@ BOARD_LEAD_FRAMES = 2          # an old element starts fading this many frames b
 # has fully faded (FADE_FRAMES) before its first frame.
 BOARD_LANDING_GROWTH = 0.15    # a landing starts ~1.28x its size: its footprint grows this share per side
 BOARD_CLEARANCE = 0.015        # minimum gap kept between an old element and a new one
-_SENTENCE_END = frozenset(".!?\u061f\u2026")
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
 _PROTECTED_PHASES = frozenset({"INTERACT", "REACT", "PAYOFF"})
@@ -1013,12 +1013,6 @@ class SceneBoundaryPlanner:
                 end = max(float(cue.spoken_end), ends.get(cue.id, float(cue.spoken_end)))
                 output.setdefault(beat.beat_id, []).append((float(cue.spoken_start), end, box))
         return output
-
-
-def continues_sentence(narration: str | None) -> bool:
-    """True when a beat's narration stops mid-sentence: the next picture is the same idea."""
-    text = (narration or "").strip().rstrip("\"'\u00bb)]}\u201d\u2019 ")
-    return bool(text) and any(char.isalpha() for char in text) and text[-1] not in _SENTENCE_END
 
 
 def _union(boxes: list[Box]) -> Box:

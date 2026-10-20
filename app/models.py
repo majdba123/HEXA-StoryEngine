@@ -327,6 +327,9 @@ class CompositionBeat(BaseModel):
     state_name: str = "AUTHORED"
     semantic_focus_asset_id: str | None = None
     state_evidence: list[str] = Field(default_factory=list)
+    # Focus staging's anchor object for the picture (set even when the scene kept its
+    # authored geometry), the subject an idea climax keeps crisp. None: no clear anchor.
+    visual_anchor_asset_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class MotionSegment(BaseModel):

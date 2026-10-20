@@ -37,6 +37,7 @@ from dataclasses import dataclass, field, replace
 from app.assets import AssetManager
 from app.choreography.interactions import is_connectable_relation
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
+from app.shared.narration import continues_sentence
 
 from .collision import box
 from .contract import accent_readability_floor, comfort_profile_for, segment_contract_violations
@@ -76,6 +77,15 @@ WASH_MIN_HOLD_SECONDS = 0.55
 WASH_MIN_GAP_SECONDS = 5.0
 WASH_MAX_LAG_SECONDS = 4 / 30
 WASH_FOCUS_OVERLAP = 0.02
+# Idea climax (2026-10-21 measurement of both references at 5 fps): the backdrop greys and
+# blurs at the end of an idea while its subject (and the presenter) stay crisp - 3 washes in
+# 79 s and 5 in 73 s, 1.8-2.8 s each, 11-12 % of the running time, 11.6-18.5 s apart. Here:
+# the last picture of a sentence, its staged anchor crisp, once everything else has landed.
+IDEA_CLIMAX_WASH = True
+IDEA_WASH_MIN_HOLD = 1.0
+IDEA_WASH_MAX_SECONDS = 3.0
+IDEA_WASH_MIN_GAP = 9.0
+IDEA_WASH_SETTLE = 9 / 30      # a backdrop element has finished landing this long after it appears
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +295,9 @@ class PayoffResolutionDirector:
                 **cue.params, "focus_wash": spec,
                 "payoff_resolution": {**(cue.params.get("payoff_resolution") or {}), "wash": self.style.name}}})
             self.decisions[position] = replace(decision, wash=self.style.name)
+        if IDEA_CLIMAX_WASH and not self.icon_focus_mode:
+            self._idea_climaxes(story=story, layouts=layouts, composition=composition, output=output,
+                                index=index, assets_by_id=assets_by_id, continuing=continuing, chosen=chosen)
         if emphasize is not None:
             beats = {beat.id: beat for beat in story}
             for position, decision in enumerate(self.decisions):
@@ -313,6 +326,83 @@ class PayoffResolutionDirector:
                     output[index[(decision.beat_id, subject)]] = pulsed
                 self.decisions[position] = replace(decision, pulse=why)
         return output
+
+    def _idea_climaxes(
+        self,
+        *,
+        story: list[StoryBeat],
+        layouts: dict[str, dict[str, LayoutItem]],
+        composition: list[CompositionBeat],
+        output: list[MotionCue],
+        index: dict[tuple[str, str], int],
+        assets_by_id: dict[str, VisualAsset],
+        continuing: set[tuple[str, str]],
+        chosen: list[float],
+    ) -> None:
+        """One idea-climax wash for the strongest idea ends, keeping IDEA_WASH_MIN_GAP from
+        every wash (the event washes above first). Fail-closed like the event wash: the
+        anchor is staged and on screen, something else recedes, nothing reveals or moves in
+        the backdrop once it starts, no backdrop drawing sits above the subject or continues
+        into the next scene, and a readable hold remains before the cut."""
+        anchors = {row.beat_id: row.visual_anchor_asset_id for row in composition}
+
+        def family(asset_id: str) -> str:
+            asset = assets_by_id.get(asset_id)
+            return AssetManager.family_id(asset) if asset is not None else asset_id
+
+        candidates = []
+        for position, beat in enumerate(story):
+            decision = self.decisions[position]
+            anchor = anchors.get(beat.id)
+            if decision.wash != "none" or anchor is None or continues_sentence(beat.narration):
+                continue
+            cues = [cue for cue in output if cue.beat_id == beat.id]
+            layout = layouts.get(beat.id, {})
+            if not any(cue.asset_id == anchor for cue in cues) or anchor not in layout:
+                continue
+            context = beat.semantic_context
+            roles = {entity.unit_id: str(entity.role or "").upper() for entity in (context.entities if context else [])}
+            characters = {row.asset_id for row in beat.asset_activations
+                          if roles.get(row.semantic_unit_id or "") == "CHARACTER"}
+            focus = {cue.asset_id for cue in cues
+                     if family(cue.asset_id) == family(anchor) or family(cue.asset_id) in {family(c) for c in characters}}
+            others = [cue for cue in cues if cue.asset_id not in focus and cue.asset_id in layout]
+            if not others:
+                continue
+            anchor_cue = next(cue for cue in cues if cue.asset_id == anchor)
+            start = max([_arrival_end(anchor_cue), float(anchor_cue.start) + IDEA_WASH_SETTLE]
+                        + [max(_motion_end(cue), float(cue.start) + IDEA_WASH_SETTLE) for cue in others])
+            start = max(start, float(beat.end) - IDEA_WASH_MAX_SECONDS)
+            hold = float(beat.end) - (start + WASH_RAMP_SECONDS)
+            if hold < IDEA_WASH_MIN_HOLD - _EPS:
+                continue
+            if any(_overlap(layout[a], layout[o.asset_id]) > WASH_FOCUS_OVERLAP and layout[a].z <= layout[o.asset_id].z
+                   for a in focus if a in layout for o in others):
+                continue
+            if any((beat.id, cue.asset_id) in continuing for cue in others):
+                continue
+            receding = len({family(cue.asset_id) for cue in others})
+            spec = {
+                "start": round(start, 6), "end": round(float(beat.end), 6),
+                "ramp": round(WASH_RAMP_SECONDS, 6), "blur_px": self.style.blur_px,
+                "tint": self.style.tint, "tint_alpha": self.style.tint_alpha,
+                "focus_asset_ids": sorted(focus), "case": "IDEA_CLIMAX", "priority": "P1",
+                "event_id": None, "style": self.style.name,
+            }
+            candidates.append(((min(hold, 2.5), min(receding, 4)), start, position, anchor, spec))
+        for score, start, position, anchor, spec in sorted(candidates, key=lambda row: (-row[0][0], -row[0][1], row[2])):
+            if any(abs(start - other) < IDEA_WASH_MIN_GAP - _EPS for other in chosen):
+                continue
+            chosen.append(start)
+            beat_id = story[position].id
+            key = index[(beat_id, anchor)]
+            cue = output[key]
+            output[key] = cue.model_copy(update={"params": {
+                **cue.params, "focus_wash": spec,
+                "payoff_resolution": {**(cue.params.get("payoff_resolution") or {}), "wash": "idea_climax"}}})
+            decision = self.decisions[position]
+            self.decisions[position] = replace(decision, wash="idea_climax",
+                                               reasons=decision.reasons + ("wash:idea_climax",))
 
     @staticmethod
     def _continuing(story: list[StoryBeat], motion: list[MotionCue]) -> set[tuple[str, str]]:

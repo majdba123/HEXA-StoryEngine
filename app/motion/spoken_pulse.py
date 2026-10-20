@@ -144,6 +144,11 @@ def pulse_at(cue: MotionCue, *, at: float, beat: StoryBeat, item, beat_cues: lis
         return None, "already_pulsed"
     if at + PULSE_SECONDS > float(beat.end) - 2 / 30:
         return None, "pulse_outside_its_beat"
+    for row in beat_cues:
+        wash = row.params.get("focus_wash") if isinstance(row.params, dict) else None
+        if (isinstance(wash, dict) and cue.asset_id not in (wash.get("focus_asset_ids") or [])
+                and at + PULSE_SECONDS > float(wash.get("start", 0.0))):
+            return None, "receded_behind_wash"  # a washed backdrop is still
     # A still semantic segment that holds this moment carries the pulse itself.
     host = next((position for position, row in enumerate(cue.segments)
                  if row.phase != "ENTRY" and _still(row)
