@@ -6,14 +6,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 DESKTOP = ROOT / "app" / "desktop" / "main.py"
+# The panel runs each generation in a job process; the pipeline call lives there.
+JOB_PROCESS = ROOT / "app" / "desktop" / "job_process.py"
 
 
 def _source() -> str:
     return DESKTOP.read_text(encoding="utf-8")
 
 
+def _job_source() -> str:
+    return JOB_PROCESS.read_text(encoding="utf-8")
+
+
 def test_desktop_source_remains_valid_python() -> None:
     ast.parse(_source())
+    ast.parse(_job_source())
 
 
 def test_desktop_uses_production_export_root_not_legacy_save_picker() -> None:
@@ -37,10 +44,13 @@ def test_desktop_exposes_both_dual_format_outputs() -> None:
     assert 'QPushButton("توليد YouTube + Reels")' in source
     assert 'QPushButton("فتح YouTube")' in source
     assert 'QPushButton("فتح Reels")' in source
-    assert "pipeline.generate_bundle(" in source
-    assert "str(bundle.youtube.path)" in source
-    assert "str(bundle.reels.path)" in source
-    assert "str(bundle.directory)" in source
+    assert "self.finished.emit(outcome.directory, outcome.youtube, outcome.reels)" in source
+    job = _job_source()
+    assert "pipeline.generate_bundle(" in job
+    assert '"youtube": str(bundle.youtube.path)' in job
+    assert '"reels": str(bundle.reels.path)' in job
+    assert '"directory": str(bundle.directory)' in job
+    assert "from app.pipeline import" not in source  # the panel never loads the engine
 
 
 def test_desktop_result_folder_is_the_versioned_bundle() -> None:

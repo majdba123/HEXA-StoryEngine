@@ -31,3 +31,9 @@ class StageFailedError(HexaError):
 
 class GenerationCancelledError(HexaError):
     code = "GENERATION_CANCELLED"
+
+
+class GenerationProcessCrashedError(HexaError):
+    """The generation process ended without a Python error (a native crash)."""
+
+    code = "GENERATION_PROCESS_CRASHED"

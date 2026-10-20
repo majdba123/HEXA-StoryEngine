@@ -81,6 +81,10 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "GENERATION_CANCELLED", "pipeline", FailureDisposition.FAIL_FAST,
         "Explicit cancellation is terminal control flow and must not be intercepted",
     ),
+    "GENERATION_PROCESS_CRASHED": _policy(
+        "GENERATION_PROCESS_CRASHED", "pipeline", FailureDisposition.FAIL_FAST,
+        "The generation process died without a Python error, usually a native library out of memory",
+    ),
     "AUDIO_INPUT_MISSING": _policy(
         "AUDIO_INPUT_MISSING", "input", FailureDisposition.FAIL_FAST,
         "Narration media is required before production planning starts",

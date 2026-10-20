@@ -69,17 +69,20 @@ class BuildReportSession:
         self._append_log(f"DONE: {self.output_path}")
 
     def fail(self, exc: BaseException) -> None:
-        self.status = "failed"
-        self.finished_at = datetime.now(timezone.utc)
+        self.record_failure(self.describe_failure(exc))
+
+    @classmethod
+    def describe_failure(cls, exc: BaseException) -> dict[str, Any]:
+        """The error record for ``exc``: plain data, so a job process can send it back."""
         details = exc.details if isinstance(exc, HexaError) else {}
         effective_code = exc.effective_code if isinstance(exc, HexaError) else None
         policy = failure_policy(effective_code) if effective_code else None
-        self.error = {
+        return {
             "type": type(exc).__name__,
             "code": effective_code,
             "category": (exc.code if isinstance(exc, HexaError) else None),
             "message": str(exc),
-            "details": self._sanitize(details),
+            "details": cls._sanitize(details),
             "policy": (
                 {
                     "owner_stage": policy.owner_stage,
@@ -93,7 +96,12 @@ class BuildReportSession:
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             ),
         }
-        self._append_log(f"FAILED: {type(exc).__name__}: {exc}")
+
+    def record_failure(self, error: dict[str, Any]) -> None:
+        self.status = "failed"
+        self.finished_at = datetime.now(timezone.utc)
+        self.error = error
+        self._append_log(f"FAILED: {error['type']}: {error['message']}")
 
     def cancel(self) -> None:
         self.status = "cancelled"
@@ -283,7 +291,8 @@ class BuildReportSession:
             for key, value in identity.items()
         }
 
-    def _display_path(self, path: Path) -> str:
+    @staticmethod
+    def _display_path(path: Path) -> str:
         value = str(path.expanduser().resolve())
         home = str(Path.home().resolve())
         if value == home:
@@ -292,15 +301,16 @@ class BuildReportSession:
             return "~" + value[len(home):]
         return value
 
-    def _sanitize(self, value: Any) -> Any:
+    @classmethod
+    def _sanitize(cls, value: Any) -> Any:
         if isinstance(value, dict):
-            return {str(key): self._sanitize(item) for key, item in value.items()}
+            return {str(key): cls._sanitize(item) for key, item in value.items()}
         if isinstance(value, list):
-            return [self._sanitize(item) for item in value]
+            return [cls._sanitize(item) for item in value]
         if isinstance(value, tuple):
-            return [self._sanitize(item) for item in value]
+            return [cls._sanitize(item) for item in value]
         if isinstance(value, Path):
-            return self._display_path(value)
+            return cls._display_path(value)
         if isinstance(value, str):
             home = str(Path.home().resolve())
             return value.replace(home, "~")

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import sys
-import threading
 import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -26,19 +25,30 @@ from PySide6.QtWidgets import (
 from app import __version__
 from app.config import Settings
 from app.desktop.export_preflight import export_root_problem, initialize_windows_export_root
+from app.desktop.job_process import (
+    GenerationJob,
+    GenerationProcess,
+    Runner,
+    diagnostic_zip_path,
+    out_of_memory_message,
+    run_pipeline,
+)
 from app.diagnostics import BuildReportSession
 from app.models import Stage
-from app.pipeline import StoryEnginePipeline
-from app.shared.errors import GenerationCancelledError
 from app.shared.runtime_integrity import RuntimeSourceMismatchError, require_launch_source
 
 
 class GenerationWorker(QObject):
+    """Drives one job process from a QThread; the job never runs inside the panel."""
+
     progress = Signal(str, int, str)
     # bundle directory, YouTube output, Reels output
     finished = Signal(str, str, str)
     failed = Signal(str)
+    # bilingual out-of-memory explanation, diagnostic zip written for it ("" if none)
+    crashed = Signal(str, str)
     cancelled = Signal()
+    note = Signal(str)
     done = Signal()
 
     def __init__(
@@ -48,36 +58,36 @@ class GenerationWorker(QObject):
         package_path: Path,
         audio_path: Path,
         report: BuildReportSession,
+        runner: Runner = run_pipeline,
     ) -> None:
         super().__init__()
-        self.settings = settings
-        self.package_path = package_path
-        self.audio_path = audio_path
         self.report = report
-        self.cancel_event = threading.Event()
+        self.process = GenerationProcess(
+            GenerationJob(
+                settings=settings,
+                package_path=package_path,
+                audio_path=audio_path,
+                job_id=report.job_id,
+            ),
+            runner=runner,
+        )
 
     @Slot()
     def run(self) -> None:
         try:
-            pipeline = StoryEnginePipeline(self.settings)
-            bundle = pipeline.generate_bundle(
-                package_path=self.package_path,
-                audio_path=self.audio_path,
-                job_id=self.report.job_id,
-                progress=self._on_progress,
-                cancelled=self.cancel_event.is_set,
-            )
-            for output in bundle.outputs.values():
-                self.report.on_progress(Stage.final, 1.0, f"{output.target_id}: {output.path}")
-            self.report.complete(bundle.youtube.path)
-            self.finished.emit(
-                str(bundle.directory),
-                str(bundle.youtube.path),
-                str(bundle.reels.path),
-            )
-        except GenerationCancelledError:
-            self.report.cancel()
-            self.cancelled.emit()
+            outcome = self.process.run(self._on_progress)
+            self.note.emit(outcome.summary())
+            outcome.record(self.report)
+            if outcome.status == "completed":
+                self.finished.emit(outcome.directory, outcome.youtube, outcome.reels)
+            elif outcome.status == "cancelled":
+                self.cancelled.emit()
+            elif outcome.status == "failed":
+                self.failed.emit(outcome.message)
+            else:
+                self.note.emit(f"ERROR: {outcome.message}")
+                saved = self._save_crash_report()
+                self.crashed.emit(out_of_memory_message(saved), str(saved or ""))
         except Exception as exc:  # noqa: BLE001 - surfaced to UI and diagnostic report
             self.report.fail(exc)
             self.failed.emit(str(exc))
@@ -85,7 +95,16 @@ class GenerationWorker(QObject):
             self.done.emit()
 
     def request_cancel(self) -> None:
-        self.cancel_event.set()
+        self.process.request_cancel()
+
+    def stop(self) -> None:
+        self.process.stop()
+
+    def _save_crash_report(self) -> Path | None:
+        try:
+            return self.report.export_zip(diagnostic_zip_path(self.report))
+        except Exception:  # noqa: BLE001 - the export button still offers the report
+            return None
 
     def _on_progress(self, stage: Stage, value: float, message: str) -> None:
         self.report.on_progress(stage, value, message)
@@ -283,7 +302,9 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._on_progress)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
+        worker.crashed.connect(self._on_crashed)
         worker.cancelled.connect(self._on_cancelled)
+        worker.note.connect(self.log_view.append)
         worker.done.connect(thread.quit)
         worker.done.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -341,6 +362,14 @@ class MainWindow(QMainWindow):
             "حدثت مشكلة أثناء التوليد.\nاستخرج تقرير التشخيص وأرسله لفحص السبب.",
         )
 
+    @Slot(str, str)
+    def _on_crashed(self, message: str, report_path: str) -> None:
+        self.status_label.setText("نفدت ذاكرة الجهاز — أغلق البرامج الثقيلة ثم أعد التوليد")
+        if report_path:
+            self.log_view.append(f"REPORT: {report_path}")
+        self.report_button.setEnabled(True)
+        QMessageBox.critical(self, "HEXA", message)
+
     @Slot()
     def _on_cancelled(self) -> None:
         self.status_label.setText("تم إلغاء العملية")
@@ -360,6 +389,24 @@ class MainWindow(QMainWindow):
             self._worker.request_cancel()
             self.cancel_button.setEnabled(False)
             self.status_label.setText("تم طلب الإلغاء — سيتم الإيقاف عند أول نقطة آمنة")
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        if self._worker is None or self._thread is None:
+            event.accept()
+            return
+        answer = QMessageBox.question(
+            self,
+            "HEXA",
+            "التوليد ما زال يعمل. هل تريد إيقافه وإغلاق اللوحة؟",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            event.ignore()
+            return
+        # Never leave an orphaned job process holding gigabytes of memory.
+        self._worker.stop()
+        self._thread.quit()
+        self._thread.wait()
+        event.accept()
 
     @Slot()
     def _export_report(self) -> None:
