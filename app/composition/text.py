@@ -69,6 +69,7 @@ class TextCompositionPlanner:
                     })
                     continue
                 visible_end = self.visibility.visible_end(cue, beat, cues)
+                reading_end = self.visibility.reading_end(cue, beat, cues)
                 display_start = self.visibility.display_start(cue, beat)
                 if (display_start > float(cue.spoken_start) + 1e-6
                         and visible_end - display_start + 1e-9 < self.visibility.readable_floor(cue)):
@@ -92,32 +93,48 @@ class TextCompositionPlanner:
                                 else "read_target"),
                     })
                     continue
-                concurrent = [
-                    row
-                    for row in placed
-                    if self.visibility.overlaps(
-                        cue.spoken_start,
-                        visible_end,
-                        row.start,
-                        row.end,
+                # Reference G14: the word is held as part of the idea - unless holding it
+                # would shrink it or leave it nowhere to sit; then the reading-time window
+                # (the earlier default) is kept for this word and recorded on its item.
+                windows = [visible_end]
+                if reading_end < visible_end - 1e-6 and not (
+                        display_start > float(cue.spoken_start) + 1e-6
+                        and reading_end - display_start + 1e-9 < self.visibility.readable_floor(cue)):
+                    windows.append(reading_end)
+                attempts = []
+                for window_end in windows:
+                    window_concurrent = [
+                        row
+                        for row in placed
+                        if self.visibility.overlaps(
+                            cue.spoken_start,
+                            window_end,
+                            row.start,
+                            row.end,
+                        )
+                    ]
+                    window_visual = self._visual_for_text_window(
+                        beat=beat,
+                        visual=visual,
+                        visible_end=window_end,
+                        motion_by_key=motion_by_key,
                     )
-                ]
-                cue_visual = self._visual_for_text_window(
-                    beat=beat,
-                    visual=visual,
-                    visible_end=visible_end,
-                    motion_by_key=motion_by_key,
-                )
-                result = self.director.place(
-                    beat=beat,
-                    visual=cue_visual,
-                    cue=cue,
-                    concurrent_text=concurrent,
-                    preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
-                    assets_by_id=assets_by_id,
-                    visible_end=visible_end,
-                    visual_visibility_resolved=bool(motion_by_key),
-                )
+                    attempts.append((window_end, window_concurrent, window_visual, self.director.place(
+                        beat=beat,
+                        visual=window_visual,
+                        cue=cue,
+                        concurrent_text=window_concurrent,
+                        preferred_zone=preferred_zone_by_scene.get(beat.scene_id),
+                        assets_by_id=assets_by_id,
+                        visible_end=window_end,
+                        visual_visibility_resolved=bool(motion_by_key),
+                    )))
+                held, *fallback = attempts
+                chosen = held
+                if fallback and fallback[0][3] is not None and (
+                        held[3] is None or held[3].item.font_scale < fallback[0][3].item.font_scale - 1e-6):
+                    chosen = fallback[0]
+                visible_end, concurrent, cue_visual, result = chosen
                 if result is None:
                     continue
                 certified = result
@@ -132,7 +149,8 @@ class TextCompositionPlanner:
                     motion_by_key=motion_by_key,
                     assets_by_id=assets_by_id,
                 )
-                items.append(result.item)
+                items.append(result.item if chosen is held
+                             else result.item.model_copy(update={"visible_end": round(visible_end, 6)}))
                 placed.append(
                     PlacedTextRegion(
                         cue_id=cue.id,

@@ -25,11 +25,22 @@ class TextVisibilityPolicy:
 
     @classmethod
     def visible_end(cls, cue: TextCue, beat: StoryBeat, siblings: list[TextCue]) -> float:
+        """The keyword's default lifetime: held until the next keyword or the scene end."""
+        return cls._end(cue, beat, siblings, KEYWORD_HOLD_SECONDS)
+
+    @classmethod
+    def reading_end(cls, cue: TextCue, beat: StoryBeat, siblings: list[TextCue]) -> float:
+        """The reading-time lifetime (no hold): Composition falls back to it when holding the
+        word would shrink or drop it; Motion's competing-entry rule reads against it."""
+        return cls._end(cue, beat, siblings, 0.0)
+
+    @classmethod
+    def _end(cls, cue: TextCue, beat: StoryBeat, siblings: list[TextCue], hold: float) -> float:
         min_read = min(1.90, max(0.86, 0.52 + len(cue.text) * 0.060))
         # A label held back until its subject is recognizable is read from that instant,
         # not from the spoken word it could not yet show (same caps: next cue, the cut).
         start = cls.display_start(cue, beat)
-        target = max(cue.spoken_end + 0.24, start + min_read, start + KEYWORD_HOLD_SECONDS)
+        target = max(cue.spoken_end + 0.24, start + min_read, start + hold)
         later = [
             row.spoken_start
             for row in siblings

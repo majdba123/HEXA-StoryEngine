@@ -75,7 +75,8 @@ def test_a_keyword_that_appears_over_a_held_element_makes_it_fade_first() -> Non
     scene = _board(Scene(lead=3, opener=NEW_ON_OLD))
     scene.add_text(20, 50, 0.8, 0.3)                                    # the word lands on old_b
     row = scene.plan()
-    assert scene.frame(row.overlap_exits["old_b"]["start"]) == 20 - BOARD_LEAD_FRAMES
+    # it has fully faded before the word's first frame: they never share the spot
+    assert scene.frame(row.overlap_exits["old_b"]["end"]) == 20
 
 
 def test_no_more_than_the_board_capacity_share_the_screen() -> None:
@@ -139,3 +140,93 @@ def test_the_hold_switch_restores_the_reading_time_window(monkeypatch) -> None:
     monkeypatch.setattr("app.text.timing.visibility.KEYWORD_HOLD_SECONDS", 0.0)
     word = _word("a", 0.5, 0.9)
     assert TextVisibilityPolicy.visible_end(word, _beat(), [word]) < 0.5 + 1.95
+
+
+# -- the keyword is part of the idea: it crosses the board boundary --------------------
+def _outgoing_word(scene: Scene, x: float = 0.5, y: float = 0.75, spoken: float = 1.2) -> None:
+    from app.models import TextCompositionBeat, TextLayoutItem, TextMotionCue, TextPlan
+
+    cue = TextCue(id="w1", beat_id="b1", text="label", semantic_type="emphasis", source_char_start=0,
+                  source_char_end=5, spoken_start=spoken, spoken_end=spoken + 0.3, emphasis_time=spoken,
+                  style_id="emphasis")
+    scene.text = TextPlan(cues=[*scene.text.cues, cue])
+    scene.text_composition = [*scene.text_composition, TextCompositionBeat(
+        beat_id="b1", items=[TextLayoutItem(text_cue_id="w1", x=x, y=y, max_width=0.2)])]
+    scene.text_motion = [*scene.text_motion, TextMotionCue(
+        beat_id="b1", text_cue_id="w1", kind="text", start=spoken, end=spoken + 0.3,
+        params={"visible_end": scene.boundary})]
+
+
+def test_a_keyword_on_screen_at_the_cut_stays_into_the_next_picture() -> None:
+    scene = _board(Scene(lead=3, opener=NEW_ON_OLD))
+    _outgoing_word(scene)
+    row = scene.plan()
+    assert row.audit["idea_board"]["carried_words"] == 1
+    # nothing replaces it: it stays until the new picture is complete
+    assert scene.frame(row.text_carry["w1"]) == scene.frame(scene.story[1].end) - FADE_FRAMES - 1
+
+
+def test_the_next_keyword_replaces_the_carried_one() -> None:
+    scene = _board(Scene(lead=3, opener=NEW_ON_OLD))
+    scene.add_text(20, 50, 0.2, 0.85)                                   # the next word, elsewhere
+    _outgoing_word(scene)                                               # (add_text replaces the plan)
+    row = scene.plan()
+    assert scene.frame(row.text_carry["w1"]) == 20 - FADE_FRAMES     # gone before the next word
+
+
+def test_an_arrival_on_the_carried_word_ends_it_first() -> None:
+    scene = _board(Scene(lead=3, opener=NEW_ON_OLD))
+    _outgoing_word(scene, x=0.8, y=0.8)                                 # where new_b lands at frame 30
+    row = scene.plan()
+    assert scene.frame(row.text_carry["w1"]) == 30 - BOARD_LEAD_FRAMES
+
+
+def test_no_carry_after_a_finished_sentence_or_for_a_word_already_gone() -> None:
+    finished = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.")
+    _outgoing_word(finished)
+    assert finished.plan().text_carry == {}
+    gone = _board(Scene(lead=3, opener=NEW_ON_OLD))
+    _outgoing_word(gone)
+    gone.text_motion[-1] = gone.text_motion[-1].model_copy(update={"params": {"visible_end": 1.6}})
+    assert gone.plan().text_carry == {}
+
+
+# -- holding a word never shrinks or drops it ---------------------------------------------
+def _composed(late_reveal: float | None):
+    from pathlib import Path
+
+    from app.composition import TextCompositionPlanner
+    from app.models import CompositionBeat, LayoutItem, MotionCue, VisualAsset
+    from app.motion import TextMotionPlanner
+
+    beat = _beat(end=6.0)
+    word = _word("a", 0.5, 0.9, text="السيطرة")
+    items = [LayoutItem(asset_id="hero", x=0.2, y=0.55, width=0.2, height=0.5, z=10)]
+    motion = [MotionCue(beat_id="b1", asset_id="hero", kind="program_v3", start=0.0, end=0.3, params={})]
+    assets = [VisualAsset(id="hero", scene_id="s1", role="visual", image_path=Path("/missing/hero.png"),
+                          extraction_method="test")]
+    if late_reveal is not None:  # a later element covers the whole frame from late_reveal on
+        items.append(LayoutItem(asset_id="late", x=0.5, y=0.5, width=1.0, height=1.0, z=11))
+        motion.append(MotionCue(beat_id="b1", asset_id="late", kind="program_v3", start=late_reveal,
+                                end=late_reveal + 0.3, params={}))
+        assets.append(VisualAsset(id="late", scene_id="s1", role="visual", image_path=Path("/missing/late.png"),
+                                  extraction_method="test"))
+    layout = TextCompositionPlanner().plan([beat], [CompositionBeat(beat_id="b1", items=items)], [word],
+                                           assets=assets, visual_motion=motion)
+    text_motion = TextMotionPlanner().plan([beat], [word], layout)
+    return beat, word, layout, text_motion
+
+
+def test_with_room_the_word_is_held_and_motion_follows_the_policy() -> None:
+    beat, word, layout, text_motion = _composed(late_reveal=None)
+    assert layout[0].items[0].visible_end is None
+    assert text_motion[0].params["visible_end"] == pytest.approx(
+        TextVisibilityPolicy.visible_end(word, beat, [word]))
+
+
+def test_a_word_whose_spot_is_taken_later_keeps_its_reading_window_instead_of_vanishing() -> None:
+    beat, word, layout, text_motion = _composed(late_reveal=2.0)
+    item = layout[0].items[0]                                           # placed, not dropped
+    assert item.visible_end == pytest.approx(TextVisibilityPolicy.reading_end(word, beat, [word]), abs=1e-6)
+    assert item.visible_end < 2.0                                       # gone before the spot is taken
+    assert text_motion[0].params["visible_end"] == pytest.approx(item.visible_end)

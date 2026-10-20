@@ -59,7 +59,7 @@ class EntryMotionGrammar:
             for beat in story or []:
                 siblings = [row for row in text.cues if row.beat_id == beat.id]
                 text_windows[beat.id] = [
-                    (float(row.spoken_start), TextVisibilityPolicy.visible_end(row, beat, siblings))
+                    (float(row.spoken_start), TextVisibilityPolicy.reading_end(row, beat, siblings))
                     for row in siblings
                 ]
         by_beat: dict[str, list[int]] = {}

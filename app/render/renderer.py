@@ -202,7 +202,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text(?:-under)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-[a-z]*\d+-\d+\.cmd|-defocus-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under|-carried)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-[a-z]*\d+-\d+\.cmd|-defocus-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -965,6 +965,23 @@ class FFmpegRenderer:
             text_label = "textmix"
             filters.append(self.text_renderer.ass_filter(ass_path, composite_label, text_label))
             composite_label = text_label
+        # Idea boards: the previous picture's keyword stays (no new entrance) until Boundary's
+        # planned end, then takes its own planned exit fade.
+        carry = self._planned_text_carry(plan, beat, previous_beat)
+        if carry and previous_beat is not None:
+            carried_plan = plan.model_copy(update={"text_motion": [
+                row.model_copy(update={"params": {**row.params, "visible_end": carry[row.text_cue_id]}})
+                if row.beat_id == previous_beat.id and row.text_cue_id in carry else row
+                for row in plan.text_motion
+            ]})
+            carried_path = self.text_renderer.write_beat_ass(
+                carried_plan, previous_beat, segment_start=segment_start, duration=duration,
+                output=target.parent / f"{target.stem}-text-carried.ass",
+                include=lambda cue: cue.id in carry,
+            )
+            if carried_path is not None:
+                filters.append(self.text_renderer.ass_filter(carried_path, composite_label, "carriedtext"))
+                composite_label = "carriedtext"
 
         filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
@@ -1327,6 +1344,15 @@ class FFmpegRenderer:
         row = next((r for r in plan.scene_boundaries
                     if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
         return dict(row.overlap_exits) if row is not None else {}
+
+    @staticmethod
+    def _planned_text_carry(plan: RenderPlan, beat: StoryBeat, previous_beat: StoryBeat | None) -> dict[str, float]:
+        """Boundary's idea-board keyword carry into this segment (empty otherwise)."""
+        if previous_beat is None:
+            return {}
+        row = next((r for r in plan.scene_boundaries
+                    if r.beat_id == beat.id and r.from_beat_id == previous_beat.id), None)
+        return dict(row.text_carry) if row is not None else {}
 
     @staticmethod
     def _planned_exit_blur(plan: RenderPlan, beat: StoryBeat, previous_beat: StoryBeat | None) -> dict:

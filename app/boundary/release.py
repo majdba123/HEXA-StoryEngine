@@ -21,6 +21,7 @@ from app.motion.motion_blur import MAX_LENGTH, MIN_LENGTH, MOTION_BLUR_SHUTTER
 from app.motion.visual_flow.direction import focus_handoff_direction
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
+from app.text.timing.visibility import KEYWORD_HOLD_SECONDS
 
 # Sprint 4.5: reference-derived scene release. Measured reference boundaries fade the
 # outgoing scene over 5-7 frames (median 6); where old and new share the screen they do so
@@ -59,6 +60,8 @@ SCENE_WHIP = True
 IDEA_BOARD = True
 BOARD_MAX_UNITS = 5            # carried + arrived element units on screen together
 BOARD_LEAD_FRAMES = 2          # an old element starts fading this many frames before the new lands
+# A word never shares its spot with fading artwork or another fading word: what it replaces
+# has fully faded (FADE_FRAMES) before its first frame.
 BOARD_LANDING_GROWTH = 0.15    # a landing starts ~1.28x its size: its footprint grows this share per side
 BOARD_CLEARANCE = 0.015        # minimum gap kept between an old element and a new one
 _SENTENCE_END = frozenset(".!?\u061f\u2026")
@@ -106,7 +109,8 @@ class SceneBoundaryPlanner:
         layouts = {layout.beat_id: layout for layout in composition}
         cues = {(cue.beat_id, cue.asset_id): cue for cue in motion}
         assets_by_id = {asset.id: asset for asset in assets}
-        text_boxes = self._text_boxes(text, text_composition, text_motion)
+        text_rows = self._text_rows(text, text_composition, text_motion)
+        text_boxes = {beat_id: [(t0, t1, box) for _cue, t0, t1, box in rows] for beat_id, rows in text_rows.items()}
         output: list[SceneBoundaryRelease] = []
         for segment in beat_segments(story, duration=duration, fps=fps):
             if segment.previous_beat is None:
@@ -118,6 +122,7 @@ class SceneBoundaryPlanner:
             whip = self._scene_whip(
                 row, segment, layouts=layouts, cues=cues, fps=fps, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []),
+                outgoing_text=text_rows.get(segment.previous_beat.id, []),
             ) if SCENE_WHIP else None
             output.append(whip if whip is not None else self._hero_overlap_exit(
                 row, segment, layouts=layouts, cues=cues, assets=assets_by_id,
@@ -135,6 +140,7 @@ class SceneBoundaryPlanner:
         fps: int,
         assets: dict[str, VisualAsset] | None = None,
         text_boxes: list[tuple[float, float, Box]] | None = None,
+        outgoing_text: list[tuple[str, float, float, Box]] | None = None,
     ) -> SceneBoundaryRelease | None:
         """The whole outgoing scene whips out as one block when the new scene opens (G16).
 
@@ -177,12 +183,14 @@ class SceneBoundaryPlanner:
         leaving = {item.asset_id for item in previous_layout.items}
         if IDEA_BOARD and continues_sentence(previous.narration):
             board = self._idea_board_exits(segment, previous_layout, incoming, first, opener,
-                                           assets=assets or {}, text_boxes=text_boxes or [], fps=fps)
+                                           assets=assets or {}, text_boxes=text_boxes or [],
+                                           outgoing_text=outgoing_text or [], fps=fps)
             if board is not None:
-                specs, audit = board
+                specs, carry, audit = board
                 return row.model_copy(update={
                     "exit_starts": {key: value for key, value in row.exit_starts.items() if key not in leaving},
                     "overlap_exits": specs,
+                    "text_carry": carry,
                     "exit_motion_blur": {},
                     "audit": {**row.audit, "hero_exit": "idea_board", "idea_board": audit},
                 })
@@ -219,8 +227,9 @@ class SceneBoundaryPlanner:
         *,
         assets: dict[str, VisualAsset],
         text_boxes: list[tuple[float, float, Box]],
+        outgoing_text: list[tuple[str, float, float, Box]] | None = None,
         fps: int,
-    ) -> tuple[dict[str, dict[str, float]], dict] | None:
+    ) -> tuple[dict[str, dict[str, float]], dict[str, float], dict] | None:
         """Per-unit exits that replace the old picture in place inside one idea.
 
         Every outgoing unit (a Pass2 family leaves as one) is held still in the incoming
@@ -228,8 +237,12 @@ class SceneBoundaryPlanner:
         starts larger, so it is grown) touches it, and starts fading BOARD_LEAD_FRAMES
         before that frame. At most BOARD_MAX_UNITS units share the screen: beyond that the
         smallest held unit gives way to the arrival. Units nothing touches stay until the
-        incoming picture is complete and fade before its segment ends. None when nothing
-        would outlive the opener (the plain fade then applies).
+        incoming picture is complete and fade before its segment ends.
+
+        A keyword still on screen at the cut stays too (reference G14: the word is part of
+        the idea) until the first incoming keyword replaces it or an arrival lands on it,
+        never beyond KEYWORD_HOLD_SECONDS after it was spoken. None when nothing would
+        outlive the opener (the plain fade then applies).
         """
         last = segment.frame_count - FADE_FRAMES - 1
         if last <= opener:
@@ -259,7 +272,7 @@ class SceneBoundaryPlanner:
         exit_frame: dict[str, int] = {}
         arrived = 0
         for frame, is_art, box in sorted(events, key=lambda row: (row[0], row[1])):
-            leave_at = max(0, min(last, frame - BOARD_LEAD_FRAMES))
+            leave_at = max(0, min(last, frame - (BOARD_LEAD_FRAMES if is_art else FADE_FRAMES)))
             for key in [key for key in alive if self._intersects(unit_box[key], box)]:
                 exit_frame[key] = leave_at
                 alive.pop(key)
@@ -270,8 +283,22 @@ class SceneBoundaryPlanner:
                 alive.pop(key)
         for key in alive:
             exit_frame[key] = last
+        carry: dict[str, float] = {}
+        cut = start_time
+        for cue_id, spoken, visible_end, box in outgoing_text or []:
+            if visible_end < cut - 1.5 / fps:
+                continue  # already gone before the cut
+            word = _grow(box, 0.0, BOARD_CLEARANCE)
+            stop = min(spoken + KEYWORD_HOLD_SECONDS, (segment.start_frame + last) / fps)
+            for frame, is_art, other in sorted(events, key=lambda row: (row[0], row[1])):
+                if not is_art or self._intersects(word, other):
+                    lead = BOARD_LEAD_FRAMES if is_art else FADE_FRAMES
+                    stop = min(stop, (segment.start_frame + max(0, frame - lead)) / fps)
+                    break
+            if stop >= cut + 6 / fps:
+                carry[cue_id] = round(stop, 6)
         held = [frame - opener for frame in exit_frame.values() if frame > opener]
-        if not held:
+        if not held and not carry:
             return None
         specs: dict[str, dict[str, float]] = {}
         for key, members in units.items():
@@ -280,11 +307,12 @@ class SceneBoundaryPlanner:
                     "direction": 0.0, "axis": 0.0, "fade": 1.0}
             for member in members:
                 specs[member.asset_id] = dict(spec)
-        audit = {"units": len(units), "held_units": len(held), "held_frames_max": max(held),
+        audit = {"units": len(units), "held_units": len(held), "held_frames_max": max(held, default=0),
                  "left_at_opener": sum(1 for frame in exit_frame.values() if frame <= opener),
                  "replaced_in_place": sum(1 for frame in exit_frame.values() if opener < frame < last),
-                 "held_to_picture_end": sum(1 for frame in exit_frame.values() if frame == last)}
-        return specs, audit
+                 "held_to_picture_end": sum(1 for frame in exit_frame.values() if frame == last),
+                 "carried_words": len(carry)}
+        return specs, carry, audit
 
     @staticmethod
     def _roles(beat: StoryBeat) -> dict[str, str]:
@@ -938,6 +966,30 @@ class SceneBoundaryPlanner:
     def _intersects(left: Box, right: Box) -> bool:
         return min(left[2], right[2]) - max(left[0], right[0]) > _EPS and (
             min(left[3], right[3]) - max(left[1], right[1]) > _EPS)
+
+    @staticmethod
+    def _text_rows(
+        text: TextPlan | None,
+        text_composition: list[TextCompositionBeat] | None,
+        text_motion: list[TextMotionCue] | None,
+    ) -> dict[str, list[tuple[str, float, float, Box]]]:
+        """Per beat: (cue id, spoken start, visible end, box) of every placed keyword."""
+        cues = {cue.id: cue for cue in (text.cues if text is not None else [])}
+        ends = {
+            row.text_cue_id: float(row.params.get("visible_end", row.end))
+            for row in (text_motion or []) if isinstance(row.params, dict)
+        }
+        output: dict[str, list[tuple[str, float, float, Box]]] = {}
+        for beat in text_composition or []:
+            for item in beat.items:
+                cue = cues.get(item.text_cue_id)
+                if cue is None:
+                    continue
+                width, height = TextPlacementDirector.estimated_box(cue, scale=item.font_scale)
+                box = TextPlacementDirector._box(item.x, item.y, width, height)
+                end = max(float(cue.spoken_end), ends.get(cue.id, float(cue.spoken_end)))
+                output.setdefault(beat.beat_id, []).append((cue.id, float(cue.spoken_start), end, box))
+        return output
 
     @staticmethod
     def _text_boxes(

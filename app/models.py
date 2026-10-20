@@ -434,6 +434,9 @@ class TextLayoutItem(BaseModel):
     z: int = 50
     anchor_asset_id: str | None = None
     placement: str = "safe_top"
+    # Composition's lifetime decision when it differs from the visibility policy default
+    # (holding the word would have shrunk or dropped it): absolute seconds, else None.
+    visible_end: float | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TextCompositionBeat(BaseModel):
@@ -490,6 +493,10 @@ class SceneBoundaryRelease(BaseModel):
     # Boundary: {"owner": "BOUNDARY", "shutter", "min_length", "max_length"} with lengths as
     # fractions of the content height. Empty means the exits are drawn sharp.
     exit_motion_blur: dict[str, Any] = Field(default_factory=dict, exclude_if=lambda value: not value)
+    # Idea boards: outgoing keyword cue id -> absolute time it leaves. The word stays in the
+    # incoming segment (no new entrance) until the next keyword or a landing on it, then
+    # takes its planned exit fade. Empty: every word ends with its own scene.
+    text_carry: dict[str, float] = Field(default_factory=dict, exclude_if=lambda value: not value)
     reason: str
     downgrade_reason: str | None = None
     audit: dict[str, Any] = Field(default_factory=dict)

@@ -39,11 +39,12 @@ class TextMotionPlanner:
             (cue.beat_id, cue.asset_id): cue
             for cue in (visual_motion or [])
         }
-        laid_out_ids = {
-            item.text_cue_id
+        laid_out = {
+            item.text_cue_id: item
             for beat in text_composition
             for item in beat.items
         }
+        laid_out_ids = set(laid_out)
         cues_by_beat: dict[str, list[TextCue]] = {}
         for cue in text_cues:
             cues_by_beat.setdefault(cue.beat_id, []).append(cue)
@@ -64,7 +65,9 @@ class TextMotionPlanner:
             )
             sync = self._visual_sync_profile(cue, anchor_motion)
 
-            visible_end = self.visibility.visible_end(
+            # Composition may have kept the reading-time lifetime where holding would shrink it.
+            chosen = laid_out[cue.id].visible_end
+            visible_end = float(chosen) if chosen is not None else self.visibility.visible_end(
                 cue,
                 beat,
                 cues_by_beat.get(cue.beat_id, []),
