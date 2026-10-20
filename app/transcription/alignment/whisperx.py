@@ -13,6 +13,7 @@ from app.transcription.alignment.prepared_text import (
     PreparedAlignmentText,
     prepare_alignment_text,
 )
+from app.transcription.alignment.word_repair import WordRepair, rejoin_split_words
 
 _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
 _ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
@@ -70,6 +71,8 @@ class WhisperXForcedAligner:
         self.policy = policy or AlignmentPolicy()
         self.ffmpeg_bin = ffmpeg_bin
         self._loaded: dict[str, tuple[Any, dict[str, Any]]] = {}
+        # Tokens the last alignment returned split by a sentence break, then rejoined.
+        self.word_repairs: list[WordRepair] = []
 
     def preflight(self, script: str) -> None:
         """Prove the production forced-alignment runtime before later visual stages.
@@ -148,6 +151,7 @@ class WhisperXForcedAligner:
             prepared=prepared,
             language=language,
             duration=duration,
+            sentence_spans=_whisperx_sentence_spans(prepared.text, metadata),
             raw_words=raw_words,
         )
 
@@ -218,6 +222,7 @@ class WhisperXForcedAligner:
         language: str,
         duration: float,
         raw_words: list[dict[str, Any]],
+        sentence_spans: list[tuple[int, int]] | None = None,
     ) -> Transcript:
         """Map aligner words back onto the canonical tokens the aligner was given.
 
@@ -240,10 +245,21 @@ class WhisperXForcedAligner:
                 },
             )
 
+        # WhisperX groups words per Punkt sentence and can return one script token cut at
+        # punctuation ("مكان!!," -> "مكان!!", "!,"); rejoin exactly the pieces its own
+        # grouping predicts (word_repair). Character timing is untouched, and the gate
+        # below still judges the result.
+        repairs: list[WordRepair] = []
+        if sentence_spans is not None:
+            raw_words, repairs = rejoin_split_words(prepared, raw_words, sentence_spans)
+        self.word_repairs = repairs
+
         # WhisperX 3.8.4+ preserves words containing digits/symbols with wildcard timing.
         # Still validate a one-to-one monotonic mapping so a bad model result can never
         # silently shift every subsequent word onto the wrong script token.
         diagnostics = word_mapping_diagnostics(prepared, raw_words, language=language)
+        if repairs:
+            diagnostics["rejoined_split_tokens"] = [repair.token for repair in repairs]
         if (
             len(raw_words) != len(tokens)
             or diagnostics["match_ratio"] < self.policy.min_token_match_ratio
@@ -307,6 +323,21 @@ class WhisperXForcedAligner:
         return Transcript(language=language, duration=duration, segments=segments, words=words)
 
 
+def _whisperx_sentence_spans(text: str, metadata: dict[str, Any]) -> list[tuple[int, int]] | None:
+    """The Punkt sentence spans WhisperX 3.8.x used to group ``text`` into words (the same
+    tokenizer and language fallback as ``whisperx.alignment.align``); ``None`` when they
+    cannot be reproduced, which leaves the aligner's words unrepaired."""
+    try:
+        from nltk.data import load as nltk_load
+        from whisperx.utils import PUNKT_LANGUAGES
+
+        language = PUNKT_LANGUAGES.get(str(metadata.get("language") or ""), "english")
+        splitter = nltk_load(f"tokenizers/punkt_tab/{language}.pickle")
+        return [(int(start), int(end)) for start, end in splitter.span_tokenize(text)]
+    except Exception:
+        return None
+
+
 def detect_script_language(script: str) -> str:
     """Return the dominant supported alignment language for Arabic/English scripts."""
     arabic = len(_ARABIC_RE.findall(script))
@@ -339,6 +370,9 @@ def word_mapping_diagnostics(
         expected = _normalize_token(tokens[index].text)
         actual = _normalize_token(actual_words[index])
         if expected and actual and expected == actual:
+            matches += 1
+        elif not expected and not actual and _marks(tokens[index].text) == _marks(actual_words[index]):
+            # A punctuation-only token (" . ", " - ") returned verbatim is a match too.
             matches += 1
         elif first_mismatch is None:
             first_mismatch = index
@@ -403,6 +437,10 @@ def _normalize_token(value: str) -> str:
     value = unicodedata.normalize("NFKC", value).lower().replace("ـ", "")
     value = _ARABIC_DIACRITICS.sub("", value)
     return "".join(character for character in value if character.isalnum())
+
+
+def _marks(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).strip()
 
 
 def _float_or_none(value: Any) -> float | None:
