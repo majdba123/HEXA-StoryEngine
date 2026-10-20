@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.shared.errors import StageFailedError
-from app.story import StoryPlanner
+from app.story import StoryPlanner, carrier_repair
 from app.story.identity import VisualIdentityBinder
 from tests.support.carrier_scene import Cutout, Event, SceneSpec, Unit, build_package, locator_for
 
@@ -20,6 +20,12 @@ PHRASE = ("alpha", "beta", "gamma", "delta", "epsilon", "zeta")
 LEFT = (40, 200, 280, 600)
 MIDDLE = (380, 300, 240, 400)
 RIGHT = (680, 220, 280, 560)
+
+
+@pytest.fixture
+def strict_story(monkeypatch):
+    """The fail-closed contract (production repairs instead: carrier_repair, 2026-10-21)."""
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)
 
 
 def _plan(built):
@@ -223,9 +229,8 @@ def test_authored_unit_split_into_many_cutouts_keeps_every_piece() -> None:
     assert planner.hidden_content_audit == []
 
 
-def test_unresolved_required_carrier_fails_before_render_with_diagnostics() -> None:
-    """Ambiguous locator-less participant + hidden candidates -> typed failure."""
-    built = build_package([SceneSpec(
+def _unresolved_participant_case():
+    return build_package([SceneSpec(
         phrase=PHRASE,
         units=(
             Unit("SIGNED", (0, 3), role="primary", locator=locator_for(LEFT)),
@@ -242,6 +247,10 @@ def test_unresolved_required_carrier_fails_before_render_with_diagnostics() -> N
         group_policy="SIMULTANEOUS_VISUAL_UNIT",
     )])
 
+
+def test_unresolved_required_carrier_fails_before_render_with_diagnostics(strict_story) -> None:
+    """Ambiguous locator-less participant + hidden candidates -> typed failure (strict)."""
+    built = _unresolved_participant_case()
     with pytest.raises(StageFailedError) as caught:
         StoryPlanner().plan(built.package, built.transcript, built.assets)
 
@@ -314,7 +323,7 @@ def _hidden_content_case(extra: Cutout, *, extra_unit: Unit | None = None):
     ],
     ids=["significant-area", "authored-primary-role", "inside-authored-locator"],
 )
-def test_materially_hidden_authored_content_fails_before_render(extra, extra_unit, reason) -> None:
+def test_materially_hidden_authored_content_fails_before_render(extra, extra_unit, reason, strict_story) -> None:
     built = _hidden_content_case(extra, extra_unit=extra_unit)
     with pytest.raises(StageFailedError) as caught:
         StoryPlanner().plan(built.package, built.transcript, built.assets)
@@ -383,3 +392,31 @@ def test_proxy_on_another_units_cutout_is_not_proof_while_candidates_hide() -> N
     assert row["status"] == "UNRESOLVED"
     assert row["reason"] == "proxy_carrier_while_scene_hides_candidates"
     assert len(row["candidate_hidden_asset_ids"]) == 3
+
+# -- repair instead of stopping (production default) ---------------------------------------
+def test_an_unresolved_participant_is_repaired_by_showing_its_hidden_candidates() -> None:
+    built = _unresolved_participant_case()
+    planner, beats = _plan(built)
+    shown = {row["asset_id"] for row in planner.carrier_repairs}
+    assert shown, "the repair is recorded"
+    assert shown <= _visible(beats, built.scene_ids[0])
+    assert all(row["scene_id"] == built.scene_ids[0] for row in planner.carrier_repairs)
+
+
+@pytest.mark.parametrize(
+    "extra,extra_unit",
+    [
+        (Cutout("asset-02", RIGHT), None),
+        (Cutout("asset-02", (700, 700, 40, 40), role="primary"), None),
+        (Cutout("asset-02", (700, 700, 60, 60), role="decorative"),
+         Unit("ORNAMENT", (4, 4), role="decorative", locator=(0.73, 0.73, 0.10, 0.10))),
+    ],
+    ids=["significant-area", "authored-primary-role", "inside-authored-locator"],
+)
+def test_materially_hidden_authored_content_is_shown_instead_of_stopping(extra, extra_unit) -> None:
+    built = _hidden_content_case(extra, extra_unit=extra_unit)
+    planner, beats = _plan(built)
+    hidden = built.runtime_id(0, "asset-02")
+    assert hidden in _visible(beats, built.scene_ids[0])
+    assert [row["asset_id"] for row in planner.carrier_repairs] == [hidden]
+    assert planner.hidden_content_audit == []

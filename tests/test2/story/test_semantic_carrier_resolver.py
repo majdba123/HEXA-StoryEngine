@@ -9,7 +9,7 @@ import random
 import pytest
 
 from app.shared.errors import StageFailedError
-from app.story import StoryPlanner
+from app.story import StoryPlanner, carrier_repair
 from app.story.carrier_resolver import (
     CarrierConfidence as Conf,
     CarrierKind as Kind,
@@ -198,9 +198,9 @@ def test_near_tied_one_to_one_candidates_are_classified_ambiguous() -> None:
     assert row.confidence is Conf.AMBIGUOUS and row.rival is not None and not row.members
 
 
-def test_ambiguous_required_participant_fails_closed_with_typed_code() -> None:
+def _ambiguous_participant_case():
     near_a, near_b = (455, 50, 420, 420), (475, 70, 420, 420)
-    built = build_package([_spec(
+    return build_package([_spec(
         [Unit("LEAD", (0, 1), role="primary", locator=locator_for(A)),
          Unit("PART", (2, 3), locator=locator_for((515, 110, 300, 300)))],
         [Cutout("asset-01", A, role="primary"), Cutout("asset-02", near_a),
@@ -208,6 +208,12 @@ def test_ambiguous_required_participant_fails_closed_with_typed_code() -> None:
         events=(Event("E1", "LEAD", (0, 3), participants=("PART",)),),
         group_policy="SIMULTANEOUS_VISUAL_UNIT",
     )])
+
+
+def test_ambiguous_required_participant_fails_closed_with_typed_code(monkeypatch) -> None:
+    """Strict contract; production shows every contested cutout instead (next test)."""
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)
+    built = _ambiguous_participant_case()
     with pytest.raises(StageFailedError) as caught:
         StoryPlanner().plan(built.package, built.transcript, built.assets)
     assert caught.value.effective_code == "SEMANTIC_CARRIER_AMBIGUOUS"
@@ -217,6 +223,18 @@ def test_ambiguous_required_participant_fails_closed_with_typed_code() -> None:
     top, second = violation["resolution"]["candidates"][:2]
     assert top["score"] - second["score"] < 0.065 and second["score"] >= 0.60
     assert violation["resolution"]["ownership_conflict"]
+
+
+def test_an_ambiguous_participant_shows_every_contested_cutout_instead_of_stopping() -> None:
+    built = _ambiguous_participant_case()
+    planner = StoryPlanner()
+    beats = planner.plan(built.package, built.transcript, built.assets)
+    visible = {asset_id for beat in beats for asset_id in (beat.active_visual_semantic_state or {})}
+    record = next(row for row in planner.semantic_carrier_audit
+                  if row["semantic_asset_id"] == built.semantic_id(0, "PART"))
+    contested = set(record.get("carrier_asset_ids") or []) | set(record.get("candidate_hidden_asset_ids") or [])
+    assert contested and contested <= visible
+    assert carrier_repair.tolerable(record) or record["status"] != "AMBIGUOUS"
 
 
 def test_ambiguous_optional_intent_abstains_without_failing() -> None:

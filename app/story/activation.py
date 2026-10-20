@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
+from app.assets import AssetManager
 from app.canonical import (
     CanonicalAsset,
     CanonicalPackage,
@@ -1453,6 +1454,33 @@ class SemanticActivationPlanner:
             by_asset.update({row.asset_id: row for row in derived_support})
 
         mapped_unit_by_asset = {asset_id: unit_id for unit_id, asset_id in semantic_map.items()}
+        # Family completion (2026-10-21, Hacktivist SCENE_002): Pass2 can split ONE authored
+        # icon into family layers (the two arrows of a "change" symbol). When identity bound
+        # one layer to unit U and the package maps another, still unbound layer of the SAME
+        # Pass2 family to the SAME unit U, that layer is the rest of the same drawing: it takes
+        # the bound layer's window (GROUP) instead of SAFE_ABSTENTION, so the icon is never
+        # shown in half. A layer mapped to another unit, or of another family, is untouched.
+        for asset in sorted(assets, key=lambda asset: asset.id):
+            unit_id = mapped_unit_by_asset.get(asset.id)
+            if asset.id in by_asset or unit_id is None or not asset.can_animate_independently:
+                continue
+            sibling = next((
+                row for row in sorted(activations, key=lambda row: row.asset_id)
+                if row.semantic_unit_id == unit_id and row.asset_id != asset.id
+                and row.policy != "FALLBACK" and row.asset_id in asset_by_id
+                and AssetManager.family_id(asset_by_id[row.asset_id]) == AssetManager.family_id(asset)
+            ), None)
+            if sibling is None:
+                continue
+            completed = sibling.model_copy(update={
+                "asset_id": asset.id,
+                "policy": "GROUP",
+                "confidence": min(0.78, sibling.confidence),
+                "source": "family_semantic_anchor",
+                "evidence": ["completes_split_pass2_family_of_the_same_unit"],
+            })
+            activations.append(completed)
+            by_asset[asset.id] = completed
         for asset in sorted(assets, key=lambda asset: asset.id):
             if asset.id not in by_asset:
                 unit_id = (
