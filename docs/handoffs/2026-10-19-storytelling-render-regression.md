@@ -272,3 +272,9 @@ to relax any of the measured limits (sub-0.2 s Story windows, PAYOFF comfort vs 
   - Job process (`02d46828`), two renders in one panel session without a restart: panel 39.8 MB → 42.0 MB after render 1 and 42.0 MB → 42.0 MB after render 2 (panel peak 44 MB). Each job process peaked at 7.60 GB and was gone when the render ended. 787 s and 759 s (old panel: 958 s).
   - YouTube and Reels mp4 SHA-256 identical to the old panel's render in both runs (`89a19678…`, `4f631bbf…`); `export.json` identical apart from time, commit and path fields.
   - Free RAM still fell to 33–66 MB during each job: the aligner alone needs most of this laptop, so closing Firefox still helps a single render. What changed is that the panel no longer adds its own 6 GB on top, and a crash no longer takes the panel down.
+
+## IDEA BOARDS (2026-10-21) — branch feature/idea-boards, not merged
+
+- Points 1 and 2 of the frame review (idea board, keyword hold and carry): see docs/reference-motion-grammar.md section 6.
+- Gates on the branch: ruff clean; web 63, test1 738 (38 corpus skips), test2 1689, test3 814, certification 6725, holdouts 80, visual 399. All have 0 failures; 4 visual tests errored once when another pytest process removed the shared temp folder, and passed on a rerun alone. Certified real corpus: 355/0.
+- Open: one big anchor per idea, a grey-wash climax per idea, a fixed presenter role (points 3-5).

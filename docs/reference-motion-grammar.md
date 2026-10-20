@@ -118,3 +118,35 @@ Arrows run silhouette to silhouette (≤ 22 % of the width), never across a thir
 keyword, and stay until the scene changes. Black Hat: 6 of 7 relations now draw an arrow
 (v11: 1); cause pulses 6/7 (Black Hat), 4/13, 5/8, 3/6 (White Hat, Gray Hat, Script Kiddie).
 Decoded: beat-005 chip pulses 11.07 s, arrow 11.13–11.30 s, money bag lands at the tip 11.33 s.
+
+
+## 6. Idea boards and keyword hold (2026-10-21, after the frame review of Social Engineer v1)
+
+Measured on both references at 3 fps (A 29.5–36.2 s burger idea, B 30.6–35.4 s money-bag
+idea): one idea lasts 3–7 s and is built on one picture.
+- An anchor comes first (a character pose or one large object).
+- A new element arrives every 0.5–1 s, each landing beside it.
+- The spoken keyword appears big under a short arrow and stays until the next keyword replaces it (1.3–2 s when words come quickly).
+- An element only leaves when the focus moves; the newspaper lands where the character stood.
+- The screen clears to white only when the idea changes.
+
+Social Engineer v1, by contrast, showed a new picture every 2.1 s with every word gone after about 1 s. About half of all scene changes in the Final Packages happen inside one sentence (Social Engineer 22/49, Black Hat 22/39): the package splits one idea over two or three pictures.
+
+| Device | What the viewer sees | Owner |
+| --- | --- | --- |
+| Idea board | at a scene change inside one sentence (the outgoing narration does not end with `. ! ? ؟ …`) nothing is cleared: each old element stays until a new element or keyword lands on its spot and fades 2 frames before it (fully before a word); untouched elements stay until the new picture is complete; at most 5 units share the screen. Authored positions only; nothing moves | `boundary/release.py` `_idea_board_exits` (`IDEA_BOARD`) |
+| Keyword hold | a keyword stays until the next keyword or its scene end (≤ 4 s) instead of a ~1 s reading window | `text/timing/visibility.py` (`KEYWORD_HOLD_SECONDS`) |
+| Keyword carry | inside a board, the keyword on screen at the cut stays in the next picture (no new entrance) until the next keyword or an arrival on it | `SceneBoundaryRelease.text_carry`, renderer `-text-carried.ass` |
+| Never smaller | Text Composition tries the held window first; if holding would shrink or drop the word, it keeps the reading window for that word (`TextLayoutItem.visible_end`), which Text Motion follows | `composition/text.py`, `motion/text.py` |
+
+A finished sentence keeps the plain fade to white; a character swap after a finished sentence keeps its whip.
+
+Corpus (4 cached packages; pre-encode QA 0 everywhere):
+- 15–21 boundaries per package become boards.
+- 40–50 % of old elements outlive the new picture's first element.
+- Words placed and median font scale are equal to montage.
+- Keyword hold median goes from 1.0–1.14 s to 1.22–1.52 s (maximum 3–4 s); 4–8 words are carried per package.
+
+Black Hat 0–28 s, rendered old vs new (encoded QA ok on both):
+- At 18.4 s the old version shows a screen of fading ghosts; the new one keeps the thief's glove while the cards give way to files.
+- «السيطرة» stays from 21.0 to 22.27 s while the devices build, where it used to vanish at 21.5 s.
