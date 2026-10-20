@@ -364,18 +364,35 @@ class PayoffResolutionDirector:
             roles = {entity.unit_id: str(entity.role or "").upper() for entity in (context.entities if context else [])}
             characters = {row.asset_id for row in beat.asset_activations
                           if roles.get(row.semantic_unit_id or "") == "CHARACTER"}
-            focus = {cue.asset_id for cue in cues
-                     if family(cue.asset_id) == family(anchor) or family(cue.asset_id) in {family(c) for c in characters}}
-            others = [cue for cue in cues if cue.asset_id not in focus and cue.asset_id in layout]
-            if not others:
-                continue
+            crisp = {family(anchor)} | {family(c) for c in characters}
             anchor_cue = next(cue for cue in cues if cue.asset_id == anchor)
-            start = max([_arrival_end(anchor_cue), float(anchor_cue.start) + IDEA_WASH_SETTLE]
-                        + [max(_motion_end(cue), float(cue.start) + IDEA_WASH_SETTLE) for cue in others])
-            start = max(start, float(beat.end) - IDEA_WASH_MAX_SECONDS)
-            hold = float(beat.end) - (start + WASH_RAMP_SECONDS)
-            if hold < IDEA_WASH_MIN_HOLD - _EPS:
+
+            def settled(cue: MotionCue) -> float:
+                return max(_motion_end(cue), float(cue.start) + IDEA_WASH_SETTLE)
+
+            # 1) Everything has landed: the anchor (and presenter) stay crisp, the rest recedes.
+            # 2) Else the references' own pattern: the backdrop recedes as the idea's last
+            #    arrival lands - that arrival (and anything after it) is crisp above the wash.
+            plans = [(max([_arrival_end(anchor_cue), float(anchor_cue.start) + IDEA_WASH_SETTLE]
+                          + [settled(cue) for cue in cues if family(cue.asset_id) not in crisp]), float("inf"))]
+            plans += [(arrival, arrival) for arrival in sorted(
+                {float(cue.start) for cue in cues if family(cue.asset_id) not in crisp}, reverse=True)]
+            picked = None
+            for wash_at, late_from in plans:
+                focus = {cue.asset_id for cue in cues
+                         if family(cue.asset_id) in crisp or float(cue.start) >= late_from - _EPS}
+                others = [cue for cue in cues if cue.asset_id not in focus and cue.asset_id in layout]
+                if not others or any(settled(cue) > wash_at + WASH_MAX_LAG_SECONDS + _EPS for cue in others):
+                    continue
+                start = max(wash_at, float(beat.end) - IDEA_WASH_MAX_SECONDS)
+                if float(beat.end) - (start + WASH_RAMP_SECONDS) < IDEA_WASH_MIN_HOLD - _EPS:
+                    continue
+                picked = (start, focus, others)
+                break
+            if picked is None:
                 continue
+            start, focus, others = picked
+            hold = float(beat.end) - (start + WASH_RAMP_SECONDS)
             if any(_overlap(layout[a], layout[o.asset_id]) > WASH_FOCUS_OVERLAP and layout[a].z <= layout[o.asset_id].z
                    for a in focus if a in layout for o in others):
                 continue
