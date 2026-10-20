@@ -417,6 +417,13 @@ class FFmpegRenderer:
             for geometry in (self._geometry(plan, item),)
         }
         drawn = {asset_id: visible_rect(box, assets[asset_id].image_path) for asset_id, box in layout_boxes.items()}
+        # Elements the previous picture keeps on an idea board are obstacles for every arrow.
+        held = {
+            item.asset_id: visible_rect((float(geometry[2]), float(geometry[3]), float(geometry[2] + geometry[0]),
+                                         float(geometry[3] + geometry[1])), assets[item.asset_id].image_path)
+            for item in overlap_items
+            for geometry in (self._geometry(plan, item),)
+        }
         images = {item.asset_id: assets[item.asset_id].image_path for item in ordered_items}
         beat_cues = {item.asset_id: motion[(beat.id, item.asset_id)]
                      for item in ordered_items if (beat.id, item.asset_id) in motion}
@@ -428,7 +435,8 @@ class FFmpegRenderer:
         interactions = interaction_schedule(beat, beat_cues)
         connections = relation_arrow_specs(
             interactions=[(row.source, row.target, row.arrow_start) for row in interactions],
-            visible=drawn, images=images, boxes=layout_boxes, obstacles=[label.box for label in labels],
+            visible=drawn, images=images, boxes=layout_boxes,
+            obstacles=[label.box for label in labels] + list(held.values()),
             segment_start=segment_start, duration=duration, frame=(plan.width, plan.height), spatial_scale=scale,
         ) if interactions else connection_specs(
             beat=beat, items=layout_boxes, cues=beat_cues, segment_start=segment_start, duration=duration,
@@ -436,7 +444,7 @@ class FFmpegRenderer:
         )
         # Reference grammar G17: each placed keyword points at the artwork it names.
         connections += label_arrow_specs(
-            labels=labels, visible=drawn,
+            labels=labels, visible={**held, **drawn},
             settled={asset_id: settled_at(cue) for asset_id, cue in beat_cues.items()},
             images=images, boxes=layout_boxes, segment_start=segment_start, duration=duration,
             frame=(plan.width, plan.height), spatial_scale=scale,

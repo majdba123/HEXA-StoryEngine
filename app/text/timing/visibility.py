@@ -9,6 +9,10 @@ TEXT_ENTRY_MAX_SECONDS = 0.24
 READING_FIXATION_SECONDS = 0.25
 # A revealed visual is recognizable a few frames in (reference entry ramps: 3-13 frames).
 ANCHOR_RECOGNITION_SECONDS = 3 / 30
+# Reference G14 (2026-10-21 frame review): a spoken keyword stays as part of its idea until
+# the next keyword replaces it or the scene ends - the references hold words 2-5 s, the
+# narration-length flash (about 1 s) cannot be read. 0 restores the reading-time hold.
+KEYWORD_HOLD_SECONDS = 4.0
 
 
 class TextVisibilityPolicy:
@@ -24,7 +28,8 @@ class TextVisibilityPolicy:
         min_read = min(1.90, max(0.86, 0.52 + len(cue.text) * 0.060))
         # A label held back until its subject is recognizable is read from that instant,
         # not from the spoken word it could not yet show (same caps: next cue, the cut).
-        target = max(cue.spoken_end + 0.24, cls.display_start(cue, beat) + min_read)
+        start = cls.display_start(cue, beat)
+        target = max(cue.spoken_end + 0.24, start + min_read, start + KEYWORD_HOLD_SECONDS)
         later = [
             row.spoken_start
             for row in siblings

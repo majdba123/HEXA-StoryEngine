@@ -102,8 +102,12 @@ def test_same_text_slot_still_fails_when_visibility_windows_overlap() -> None:
     assert "text_text_overlap:text-a:text-b" in violation
     assert ":time=" in violation
 
-def test_later_visual_does_not_fail_text_overlap_before_visual_reveal() -> None:
+def test_later_visual_does_not_fail_text_overlap_before_visual_reveal(monkeypatch) -> None:
     from pathlib import Path
+
+    # The hand-placed text predates keyword holding: pin the reading-time hold so the oracle's
+    # temporal rule (nothing counts before the visual reveals) is what this test checks.
+    monkeypatch.setattr("app.text.timing.visibility.KEYWORD_HOLD_SECONDS", 0.0)
 
     from app.models import LayoutItem, MotionCue, VisualAsset
 

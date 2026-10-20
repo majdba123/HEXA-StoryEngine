@@ -48,8 +48,14 @@ def _with_roles(scene: Scene, roles: dict[str, str]) -> Scene:
     return scene
 
 
+def _idea_change(scene: Scene) -> Scene:
+    """The outgoing picture ends its sentence: a new idea, so no idea board (test_idea_boards)."""
+    scene.story[0] = scene.story[0].model_copy(update={"narration": "end of the idea."})
+    return scene
+
+
 def test_a_cut_becomes_a_fade_of_the_whole_old_scene_at_the_unchanged_opener() -> None:
-    scene = Scene(lead=3, opener=NEW_ON_OLD)
+    scene = _idea_change(Scene(lead=3, opener=NEW_ON_OLD))
     row = scene.plan()
     assert row.audit["hero_exit"] == "scene_fade"
     assert set(row.overlap_exits) == {"old_a", "old_b"}            # the whole scene, one block
@@ -62,14 +68,14 @@ def test_a_cut_becomes_a_fade_of_the_whole_old_scene_at_the_unchanged_opener() -
 
 
 def test_a_character_swap_is_carried_by_a_blurred_whip() -> None:
-    scene = _with_roles(Scene(lead=3, opener=NEW_ON_OLD), {"old_a": "CHARACTER", "new_a": "CHARACTER"})
+    scene = _with_roles(_idea_change(Scene(lead=3, opener=NEW_ON_OLD)), {"old_a": "CHARACTER", "new_a": "CHARACTER"})
     row = scene.plan()
     assert row.audit["hero_exit"] == "scene_whip"
     spec = next(iter(row.overlap_exits.values()))
     assert spec["fade"] == 0.0 and spec["end"] - spec["start"] == pytest.approx(WHIP_FRAMES / FPS, abs=1e-5)
     assert row.exit_motion_blur["owner"] == "BOUNDARY"
     # an object opening the next scene is no character swap: the old scene fades
-    objects = _with_roles(Scene(lead=3, opener=NEW_ON_OLD), {"old_a": "CHARACTER", "new_a": "OBJECT"})
+    objects = _with_roles(_idea_change(Scene(lead=3, opener=NEW_ON_OLD)), {"old_a": "CHARACTER", "new_a": "OBJECT"})
     assert objects.plan().audit["hero_exit"] == "scene_fade"
 
 

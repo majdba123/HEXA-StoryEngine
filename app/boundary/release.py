@@ -50,6 +50,18 @@ FADE_FRAMES = 5
 # Production switch for the whip; the certified hero-exit / crisp / cut machinery below it
 # stays intact (and tested) for every boundary the whip abstains from.
 SCENE_WHIP = True
+# Idea boards (2026-10-21 frame review of both references): when the Final Package splits
+# ONE sentence over several pictures, the references never clear the screen between them.
+# Each old element stays until a new element or word lands on its spot and fades just
+# before it (reference A 29.5-36 s: the character fades as the newspaper lands where it
+# stood); the rest of the idea stays until the next picture is complete. Positions stay the
+# authored ones; nothing moves.
+IDEA_BOARD = True
+BOARD_MAX_UNITS = 5            # carried + arrived element units on screen together
+BOARD_LEAD_FRAMES = 2          # an old element starts fading this many frames before the new lands
+BOARD_LANDING_GROWTH = 0.15    # a landing starts ~1.28x its size: its footprint grows this share per side
+BOARD_CLEARANCE = 0.015        # minimum gap kept between an old element and a new one
+_SENTENCE_END = frozenset(".!?\u061f\u2026")
 # Segment phases that carry certified semantic motion (Sprint 4.1 / 4.2); an overlap must
 # never run underneath them.
 _PROTECTED_PHASES = frozenset({"INTERACT", "REACT", "PAYOFF"})
@@ -103,7 +115,10 @@ class SceneBoundaryPlanner:
                 segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
             )
-            whip = self._scene_whip(row, segment, layouts=layouts, cues=cues, fps=fps) if SCENE_WHIP else None
+            whip = self._scene_whip(
+                row, segment, layouts=layouts, cues=cues, fps=fps, assets=assets_by_id,
+                text_boxes=text_boxes.get(segment.beat.id, []),
+            ) if SCENE_WHIP else None
             output.append(whip if whip is not None else self._hero_overlap_exit(
                 row, segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
@@ -118,8 +133,13 @@ class SceneBoundaryPlanner:
         layouts: dict[str, CompositionBeat],
         cues: dict[tuple[str, str], MotionCue],
         fps: int,
+        assets: dict[str, VisualAsset] | None = None,
+        text_boxes: list[tuple[float, float, Box]] | None = None,
     ) -> SceneBoundaryRelease | None:
         """The whole outgoing scene whips out as one block when the new scene opens (G16).
+
+        Inside one sentence (an idea board) the old scene is instead replaced in place,
+        element by element (``_idea_board_exits``).
 
         Only on a planned crisp change (HARD_CUT / CRISP_HANDOFF / HOLD_TO_OPENER) and only
         when nothing of the old scene continues (no persistent artwork, referent carrier or
@@ -155,6 +175,17 @@ class SceneBoundaryPlanner:
             for item in incoming}
         opener = int(row.audit.get("opener_frame", min(first.values())))
         leaving = {item.asset_id for item in previous_layout.items}
+        if IDEA_BOARD and continues_sentence(previous.narration):
+            board = self._idea_board_exits(segment, previous_layout, incoming, first, opener,
+                                           assets=assets or {}, text_boxes=text_boxes or [], fps=fps)
+            if board is not None:
+                specs, audit = board
+                return row.model_copy(update={
+                    "exit_starts": {key: value for key, value in row.exit_starts.items() if key not in leaving},
+                    "overlap_exits": specs,
+                    "exit_motion_blur": {},
+                    "audit": {**row.audit, "hero_exit": "idea_board", "idea_board": audit},
+                })
         # References: a character swap is carried by a whip (A 41 s, B 5 s, B 35 s); every
         # other change of idea clears the old scene to white in a few frames (A 12.5 s).
         roles_out, roles_in = self._roles(previous), self._roles(beat)
@@ -177,6 +208,83 @@ class SceneBoundaryPlanner:
                       "scene_whip": {"frames": frames, "units": len(leaving), "mode": "whip" if whip else "fade",
                                      "axis": "vertical" if axis else "horizontal", "direction": direction}},
         })
+
+    def _idea_board_exits(
+        self,
+        segment: BeatSegment,
+        previous_layout: CompositionBeat,
+        incoming: list[LayoutItem],
+        first: dict[str, int],
+        opener: int,
+        *,
+        assets: dict[str, VisualAsset],
+        text_boxes: list[tuple[float, float, Box]],
+        fps: int,
+    ) -> tuple[dict[str, dict[str, float]], dict] | None:
+        """Per-unit exits that replace the old picture in place inside one idea.
+
+        Every outgoing unit (a Pass2 family leaves as one) is held still in the incoming
+        segment until the first incoming element or keyword whose footprint (a landing
+        starts larger, so it is grown) touches it, and starts fading BOARD_LEAD_FRAMES
+        before that frame. At most BOARD_MAX_UNITS units share the screen: beyond that the
+        smallest held unit gives way to the arrival. Units nothing touches stay until the
+        incoming picture is complete and fade before its segment ends. None when nothing
+        would outlive the opener (the plain fade then applies).
+        """
+        last = segment.frame_count - FADE_FRAMES - 1
+        if last <= opener:
+            return None
+
+        def family(asset_id: str) -> str:
+            asset = assets.get(asset_id)
+            return AssetManager.family_id(asset) if asset is not None else asset_id
+
+        def footprint(item: LayoutItem) -> Box:
+            return self.footprints.resolve(item, assets.get(item.asset_id)).box
+
+        units: dict[str, list[LayoutItem]] = {}
+        for item in previous_layout.items:
+            units.setdefault(family(item.asset_id), []).append(item)
+        unit_box = {key: _union([footprint(member) for member in members]) for key, members in units.items()}
+        events: list[tuple[int, int, Box]] = [
+            (first[item.asset_id], 1, _grow(footprint(item), BOARD_LANDING_GROWTH, BOARD_CLEARANCE))
+            for item in incoming
+        ]
+        start_time = segment.start_frame / fps
+        for t0, _t1, box in text_boxes:
+            frame = first_visible_frame(t0 - start_time, fps)
+            if frame <= last:
+                events.append((max(0, frame), 0, _grow(box, 0.0, BOARD_CLEARANCE)))
+        alive = dict.fromkeys(units)
+        exit_frame: dict[str, int] = {}
+        arrived = 0
+        for frame, is_art, box in sorted(events, key=lambda row: (row[0], row[1])):
+            leave_at = max(0, min(last, frame - BOARD_LEAD_FRAMES))
+            for key in [key for key in alive if self._intersects(unit_box[key], box)]:
+                exit_frame[key] = leave_at
+                alive.pop(key)
+            arrived += is_art
+            while alive and len(alive) + arrived > BOARD_MAX_UNITS:
+                key = min(alive, key=lambda unit: _area(unit_box[unit]))
+                exit_frame[key] = leave_at
+                alive.pop(key)
+        for key in alive:
+            exit_frame[key] = last
+        held = [frame - opener for frame in exit_frame.values() if frame > opener]
+        if not held:
+            return None
+        specs: dict[str, dict[str, float]] = {}
+        for key, members in units.items():
+            begin = segment.start_frame + exit_frame[key]
+            spec = {"start": round(begin / fps, 6), "end": round((begin + FADE_FRAMES) / fps, 6),
+                    "direction": 0.0, "axis": 0.0, "fade": 1.0}
+            for member in members:
+                specs[member.asset_id] = dict(spec)
+        audit = {"units": len(units), "held_units": len(held), "held_frames_max": max(held),
+                 "left_at_opener": sum(1 for frame in exit_frame.values() if frame <= opener),
+                 "replaced_in_place": sum(1 for frame in exit_frame.values() if opener < frame < last),
+                 "held_to_picture_end": sum(1 for frame in exit_frame.values() if frame == last)}
+        return specs, audit
 
     @staticmethod
     def _roles(beat: StoryBeat) -> dict[str, str]:
@@ -853,6 +961,23 @@ class SceneBoundaryPlanner:
                 end = max(float(cue.spoken_end), ends.get(cue.id, float(cue.spoken_end)))
                 output.setdefault(beat.beat_id, []).append((float(cue.spoken_start), end, box))
         return output
+
+
+def continues_sentence(narration: str | None) -> bool:
+    """True when a beat's narration stops mid-sentence: the next picture is the same idea."""
+    text = (narration or "").strip().rstrip("\"'\u00bb)]}\u201d\u2019 ")
+    return bool(text) and any(char.isalpha() for char in text) and text[-1] not in _SENTENCE_END
+
+
+def _union(boxes: list[Box]) -> Box:
+    return (min(box[0] for box in boxes), min(box[1] for box in boxes),
+            max(box[2] for box in boxes), max(box[3] for box in boxes))
+
+
+def _grow(box: Box, share: float, margin: float) -> Box:
+    dx = (box[2] - box[0]) * share + margin
+    dy = (box[3] - box[1]) * share + margin
+    return (box[0] - dx, box[1] - dy, box[2] + dx, box[3] + dy)
 
 
 def _area(box: Box) -> float:
