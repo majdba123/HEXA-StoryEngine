@@ -246,3 +246,16 @@ to relax any of the measured limits (sub-0.2 s Story windows, PAYOFF comfort vs 
 - Level 5 v11 `E:\HEXA_Exports\HEXA_BLACK_HAT_HACKER_AR\v11` PASS both targets (1265 s, measured in parallel with the gates). Preview with narration `E:\HEXA_Exports\_PREVIEW_R2\BLACK_HAT_preview_first26s.mp4`; evidence `E:\HEXA_Exports\_P1_EVIDENCE_2026-10-19\v11\R2_*.png` (top v10, bottom v11).
 - Gates on `234cde11`: ruff clean; web 63, test1 738 (38 corpus skips), test2 1617 (rerun alone: the parallel run hit a native access violation in the Whisper integration test under memory pressure), test3 814, certification 6725, holdouts 80, visual 369 — 0 failures; certified real corpus 355/0.
 - Open: per-element "recede" focus shift (B 31.68 s) not built; icon cascade not built; render time (+~50 % vs v8) — proposed separate task.
+
+## FORCED ALIGNMENT ROBUSTNESS (2026-10-20) — Gray Hat field failure
+
+- Symptom: the new Gray Hat package (`Downloads\HEXA_GRAY_HAT_HACKER_AR_UNIFIED_2_0.zip`, 80 s narration) stopped at "Aligning narration" with `ALIGNMENT_WORD_MAPPING_UNSAFE (script=225, aligned=226, match=0.662)`. Same on montage and bayer (the transcription code is identical).
+- Root cause: WhisperX 3.8.6 groups aligned characters into words per Punkt sentence, taking `start <= index <= end`. Punkt broke the sentence inside "مكان!!," (between the two "!"), so that token came back as "مكان!!" + "!," and every later word shifted by one. The CTC character timings were correct; only the grouping split the token.
+- Fix (commit `12a9df7e`): `app/transcription/alignment/word_repair.py` reproduces WhisperX's grouping from the alignment text and the same Punkt spans, and rejoins aligner words into one word per token only when their texts equal the prediction verbatim. Otherwise nothing changes and the one-to-one gate (count + 0.98 ratio) decides as before. Punctuation-only tokens (" . ", " - ") returned verbatim now count as matches.
+- Harness: `tests/support/whisperx_runtime.py` runs the installed WhisperX alignment code end to end with a seeded stub acoustic model (real cleaning, wildcards, CTC, Punkt, grouping). It reproduces the field failure numbers exactly on montage code.
+- Evidence:
+  - Real model, new Gray Hat audio: 225/225 (montage code fails with the field numbers). The rejoined token sits at 52.23–52.83 s between its neighbours.
+  - Real model, old Gray Hat: 230/230, timings identical to montage.
+  - The new Gray Hat then plans end to end (41 beats, 148 assets) with pre-encode QA at 0 violations on both targets.
+  - Stress test: 255 scripts (the 17 distinct package scripts on disk plus seeded punctuation/quote/mixed-script/whitespace variants, 64,714 words) pass 255/255. Montage code fails 74 of them, and timings are identical in all 181 it passed.
+- Memory note (not fixed here): the aligner peaks at about 6.7 GB private memory for 99 s of audio, and the desktop panel kept about 6.7 GB after its jobs. Restart the panel between long renders on 8 GB machines until each job runs in its own process.
