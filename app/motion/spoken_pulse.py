@@ -165,7 +165,11 @@ def pulse_at(cue: MotionCue, *, at: float, beat: StoryBeat, item, beat_cues: lis
             return cue.model_copy(update={"segments": segments}), f"pulsed_in_{row.phase.lower()}"
         return None, "contract_rejects_every_peak"
     end = at + PULSE_SECONDS
-    if any(row.phase != "ENTRY" and float(row.start) < end and float(row.end) > at for row in cue.segments):
+    # The renderer draws the latest-starting active segment: an overlapping segment wins over
+    # the pulse only when it starts with or after it; one that started earlier only yields if
+    # it is still (identity), so nothing moving is cut mid-gesture.
+    if any(row.phase != "ENTRY" and float(row.start) < end and float(row.end) > at
+           and (float(row.start) >= at - _EPS or not _still(row)) for row in cue.segments):
         return None, "another_segment_draws_over_the_pulse"
     for peak in PULSE_SCALES:
         program = pulse_program(peak)

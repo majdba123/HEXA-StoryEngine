@@ -238,6 +238,69 @@ def _label_route(source: Rect, target: Rect, silhouette: _Silhouette, others: li
     return None
 
 
+RELATION_MAX_LENGTH = 0.22   # share of the frame width between two related drawings
+RELATION_BOWS = (0.15, -0.15, 0.0)
+
+
+def relation_arrow_specs(
+    *,
+    interactions: list[tuple[str, str, float]],
+    visible: dict[str, Rect],
+    images: dict[str, Path],
+    boxes: dict[str, Rect],
+    obstacles: list[Rect],
+    segment_start: float,
+    duration: float,
+    frame: tuple[int, int],
+    spatial_scale: float = 1.0,
+) -> list[ConnectionSpec]:
+    """Relation arrows (cause -> effect) at their interaction instants (motion/interaction).
+
+    ``interactions`` holds (source, target, absolute start). The shaft leaves the cause's
+    visible edge facing the effect and the head stops just before the effect's visible
+    edge; it never crosses another drawing or keyword, stays short (≤ RELATION_MAX_LENGTH)
+    and inside the frame, and is held until the scene changes. Touching or overlapping
+    pairs get no arrow: their pulses carry the relation."""
+    specs: list[ConnectionSpec] = []
+    for source, target, at in interactions:
+        if source not in visible or target not in visible:
+            continue
+        start = at - segment_start
+        if start < 0.0 or duration - start < LABEL_MIN_SECONDS:
+            continue
+        cs = ((visible[source][0] + visible[source][2]) / 2.0, (visible[source][1] + visible[source][3]) / 2.0)
+        ct = ((visible[target][0] + visible[target][2]) / 2.0, (visible[target][1] + visible[target][3]) / 2.0)
+        distance = hypot(ct[0] - cs[0], ct[1] - cs[1])
+        if distance <= 1e-6:
+            continue
+        ux, uy = (ct[0] - cs[0]) / distance, (ct[1] - cs[1]) / distance
+        source_shape = _Silhouette(boxes.get(source, visible[source]), images.get(source))
+        target_shape = _Silhouette(boxes.get(target, visible[target]), images.get(target))
+        leave, reach = source_shape.entry(ct, cs), target_shape.entry(cs, ct)
+        if leave is None or reach is None:
+            continue
+        p0 = (leave[0] + ux * _LABEL_GAP_PX * spatial_scale, leave[1] + uy * _LABEL_GAP_PX * spatial_scale)
+        p1 = (reach[0] - ux * _TIP_GAP_PX * spatial_scale, reach[1] - uy * _TIP_GAP_PX * spatial_scale)
+        length = hypot(p1[0] - p0[0], p1[1] - p0[1])
+        if ((p1[0] - p0[0]) * ux + (p1[1] - p0[1]) * uy <= 0.0
+                or length < LABEL_MIN_LENGTH_PX * spatial_scale or length > RELATION_MAX_LENGTH * frame[0]):
+            continue
+        others = [rect for asset_id, rect in visible.items() if asset_id not in {source, target}] + obstacles
+        nx, ny = -(p1[1] - p0[1]) / length, (p1[0] - p0[0]) / length
+        mx, my = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
+        for bow in RELATION_BOWS:
+            control = None if bow == 0.0 else (mx + nx * bow * length, my + ny * bow * length)
+            path = [p0, p1] if control is None else _bezier(p0, control, p1)
+            if not _path_clear(path, source=(0.0, 0.0, 0.0, 0.0), target=(0.0, 0.0, 0.0, 0.0),
+                               others=others, frame=frame):
+                continue
+            if any(source_shape.opaque(x, y) or target_shape.opaque(x, y) for x, y in _densify(path)):
+                continue
+            specs.append(ConnectionSpec(start=start, end=duration, p0=p0, p1=p1, control=control))
+            break
+    return specs
+
+
 def _densify(path: list[tuple[float, float]], step: float = 4.0) -> list[tuple[float, float]]:
     points = []
     for a, b in zip(path, path[1:]):

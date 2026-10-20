@@ -38,6 +38,7 @@ from app.motion.motion_blur import MotionBlurPolicy
 from app.motion.family import bind_families
 from app.motion.resolution import PayoffResolutionDirector
 from app.motion.semantic_reference import MotionSemanticReference
+from app.motion.interaction import RelationInteractionPolicy
 from app.motion.landing import ReferenceLandingPolicy
 from app.motion.spoken_pulse import SpokenPulsePolicy
 from app.motion.stillness import ReferenceStillnessPolicy
@@ -784,6 +785,10 @@ class StoryEnginePipeline:
             # their entrances); each landing is validated by the shared segment contract.
             self.landing = ReferenceLandingPolicy()
             motion = self.landing.apply(story=story, composition=composition, motion=motion, assets=assets)
+            # Elements interact when their relation is spoken: the cause pulses as the relation
+            # arrow starts, the effect lands at its tip (or answers when the head arrives).
+            self.interactions = RelationInteractionPolicy()
+            motion = self.interactions.apply(story=story, composition=composition, motion=motion, assets=assets)
             # The element the narrator names pulses on its word when it is already on screen.
             self.spoken_pulse = SpokenPulsePolicy()
             motion = self.spoken_pulse.apply(story=story, composition=composition, motion=motion,

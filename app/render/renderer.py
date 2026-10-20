@@ -13,7 +13,15 @@ from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
 from app.shared.process import run_hidden
-from app.render.connection import connection_specs, draw_connection_sequence, label_arrow_specs, visible_rect
+from app.motion.interaction import interaction_schedule
+from app.motion.spoken_pulse import settled_at
+from app.render.connection import (
+    connection_specs,
+    draw_connection_sequence,
+    label_arrow_specs,
+    relation_arrow_specs,
+    visible_rect,
+)
 from app.render.expression import compile_expression
 from app.render.write_on import authored_path_directions, write_on_filter, write_on_frame_count
 from app.render.motion import FFmpegMotionAdapter
@@ -402,53 +410,36 @@ class FFmpegRenderer:
         ] if previous_layout is not None else []
         for item in handoff_items:
             command.extend(["-loop", "1", "-framerate", str(plan.fps), "-i", str(assets[item.asset_id].image_path)])
-        # Authored directional relations become one visible connection each (Composition
-        # boxes only; Motion segments carry the relation, the renderer only draws it).
-        connections = connection_specs(
-            beat=beat,
-            items={
-                item.asset_id: (
-                    float(geometry[2]), float(geometry[3]),
-                    float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]),
-                )
-                for item in ordered_items
-                for geometry in (self._geometry(plan, item),)
-            },
-            cues={
-                item.asset_id: motion[(beat.id, item.asset_id)]
-                for item in ordered_items if (beat.id, item.asset_id) in motion
-            },
-            segment_start=segment_start,
-            duration=duration,
-            spatial_scale=plan.projection.scale if plan.projection else 1.0,
+        layout_boxes = {
+            item.asset_id: (float(geometry[2]), float(geometry[3]),
+                            float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]))
+            for item in ordered_items
+            for geometry in (self._geometry(plan, item),)
+        }
+        drawn = {asset_id: visible_rect(box, assets[asset_id].image_path) for asset_id, box in layout_boxes.items()}
+        images = {item.asset_id: assets[item.asset_id].image_path for item in ordered_items}
+        beat_cues = {item.asset_id: motion[(beat.id, item.asset_id)]
+                     for item in ordered_items if (beat.id, item.asset_id) in motion}
+        labels = self.text_renderer.label_anchors(plan, beat)
+        scale = plan.projection.scale if plan.projection else 1.0
+        # Elements interact when the narration states their relation: the cause -> effect
+        # arrow on the shared interaction schedule (motion/interaction); it supersedes the
+        # older box-to-box connector for the beat.
+        interactions = interaction_schedule(beat, beat_cues)
+        connections = relation_arrow_specs(
+            interactions=[(row.source, row.target, row.arrow_start) for row in interactions],
+            visible=drawn, images=images, boxes=layout_boxes, obstacles=[label.box for label in labels],
+            segment_start=segment_start, duration=duration, frame=(plan.width, plan.height), spatial_scale=scale,
+        ) if interactions else connection_specs(
+            beat=beat, items=layout_boxes, cues=beat_cues, segment_start=segment_start, duration=duration,
+            spatial_scale=scale,
         )
         # Reference grammar G17: each placed keyword points at the artwork it names.
         connections += label_arrow_specs(
-            labels=self.text_renderer.label_anchors(plan, beat),
-            visible={
-                item.asset_id: visible_rect((
-                    float(geometry[2]), float(geometry[3]),
-                    float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]),
-                ), assets[item.asset_id].image_path)
-                for item in ordered_items
-                for geometry in (self._geometry(plan, item),)
-            },
-            settled={
-                item.asset_id: max([float(motion[(beat.id, item.asset_id)].end)] + [
-                    float(row.end) for row in motion[(beat.id, item.asset_id)].segments if row.phase == "ENTRY"])
-                for item in ordered_items if (beat.id, item.asset_id) in motion
-            },
-            images={item.asset_id: assets[item.asset_id].image_path for item in ordered_items},
-            boxes={
-                item.asset_id: (float(geometry[2]), float(geometry[3]),
-                                float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]))
-                for item in ordered_items
-                for geometry in (self._geometry(plan, item),)
-            },
-            segment_start=segment_start,
-            duration=duration,
-            frame=(plan.width, plan.height),
-            spatial_scale=plan.projection.scale if plan.projection else 1.0,
+            labels=labels, visible=drawn,
+            settled={asset_id: settled_at(cue) for asset_id, cue in beat_cues.items()},
+            images=images, boxes=layout_boxes, segment_start=segment_start, duration=duration,
+            frame=(plan.width, plan.height), spatial_scale=scale,
         )
         # Reference grammar G5: authored arrow/path artwork writes on along its relation.
         path_directions = authored_path_directions(beat, {
