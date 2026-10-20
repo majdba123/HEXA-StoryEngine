@@ -84,3 +84,20 @@ profile is a documented, tested contract (`app/motion/contract.py` evaluates it)
 | G17 keyword arrows | `render/connection.py`, `render/text.py` | from the placed word's ink box to the named asset's visible artwork; curved bows first; only on a clean route ≥ 90 px; shown with the word | 13 arrows |
 | G18 wash | `motion/resolution.py` (icon pulse off) | existing fail-closed wash rules, spacing 5 s | 7 washes |
 | no in-place gestures | `motion/stillness.py`, `motion/hero_travel.py` | post-settle pulses off; every out-and-back accent becomes a deliberate still segment (QA still rejects weak non-zero motion) | 34 → 0 micro gestures |
+
+## 4. Rebuild R2 (2026-10-20, after the user reviewed v10): what the per-frame review corrected
+
+The user's verdict on v10: arrows cut through drawings and pointed into them; the video felt
+like "a rocket" (too much, messy, nothing understood); "high scale" never visible; the element
+being talked about never pulsed. A per-frame review of the references showed three misreadings:
+
+| # | Ref, time | Observed (per frame) | R2 rule |
+| --- | --- | --- | --- |
+| G19 | A 7.68–7.95 s (magnet), A 16.68–16.85 s (cross), B 30.60–30.84 s (coin bag) | **High-scale landing**: a named object appears in place, faint, ~1.25–1.3× its size and out of focus, then shrinks onto its size while it sharpens in ~8 frames; it never slides in from an edge. Characters are the ones that slide. | `motion/landing.py`: every entering non-character object lands (start 1.28×, ease-out, gaussian defocus 12 px → 0, opacity 0.3 → 1 in 5 frames); the start scale steps down when the shared contract demands; characters keep slides / hero travel |
+| G9 (re-read) | A 12.5–12.6 s, B 35.2 s | Most idea changes **fade the old scene to white in 3–5 frames**; the smeared whip (A 41 s, B 5 s) carries a **character swap** | `boundary/release.py`: fade (5 frames, no smear) by default; whip only when a character leaves and a character opens the next scene |
+| G17 (re-read) | A 16.4 s, A 61–63 s, B 21–23 s | Arrows are **short (5–12 % W)**, sit in the gap beside the word, never cross another drawing, point at its edge | `render/connection.py`: ≤ 14 % W, ≥ 70 px, bow ≤ 0.12, head stops 14 px before the alpha silhouette, every other drawing is an obstacle, drawn after the element settles and the word is read |
+| focus | B 31.68–34.3 s | When the narration moves on, the previous focus recedes while the new element arrives crisp | grey wash (G18) where Story resolves an event; per-element recede left for later |
+| pulse | user direction | The element the narrator names pulses on its word | `motion/spoken_pulse.py`: ~1.14 peak, 12 frames, only when the element is already on screen and settled (a first mention lands instead) |
+
+Measured on the corpus (pre-encode QA 0/8): landings 72/64/89/70, fades 25/26/27/23, whips
+8/12/10/13, keyword arrows (Black Hat) 10 of length 104–257 px, spoken pulses 4/1/4/1.

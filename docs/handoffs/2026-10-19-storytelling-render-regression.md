@@ -237,3 +237,12 @@ to relax any of the measured limits (sub-0.2 s Story windows, PAYOFF comfort vs 
 - Old machinery kept and tested: `SCENE_WHIP=False` / `POST_SETTLE_PULSES=True` fixtures in the hero-exit, crisp, cut and pulse test modules.
 - Not done (decided): icon cascade (would shift every timing field of later group members; 11 groups in Black Hat); package-RESULT wash fallback (never fires on this corpus, removed rather than shipped untested).
 - Evidence: `E:\HEXA_Exports\_P1_EVIDENCE_2026-10-19\v9\G14..G18*.png` (top v8, bottom v9).
+
+## REFERENCE REBUILD R2 (2026-10-20) — after the user reviewed v10
+- User verdict on v10: arrows "dumb" (into the gear, across the envelope and the lock), the whole video "like a rocket" / messy, "high scale" never seen, the spoken element never pulsed.
+- Per-frame reference review (A 7.68 s magnet, A 16.7 s cross, B 30.6 s coin bag, A 12.5 s clear, B 31–35 s) → G19 high-scale landing, fades as the default scene change, whips only for character swaps, short arrows, spoken pulse (`docs/reference-motion-grammar.md` §4).
+- Commit `234cde11`: `app/motion/landing.py` (objects land in place 1.28× → 1, gaussian defocus 12 px → 0, characters keep their entrances), `app/motion/spoken_pulse.py` (pulse on the word when already on screen), boundary fade/whip split by Final Package roles, arrows ≤ 14 % W with silhouette tips and every drawing as an obstacle, drawn after settle.
+- Corpus pre-encode 0/8; landings 72/64/89/70, fades 25/26/27/23, whips 8/12/10/13, pulses 4/1/4/1; Black Hat arrows 10 (104–257 px), none crossing a drawing (decoded frames checked).
+- Level 5 v11 `E:\HEXA_Exports\HEXA_BLACK_HAT_HACKER_AR\v11` PASS both targets (1265 s, measured in parallel with the gates). Preview with narration `E:\HEXA_Exports\_PREVIEW_R2\BLACK_HAT_preview_first26s.mp4`; evidence `E:\HEXA_Exports\_P1_EVIDENCE_2026-10-19\v11\R2_*.png` (top v10, bottom v11).
+- Gates on `234cde11`: ruff clean; web 63, test1 738 (38 corpus skips), test2 1617 (rerun alone: the parallel run hit a native access violation in the Whisper integration test under memory pressure), test3 814, certification 6725, holdouts 80, visual 369 — 0 failures; certified real corpus 355/0.
+- Open: per-element "recede" focus shift (B 31.68 s) not built; icon cascade not built; render time (+~50 % vs v8) — proposed separate task.
