@@ -28,7 +28,9 @@ from app.layout.footprint import AlphaFootprintResolver
 from app.render.connection import connection_specs
 from app.models import RenderPlan
 from app.pipeline import StoryEnginePipeline
+from app.render import motion_repair
 from app.render.renderer import FFmpegRenderer
+from app.render.verification import EncodedMotionVerifier
 from app.render.resources import RenderConcurrencyPolicy
 from app.shared.errors import GenerationCancelledError, StageFailedError
 from app.targets import (
@@ -642,19 +644,8 @@ def test_renderer_cleanup_is_resolution_independent(tmp_path: Path) -> None:
         assert keep.is_file() and not (segments / "0001-beat-001.mp4").exists()
 
 
-@needs_ffmpeg
-def test_pre_encode_motion_qa_rejects_any_target_before_the_first_encode(
-    bundle_run, tmp_path: Path, monkeypatch,
-) -> None:
-    """A final plan that encoded QA is already certain to reject never starts an encode.
-
-    Production defect class (Black Hat job f96ba7e0): a downstream pass left an invalid
-    program in the final RenderPlan and it was found only after the YouTube encode. Here
-    the *second* target carries such a program: neither target may encode and no bundle
-    version may be reserved."""
-    pipeline = StoryEnginePipeline(_settings(tmp_path, bundle_run["export_root"]))
-    real_project = pipeline.reference_projector.project
-    corrupted: dict[str, str] = {}
+def _corrupting_project(real_project, corrupted: dict[str, str]):
+    """The REELS projection with one moving program 12x past the comfort ceiling."""
 
     def project(reference, target, workspace):
         plan = real_project(reference, target, workspace)
@@ -678,6 +669,24 @@ def test_pre_encode_motion_qa_rejects_any_target_before_the_first_encode(
                 return plan
         raise AssertionError("fixture has no moving segment to corrupt")
 
+    return project
+
+
+@needs_ffmpeg
+def test_pre_encode_motion_qa_rejects_any_target_before_the_first_encode(
+    bundle_run, tmp_path: Path, monkeypatch,
+) -> None:
+    """A final plan that encoded QA is already certain to reject never starts an encode.
+
+    Production defect class (Black Hat job f96ba7e0): a downstream pass left an invalid
+    program in the final RenderPlan and it was found only after the YouTube encode. Here
+    the *second* target carries such a program: neither target may encode and no bundle
+    version may be reserved. Strict mode: production repairs instead (next test)."""
+    monkeypatch.setattr(motion_repair, "PRE_ENCODE_REPAIR", False)
+    pipeline = StoryEnginePipeline(_settings(tmp_path, bundle_run["export_root"]))
+    corrupted: dict[str, str] = {}
+    project = _corrupting_project(pipeline.reference_projector.project, corrupted)
+
     def no_encode(*_args, **_kwargs):
         raise AssertionError("an encode started for a plan that pre-encode QA rejects")
 
@@ -700,3 +709,38 @@ def test_pre_encode_motion_qa_rejects_any_target_before_the_first_encode(
     reels_qa = json.loads((workspace / "targets" / "REELS_9_16" / "diagnostics" / "pre-encode-motion-qa.json")
                           .read_text(encoding="utf-8"))
     assert reference_qa["ok"] is True and reels_qa["ok"] is False
+
+
+@needs_ffmpeg
+def test_pre_encode_motion_qa_repairs_a_rejected_target_and_the_first_encode_starts(
+    bundle_run, tmp_path: Path, monkeypatch,
+) -> None:
+    """Repair instead of stopping (2026-10-21): the same corrupted REELS program is made still
+    in every target, QA passes in both, and the first encode starts on the repaired plans."""
+    pipeline = StoryEnginePipeline(_settings(tmp_path, bundle_run["export_root"]))
+    corrupted: dict[str, str] = {}
+    monkeypatch.setattr(pipeline.reference_projector, "project",
+                        _corrupting_project(pipeline.reference_projector.project, corrupted))
+    encoded: list[RenderPlan] = []
+
+    class _FirstEncode(Exception):
+        pass
+
+    def first_encode(plan, _output):
+        encoded.append(plan)
+        raise _FirstEncode
+
+    monkeypatch.setattr(pipeline.renderer, "render", first_encode)
+    with pytest.raises(_FirstEncode):
+        pipeline.generate_bundle(package_path=bundle_run["package"], audio_path=bundle_run["audio"],
+                                 job_id="pre-encode-repair")
+    assert len(encoded) == 1 and EncodedMotionVerifier().preflight(encoded[0]).violations == ()
+    workspace = tmp_path / "work" / "pre-encode-repair"
+    for target_ws in (workspace, workspace / "targets" / "REELS_9_16"):
+        qa = json.loads((target_ws / "diagnostics" / "pre-encode-motion-qa.json").read_text(encoding="utf-8"))
+        assert qa["ok"] is True
+        rows = json.loads((target_ws / "diagnostics" / "pre-encode-motion-repairs.json").read_text(encoding="utf-8"))
+        assert any(row["asset_id"] == corrupted["asset"] and corrupted["phase"] in row["phases"] for row in rows)
+    reels = RenderPlan.model_validate_json(
+        (workspace / "targets" / "REELS_9_16" / "render-plan.json").read_text(encoding="utf-8"))
+    assert EncodedMotionVerifier().preflight(reels).violations == ()

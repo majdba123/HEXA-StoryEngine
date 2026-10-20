@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings
+from app.desktop import job_process
 from app.desktop.job_process import (
     GenerationJob,
     GenerationProcess,
+    crash_retry_job,
     diagnostic_zip_path,
     out_of_memory_message,
 )
@@ -249,6 +251,63 @@ def test_panel_worker_reports_a_crash_and_writes_the_diagnostic_zip(tmp_path: Pa
                for event in events)
     assert not any(event[0] in {"failed", "finished", "cancelled"} for event in events)
     assert _zip_report(Path(saved))["error"]["code"] == "GENERATION_PROCESS_CRASHED"
+
+
+def test_the_retry_job_renders_with_one_worker_in_a_fresh_workspace(tmp_path: Path) -> None:
+    job = _job(tmp_path)
+    retry = crash_retry_job(job)
+    assert retry.job_id == f"{job.job_id}-retry" and retry.fault_log != job.fault_log
+    assert retry.settings.render_resources.workers_override == 1
+    assert (retry.package_path, retry.audio_path) == (job.package_path, job.audio_path)
+    assert retry.settings.work_root == job.settings.work_root
+
+
+def test_panel_worker_retries_a_crashed_job_once_and_finishes(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6.QtWidgets")
+    from app.desktop.main import GenerationWorker
+
+    job = _job(tmp_path)
+    report = _report(job)
+    worker = _worker(GenerationWorker, job, report, generation_jobs.crashes_once)
+    events = _record_signals(worker)
+    worker.run()
+
+    notes = [event[1] for event in events if event[0] == "note"]
+    assert notes[0].startswith("JOB PROCESS: crashed")
+    assert notes[1].startswith("RETRY:")
+    assert notes[2].startswith("JOB PROCESS: completed")
+    assert [event[0] for event in events if event[0] in {"finished", "crashed", "failed"}] == ["finished"]
+    assert report.status == "completed"
+
+
+def test_crash_retry_can_be_switched_off(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("PySide6.QtWidgets")
+    from app.desktop.main import GenerationWorker
+
+    monkeypatch.setattr(job_process, "CRASH_RETRY", False)
+    job = _job(tmp_path)
+    worker = _worker(GenerationWorker, job, _report(job), generation_jobs.crashes_once)
+    events = _record_signals(worker)
+    worker.run()
+    assert [event[0] for event in events if event[0] in {"finished", "crashed"}] == ["crashed"]
+    assert not any(event[0] == "note" and event[1].startswith("RETRY:") for event in events)
+
+
+def test_panel_worker_runs_the_premiere_job_in_its_own_process(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6.QtWidgets")
+    from app.desktop.main import GenerationWorker
+
+    job = _job(tmp_path)
+    report = _report(job)
+    worker = _worker(GenerationWorker, job, report, generation_jobs.premiere_completes)
+    events = _record_signals(worker)
+    worker.run()
+
+    directory = job.settings.work_root / "exports" / "HEXA_TEST_AR" / "v1"
+    finished = [event for event in events if event[0] == "finished"]
+    assert finished == [("finished", str(directory), str(directory / "HEXA_TEST_AR_YOUTUBE_PREMIERE.xml"),
+                         str(directory / "HEXA_TEST_AR_REELS_PREMIERE.xml"))]
+    assert report.status == "completed"
 
 
 def _worker(worker_class, job: GenerationJob, report: BuildReportSession, runner):

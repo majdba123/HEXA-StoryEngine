@@ -59,3 +59,13 @@ def test_desktop_result_folder_is_the_versioned_bundle() -> None:
     assert "self._bundle_path = Path(bundle_path)" in source
     assert "if self._bundle_path and self._bundle_path.exists()" in source
     assert "QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._bundle_path)))" in source
+
+
+def test_desktop_offers_the_editable_premiere_project() -> None:
+    source = _source()
+
+    assert 'QPushButton("توليد كملف بريمير")' in source
+    assert "runner=run_premiere if premiere else run_pipeline" in source
+    job = _job_source()
+    assert "pipeline.generate_premiere(" in job
+    assert "def crash_retry_job(" in job and "CRASH_RETRY = True" in job

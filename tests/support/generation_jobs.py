@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from app.models import Stage
-from app.pipeline import GenerationBundleResult, TargetOutput
+from app.pipeline import GenerationBundleResult, PremiereBundleResult, PremiereOutput, TargetOutput
 from app.shared.errors import GenerationCancelledError, StageFailedError
 
 ARABIC_MESSAGE = "محاذاة السرد: «مكان!!،» جاهز"
@@ -96,3 +96,26 @@ def holds_memory(job, progress, cancelled):
         held[offset] = 1  # touch every page so it is really committed
     progress(Stage.render, 0.5, "holding memory")
     return _bundle(job)
+
+
+def crashes_once(job, progress, cancelled):
+    """A native crash on the first attempt; the panel's automatic retry completes."""
+    if not job.job_id.endswith("-retry"):
+        crashes_natively(job, progress, cancelled)
+    if job.settings.render_resources.workers_override != 1:
+        raise AssertionError("the retry must render with one worker")
+    return completes(job, progress, cancelled)
+
+
+def premiere_completes(job, progress, cancelled):
+    """The Premiere job's result shape: one FCP7 XML per format in the bundle."""
+    progress(Stage.render, 0.6, "Youtube: Writing Premiere layers")
+    directory = job.settings.work_root / "exports" / "HEXA_TEST_AR" / "v1"
+    directory.mkdir(parents=True, exist_ok=True)
+    outputs = {}
+    for target_id, suffix in (("YOUTUBE_16_9", "YOUTUBE"), ("REELS_9_16", "REELS")):
+        path = directory / f"HEXA_TEST_AR_{suffix}_PREMIERE.xml"
+        path.write_text("<xmeml version=\"4\"/>", encoding="utf-8")
+        outputs[target_id] = PremiereOutput(target_id=target_id, path=path, tracks=3, clips=4)
+    return PremiereBundleResult(package_id="HEXA_TEST_AR", slug="HEXA_TEST_AR", version=1, directory=directory,
+                                manifest_path=directory / "export.json", outputs=outputs)

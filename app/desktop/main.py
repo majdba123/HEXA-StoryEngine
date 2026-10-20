@@ -25,13 +25,16 @@ from PySide6.QtWidgets import (
 from app import __version__
 from app.config import Settings
 from app.desktop.export_preflight import export_root_problem, initialize_windows_export_root
+from app.desktop import job_process
 from app.desktop.job_process import (
     GenerationJob,
     GenerationProcess,
     Runner,
+    crash_retry_job,
     diagnostic_zip_path,
     out_of_memory_message,
     run_pipeline,
+    run_premiere,
 )
 from app.diagnostics import BuildReportSession
 from app.models import Stage
@@ -62,6 +65,8 @@ class GenerationWorker(QObject):
     ) -> None:
         super().__init__()
         self.report = report
+        self._runner = runner
+        self._stopping = False
         self.process = GenerationProcess(
             GenerationJob(
                 settings=settings,
@@ -77,6 +82,14 @@ class GenerationWorker(QObject):
         try:
             outcome = self.process.run(self._on_progress)
             self.note.emit(outcome.summary())
+            if outcome.status == "crashed" and job_process.CRASH_RETRY and not self._stopping:
+                # Repair instead of stopping: one automatic retry in a fresh process.
+                self.note.emit("RETRY: the job process ended unexpectedly; starting it once more "
+                               "with one render worker / إعادة المحاولة تلقائياً مرة واحدة")
+                self.report.on_progress(Stage.input, 0.0, "automatic retry after a job process crash")
+                self.process = GenerationProcess(crash_retry_job(self.process.job), runner=self._runner)
+                outcome = self.process.run(self._on_progress)
+                self.note.emit(outcome.summary())
             outcome.record(self.report)
             if outcome.status == "completed":
                 self.finished.emit(outcome.directory, outcome.youtube, outcome.reels)
@@ -98,6 +111,7 @@ class GenerationWorker(QObject):
         self.process.request_cancel()
 
     def stop(self) -> None:
+        self._stopping = True
         self.process.stop()
 
     def _save_crash_report(self) -> Path | None:
@@ -138,6 +152,9 @@ class MainWindow(QMainWindow):
         self.log_view.setReadOnly(True)
 
         self.generate_button = QPushButton("توليد YouTube + Reels")
+        # Editable Premiere Pro project (layers + keyframes) of both formats, no encode.
+        self.premiere_button = QPushButton("توليد كملف بريمير")
+        self._premiere_mode = False
         self.cancel_button = QPushButton("إلغاء")
         self.report_button = QPushButton("استخراج تقرير التشخيص")
         self.open_youtube_button = QPushButton("فتح YouTube")
@@ -170,6 +187,7 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         actions.addWidget(self.generate_button)
+        actions.addWidget(self.premiere_button)
         actions.addWidget(self.cancel_button)
         root.addLayout(actions)
 
@@ -197,7 +215,8 @@ class MainWindow(QMainWindow):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self._apply_style()
 
-        self.generate_button.clicked.connect(self._start_generation)
+        self.generate_button.clicked.connect(self._start_video)
+        self.premiere_button.clicked.connect(self._start_premiere)
         self.cancel_button.clicked.connect(self._cancel_generation)
         self.report_button.clicked.connect(self._export_report)
         self.open_youtube_button.clicked.connect(self._open_youtube)
@@ -250,7 +269,14 @@ class MainWindow(QMainWindow):
             self.audio_edit.setText(path)
 
     @Slot()
-    def _start_generation(self) -> None:
+    def _start_video(self) -> None:
+        self._start_generation(premiere=False)
+
+    @Slot()
+    def _start_premiere(self) -> None:
+        self._start_generation(premiere=True)
+
+    def _start_generation(self, *, premiere: bool = False) -> None:
         package = Path(self.package_edit.text().strip()).expanduser()
         audio = Path(self.audio_edit.text().strip()).expanduser()
 
@@ -295,7 +321,9 @@ class MainWindow(QMainWindow):
             package_path=package.resolve(),
             audio_path=audio.resolve(),
             report=report,
+            runner=run_premiere if premiere else run_pipeline,
         )
+        self._premiere_mode = premiere
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -320,6 +348,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.status_label.setText("بدء المعالجة...")
         self.generate_button.setEnabled(False)
+        self.premiere_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.report_button.setEnabled(False)
         self.open_youtube_button.setEnabled(False)
@@ -328,6 +357,8 @@ class MainWindow(QMainWindow):
         self.open_log_button.setEnabled(True)
         self.log_view.append(f"LOG: {report.log_path}")
         self.log_view.append(f"EXPORT ROOT: {settings.export_root}")
+        if premiere:
+            self.log_view.append("MODE: Premiere project (editable layers) / وضع ملف بريمير")
         thread.start()
 
     @Slot(str, int, str)
@@ -342,7 +373,9 @@ class MainWindow(QMainWindow):
         self._youtube_path = Path(youtube_path)
         self._reels_path = Path(reels_path)
         self.progress_bar.setValue(100)
-        self.status_label.setText("تم توليد نسختي YouTube وReels بنجاح")
+        self.status_label.setText(
+            "تم توليد ملفي بريمير (YouTube وReels) — افتح المجلد واستورد ملف XML في Premiere"
+            if self._premiere_mode else "تم توليد نسختي YouTube وReels بنجاح")
         self.log_view.append(f"DONE YOUTUBE: {youtube_path}")
         self.log_view.append(f"DONE REELS: {reels_path}")
         self.log_view.append(f"BUNDLE: {bundle_path}")
@@ -379,6 +412,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _thread_finished(self) -> None:
         self.generate_button.setEnabled(True)
+        self.premiere_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self._thread = None
         self._worker = None
@@ -434,13 +468,19 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _open_youtube(self) -> None:
-        if self._youtube_path and self._youtube_path.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._youtube_path)))
+        self._open_output(self._youtube_path)
 
     @Slot()
     def _open_reels(self) -> None:
-        if self._reels_path and self._reels_path.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._reels_path)))
+        self._open_output(self._reels_path)
+
+    @staticmethod
+    def _open_output(path: Path | None) -> None:
+        if path is None or not path.exists():
+            return
+        # A Premiere project is imported from Premiere (File > Import): show its folder.
+        target = path.parent if path.suffix.lower() == ".xml" else path
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     @Slot()
     def _open_folder(self) -> None:

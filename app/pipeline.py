@@ -22,7 +22,10 @@ from app.composition import CompositionPlanner, TextCompositionPlanner
 from app.config import PROJECT_ROOT, Settings
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter, FinalMediaVerifier
+from app.final import verification as final_media_rules
 from app.final.bundle import ExportBundleWriter, ExportRoot, ReservedBundle, export_slug
+from app.final.premiere import PremiereExporter
+from app.final.premiere import manifest_row as premiere_manifest_row
 from app.canonical import CanonicalPackage
 from app.final_package import FinalPackageLoader
 from app.canonical import ensure_canonical_package
@@ -46,12 +49,14 @@ from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.render import RenderPlanner
 from app.render.evidence import RenderedVisualEvidence
+from app.render import motion_repair
 from app.render.verification import EncodedMotionVerifier
 from app.render.renderer import FFmpegRenderer
 from app.shared.errors import (
     GenerationCancelledError,
     StageFailedError,
 )
+from app.shared import safe_mode
 from app.shared.process import run_hidden
 from app.story import StoryPlanner
 from app.targets import (
@@ -84,6 +89,8 @@ class SharedSemanticPlan:
     text: TextPlan
     workspace: Path
     timings: dict[str, float] = field(default_factory=dict)
+    # Every self-repair that replaced a stop (alignment, Story, planning, motion QA).
+    repairs: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +109,49 @@ class TargetOutput:
     media: dict[str, Any]
     seconds: float
     worker_count: int | None
+    # Recorded findings of this output that no longer stop a generation.
+    warnings: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PremiereOutput:
+    target_id: str
+    path: Path
+    tracks: int
+    clips: int
+
+
+@dataclass(frozen=True, slots=True)
+class PremiereBundleResult:
+    """The editable Premiere Pro project of every format, published as ``vN``."""
+
+    package_id: str
+    slug: str
+    version: int
+    directory: Path
+    manifest_path: Path
+    outputs: dict[str, PremiereOutput]
+
+    @property
+    def youtube(self) -> PremiereOutput:
+        return self.outputs["YOUTUBE_16_9"]
+
+    @property
+    def reels(self) -> PremiereOutput:
+        return self.outputs["REELS_9_16"]
+
+
+@dataclass(slots=True)
+class _PreparedTargets:
+    job_id: str
+    workspace: Path
+    audio_path: Path
+    started: float
+    export_root: Any
+    shared: SharedSemanticPlan
+    plans: dict[str, RenderPlan]
+    workspaces: dict[str, Path]
+    plan_seconds: dict[str, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +232,8 @@ class StoryEnginePipeline:
         )
         self.cross_scene = CrossSceneContinuityPlanner()
         self.motion_blur = MotionBlurPolicy()
+        # Recovery ladder level of the planning in progress (safe_mode); 0 = full craft.
+        self.safe_level = 0
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()
         self.rendered_visual_evidence = RenderedVisualEvidence(self.settings.ffmpeg_bin)
@@ -220,11 +272,13 @@ class StoryEnginePipeline:
             progress=progress, cancelled=cancelled,
         )
         target = REFERENCE_TARGET
-        plan = self._plan_target(
+        plan = self._with_planning_recovery(shared, lambda: self._plan_target(
             shared, target, workspace, progress=progress, cancelled=cancelled, announce=False,
-        )
-        self._require_pre_encode_motion_qa({target.target_id: plan}, {target.target_id: workspace},
-                                           progress=progress, at=0.70)
+        ))
+        plan = self._require_pre_encode_motion_qa(
+            {target.target_id: plan}, {target.target_id: workspace}, progress=progress, at=0.70,
+            repairs=shared.repairs,
+        )[target.target_id]
         output_file = self._output_path(shared.package.package_id, output_name)
         result = self._render_target(
             shared, target, plan, workspace, output_file, audio_path,
@@ -253,69 +307,11 @@ class StoryEnginePipeline:
         sequentially. The bundle is published only after every output rendered and
         passed encoded-motion and final-media verification and the manifest is written.
         """
-        if not targets or targets[0] is not REFERENCE_TARGET:
-            raise StageFailedError(
-                "bundle targets must start with the reference target",
-                details={"code": "TARGET_SET_INVALID"},
-            )
-        job_id = job_id or uuid.uuid4().hex
-        workspace = self.settings.work_root / job_id
-        audio_path = audio_path.expanduser().resolve()
-        started = time.perf_counter()
-
-        self._check_cancel(cancelled)
-        self._progress(progress, Stage.input, 0.005, "Checking export root")
-        if self.settings.export_root is None:
-            raise StageFailedError(
-                "production export root is not configured",
-                details={"code": "EXPORT_ROOT_UNAVAILABLE"},
-            )
-        export_root = ExportRoot(
-            self.settings.export_root, min_free_bytes=self.settings.export_min_free_bytes,
-        ).validate()
-        self._preflight(workspace, audio_path, progress, cancelled)
-        self._require_free_space(self.settings.work_root, self.settings.work_min_free_bytes)
-
-        shared = self._plan_shared(
-            package_path=package_path, audio_path=audio_path, workspace=workspace,
-            progress=progress, cancelled=cancelled, span=0.44,
-        )
-        shared.timings["shared_semantic_seconds"] = round(time.perf_counter() - started, 3)
-
-        # Plan every target before any heavy render: a semantic divergence or a target
-        # that cannot be composed fails before encode time is spent.
-        plans: dict[str, RenderPlan] = {}
-        workspaces: dict[str, Path] = {}
-        plan_seconds: dict[str, float] = {}
-        for index, target in enumerate(targets):
-            begin = time.perf_counter()
-            target_ws = self._target_workspace(workspace, target)
-            workspaces[target.target_id] = target_ws
-            reference = plans.get(REFERENCE_TARGET.target_id)
-            if reference is None:
-                plans[target.target_id] = self._plan_target(
-                    shared, target, target_ws, progress=progress, cancelled=cancelled,
-                    span=(0.46 + 0.04 * index, 0.50 + 0.04 * index),
-                )
-            else:
-                plans[target.target_id] = self.reference_projector.project(reference, target, target_ws)
-            plan_seconds[target.target_id] = time.perf_counter() - begin
-        reference_plan = plans[REFERENCE_TARGET.target_id]
-        for target in targets[1:]:
-            differences = semantic_differences(reference_plan, plans[target.target_id])
-            if differences:
-                raise StageFailedError(
-                    "output formats diverged semantically",
-                    details={
-                        "code": "TARGET_SEMANTIC_DIVERGENCE",
-                        "target_id": target.target_id,
-                        "differences": differences[:20],
-                    },
-                )
-        # Every final target plan passes the metadata half of encoded-motion QA before the
-        # first encode: no target spends minutes encoding while another (or itself) is
-        # already certain to fail, and no bundle version is reserved for it.
-        self._require_pre_encode_motion_qa(plans, workspaces, progress=progress, at=0.555)
+        prepared = self._prepare_targets(package_path=package_path, audio_path=audio_path, job_id=job_id,
+                                         progress=progress, cancelled=cancelled, targets=targets)
+        shared, plans, workspaces = prepared.shared, prepared.plans, prepared.workspaces
+        plan_seconds, workspace, audio_path = prepared.plan_seconds, prepared.workspace, prepared.audio_path
+        export_root, started = prepared.export_root, prepared.started
 
         slug = export_slug(shared.package.project_slug or shared.package.package_id)
         writer = ExportBundleWriter(export_root.root)
@@ -365,6 +361,186 @@ class StoryEnginePipeline:
             outputs=outputs,
         )
 
+    def generate_premiere(
+        self,
+        *,
+        package_path: Path,
+        audio_path: Path,
+        job_id: str | None = None,
+        progress: ProgressCallback | None = None,
+        cancelled: CancellationCallback | None = None,
+        targets: tuple[VisualTargetProfile, ...] = SUPPORTED_VISUAL_TARGETS,
+    ) -> PremiereBundleResult:
+        """One Final Package -> an editable Premiere Pro project per format (FCP7 XML).
+
+        The same plans as ``generate_bundle`` (shared semantics, every target, the same
+        self-repairs); instead of encoding, each final RenderPlan is written as a
+        layered timeline (``app.final.premiere``) into ``<root>/<PKG>/vN``.
+        """
+        prepared = self._prepare_targets(package_path=package_path, audio_path=audio_path, job_id=job_id,
+                                         progress=progress, cancelled=cancelled, targets=targets)
+        shared = prepared.shared
+        slug = export_slug(shared.package.project_slug or shared.package.package_id)
+        writer = ExportBundleWriter(prepared.export_root.root)
+        bundle = writer.reserve(slug)
+        outputs: dict[str, PremiereOutput] = {}
+        rows: dict[str, dict[str, Any]] = {}
+        exporter = PremiereExporter(self.renderer, ffmpeg_bin=self.settings.ffmpeg_bin)
+        try:
+            step = 0.40 / len(targets)
+            for index, target in enumerate(targets):
+                self._check_cancel(cancelled)
+                self._progress(progress, Stage.render, 0.56 + step * index,
+                               f"{target.output_suffix.title()}: Writing Premiere layers")
+                plan = prepared.plans[target.target_id]
+                stem = f"{bundle.slug}_{target.output_suffix}_PREMIERE"
+                project = exporter.export(
+                    plan, audio=prepared.audio_path, xml_path=bundle.directory / f"{stem}.xml",
+                    media_dir=bundle.directory / f"{stem}_media", name=f"{bundle.slug} {target.output_suffix}",
+                    work_dir=prepared.workspaces[target.target_id] / "premiere",
+                )
+                outputs[target.target_id] = PremiereOutput(target_id=target.target_id, path=project.path,
+                                                           tracks=project.tracks, clips=project.clips)
+                rows[target.target_id] = premiere_manifest_row(project, target.target_id, plan)
+            self._check_cancel(cancelled)
+            self._progress(progress, Stage.final, 0.98, "Writing export manifest")
+            manifest = {
+                "schema": "hexa.export.premiere/1",
+                "completed": True,
+                "package_id": shared.package.package_id,
+                "project_slug": shared.package.project_slug,
+                "export_identity": bundle.slug,
+                "export_version": bundle.version,
+                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "engine_git_sha": _engine_git_sha(),
+                "source_package_fingerprint": _source_fingerprint(package_path),
+                "timings": {**shared.timings, "total_seconds": round(time.perf_counter() - prepared.started, 3)},
+                "self_repairs": list(shared.repairs),
+                "outputs": rows,
+            }
+            manifest_path = writer.publish(bundle, manifest)
+        except BaseException as exc:
+            writer.fail(bundle, exc, diagnostics={"workspace": str(prepared.workspace),
+                                                  "exported_targets": sorted(outputs)})
+            raise
+        self._progress(progress, Stage.final, 1.0, f"Premiere project ready: {slug} {bundle.name}")
+        return PremiereBundleResult(package_id=shared.package.package_id, slug=slug, version=bundle.version,
+                                    directory=bundle.directory, manifest_path=manifest_path, outputs=outputs)
+
+    def _prepare_targets(
+        self,
+        *,
+        package_path: Path,
+        audio_path: Path,
+        job_id: str | None,
+        progress: ProgressCallback | None,
+        cancelled: CancellationCallback | None,
+        targets: tuple[VisualTargetProfile, ...],
+    ) -> _PreparedTargets:
+        """Everything before the first encode: export root, preflight, shared semantics, every
+        target's plan (recovery ladder) and pre-encode motion QA (self-repairing)."""
+        if not targets or targets[0] is not REFERENCE_TARGET:
+            raise StageFailedError(
+                "bundle targets must start with the reference target",
+                details={"code": "TARGET_SET_INVALID"},
+            )
+        job_id = job_id or uuid.uuid4().hex
+        workspace = self.settings.work_root / job_id
+        audio_path = audio_path.expanduser().resolve()
+        started = time.perf_counter()
+
+        self._check_cancel(cancelled)
+        self._progress(progress, Stage.input, 0.005, "Checking export root")
+        if self.settings.export_root is None:
+            raise StageFailedError(
+                "production export root is not configured",
+                details={"code": "EXPORT_ROOT_UNAVAILABLE"},
+            )
+        export_root = ExportRoot(
+            self.settings.export_root, min_free_bytes=self.settings.export_min_free_bytes,
+        ).validate()
+        self._preflight(workspace, audio_path, progress, cancelled)
+        self._require_free_space(self.settings.work_root, self.settings.work_min_free_bytes)
+
+        shared = self._plan_shared(
+            package_path=package_path, audio_path=audio_path, workspace=workspace,
+            progress=progress, cancelled=cancelled, span=0.44,
+        )
+        shared.timings["shared_semantic_seconds"] = round(time.perf_counter() - started, 3)
+
+        # Plan every target before any heavy render. A target that cannot be planned (or
+        # formats that diverge) is planned again on a safer level instead of stopping.
+        plans, workspaces, plan_seconds = self._with_planning_recovery(shared, lambda: self._plan_targets(
+            shared, targets, workspace, progress=progress, cancelled=cancelled,
+        ))
+        # Every final target plan passes the metadata half of encoded-motion QA before the
+        # first encode: a gesture it rejects is repaired (made still) in every target and
+        # QA runs again, so no target spends minutes encoding a plan QA would reject.
+        plans = self._require_pre_encode_motion_qa(plans, workspaces, progress=progress, at=0.555,
+                                                   repairs=shared.repairs)
+        return _PreparedTargets(job_id=job_id, workspace=workspace, audio_path=audio_path, started=started,
+                                export_root=export_root, shared=shared, plans=plans, workspaces=workspaces,
+                                plan_seconds=plan_seconds)
+
+    def _plan_targets(
+        self,
+        shared: SharedSemanticPlan,
+        targets: tuple[VisualTargetProfile, ...],
+        workspace: Path,
+        *,
+        progress: ProgressCallback | None,
+        cancelled: CancellationCallback | None,
+    ) -> tuple[dict[str, RenderPlan], dict[str, Path], dict[str, float]]:
+        plans: dict[str, RenderPlan] = {}
+        workspaces: dict[str, Path] = {}
+        plan_seconds: dict[str, float] = {}
+        for index, target in enumerate(targets):
+            begin = time.perf_counter()
+            target_ws = self._target_workspace(workspace, target)
+            workspaces[target.target_id] = target_ws
+            reference = plans.get(REFERENCE_TARGET.target_id)
+            if reference is None:
+                plans[target.target_id] = self._plan_target(
+                    shared, target, target_ws, progress=progress, cancelled=cancelled,
+                    span=(0.46 + 0.04 * index, 0.50 + 0.04 * index),
+                )
+            else:
+                plans[target.target_id] = self.reference_projector.project(reference, target, target_ws)
+            plan_seconds[target.target_id] = time.perf_counter() - begin
+        reference_plan = plans[REFERENCE_TARGET.target_id]
+        for target in targets[1:]:
+            differences = semantic_differences(reference_plan, plans[target.target_id])
+            if differences:
+                raise StageFailedError(
+                    "output formats diverged semantically",
+                    details={
+                        "code": "TARGET_SEMANTIC_DIVERGENCE",
+                        "target_id": target.target_id,
+                        "differences": differences[:20],
+                    },
+                )
+        return plans, workspaces, plan_seconds
+
+    def _with_planning_recovery(self, shared: SharedSemanticPlan, plan: Callable[[], Any]) -> Any:
+        """Run per-target planning; on a recoverable failure plan again on the next safe
+        level (``safe_mode``), recording why, instead of stopping the generation."""
+        level = 0
+        while True:
+            self.safe_level = level
+            try:
+                with safe_mode.safe_level(level):
+                    return plan()
+            except StageFailedError as exc:
+                if level >= safe_mode.MAX_LEVEL or not safe_mode.recoverable(exc):
+                    raise
+                level += 1
+                shared.repairs.append({
+                    "stage": "planning", "repair": f"safe_level_{level}",
+                    "code": exc.effective_code, "message": str(exc)[:300],
+                })
+            finally:
+                self.safe_level = 0
+
     def _require_pre_encode_motion_qa(
         self,
         plans: dict[str, RenderPlan],
@@ -372,17 +548,82 @@ class StoryEnginePipeline:
         *,
         progress: ProgressCallback | None,
         at: float,
-    ) -> None:
-        """Run encoded-motion QA's metadata contract on every final plan before encoding."""
+        repairs: list[dict[str, Any]] | None = None,
+    ) -> dict[str, RenderPlan]:
+        """Run encoded-motion QA's metadata contract on every final plan before encoding.
+
+        Repair instead of stopping (``motion_repair``): the rejected gestures become still
+        in every target and QA runs again (the last round stills the whole cue). What QA
+        still reports after that is recorded and the render continues. With
+        ``PRE_ENCODE_REPAIR`` off the contract fails closed as before.
+        """
         self._progress(progress, Stage.render, at, "Verifying final motion plans before encoding")
-        checks = {}
+        plans = dict(plans)
+        reports = {target_id: self.encoded_motion_verifier.preflight(plan) for target_id, plan in plans.items()}
+        applied: list[dict[str, Any]] = []
+        rounds = 0
+        while (motion_repair.PRE_ENCODE_REPAIR and rounds < motion_repair.MAX_REPAIR_ROUNDS
+               and not all(report.ok for report in reports.values())):
+            rounds += 1
+            found: dict[tuple[str, str], set[str]] = {}
+            for report in reports.values():
+                for key, phases in motion_repair.offenders(report.violations).items():
+                    found.setdefault(key, set()).update(phases)
+            if rounds == motion_repair.MAX_REPAIR_ROUNDS:
+                found = {key: {motion_repair.ALL_PHASES} for key in found}
+            for index, target_id in enumerate(plans):
+                plans[target_id], fixed = motion_repair.neutralize(plans[target_id], found)
+                if index == 0:  # the same repairs reach every target
+                    applied.extend({**row, "round": rounds} for row in fixed)
+            reports = {target_id: self.encoded_motion_verifier.preflight(plan) for target_id, plan in plans.items()}
         for target_id, plan in plans.items():
-            report = self.encoded_motion_verifier.preflight(plan)
-            self.encoded_motion_verifier.write(
-                report, workspaces[target_id] / "diagnostics" / "pre-encode-motion-qa.json",
-            )
-            checks[target_id] = (plan, report)
-        self.encoded_motion_verifier.require_preflight(checks)
+            diagnostics = workspaces[target_id] / "diagnostics"
+            self.encoded_motion_verifier.write(reports[target_id], diagnostics / "pre-encode-motion-qa.json")
+            if applied:
+                # The repaired plan is the one the renderer executes.
+                (workspaces[target_id] / "render-plan.json").write_text(
+                    json.dumps(plan.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+                (diagnostics / "pre-encode-motion-repairs.json").write_text(
+                    json.dumps(applied, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not motion_repair.PRE_ENCODE_REPAIR:
+            self.encoded_motion_verifier.require_preflight(
+                {target_id: (plans[target_id], report) for target_id, report in reports.items()})
+            return plans
+        remaining = sorted({row.code for report in reports.values() for row in report.violations})
+        if applied or remaining:
+            (repairs if repairs is not None else []).append({
+                "stage": "pre_encode_motion_qa", "repair": "gesture_made_still",
+                "repaired_cues": len({(row["beat_id"], row["asset_id"]) for row in applied}),
+                "rounds": rounds, "remaining_codes": remaining,
+            })
+        return plans
+
+    def _verify_final_media(
+        self,
+        final_path: Path,
+        video_only: Path,
+        audio_path: Path,
+        output_file: Path,
+        *,
+        first_spoken_start: float | None,
+    ) -> list[dict[str, Any]]:
+        """Final media integrity. Repair instead of stopping: one re-mux on any finding;
+        afterwards only a missing or unreadable stream stops, the rest is recorded."""
+        if not final_media_rules.FINAL_MEDIA_REPAIR:
+            self.final_media.require(final_path, audio_path, first_spoken_start=first_spoken_start)
+            return []
+        issues = self.final_media.inspect(final_path, audio_path, first_spoken_start=first_spoken_start)
+        remuxed = False
+        if issues:
+            self.final.mux(video_only, audio_path, output_file)
+            remuxed = True
+            issues = self.final_media.inspect(final_path, audio_path, first_spoken_start=first_spoken_start)
+        fatal = [issue for issue in issues if issue.code in final_media_rules.FATAL_FINAL_CODES]
+        if fatal:
+            raise StageFailedError(fatal[0].message, details={"code": fatal[0].code, **fatal[0].context})
+        return [{"stage": "final_media", "code": issue.code, "message": issue.message, "remuxed": remuxed,
+                 **{key: value for key, value in issue.context.items() if key != "first_frames"}}
+                for issue in issues]
 
     # -- shared semantic stages -----------------------------------------------------------
     def _preflight(
@@ -430,10 +671,14 @@ class StoryEnginePipeline:
         transcript = self.transcriber.transcribe(audio_path, package.script)
         recovery = {"transcription": self.transcriber.recovery,
                     "alignment_salvage": getattr(self.transcriber.forced_aligner, "salvage_report", None)}
+        repairs: list[dict[str, Any]] = []
         if any(recovery.values()):
             # Repaired instead of stopped: recorded next to the job's other diagnostics.
             (workspace / "transcription-recovery.json").write_text(
                 json.dumps(recovery, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            repairs.append({"stage": "transcription",
+                            "repair": "speech_interval_timing" if recovery["transcription"] else "text_matched_salvage",
+                            "code": (recovery["transcription"] or {}).get("code")})
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.vision, at(0.22), "Understanding scene elements")
@@ -489,6 +734,12 @@ class StoryEnginePipeline:
             ),
             encoding="utf-8",
         )
+        carrier_repairs = getattr(self.story, "carrier_repairs", None) or []
+        story_warnings = getattr(self.story, "quality_warnings", None) or []
+        if carrier_repairs or story_warnings:
+            repairs.append({"stage": "story", "repair": "hidden_authored_content_shown",
+                            "revealed_cutouts": len(carrier_repairs),
+                            "warnings": sorted({row.get("code") for row in story_warnings})})
         self.handoff_contracts.require_story_for_choreography(
             package=package, transcript=transcript, assets=assets, story=story
         )
@@ -559,6 +810,7 @@ class StoryEnginePipeline:
             choreography=choreography,
             text=text,
             workspace=workspace,
+            repairs=repairs,
         )
 
     # -- per-target spatial authoring -----------------------------------------------------
@@ -792,24 +1044,33 @@ class StoryEnginePipeline:
             motion = self.stillness.apply(motion)
             # Reference G19: named objects land in place from a high scale (characters keep
             # their entrances); each landing is validated by the shared segment contract.
+            # Recovery ladder level 2 (safe_mode) plans without the late accent passes.
+            late_accents = self.safe_level < safe_mode.LATE_ACCENTS_OFF
             self.landing = ReferenceLandingPolicy()
-            motion = self.landing.apply(story=story, composition=composition, motion=motion, assets=assets)
+            if late_accents:
+                motion = self.landing.apply(story=story, composition=composition, motion=motion, assets=assets)
             # Elements interact when their relation is spoken: the cause pulses as the relation
             # arrow starts, the effect lands at its tip (or answers when the head arrives).
             self.interactions = RelationInteractionPolicy()
-            motion = self.interactions.apply(story=story, composition=composition, motion=motion, assets=assets)
+            if late_accents:
+                motion = self.interactions.apply(story=story, composition=composition, motion=motion,
+                                                 assets=assets)
             # The element the narrator names pulses on its word when it is already on screen.
             self.spoken_pulse = SpokenPulsePolicy()
-            motion = self.spoken_pulse.apply(story=story, composition=composition, motion=motion,
-                                             assets=assets, text=text)
+            if late_accents:
+                motion = self.spoken_pulse.apply(story=story, composition=composition, motion=motion,
+                                                 assets=assets, text=text)
             # Locked Pass2 layers draw with their family primary's transform (one unit).
             motion = bind_families(
                 motion, {row.beat_id: {item.asset_id: item for item in row.items} for row in composition},
                 {asset.id: asset for asset in assets},
             )
             # Visual sprint B1: Motion owns motion blur, decided on the final Motion.
-            motion = self.motion_blur.plan(motion, composition, width=target.width, height=target.height,
-                                           fps=target.fps, assets=assets)
+            if late_accents:
+                motion = self.motion_blur.plan(motion, composition, width=target.width, height=target.height,
+                                               fps=target.fps, assets=assets)
+            else:
+                self.motion_blur.decisions = []
             (workspace / "diagnostics").mkdir(parents=True, exist_ok=True)
             (workspace / "diagnostics" / "motion-blur.json").write_text(
                 json.dumps([row.to_payload() for row in self.motion_blur.decisions], indent=2),
@@ -963,18 +1224,28 @@ class StoryEnginePipeline:
             rendered_motion_report,
             workspace / "diagnostics" / "rendered-motion-qa.json",
         )
-        self.encoded_motion_verifier.require(rendered_motion_report)
+        warnings: list[dict[str, Any]] = list(getattr(self.renderer, "last_repairs", None) or [])
+        if not rendered_motion_report.ok and motion_repair.ENCODED_QA_WARN:
+            # Repair instead of stopping: a gesture that reads weaker than its contract in the
+            # encoded frames already looks still on screen, which is what a repaired
+            # re-encode would show. Recorded with the evidence above, never a stop.
+            warnings.append({
+                "stage": "encoded_motion_qa", "code": "ENCODED_MOTION_BELOW_CONTRACT",
+                "codes": sorted({row.code for row in rendered_motion_report.violations}),
+                "violations": len(rendered_motion_report.violations),
+            })
+        else:
+            self.encoded_motion_verifier.require(rendered_motion_report)
 
         self._check_cancel(cancelled)
         self._progress(
             progress, Stage.final, span[1], f"{prefix}Building final video",
         )
         final_path = self.final.mux(video_only, audio_path, output_file)
-        self.final_media.require(
-            final_path,
-            audio_path,
+        warnings.extend(self._verify_final_media(
+            final_path, video_only, audio_path, output_file,
             first_spoken_start=story[0].audio_start if story else None,
-        )
+        ))
         self.rendered_visual_evidence.inspect(final_path, workspace / "diagnostics")
         self._check_cancel(cancelled)
         if not self.settings.render_resources.keep_intermediates:
@@ -999,7 +1270,8 @@ class StoryEnginePipeline:
             render_plan_path=workspace / "render-plan.json",
             render_plan_fingerprint=plan_fingerprint(plan),
             encoded_motion_ok=bool(rendered_motion_report.ok),
-            final_media_ok=True,
+            final_media_ok=not any(row["stage"] == "final_media" for row in warnings),
+            warnings=tuple(warnings),
             media=self.final_media.summary(final_path),
             seconds=round(time.perf_counter() - begin, 3),
             worker_count=worker_count,
@@ -1129,6 +1401,8 @@ class StoryEnginePipeline:
                 "story_beats": len(shared.story),
             },
             "timings": {**shared.timings, "total_seconds": round(total_seconds, 3)},
+            # Every finding that was repaired instead of stopping the generation.
+            "self_repairs": list(shared.repairs),
             "outputs": {
                 target_id: {
                     "target_id": target_id,
@@ -1143,8 +1417,9 @@ class StoryEnginePipeline:
                     "media": output.media,
                     "bytes": output.path.stat().st_size,
                     "render_plan_fingerprint": output.render_plan_fingerprint,
-                    "encoded_motion_verification": "PASS" if output.encoded_motion_ok else "FAIL",
-                    "final_media_verification": "PASS" if output.final_media_ok else "FAIL",
+                    "encoded_motion_verification": "PASS" if output.encoded_motion_ok else "WARN",
+                    "final_media_verification": "PASS" if output.final_media_ok else "WARN",
+                    "warnings": list(output.warnings),
                     "seconds": output.seconds,
                     "render_workers": output.worker_count,
                 }

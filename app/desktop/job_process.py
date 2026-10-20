@@ -19,7 +19,7 @@ import signal
 import sys
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing.connection import Connection, wait
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,10 @@ CancellationCallback = Callable[[], bool]
 
 # Seconds the child may take to exit after its last message before it is terminated.
 EXIT_GRACE_SECONDS = 30.0
+# Repair instead of stopping (2026-10-21): a job process that crashes natively (most often
+# when memory runs out) is started once more automatically, in a fresh process with one
+# render worker and its own workspace.
+CRASH_RETRY = True
 FAULT_LOG_NAME = "process-fault.log"
 _FAULT_LOG_LIMIT = 20_000
 
@@ -76,6 +80,26 @@ def run_pipeline(job: GenerationJob, progress: ProgressCallback, cancelled: Canc
         progress=progress,
         cancelled=cancelled,
     )
+
+
+def run_premiere(job: GenerationJob, progress: ProgressCallback, cancelled: CancellationCallback):
+    """The Premiere project job (editable layers, no encode); run in the child process only."""
+    from app.pipeline import StoryEnginePipeline
+
+    pipeline = StoryEnginePipeline(job.settings)
+    return pipeline.generate_premiere(
+        package_path=job.package_path,
+        audio_path=job.audio_path,
+        job_id=job.job_id,
+        progress=progress,
+        cancelled=cancelled,
+    )
+
+
+def crash_retry_job(job: GenerationJob) -> GenerationJob:
+    """The same job for its single automatic retry: one render worker, a fresh workspace."""
+    resources = replace(job.settings.render_resources, workers_override=1)
+    return replace(job, settings=replace(job.settings, render_resources=resources), job_id=f"{job.job_id}-retry")
 
 
 @dataclass(slots=True)

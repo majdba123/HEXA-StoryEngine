@@ -5,6 +5,7 @@ import re
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import RenderResourceSettings
@@ -25,10 +26,45 @@ from app.render.connection import (
 from app.render.expression import compile_expression
 from app.render.write_on import authored_path_directions, write_on_filter, write_on_frame_count
 from app.render.motion import FFmpegMotionAdapter
+from app.render.motion_repair import ALL_PHASES, neutralize_cue
 from app.render.resources import RenderConcurrencyPolicy
 from app.render.text import TextRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import beat_segments, first_visible_frame, time_to_frame
+
+# Repair instead of stopping (2026-10-21): a beat segment whose encode fails is encoded
+# again alone (no parallel memory pressure), then once more with that beat's motion still
+# (no blur, no wash), before the render stops. Every retry is recorded.
+SEGMENT_RETRY = True
+_FADE = re.compile(r"fade=t=(in|out):st=(-?[0-9.]+):d=([0-9.]+)")
+
+
+@dataclass(slots=True)
+class CapturedLayer:
+    """One drawn layer of one beat segment, exactly as the renderer composites it.
+
+    ``capture_layers`` runs the renderer's own segment authoring without encoding, so an
+    editable timeline (the Premiere export) reproduces the encoded video: the same
+    position/scale expressions, visibility window and opacity clock per drawn element, in
+    compositing order (bottom first). Times are segment-local seconds.
+    """
+
+    kind: str  # asset | text | connection | wash
+    beat_id: str
+    segment_start: float
+    duration: float
+    role: str = ""  # current | outgoing | overlap_exit | handoff | carried | under
+    asset_id: str | None = None
+    image: Path | None = None
+    box: tuple[int, int] = (0, 0)
+    x_expr: str = "0"
+    y_expr: str = "0"
+    scale_expr: str = "1"
+    visible: tuple[float, float] = (0.0, 0.0)
+    fades: tuple[tuple[str, float, float], ...] = ()
+    source: Path | None = None  # ASS document or PNG-sequence pattern
+    frames: int = 0
+    wash: dict | None = None
 
 
 # Safest carrier roles (see ``_visual_carrier_asset_id.safety_rank``): CONTEXT, OBJECT,
@@ -61,6 +97,9 @@ class FFmpegRenderer:
         self.concurrency = RenderConcurrencyPolicy(self.resources)
         self.defer_cleanup = defer_cleanup
         self.last_worker_count: int | None = None
+        self.last_repairs: list[dict] = []
+        # Set only by ``capture_layers``: segments record their layers instead of encoding.
+        self.capture: list[CapturedLayer] | None = None
         self._filter_complex_file_option_cache: str | None = None
         self.text_renderer = TextRenderer()
         self.transition_policy = VisualTransitionPolicy()
@@ -151,33 +190,24 @@ class FFmpegRenderer:
         worker_count = self.concurrency.workers(width=plan.width, height=plan.height)
         self.last_worker_count = worker_count
 
-        failures: list[Exception] = []
+        self.last_repairs = []
+        failures: list[tuple[tuple, Exception]] = []
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="hexa-render") as pool:
             futures = {
-                pool.submit(
-                    self._render_beat_segment,
-                    plan,
-                    beat,
-                    previous_beat,
-                    segment_start,
-                    frame_count,
-                    target,
-                    assets,
-                    composition,
-                    motion,
-                ): target
-                for _, beat, previous_beat, segment_start, frame_count, target in jobs
+                pool.submit(self._render_beat_segment, plan, *job[1:], assets, composition, motion): job
+                for job in jobs
             }
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as exc:  # noqa: PERF203 - collect all worker failures
-                    failures.append(exc)
-        if failures:
-            first = failures[0]
-            if isinstance(first, (DependencyUnavailableError, StageFailedError)):
-                raise first
-            raise StageFailedError("parallel render segment failed", details={"error": str(first)})
+                    failures.append((futures[future], exc))
+        for job, error in sorted(failures, key=lambda pair: pair[0][0]):
+            if not SEGMENT_RETRY or isinstance(error, DependencyUnavailableError):
+                if isinstance(error, (DependencyUnavailableError, StageFailedError)):
+                    raise error
+                raise StageFailedError("parallel render segment failed", details={"error": str(error)})
+            self._retry_segment(plan, job, error, assets, composition, motion)
 
         segments: list[Path] = []
         prelude = segment_root / "0000-prelude.mp4"
@@ -190,6 +220,70 @@ class FFmpegRenderer:
         if not self.resources.keep_intermediates and not self.defer_cleanup:
             self.cleanup_intermediates(output, source_paths={Path(a.image_path) for a in plan.assets})
         return output
+
+    def capture_layers(self, plan: RenderPlan, root: Path) -> tuple[list[CapturedLayer], list[dict]]:
+        """Every segment's layers in compositing order, authored exactly as ``render`` would
+        and never encoded. Arrow frames and ASS documents are written under ``root``. A
+        segment that cannot be authored is skipped and reported, never a stop."""
+        root.mkdir(parents=True, exist_ok=True)
+        story = sorted(plan.story, key=lambda beat: (beat.start, beat.end, beat.id))
+        assets = {asset.id: asset for asset in plan.assets}
+        composition = {beat.beat_id: beat for beat in plan.composition}
+        motion = {(cue.beat_id, cue.asset_id): cue for cue in plan.motion}
+        problems: list[dict] = []
+        self.capture = []
+        try:
+            for segment in beat_segments(story, duration=plan.duration, fps=plan.fps):
+                mark = len(self.capture)
+                try:
+                    self._render_beat_segment(
+                        plan, segment.beat, segment.previous_beat, segment.start_frame / plan.fps,
+                        segment.frame_count, root / f"{segment.index:04d}-{segment.beat.id}.mp4",
+                        assets, composition, motion,
+                    )
+                except DependencyUnavailableError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - reported, the other segments continue
+                    del self.capture[mark:]  # never half a beat
+                    problems.append({"beat_id": segment.beat.id, "error": str(exc)[:300]})
+            return list(self.capture), problems
+        finally:
+            self.capture = None
+
+    def _capture_layer(self, **fields) -> None:
+        if self.capture is not None:
+            self.capture.append(CapturedLayer(**fields))
+
+    @staticmethod
+    def _fade_specs(chain: str) -> tuple[tuple[str, float, float], ...]:
+        return tuple((kind, float(start), float(length)) for kind, start, length in _FADE.findall(chain or ""))
+
+    def _retry_segment(self, plan: RenderPlan, job: tuple, error: Exception, assets: dict,
+                       composition: dict, motion: dict[tuple[str, str], MotionCue]) -> None:
+        _, beat, previous_beat, segment_start, frame_count, target = job
+        beats = {beat.id, previous_beat.id if previous_beat is not None else beat.id}
+        still = dict(motion)
+        for key, cue in motion.items():
+            if key[0] in beats:
+                cue = neutralize_cue(cue, {ALL_PHASES})
+                params = {name: value for name, value in cue.params.items() if name not in {"motion_blur", "focus_wash"}}
+                still[key] = cue.model_copy(update={"params": params})
+        last: Exception = error
+        for repair, cues in (("serial_retry", motion), ("beat_motion_still", still)):
+            try:
+                self._render_beat_segment(plan, beat, previous_beat, segment_start, frame_count, target,
+                                          assets, composition, cues)
+            except DependencyUnavailableError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the next, safer attempt decides
+                last = exc
+                continue
+            self.last_repairs.append({"stage": "render", "code": "RENDER_SEGMENT_RETRIED", "beat_id": beat.id,
+                                      "repair": repair, "error": str(error)[:300]})
+            return
+        if isinstance(last, StageFailedError):
+            raise last
+        raise StageFailedError("parallel render segment failed", details={"error": str(last)})
 
     @staticmethod
     def cleanup_intermediates(output: Path, *, source_paths: set[Path] | None = None) -> None:
@@ -230,7 +324,8 @@ class FFmpegRenderer:
         duration = frame_count / plan.fps
         layout = composition.get(beat.id)
         if not layout or not layout.items:
-            self._render_color_segment(plan, duration, target, frame_count=frame_count)
+            if self.capture is None:
+                self._render_color_segment(plan, duration, target, frame_count=frame_count)
             return
 
         ordered_items = sorted(layout.items, key=lambda row: row.z)
@@ -240,7 +335,8 @@ class FFmpegRenderer:
                 item for item in ordered_items if item.asset_id in active_asset_ids
             ]
         if not ordered_items:
-            self._render_color_segment(plan, duration, target, frame_count=frame_count)
+            if self.capture is None:
+                self._render_color_segment(plan, duration, target, frame_count=frame_count)
             return
         wash = self._focus_wash(
             plan=plan, beat=beat, ordered_items=ordered_items, motion=motion,
@@ -457,6 +553,7 @@ class FFmpegRenderer:
         }, parent_of={item.asset_id: assets[item.asset_id].parent_asset_id for item in ordered_items},
             images={item.asset_id: assets[item.asset_id].image_path for item in ordered_items})
         connection_inputs = len(ordered_items) + len(outgoing_items) + len(handoff_items)
+        connection_sequences: list[tuple[str, int]] = []
         for connection_index, connection in enumerate(connections):
             # Reference grammar G5: the arrow writes on (numbered frames), then holds.
             pattern, _frames = draw_connection_sequence(
@@ -464,6 +561,7 @@ class FFmpegRenderer:
                 target.parent / f"{target.stem}-connection-{connection_index}",
                 spatial_scale=plan.projection.scale if plan.projection else 1.0, fps=plan.fps,
             )
+            connection_sequences.append((pattern, _frames))
             command.extend(["-framerate", str(plan.fps), "-start_number", "0", "-i", pattern])
 
         overlap_inputs = connection_inputs + len(connections)
@@ -552,6 +650,14 @@ class FFmpegRenderer:
                 next_old = f"oldmix{bridge_index}"
                 old_x = f"{target_x}+({horizontal})*{progress_expr}"
                 old_y = f"{target_y}+({vertical})*{progress_expr}"
+                self._capture_layer(
+                    kind="asset", role="outgoing", beat_id=beat.id, segment_start=segment_start,
+                    duration=duration, asset_id=item.asset_id, image=assets[item.asset_id].image_path,
+                    box=(box_w, box_h), x_expr=old_x, y_expr=old_y, visible=(0.0, bridge_end),
+                    fades=((("out", release[0], release[1]),)
+                           if release is not None and release[1] > 0
+                           and transition.mode != SceneTransitionMode.BLUR_BRIDGE else ()),
+                )
                 exit_blur = self._motion_blur_windows(
                     plan=plan, spec=exit_blur_spec if exit_start is not None and release is not None else None,
                     x_expr=old_x, y_expr=old_y, scale_expr="1", box=(box_w, box_h),
@@ -652,6 +758,12 @@ class FFmpegRenderer:
             travelled = "0" if fading else f"({travel})*(3*pow({progress},2)-2*pow({progress},3))"
             exit_x = str(target_x) if is_vertical else f"{target_x}+{travelled}"
             exit_y = f"{target_y}+{travelled}" if is_vertical else str(target_y)
+            self._capture_layer(
+                kind="asset", role="overlap_exit", beat_id=beat.id, segment_start=segment_start,
+                duration=duration, asset_id=item.asset_id, image=assets[item.asset_id].image_path,
+                box=(box_w, box_h), x_expr=exit_x, y_expr=exit_y, visible=(0.0, finish),
+                fades=(("out", begin, finish - begin),) if fading else (),
+            )
             exit_blur = self._motion_blur_windows(
                 plan=plan, spec=exit_blur_spec, x_expr=exit_x, y_expr=exit_y, scale_expr="1",
                 box=(box_w, box_h), visible=(0.0, finish), duration=duration,
@@ -712,6 +824,12 @@ class FFmpegRenderer:
             last = (first_visible_frame(successor_start, plan.fps) - 0.5) / plan.fps
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
             label = f"handoff{handoff_index}"
+            if last >= 0.0:
+                self._capture_layer(
+                    kind="asset", role="handoff", beat_id=beat.id, segment_start=segment_start,
+                    duration=duration, asset_id=item.asset_id, image=assets[item.asset_id].image_path,
+                    box=(box_w, box_h), x_expr=str(target_x), y_expr=str(target_y), visible=(0.0, last),
+                )
             filters.append(
                 f"[{handoff_offset + handoff_index}:v]format=rgba,setsar=1,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
@@ -744,6 +862,11 @@ class FFmpegRenderer:
                 if text_under is not None:
                     filters.append(self.text_renderer.ass_filter(text_under, composite_label, "washtext"))
                     composite_label = "washtext"
+                    self._capture_layer(kind="text", role="under", beat_id=beat.id, segment_start=segment_start,
+                                        duration=duration, source=text_under, visible=(0.0, duration))
+                self._capture_layer(kind="wash", beat_id=beat.id, segment_start=segment_start, duration=duration,
+                                    wash={key: value for key, value in wash.items() if key != "focus"},
+                                    visible=(wash["start"], wash["end"]))
                 filters.extend(self._focus_wash_filters(plan, wash, composite_label, duration))
                 composite_label = "washed"
                 wash["applied"] = True
@@ -910,6 +1033,20 @@ class FFmpegRenderer:
                 reveal_start=effective_reveal_start,
                 persistent=(persistent or visual_carrier),
             )
+            if self.capture is not None:
+                fades = self._fade_specs(entry_fade)
+                settle = cue.params.get("semantic_settle_time") if cue is not None and isinstance(
+                    cue.params, dict) else None
+                if entry_fade and not fades and type(settle) in (int, float):
+                    # An authored path writes on; the editable layer fades in on the same window.
+                    fades = (("in", effective_reveal_start,
+                              max(2.0 / plan.fps, float(settle) - segment_start - effective_reveal_start)),)
+                self._capture_layer(
+                    kind="asset", role="current", beat_id=beat.id, segment_start=segment_start,
+                    duration=duration, asset_id=item.asset_id, image=assets[item.asset_id].image_path,
+                    box=(box_w, box_h), x_expr=x_expr, y_expr=y_expr, scale_expr=scale_expr,
+                    visible=(enable_start, enable_end), fades=fades,
+                )
             blur = self._motion_blur_windows(
                 plan=plan,
                 spec=(transform_cue.params.get("motion_blur")
@@ -936,6 +1073,12 @@ class FFmpegRenderer:
 
         for connection_index, connection in enumerate(connections):
             label = f"connection{connection_index}"
+            self._capture_layer(
+                kind="connection", beat_id=beat.id, segment_start=segment_start, duration=duration,
+                source=Path(connection_sequences[connection_index][0]),
+                frames=connection_sequences[connection_index][1],
+                visible=(connection.start, min(duration, connection.end)),
+            )
             filters.append(
                 f"[{connection_inputs + connection_index}:v]format=rgba,"
                 f"tpad=start_duration={connection.start:.6f}:start_mode=add:color=black@0.0:"
@@ -962,6 +1105,8 @@ class FFmpegRenderer:
             ),
         )
         if ass_path is not None:
+            self._capture_layer(kind="text", beat_id=beat.id, segment_start=segment_start, duration=duration,
+                                source=ass_path, visible=(0.0, duration))
             text_label = "textmix"
             filters.append(self.text_renderer.ass_filter(ass_path, composite_label, text_label))
             composite_label = text_label
@@ -980,9 +1125,13 @@ class FFmpegRenderer:
                 include=lambda cue: cue.id in carry,
             )
             if carried_path is not None:
+                self._capture_layer(kind="text", role="carried", beat_id=beat.id, segment_start=segment_start,
+                                    duration=duration, source=carried_path, visible=(0.0, duration))
                 filters.append(self.text_renderer.ass_filter(carried_path, composite_label, "carriedtext"))
                 composite_label = "carriedtext"
 
+        if self.capture is not None:
+            return  # layers recorded; nothing is encoded
         filters.append(f"[{composite_label}]format=yuv420p[vout]")
         command.extend(self._encode_args(filters, target, plan.fps, frame_count))
         self._run(command, "render segment failed")

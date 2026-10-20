@@ -31,6 +31,15 @@ def opening_blank_seconds(first_spoken_start: float | None) -> float:
     return max(EDGE_GUARD_SECONDS, silence)
 
 
+# Repair instead of stopping (2026-10-21): after one re-mux only a missing or unreadable
+# stream stops a generation; timing drift and white-flash findings are recorded warnings
+# of a video that plays end to end.
+FINAL_MEDIA_REPAIR = True
+FATAL_FINAL_CODES = frozenset({
+    "FINAL_MISSING_OUTPUT", "FINAL_UNREADABLE_MEDIA", "FINAL_MISSING_VIDEO", "FINAL_MISSING_AUDIO",
+})
+
+
 @dataclass(frozen=True, slots=True)
 class FinalMediaIssue:
     code: str
