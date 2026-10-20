@@ -26,6 +26,7 @@ from app.motion.emphasis import (
     CHARACTER_EMPHASIS_MIN_DELTA,
     apply_character_emphasis,
 )
+from app.motion.interaction import interaction_schedule
 from app.motion.reference import ReferenceMotionEnforcer
 from app.reference.profile import HexaVisualProfile
 from app.story import StoryPlanner
@@ -645,7 +646,11 @@ def test_authored_relation_is_visibly_drawn_between_its_two_elements(tmp_path) -
         float(segment.start), float(by_asset[segment.source_asset_id].start),
         float(by_asset[segment.target_asset_id].start),
     )
-    before = _frame(video, max(0.05, appears - 0.1))
+    # Reference grammar §5: the cause's arrow may lead the effect, whose landing meets its
+    # tip, so "before" is taken before the authored interaction starts drawing.
+    begins = min([appears, *(row.arrow_start for row in interaction_schedule(beat, by_asset)
+                             if (row.source, row.target) == (segment.source_asset_id, segment.target_asset_id))])
+    before = _frame(video, max(0.05, begins - 0.1))
     after = _frame(video, min(float(beat.end) - 0.1, appears + 0.6))
     assert dark_near(after) > dark_near(before) + 20
     rect = (min(source.x, target.x), min(source.y, target.y))

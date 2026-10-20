@@ -189,7 +189,8 @@ class _Lossless(FFmpegRenderer):
 def _frames(video: Path, plan: RenderPlan) -> np.ndarray:
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          capture_output=True, check=True).stdout
-    return np.frombuffer(raw, np.uint8).reshape(-1, plan.height, plan.width, 3).astype(int)
+    # int16 holds every difference below and keeps two 2 s 1080p clips under ~1.5 GB (8 GB machines).
+    return np.frombuffer(raw, np.uint8).reshape(-1, plan.height, plan.width, 3).astype(np.int16)
 
 
 @needs_ffmpeg
