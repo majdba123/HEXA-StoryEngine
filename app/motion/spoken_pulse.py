@@ -38,18 +38,21 @@ class PulseDecision:
     reason: str
 
 
-def pulse_program(peak: float, share: float = 1.0) -> dict:
-    """The pulse over the first ``share`` of its segment, at rest for the remainder."""
+def pulse_program(peak: float, share: float = 1.0, delay: float = 0.0) -> dict:
+    """The pulse over ``share`` of its segment, starting after ``delay`` (shares of the
+    segment), at rest before and after."""
     share = max(0.05, min(1.0, share))
-    frames = [
-        {"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "ease_out_cubic"},
-        {"progress": round(PULSE_PEAK * share, 6), "dx": 0.0, "dy": 0.0, "scale": round(peak, 5),
-         "easing": "ease_in_out_cubic"},
-        {"progress": round(share, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"},
-    ]
-    if share < 1.0 - _EPS:
+    delay = max(0.0, min(1.0 - share, delay))
+    frames = [{"progress": 0.0, "dx": 0.0, "dy": 0.0, "scale": 1.0,
+               "easing": "ease_out_cubic" if delay <= _EPS else "linear"}]
+    if delay > _EPS:
+        frames.append({"progress": round(delay, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "ease_out_cubic"})
+    frames.append({"progress": round(delay + PULSE_PEAK * share, 6), "dx": 0.0, "dy": 0.0,
+                   "scale": round(peak, 5), "easing": "ease_in_out_cubic"})
+    frames.append({"progress": round(delay + share, 6), "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"})
+    if delay + share < 1.0 - _EPS:
         frames.append({"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "easing": "linear"})
-    return {"name": PULSE_NAME, "settle_progress": round(share, 6), "keyframes": frames}
+    return {"name": PULSE_NAME, "settle_progress": round(delay + share, 6), "keyframes": frames}
 
 
 def settled_at(cue: MotionCue) -> float:
@@ -104,68 +107,73 @@ class SpokenPulsePolicy:
             if not candidates:
                 continue
             at = candidates[0]
-            pulsed, reason = self._pulse(cue, at=at, beat=beat, item=layouts.get(beat_id, {}).get(asset_id),
-                                         beat_cues=[row for row in output if row.beat_id == beat_id],
-                                         assets_by_id=assets_by_id)
+            pulsed, reason = pulse_at(cue, at=at, beat=beat, item=layouts.get(beat_id, {}).get(asset_id),
+                                      beat_cues=[row for row in output if row.beat_id == beat_id],
+                                      assets_by_id=assets_by_id)
             self.decisions.append(PulseDecision(beat_id, asset_id, round(at, 3), pulsed is not None, reason))
             if pulsed is not None:
                 output[position] = pulsed
         return output
 
-    @staticmethod
-    def _pulse(cue: MotionCue, *, at: float, beat: StoryBeat, item, beat_cues: list[MotionCue],
-               assets_by_id: dict[str, VisualAsset]) -> tuple[MotionCue | None, str]:
-        params = cue.params if isinstance(cue.params, dict) else {}
-        if item is None:
-            return None, "no_layout"
-        if (params.get("render_constraints") or {}).get("geometry_lock") or params.get("family_follow"):
-            return None, "family_layer_follows_its_leader"
-        asset = assets_by_id.get(cue.asset_id)
-        if asset is not None and asset.parent_asset_id:
-            return None, "child_asset"
-        family = AssetManager.family_id(asset) if asset is not None else cue.asset_id
-        loose = [row for row in beat_cues if row.asset_id != cue.asset_id
-                 and row.asset_id in assets_by_id and AssetManager.family_id(assets_by_id[row.asset_id]) == family
-                 and not (row.params.get("render_constraints") or {}).get("geometry_lock")]
-        if loose:
-            return None, "family_cannot_pulse_as_one"
-        if any(is_spoken_pulse(row.program) for row in cue.segments):
-            return None, "already_pulsed"
-        # The authored semantic moment of this element at its word (now a still accent)
-        # carries the pulse itself: same phase, same window, same relation fields.
-        host = next((position for position, row in enumerate(cue.segments)
-                     if row.phase != "ENTRY" and abs(float(row.start) - at) <= PULSE_SNAP
-                     and float(row.end) - float(row.start) >= 6 / 30
-                     and all(abs(float(f.get("dx", 0.0))) <= _EPS and abs(float(f.get("dy", 0.0))) <= _EPS
-                             and abs(float(f.get("scale", 1.0)) - 1.0) <= _EPS
-                             for f in row.program.get("keyframes") or [])), None)
-        if host is not None:
-            row = cue.segments[host]
-            duration = float(row.end) - float(row.start)
-            if float(row.start) + min(PULSE_SECONDS, duration) > float(beat.end) - 2 / 30:
-                return None, "pulse_outside_its_beat"
-            for peak in PULSE_SCALES:
-                program = {**row.program, **pulse_program(peak, min(1.0, PULSE_SECONDS / duration))}
-                if segment_contract_violations(phase=row.phase, program=program, params=params,
-                                               segment_duration=duration, item_width=item.width,
-                                               item_height=item.height):
-                    continue
-                segments = list(cue.segments)
-                segments[host] = row.model_copy(update={"program": program})
-                return cue.model_copy(update={"segments": segments}), f"pulsed_in_{row.phase.lower()}"
-            return None, "contract_rejects_every_peak"
-        end = at + PULSE_SECONDS
-        if end > float(beat.end) - 2 / 30:
-            return None, "pulse_outside_its_beat"
-        if any(row.phase != "ENTRY" and float(row.start) < end and float(row.end) > at for row in cue.segments):
-            return None, "another_segment_draws_over_the_pulse"
+
+def _still(row: MotionSegment) -> bool:
+    return all(abs(float(f.get("dx", 0.0))) <= _EPS and abs(float(f.get("dy", 0.0))) <= _EPS
+               and abs(float(f.get("scale", 1.0)) - 1.0) <= _EPS for f in row.program.get("keyframes") or [])
+
+
+def pulse_at(cue: MotionCue, *, at: float, beat: StoryBeat, item, beat_cues: list[MotionCue],
+             assets_by_id: dict[str, VisualAsset], action: str = "EMPHASIZE") -> tuple[MotionCue | None, str]:
+    """One pulse of ``cue`` at absolute time ``at`` (shared by the spoken pulse and the
+    relation interaction): placed inside a still semantic segment that holds that moment
+    (keeping its phase and window), else in its own ESTABLISH segment; fail-closed."""
+    params = cue.params if isinstance(cue.params, dict) else {}
+    if item is None:
+        return None, "no_layout"
+    if (params.get("render_constraints") or {}).get("geometry_lock") or params.get("family_follow"):
+        return None, "family_layer_follows_its_leader"
+    asset = assets_by_id.get(cue.asset_id)
+    if asset is not None and asset.parent_asset_id:
+        return None, "child_asset"
+    family = AssetManager.family_id(asset) if asset is not None else cue.asset_id
+    loose = [row for row in beat_cues if row.asset_id != cue.asset_id
+             and row.asset_id in assets_by_id and AssetManager.family_id(assets_by_id[row.asset_id]) == family
+             and not (row.params.get("render_constraints") or {}).get("geometry_lock")]
+    if loose:
+        return None, "family_cannot_pulse_as_one"
+    if any(is_spoken_pulse(row.program) for row in cue.segments):
+        return None, "already_pulsed"
+    if at + PULSE_SECONDS > float(beat.end) - 2 / 30:
+        return None, "pulse_outside_its_beat"
+    # A still semantic segment that holds this moment carries the pulse itself.
+    host = next((position for position, row in enumerate(cue.segments)
+                 if row.phase != "ENTRY" and _still(row)
+                 and float(row.start) - PULSE_SNAP <= at and at + PULSE_SECONDS <= float(row.end) + PULSE_SNAP),
+                None)
+    if host is not None:
+        row = cue.segments[host]
+        start, duration = float(row.start), float(row.end) - float(row.start)
+        begin = max(start, min(at, float(row.end) - PULSE_SECONDS))
+        share = min(1.0, PULSE_SECONDS / duration)
         for peak in PULSE_SCALES:
-            program = pulse_program(peak)
-            if segment_contract_violations(phase="ESTABLISH", program=program, params=params,
-                                           segment_duration=PULSE_SECONDS, item_width=item.width,
+            program = {**row.program, **pulse_program(peak, share, (begin - start) / duration)}
+            if segment_contract_violations(phase=row.phase, program=program, params=params,
+                                           segment_duration=duration, item_width=item.width,
                                            item_height=item.height):
                 continue
-            segment = MotionSegment(phase="ESTABLISH", start=round(at, 6), end=round(end, 6), program=program,
-                                    semantic_action="EMPHASIZE")
-            return cue.model_copy(update={"segments": [*cue.segments, segment]}), "pulsed"
+            segments = list(cue.segments)
+            segments[host] = row.model_copy(update={"program": program})
+            return cue.model_copy(update={"segments": segments}), f"pulsed_in_{row.phase.lower()}"
         return None, "contract_rejects_every_peak"
+    end = at + PULSE_SECONDS
+    if any(row.phase != "ENTRY" and float(row.start) < end and float(row.end) > at for row in cue.segments):
+        return None, "another_segment_draws_over_the_pulse"
+    for peak in PULSE_SCALES:
+        program = pulse_program(peak)
+        if segment_contract_violations(phase="ESTABLISH", program=program, params=params,
+                                       segment_duration=PULSE_SECONDS, item_width=item.width,
+                                       item_height=item.height):
+            continue
+        segment = MotionSegment(phase="ESTABLISH", start=round(at, 6), end=round(end, 6), program=program,
+                                semantic_action=action)
+        return cue.model_copy(update={"segments": [*cue.segments, segment]}), "pulsed"
+    return None, "contract_rejects_every_peak"
