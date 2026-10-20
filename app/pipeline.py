@@ -428,6 +428,12 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.transcription, at(0.12), "Aligning narration")
         transcript = self.transcriber.transcribe(audio_path, package.script)
+        recovery = {"transcription": self.transcriber.recovery,
+                    "alignment_salvage": getattr(self.transcriber.forced_aligner, "salvage_report", None)}
+        if any(recovery.values()):
+            # Repaired instead of stopped: recorded next to the job's other diagnostics.
+            (workspace / "transcription-recovery.json").write_text(
+                json.dumps(recovery, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.vision, at(0.22), "Understanding scene elements")

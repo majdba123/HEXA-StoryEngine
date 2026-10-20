@@ -13,6 +13,7 @@ import pytest
 
 from app.transcription.alignment import AlignmentRejectedError, WhisperXForcedAligner
 from app.transcription.alignment.prepared_text import prepare_alignment_text
+from app.transcription.alignment.whisperx import AlignmentPolicy
 from app.transcription.alignment.word_repair import rejoin_split_words, whisperx_word_pieces
 
 FIELD = "خلني أشوف إذا أقدر أوصل لغير مكان!!,\nوبدأت تفتح صفحات ثانية، فكرة الهاكر الرمادي .\nهو غالبًا مو داخل"
@@ -59,7 +60,8 @@ def test_without_the_repair_the_field_failure_is_reproduced() -> None:
     spans = _break_inside(prepared.text, "مكان!!,", "مكان!")
     raw = _timed([text for _, text in whisperx_word_pieces(prepared.text, spans)])
     with pytest.raises(AlignmentRejectedError) as caught:
-        WhisperXForcedAligner()._build_transcript(prepared=prepared, language="ar", duration=10.0, raw_words=raw)
+        WhisperXForcedAligner(policy=AlignmentPolicy(salvage=False))._build_transcript(
+            prepared=prepared, language="ar", duration=10.0, raw_words=raw)
     assert caught.value.details["code"] == "ALIGNMENT_WORD_MAPPING_UNSAFE"
     assert caught.value.details["aligned_word_count"] == len(prepared.tokens) + 1
 
@@ -71,7 +73,8 @@ def test_unsplit_words_are_returned_as_the_same_objects() -> None:
     assert repairs == [] and all(a is b for a, b in zip(words, raw)) and len(words) == len(raw)
 
 
-def test_words_that_disagree_with_the_prediction_are_never_regrouped() -> None:
+def test_words_that_disagree_with_the_prediction_are_never_regrouped(monkeypatch) -> None:
+    monkeypatch.setattr("app.transcription.alignment.whisperx.ALIGNMENT_SALVAGE", False)  # strict contract
     prepared = prepare_alignment_text(FIELD)
     spans = _break_inside(prepared.text, "مكان!!,", "مكان!")
     pieces = [text for _, text in whisperx_word_pieces(prepared.text, spans)]

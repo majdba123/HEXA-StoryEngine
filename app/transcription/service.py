@@ -19,6 +19,12 @@ _PHRASE_RE = re.compile(r"[^.!؟?،؛;\n]+[.!؟?،؛;]?|[^\n]+$")
 _STRONG_PUNCTUATION = frozenset(".!?؟؛;\n")
 
 
+# Timing source of a render that recovered from a rejected/unavailable forced alignment.
+RECOVERED_TIMING_SOURCE = "speech_interval_recovered"
+# Production switch for that recovery (strict mode: False - a rejected alignment stops).
+ALIGNMENT_RECOVERY = True
+
+
 class TranscriptionService:
     def __init__(
         self,
@@ -28,12 +34,17 @@ class TranscriptionService:
         ffprobe_bin: str = "ffprobe",
         forced_aligner: ForcedAligner | None = None,
         require_forced_alignment: bool = False,
+        recover_alignment: bool = True,
     ) -> None:
         self.model_name = model_name
         self.ffmpeg_bin = ffmpeg_bin
         self.ffprobe_bin = ffprobe_bin
         self.forced_aligner = forced_aligner or WhisperXForcedAligner(ffmpeg_bin=ffmpeg_bin)
         self.require_forced_alignment = require_forced_alignment
+        # Repair instead of stopping: a rejected or unavailable forced alignment falls back
+        # to speech-interval timing (recorded in ``recovery``) instead of failing the render.
+        self.recover_alignment = recover_alignment
+        self.recovery: dict | None = None
 
     def preflight(self, audio: Path, script: str | None = None) -> float:
         """Validate narration and strict timing dependencies before expensive visual work."""
@@ -51,7 +62,13 @@ class TranscriptionService:
                     "forced aligner does not expose production preflight",
                     details={"code": "ALIGNMENT_PREFLIGHT_UNAVAILABLE"},
                 )
-            preflight(script)
+            try:
+                preflight(script)
+            except DependencyUnavailableError as exc:
+                if not (self.recover_alignment and ALIGNMENT_RECOVERY):
+                    raise
+                self.recovery = {"reason": "preflight", "code": (exc.details or {}).get("code"),
+                                 "message": str(exc)[:300]}
         return duration
 
     def transcribe(self, audio: Path, script: str | None = None) -> Transcript:
@@ -67,9 +84,18 @@ class TranscriptionService:
                 aligned = self.forced_aligner.align(audio, script, duration)
                 aligned.timing_source = "forced_alignment"
                 return aligned
-            except (DependencyUnavailableError, AlignmentRejectedError):
-                if self.require_forced_alignment:
+            except (DependencyUnavailableError, AlignmentRejectedError) as exc:
+                if self.require_forced_alignment and not (self.recover_alignment and ALIGNMENT_RECOVERY):
                     raise
+                if self.require_forced_alignment:
+                    # Repair instead of stopping (2026-10-21): narration timing from the
+                    # speech intervals of the audio itself (silence detection), recorded.
+                    recovered = self._script_fallback(audio, script)
+                    recovered.timing_source = RECOVERED_TIMING_SOURCE
+                    self.recovery = {"reason": type(exc).__name__,
+                                     "code": (getattr(exc, "details", None) or {}).get("code"),
+                                     "message": str(exc)[:300], "timing_source": RECOVERED_TIMING_SOURCE}
+                    return recovered
                 # Controlled fallback for tests/diagnostics only. Product Settings use
                 # strict forced alignment so unsafe timing never silently drives render.
                 pass

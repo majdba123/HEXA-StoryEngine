@@ -33,9 +33,12 @@ class TextTimingPlanner:
     """
 
     REQUIRED_TIMING_SOURCE = "forced_alignment"
+    # A render that recovered from a rejected alignment keeps its keywords on the
+    # speech-interval timing instead of losing every word (2026-10-21).
+    ACCEPTED_TIMING_SOURCES = frozenset({REQUIRED_TIMING_SOURCE, "speech_interval_recovered"})
 
     def align(self, candidate: KeywordCandidate, transcript: Transcript) -> TimedKeyword | None:
-        if transcript.timing_source != self.REQUIRED_TIMING_SOURCE:
+        if transcript.timing_source not in self.ACCEPTED_TIMING_SOURCES:
             return None
         words = self._words_for_span(
             transcript,

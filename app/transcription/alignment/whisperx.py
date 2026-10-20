@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,9 @@ class AlignmentRejectedError(HexaError):
     code = "ALIGNMENT_REJECTED"
 
 
+# Production switch for the text-matched salvage below (strict mode: False).
+ALIGNMENT_SALVAGE = True
+
 # Tokens shown around the first mismatch. Diagnostics never dump the whole script.
 _MISMATCH_CONTEXT = 3
 
@@ -46,6 +50,11 @@ _MISMATCH_CONTEXT = 3
 class AlignmentPolicy:
     min_token_match_ratio: float = 0.98
     timestamp_tolerance: float = 0.08
+    # Salvage (2026-10-21, "repair instead of stopping"): when the one-to-one mapping is
+    # unsafe, tokens are matched to aligner words by text; unmatched tokens get timings
+    # interpolated between matched neighbours. Accepted when this share of tokens matched.
+    salvage: bool = True
+    salvage_min_match: float = 0.85
 
 
 class WhisperXForcedAligner:
@@ -260,6 +269,16 @@ class WhisperXForcedAligner:
         diagnostics = word_mapping_diagnostics(prepared, raw_words, language=language)
         if repairs:
             diagnostics["rejoined_split_tokens"] = [repair.token for repair in repairs]
+        self.salvage_report: dict[str, Any] | None = None
+        if (
+            len(raw_words) != len(tokens)
+            or diagnostics["match_ratio"] < self.policy.min_token_match_ratio
+        ) and self.policy.salvage and ALIGNMENT_SALVAGE:
+            salvaged = _salvage(prepared, raw_words, duration, self.policy.salvage_min_match)
+            if salvaged is not None:
+                raw_words, share = salvaged
+                self.salvage_report = {"matched_share": round(share, 3), **diagnostics}
+                diagnostics = word_mapping_diagnostics(prepared, raw_words, language=language)
         if (
             len(raw_words) != len(tokens)
             or diagnostics["match_ratio"] < self.policy.min_token_match_ratio
@@ -437,6 +456,61 @@ def _normalize_token(value: str) -> str:
     value = unicodedata.normalize("NFKC", value).lower().replace("ـ", "")
     value = _ARABIC_DIACRITICS.sub("", value)
     return "".join(character for character in value if character.isalnum())
+
+
+def _salvage(
+    prepared: PreparedAlignmentText,
+    raw_words: list[dict[str, Any]],
+    duration: float,
+    min_match: float,
+) -> tuple[list[dict[str, Any]], float] | None:
+    """One aligner word per token, matched by text (``SequenceMatcher`` over normalized
+    tokens); unmatched tokens share the gap between their matched neighbours in proportion
+    to their length. None when too few tokens match or no monotonic timing results."""
+    tokens = prepared.tokens
+
+    def key(text: str) -> str:
+        return _normalize_token(text) or _marks(text)
+
+    timed = [row for row in raw_words
+             if _float_or_none(row.get("start")) is not None and _float_or_none(row.get("end")) is not None]
+    matcher = SequenceMatcher(a=[key(t.text) for t in tokens], b=[key(str(r.get("word") or "")) for r in timed],
+                              autojunk=False)
+    matched: dict[int, dict[str, Any]] = {}
+    for block in matcher.get_matching_blocks():
+        for offset in range(block.size):
+            matched[block.a + offset] = timed[block.b + offset]
+    share = len(matched) / max(1, len(tokens))
+    if share < min_match or not matched:
+        return None
+    output: list[dict[str, Any]] = []
+    index = 0
+    while index < len(tokens):
+        if index in matched:
+            row = matched[index]
+            output.append({"word": tokens[index].text, "start": float(row["start"]), "end": float(row["end"])})
+            index += 1
+            continue
+        run_end = index
+        while run_end < len(tokens) and run_end not in matched:
+            run_end += 1
+        left = output[-1]["end"] if output else max(0.0, float(matched[min(matched)]["start"]) - 0.4)
+        right = float(matched[run_end]["start"]) if run_end in matched else min(duration, left + 0.4 * (run_end - index))
+        span = max(0.0, right - left)
+        weights = [max(1, len(tokens[n].text)) for n in range(index, run_end)]
+        cursor = left
+        for n, weight in zip(range(index, run_end), weights):
+            step = span * weight / sum(weights)
+            output.append({"word": tokens[n].text, "start": cursor, "end": cursor + max(step, 0.02)})
+            cursor += step
+        index = run_end
+    for previous, current in zip(output, output[1:]):
+        if current["start"] < previous["end"]:
+            current["start"] = previous["end"]
+            current["end"] = max(current["end"], current["start"] + 0.02)
+    if output and output[-1]["end"] > duration:
+        return None
+    return output, share
 
 
 def _marks(value: str) -> str:
