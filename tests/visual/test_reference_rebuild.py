@@ -252,3 +252,53 @@ def test_reference_typography_rungs_come_first_and_never_exceed_the_safe_width()
 def test_motion_blur_matches_the_reference_exposure() -> None:
     assert MOTION_BLUR_SHUTTER == 1.0 and LEAD_SHUTTER > MOTION_BLUR_SHUTTER
     assert MAX_LENGTH >= 0.2   # whips smear about an element's own size
+
+
+# -- elements interact when their relation is spoken -----------------------------------
+def _relation_beat(order: str):
+    from app.models import StoryBeat, StoryRelation
+
+    entities = [StoryEntity(unit_id="u_cause", role="OBJECT"), StoryEntity(unit_id="u_effect", role="RESULT")]
+    relation = StoryRelation(source_unit_id="u_cause", target_unit_id="u_effect", kind="ENABLES",
+                             authority="FINAL_PACKAGE_ASSET_RELATION", spoken_start=2.2, causal=True)
+    beat = StoryBeat(id="b2", scene_id="s2", start=2.0, end=5.0, narration="x", action="REVEAL",
+                     semantic_context=StorySemanticContext(entities=entities, relations=[relation]),
+                     asset_activations=[AssetActivation(asset_id=a, semantic_unit_id=f"u_{a}")
+                                        for a in ("cause", "effect")])
+    first, second = (2.2, 3.0) if order == "cause_first" else (3.0, 2.2)
+    return beat, {"cause": _cue("b2", "cause", first, 0.25), "effect": _cue("b2", "effect", second, 0.25)}
+
+
+def test_cause_first_draws_the_arrow_before_the_effect_lands_at_its_tip() -> None:
+    from app.motion.interaction import ARROW_SECONDS, interaction_schedule
+
+    beat, cues = _relation_beat("cause_first")
+    (row,) = interaction_schedule(beat, cues)
+    assert (row.source, row.target, row.kind) == ("cause", "effect", "ENABLES")
+    assert row.arrow_start == pytest.approx(3.0 - ARROW_SECONDS)   # head reaches the effect as it lands
+    assert row.source_pulse == row.arrow_start and row.target_pulse is None
+
+
+def test_effect_first_draws_the_arrow_after_both_settle_and_the_effect_answers() -> None:
+    from app.motion.interaction import ARROW_SECONDS, interaction_schedule
+
+    beat, cues = _relation_beat("effect_first")
+    (row,) = interaction_schedule(beat, cues)
+    assert row.arrow_start >= 3.25                                  # both ends have settled
+    assert row.target_pulse == pytest.approx(row.arrow_start + ARROW_SECONDS)
+
+
+def test_relation_arrow_runs_silhouette_to_silhouette_and_never_through_a_third_drawing(tmp_path) -> None:
+    from app.render.connection import RELATION_MAX_LENGTH, relation_arrow_specs
+
+    disc = _disc(tmp_path / "d.png")
+    boxes = {"cause": (300.0, 300.0, 600.0, 600.0), "effect": (800.0, 300.0, 1100.0, 600.0)}
+    visible = {"cause": (360.0, 360.0, 540.0, 540.0), "effect": (860.0, 360.0, 1040.0, 540.0)}
+    kwargs = dict(interactions=[("cause", "effect", 2.5)], images={"cause": disc, "effect": disc}, boxes=boxes,
+                  obstacles=[], segment_start=2.0, duration=3.0, frame=(1920, 1080))
+    (spec,) = relation_arrow_specs(visible=visible, **kwargs)
+    assert spec.start == pytest.approx(0.5) and spec.end == 3.0       # held until the scene changes
+    assert 540.0 <= spec.p0[0] <= 570.0 and 830.0 <= spec.p1[0] <= 860.0   # edge to edge, outside both
+    assert ((spec.p1[0] - spec.p0[0]) ** 2) ** 0.5 <= RELATION_MAX_LENGTH * 1920
+    blocked = {**visible, "wall": (640.0, 0.0, 760.0, 1080.0)}
+    assert relation_arrow_specs(visible=blocked, **kwargs) == []
