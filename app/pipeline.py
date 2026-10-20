@@ -474,6 +474,9 @@ class StoryEnginePipeline:
                 {
                     "semantic_carriers": self.story.semantic_carrier_audit,
                     "hidden_content": self.story.hidden_content_audit,
+                    # Self-repairs that replaced a stop (shown cutouts, added support, warnings).
+                    "repairs": getattr(self.story, "carrier_repairs", []),
+                    "quality_warnings": getattr(self.story, "quality_warnings", []),
                 },
                 ensure_ascii=False,
                 indent=2,

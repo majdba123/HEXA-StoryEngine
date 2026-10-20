@@ -14,6 +14,8 @@ from app.shared.errors import StageFailedError
 from .activation import SemanticActivationPlanner
 from .event_authority import event_authority
 from .carriers import SemanticCarrierAuditor
+from . import carrier_repair
+from .carrier_repair import assets_to_reveal, reveal_assets, tolerable
 from .graph import StoryGraph, StoryGraphBuilder
 from .semantic import PackageStoryInterpreter
 
@@ -159,23 +161,54 @@ class StoryPlanner:
         planned = with_authority
         self.semantic_carrier_audit = []
         self.hidden_content_audit = []
+        self.carrier_repairs: list[dict] = []
+        self.quality_warnings: list[dict] = []
         self.carrier_resolution_report = [
             {"beat_id": beat_id, **resolution.to_payload()}
             for beat_id, resolution in sorted(self.activation.carrier_resolutions.items())
         ]
         if package.has_authoritative_semantics:
             planned = self._resolve_active_visual_semantic_state(planned)
-            self.semantic_carrier_audit = self.carrier_auditor.audit(
-                package=package, assets=assets, beats=planned,
-                resolutions=self.activation.carrier_resolutions,
-            )
-            self.hidden_content_audit = self.carrier_auditor.audit_hidden_content(
-                package=package, assets=assets, beats=planned,
-            )
-        self._require_quality_contract(package=package, assets=assets, beats=planned)
-        self.carrier_auditor.require(self.semantic_carrier_audit)
+            self._audit_carriers(package, assets, planned)
+            if carrier_repair.STORY_CARRIER_REPAIR:
+                planned = self._repair_carriers(package, assets, planned)
+        planned = self._require_quality_contract(package=package, assets=assets, beats=planned,
+                                                 repair=carrier_repair.STORY_CARRIER_REPAIR,
+                                                 warnings=self.quality_warnings)
+        self.carrier_auditor.require([row for row in self.semantic_carrier_audit
+                                      if not (carrier_repair.STORY_CARRIER_REPAIR and tolerable(row))])
         self.carrier_auditor.require_hidden_content(self.hidden_content_audit)
         return planned
+
+    def _audit_carriers(self, package: CanonicalPackage, assets: list[VisualAsset], beats: list[StoryBeat]) -> None:
+        self.semantic_carrier_audit = self.carrier_auditor.audit(
+            package=package, assets=assets, beats=beats, resolutions=self.activation.carrier_resolutions,
+        )
+        self.hidden_content_audit = self.carrier_auditor.audit_hidden_content(
+            package=package, assets=assets, beats=beats,
+        )
+
+    def _repair_carriers(self, package: CanonicalPackage, assets: list[VisualAsset],
+                         beats: list[StoryBeat]) -> list[StoryBeat]:
+        """Show hidden authored content instead of stopping (carrier_repair). Second pass:
+        every cutout still hidden in a scene the audits still flag is shown."""
+        for attempt in range(2):
+            reveal = assets_to_reveal(self.semantic_carrier_audit, self.hidden_content_audit)
+            if attempt == 1 and reveal:
+                hidden_by_scene: dict[str, dict[str, str | None]] = {}
+                for scene_id in reveal:
+                    visible = {asset_id for beat in beats if beat.scene_id == scene_id
+                               for asset_id in (beat.active_visual_semantic_state or {})}
+                    hidden_by_scene[scene_id] = {asset.id: None for asset in assets if asset.scene_id == scene_id
+                                                 and asset.can_animate_independently and asset.id not in visible}
+                reveal = hidden_by_scene
+            if not any(reveal.values()):
+                break
+            beats, repairs = reveal_assets(beats, reveal)
+            self.carrier_repairs.extend({**row, "pass": attempt + 1} for row in repairs)
+            beats = self._resolve_active_visual_semantic_state(beats)
+            self._audit_carriers(package, assets, beats)
+        return beats
 
     @staticmethod
     def _resolve_active_visual_semantic_state(
@@ -219,8 +252,14 @@ class StoryPlanner:
         package: CanonicalPackage,
         assets: list[VisualAsset],
         beats: list[StoryBeat],
-    ) -> None:
-        """Fail at Story ownership instead of emitting incomplete semantic output."""
+        repair: bool = False,
+        warnings: list[dict] | None = None,
+    ) -> list[StoryBeat]:
+        """Fail at Story ownership instead of emitting incomplete semantic output.
+
+        With ``repair`` a dropped animatable asset is added to its scene's first beat as
+        support, and an authored event without a proven carrier is recorded as a warning
+        (its artwork is on screen; only the event bookkeeping is missing)."""
         beats_by_scene: dict[str, list[StoryBeat]] = defaultdict(list)
         for beat in beats:
             beats_by_scene[beat.scene_id].append(beat)
@@ -263,6 +302,24 @@ class StoryPlanner:
             for asset_id in (*beat.primary_asset_ids, *beat.support_asset_ids)
         }
         missing_assets = sorted(eligible_assets - represented_assets)
+        if missing_assets and repair:
+            scene_of = {asset.id: asset.scene_id for asset in assets}
+            first = {}
+            for position, beat in enumerate(beats):
+                first.setdefault(beat.scene_id, position)
+            beats = list(beats)
+            for asset_id in missing_assets:
+                position = first.get(scene_of.get(asset_id, ""))
+                if position is None:
+                    continue
+                beat = beats[position]
+                beats[position] = beat.model_copy(update={"support_asset_ids": [*beat.support_asset_ids, asset_id]})
+                (warnings if warnings is not None else []).append(
+                    {"code": "ASSET_REACHES_STORY", "repair": "added_as_scene_support", "asset_id": asset_id})
+            represented_assets = {
+                asset_id for beat in beats for asset_id in (*beat.primary_asset_ids, *beat.support_asset_ids)
+            }
+            missing_assets = sorted(eligible_assets - represented_assets)
         if missing_assets:
             raise StageFailedError(
                 "Story dropped independently animatable visual assets",
@@ -289,6 +346,11 @@ class StoryPlanner:
             )
         }
         missing_events = sorted(authored_events - represented_events)
+        if missing_events and repair:
+            (warnings if warnings is not None else []).append({
+                "code": "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "repair": "recorded_as_warning",
+                "missing_events": [f"{scene_id}:{event_id}" for scene_id, event_id in missing_events]})
+            missing_events = []
         if missing_events:
             raise StageFailedError(
                 "Story could not assign every authored semantic event to a proven visual carrier",
@@ -299,6 +361,7 @@ class StoryPlanner:
                     ],
                 },
             )
+        return beats
 
     @classmethod
     def _resolve_relation_timing(
