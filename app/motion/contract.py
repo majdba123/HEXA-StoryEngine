@@ -96,6 +96,13 @@ def comfort_profile_for(phase: str, *, program_name: str, params: Mapping | None
     if (phase in {"ENTRY", "PAYOFF", "REACT"} and isinstance(params.get("reference_slide"), Mapping)
             and program_name.startswith("reference_slide")):
         return REFERENCE_SLIDE
+    if program_name == "reference_spoken_pulse":
+        # The element the narrator names pulses on its word: a reference-pop-sized gesture.
+        return REFERENCE_POP
+    if isinstance(params.get("reference_landing"), Mapping) and program_name.startswith("reference_landing"):
+        # Reference G19: every program that starts with the reveal carries the one in-place
+        # landing (high scale -> authored size), an entrance like the reference pop.
+        return REFERENCE_POP
     if (phase in {"INTERACT", "REACT"} and isinstance(params.get("relation_approach"), Mapping)
             and program_name.startswith("reference_relation_approach")):
         # A relation accent executed as the asset's own entrance (arrivals relation approach)

@@ -1,4 +1,4 @@
-"""Reference rebuild (2026-10-20, full-length review of the approved references).
+"""Reference rebuild (2026-10-20, full-length review of the approved references; R2 after user review).
 
 Each test pins one reference device that was missing or invisible in v8: the scene whip
 instead of a cut, deliberate stillness instead of micro nudges/pulses, keyword arrows,
@@ -12,14 +12,18 @@ import json
 import pytest
 
 import app.boundary.release as release
-from app.boundary.release import WHIP_FRAMES, SceneBoundaryPlanner
+from app.boundary.release import FADE_FRAMES, WHIP_FRAMES, SceneBoundaryPlanner
 from app.composition.text_director import REFERENCE_FONT_SCALES, TextPlacementDirector
-from app.models import MotionSegment
+from app.models import AssetActivation, MotionSegment, StoryEntity, StorySemanticContext
 from app.motion import hero_travel
 from app.motion.motion_blur import LEAD_SHUTTER, MAX_LENGTH, MOTION_BLUR_SHUTTER
 from app.motion.stillness import ReferenceStillnessPolicy, is_out_and_back, is_reference_still
+from app.motion.landing import ReferenceLandingPolicy
+from app.motion.spoken_pulse import SpokenPulsePolicy
 from app.render.connection import (
+    LABEL_MAX_LENGTH,
     LABEL_MIN_LENGTH_PX,
+    LABEL_SETTLE_PAUSE,
     LabelAnchor,
     label_arrow_specs,
 )
@@ -32,18 +36,41 @@ _NUDGE = {"name": "reference_directional_handoff", "keyframes": [
     {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0}]}
 
 
-# -- scene whip (G16) ---------------------------------------------------------------
-def test_a_cut_becomes_one_whip_of_the_whole_old_scene_at_the_unchanged_opener() -> None:
+# -- scene change: fade to white, whip only for a character swap (G9 / G16) ----------
+def _with_roles(scene: Scene, roles: dict[str, str]) -> Scene:
+    for position, beat in enumerate(scene.story):
+        ids = {item.asset_id for item in scene.composition[position].items}
+        entities = [StoryEntity(unit_id=f"u_{a}", role=r) for a, r in roles.items() if a in ids]
+        scene.story[position] = beat.model_copy(update={
+            "semantic_context": StorySemanticContext(entities=entities),
+            "asset_activations": [AssetActivation(asset_id=a, semantic_unit_id=f"u_{a}") for a in ids],
+        })
+    return scene
+
+
+def test_a_cut_becomes_a_fade_of_the_whole_old_scene_at_the_unchanged_opener() -> None:
     scene = Scene(lead=3, opener=NEW_ON_OLD)
     row = scene.plan()
-    assert row.audit["hero_exit"] == "scene_whip"
+    assert row.audit["hero_exit"] == "scene_fade"
     assert set(row.overlap_exits) == {"old_a", "old_b"}            # the whole scene, one block
     specs = list(row.overlap_exits.values())
-    assert all(spec == specs[0] for spec in specs)                 # one rigid path and clock
+    assert all(spec == specs[0] for spec in specs)                 # one clock
     opener = scene.boundary + 3 / FPS
     assert specs[0]["start"] == pytest.approx(opener)              # Story's opener unchanged
-    assert specs[0]["end"] - specs[0]["start"] == pytest.approx(WHIP_FRAMES / FPS)
-    assert row.exit_motion_blur["owner"] == "BOUNDARY"             # smeared like the reference
+    assert specs[0]["end"] - specs[0]["start"] == pytest.approx(FADE_FRAMES / FPS, abs=1e-5)
+    assert specs[0]["fade"] == 1.0 and row.exit_motion_blur == {}  # clears in place, no smear
+
+
+def test_a_character_swap_is_carried_by_a_blurred_whip() -> None:
+    scene = _with_roles(Scene(lead=3, opener=NEW_ON_OLD), {"old_a": "CHARACTER", "new_a": "CHARACTER"})
+    row = scene.plan()
+    assert row.audit["hero_exit"] == "scene_whip"
+    spec = next(iter(row.overlap_exits.values()))
+    assert spec["fade"] == 0.0 and spec["end"] - spec["start"] == pytest.approx(WHIP_FRAMES / FPS, abs=1e-5)
+    assert row.exit_motion_blur["owner"] == "BOUNDARY"
+    # an object opening the next scene is no character swap: the old scene fades
+    objects = _with_roles(Scene(lead=3, opener=NEW_ON_OLD), {"old_a": "CHARACTER", "new_a": "OBJECT"})
+    assert objects.plan().audit["hero_exit"] == "scene_fade"
 
 
 def test_continuing_artwork_keeps_its_certified_boundary_instead_of_a_whip() -> None:
@@ -96,46 +123,119 @@ def test_production_never_pulses_a_subject_at_rest() -> None:
     assert hero_travel.POST_SETTLE_PULSES is False
 
 
-# -- keyword arrows (G17) -----------------------------------------------------------
+# -- keyword arrows (G17): short, beside the word, never through any drawing ----------
 def _label(box, start=1.0, end=3.0, asset="lock"):
     return LabelAnchor(asset_id=asset, box=box, start=start, end=end)
 
 
-def test_a_keyword_gets_one_curved_arrow_to_what_it_names_for_as_long_as_it_is_shown() -> None:
-    specs = label_arrow_specs(
-        labels=[_label((1200.0, 100.0, 1500.0, 200.0))],
-        visible={"lock": (600.0, 400.0, 900.0, 800.0)}, revealed={"lock": 0.5}, family={},
-        segment_start=0.0, duration=4.0, frame=(1920, 1080))
+def _disc(path, size=300):
+    """An asset whose visible drawing is a disc well inside its transparent canvas."""
+    import numpy as np
+    from PIL import Image
+
+    yy, xx = np.mgrid[0:size, 0:size]
+    art = np.zeros((size, size, 4), np.uint8)
+    art[(xx - size / 2) ** 2 + (yy - size / 2) ** 2 <= (size * 0.3) ** 2] = (200, 40, 40, 255)
+    Image.fromarray(art).save(path)
+    return path
+
+
+LOCK_BOX = (800.0, 300.0, 1100.0, 600.0)   # Composition box; the disc is radius 90 at (950, 450)
+
+
+def _arrows(labels, *, visible=None, settled=None, images=None, boxes=None):
+    return label_arrow_specs(labels=labels, visible=visible or {"lock": (860.0, 360.0, 1040.0, 540.0)},
+                             settled=settled or {"lock": 0.5}, segment_start=0.0, duration=4.0,
+                             frame=(1920, 1080), images=images, boxes=boxes)
+
+
+def test_the_arrow_head_stops_just_outside_the_drawing_not_inside_its_box(tmp_path) -> None:
+    specs = _arrows([_label((1180.0, 410.0, 1380.0, 490.0))],
+                    images={"lock": _disc(tmp_path / "lock.png")}, boxes={"lock": LOCK_BOX})
     assert len(specs) == 1
-    spec = specs[0]
-    assert (spec.start, spec.end) == (1.0, 3.0)              # with the word, gone with it
-    assert spec.control is not None                          # curved, like the references
-    def near(point, box, margin=16.0):
-        return box[0] - margin <= point[0] <= box[2] + margin and box[1] - margin <= point[1] <= box[3] + margin
-
-    assert near(spec.p0, (1200.0, 100.0, 1500.0, 200.0))     # starts at the word ...
-    assert near(spec.p1, (600.0, 400.0, 900.0, 800.0))       # ... and ends at the lock
+    tip = specs[0].p1
+    distance = ((tip[0] - 950.0) ** 2 + (tip[1] - 450.0) ** 2) ** 0.5
+    assert 90.0 <= distance <= 90.0 + 30.0          # outside the disc, close to its edge
+    length = ((tip[0] - specs[0].p0[0]) ** 2 + (tip[1] - specs[0].p0[1]) ** 2) ** 0.5
+    assert LABEL_MIN_LENGTH_PX <= length <= LABEL_MAX_LENGTH * 1920   # short, like the references
 
 
-def test_no_arrow_when_the_word_touches_its_artwork_or_the_path_is_blocked_or_too_short() -> None:
-    lock = (600.0, 400.0, 900.0, 800.0)
-    touching = _label((880.0, 300.0, 1100.0, 420.0))
-    near = _label((920.0, 380.0, 920.0 + 200.0, 440.0))      # gap below the minimum arrow
-    far = _label((1300.0, 100.0, 1600.0, 200.0))
-    wall = (950.0, 0.0, 1250.0, 1080.0)                       # another asset across every route
-    for labels, visible in (([touching], {"lock": lock}), ([near], {"lock": lock}),
-                            ([far], {"lock": lock, "wall": wall})):
-        assert label_arrow_specs(labels=labels, visible=visible, revealed={"lock": 0.5, "wall": 0.0},
-                                 family={}, segment_start=0.0, duration=4.0, frame=(1920, 1080)) == []
-    assert LABEL_MIN_LENGTH_PX >= 80.0
+def test_no_long_arrow_and_no_arrow_through_another_drawing_even_of_the_same_family() -> None:
+    far = _label((1500.0, 80.0, 1800.0, 160.0))       # would cross the frame: no arrow
+    assert _arrows([far]) == []
+    beside = _label((1180.0, 410.0, 1380.0, 490.0))
+    piece = (1070.0, 380.0, 1150.0, 520.0)            # e.g. the lock's own dots, in the gap
+    assert _arrows([beside], visible={"lock": (860.0, 360.0, 1040.0, 540.0), "lock:dots": piece}) == []
+    touching = _label((1030.0, 300.0, 1250.0, 380.0))
+    assert _arrows([touching]) == []
 
 
-def test_an_arrow_never_points_at_artwork_before_it_is_revealed() -> None:
-    specs = label_arrow_specs(
-        labels=[_label((1200.0, 100.0, 1500.0, 200.0), start=1.0, end=3.0)],
-        visible={"lock": (600.0, 400.0, 900.0, 800.0)}, revealed={"lock": 2.0}, family={},
-        segment_start=0.0, duration=4.0, frame=(1920, 1080))
-    assert specs and specs[0].start == 2.0
+def test_the_arrow_waits_for_its_element_to_settle_and_for_the_word_to_be_read() -> None:
+    word = _label((1180.0, 410.0, 1380.0, 490.0), start=1.0, end=3.0)
+    assert _arrows([word], settled={"lock": 2.0})[0].start == 2.0
+    assert _arrows([word], settled={"lock": 0.2})[0].start == pytest.approx(1.0 + LABEL_SETTLE_PAUSE)
+    assert _arrows([word], settled={"lock": 2.0})[0].end == 3.0       # gone with the word
+
+
+# -- high-scale landing (G19) ---------------------------------------------------------
+def _landing_beat(roles):
+    from app.models import StoryBeat
+
+    entities = [StoryEntity(unit_id=f"u_{a}", role=r) for a, r in roles.items()]
+    return StoryBeat(id="b2", scene_id="s2", start=2.0, end=5.0, narration="x", action="REVEAL",
+                     semantic_context=StorySemanticContext(entities=entities),
+                     asset_activations=[AssetActivation(asset_id=a, semantic_unit_id=f"u_{a}") for a in roles])
+
+
+def test_a_named_object_lands_in_place_from_a_high_scale_and_a_character_keeps_its_entrance() -> None:
+    from app.models import CompositionBeat, LayoutItem, VisualAsset
+
+    beat = _landing_beat({"obj": "OBJECT", "hero": "CHARACTER"})
+    items = [LayoutItem(asset_id="obj", x=0.3, y=0.5, width=0.2, height=0.3),
+             LayoutItem(asset_id="hero", x=0.75, y=0.5, width=0.25, height=0.6)]
+    slide = {"name": "reference_slide_arrival", "settle_progress": 1.0, "keyframes": [
+        {"progress": 0.0, "dx": -0.2, "dy": 0.0, "scale": 1.0}, {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0}]}
+    cues = [_cue("b2", "obj", 2.5, 0.4).model_copy(update={"params": {
+                **_cue("b2", "obj", 2.5, 0.4).params, "program": slide, "reference_slide": {"dx": -0.2}}}),
+            _cue("b2", "hero", 2.5, 0.4).model_copy(update={"params": {
+                **_cue("b2", "hero", 2.5, 0.4).params, "program": slide}})]
+    assets = [VisualAsset(id=a, scene_id="s2", role="supporting", image_path=f"{a}.png", extraction_method="t")
+              for a in ("obj", "hero")]
+    policy = ReferenceLandingPolicy()
+    out = {c.asset_id: c for c in policy.apply(story=[beat], composition=[CompositionBeat(beat_id="b2", items=items)],
+                                               motion=cues, assets=assets)}
+    landed = out["obj"]
+    frames = landed.params["program"]["keyframes"]
+    assert frames[0]["scale"] > 1.1 and frames[-1]["scale"] == 1.0          # big -> authored size
+    assert all(f["dx"] == 0.0 and f["dy"] == 0.0 for f in frames)          # in place, no slide
+    assert "reference_slide" not in landed.params
+    assert landed.params["reference_landing"]["defocus_px"] > 0            # soft -> sharp
+    assert (landed.start, landed.end) == (2.5, 2.9)                        # Story instants kept
+    assert out["hero"].params["program"] == slide                          # characters keep theirs
+
+
+# -- the element being spoken about pulses on its word ----------------------------------
+def test_an_element_already_on_screen_pulses_exactly_when_it_is_spoken() -> None:
+    from app.models import CompositionBeat, LayoutItem, TextCue, TextPlan, VisualAsset
+
+    beat = _landing_beat({"obj": "OBJECT"})
+    item = LayoutItem(asset_id="obj", x=0.3, y=0.5, width=0.2, height=0.3)
+    cue = _cue("b2", "obj", 2.2, 0.3)
+    word = TextCue(id="t", beat_id="b2", text="x", semantic_type="emphasis", source_char_start=0,
+                   source_char_end=1, spoken_start=3.4, spoken_end=3.8, emphasis_time=3.4,
+                   style_id="emphasis", anchor_asset_id="obj")
+    asset = VisualAsset(id="obj", scene_id="s2", role="supporting", image_path="obj.png", extraction_method="t")
+    out = SpokenPulsePolicy().apply(story=[beat], composition=[CompositionBeat(beat_id="b2", items=[item])],
+                                    motion=[cue], assets=[asset], text=TextPlan(cues=[word]))[0]
+    pulse = [row for row in out.segments if row.program.get("name") == "reference_spoken_pulse"]
+    assert len(pulse) == 1 and pulse[0].start == pytest.approx(3.4)        # on the spoken word
+    peak = max(f["scale"] for f in pulse[0].program["keyframes"])
+    assert 1.05 <= peak <= 1.15 and pulse[0].program["keyframes"][-1]["scale"] == 1.0
+    # an element still arriving when it is named gets no extra pulse (its arrival is the pulse)
+    early = word.model_copy(update={"spoken_start": 2.3})
+    again = SpokenPulsePolicy().apply(story=[beat], composition=[CompositionBeat(beat_id="b2", items=[item])],
+                                      motion=[cue], assets=[asset], text=TextPlan(cues=[early]))[0]
+    assert not any(row.program.get("name") == "reference_spoken_pulse" for row in again.segments)
 
 
 # -- typography and blur (G14 / G15) ------------------------------------------------

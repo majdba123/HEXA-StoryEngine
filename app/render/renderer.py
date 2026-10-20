@@ -9,7 +9,6 @@ from pathlib import Path
 
 from app.config import RenderResourceSettings
 from app.motion.continuity import ContinuityContract
-from app.assets import AssetManager
 from app.models import MotionCue, RenderPlan, StoryBeat
 from app.motion.timing import GOLDEN_MINOR
 from app.shared.errors import DependencyUnavailableError, StageFailedError
@@ -195,7 +194,7 @@ class FFmpegRenderer:
             raise StageFailedError("renderer cleanup overlaps a source asset")
         allowed = re.compile(
             r"(?:\d{4}-(?:prelude|beat-[\w-]+)(?:\.mp4|-filter-complex\.ffgraph|"
-            r"-text(?:-under)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-[a-z]*\d+-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
+            r"-text(?:-under)?\.ass|-connection-\d+(?:-\d+)?\.png|-blur-[a-z]*\d+-\d+\.cmd|-defocus-\d+\.cmd)|ffmpeg-filter-option-probe\.ffgraph)"
         )
         if segment_root.exists():
             for path in segment_root.iterdir():
@@ -434,11 +433,18 @@ class FFmpegRenderer:
                 for item in ordered_items
                 for geometry in (self._geometry(plan, item),)
             },
-            revealed={
-                item.asset_id: float(motion[(beat.id, item.asset_id)].start)
+            settled={
+                item.asset_id: max([float(motion[(beat.id, item.asset_id)].end)] + [
+                    float(row.end) for row in motion[(beat.id, item.asset_id)].segments if row.phase == "ENTRY"])
                 for item in ordered_items if (beat.id, item.asset_id) in motion
             },
-            family={item.asset_id: AssetManager.family_id(assets[item.asset_id]) for item in ordered_items},
+            images={item.asset_id: assets[item.asset_id].image_path for item in ordered_items},
+            boxes={
+                item.asset_id: (float(geometry[2]), float(geometry[3]),
+                                float(geometry[2] + geometry[0]), float(geometry[3] + geometry[1]))
+                for item in ordered_items
+                for geometry in (self._geometry(plan, item),)
+            },
             segment_start=segment_start,
             duration=duration,
             frame=(plan.width, plan.height),
@@ -632,13 +638,19 @@ class FFmpegRenderer:
             )
             progress = f"clip((t-{begin:.6f})/{finish - begin:.6f},0,1)"
             label = f"overlapexit{exit_index}"
+            # Reference G9/G16: a planned "fade" exit clears the old scene in place (to the
+            # white canvas); only a "whip" travels and smears.
+            fading = float(spec.get("fade", 0.0)) > 0.5
+            fade_out = (f",settb=AVTB,fade=t=out:st={begin:.6f}:d={finish - begin:.6f}:alpha=1"
+                        if fading else "")
             filters.append(
                 f"[{overlap_inputs + exit_index}:v]format=rgba,setsar=1,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
                 f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
-                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS[{label}]"
+                f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
+                f"{fade_out}[{label}]"
             )
-            travelled = f"({travel})*(3*pow({progress},2)-2*pow({progress},3))"
+            travelled = "0" if fading else f"({travel})*(3*pow({progress},2)-2*pow({progress},3))"
             exit_x = str(target_x) if is_vertical else f"{target_x}+{travelled}"
             exit_y = f"{target_y}+{travelled}" if is_vertical else str(target_y)
             exit_blur = self._motion_blur_windows(
@@ -787,12 +799,26 @@ class FFmpegRenderer:
                     direction=path_directions[item.asset_id], segment_start=segment_start,
                     effective_reveal_start=effective_reveal_start, fps=plan.fps,
                 ) or entry_fade
+            # Reference G19 landing: the object sharpens while it shrinks onto its size.
+            landing_cue = cue
+            if cue is not None and isinstance(cue.params, dict) and cue.params.get("family_follow"):
+                landing_cue = motion.get((beat.id, cue.params["family_follow"]), cue)
+            defocus = (
+                ""
+                if persistent or visual_carrier or item.asset_id in handoffs.values()
+                else self._landing_defocus_filter(
+                    landing_cue, effective_reveal_start=effective_reveal_start, fps=plan.fps,
+                    pixel_scale=plan.projection.scale if plan.projection else 1.0,
+                    commands=target.parent / f"{target.stem}-defocus-{layer_index}.cmd",
+                    name=f"df{layer_index}",
+                )
+            )
             filters.append(
                 f"[{layer_index}:v]format=rgba,setsar=1,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
                 f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
-                f"{entry_fade}[{base_source_label}]"
+                f"{entry_fade}{defocus}[{base_source_label}]"
             )
             # Authored alpha stays intact after the entry. The only alpha change is the
             # Motion-owned entry clock (reveal -> settle); family layers share one clock,
@@ -1681,6 +1707,37 @@ class FFmpegRenderer:
         if not windows:
             return 0.0, min(0.12, duration)
         return min(windows, key=lambda row: row[0])
+
+    @classmethod
+    def _landing_defocus_filter(
+        cls,
+        cue: MotionCue | None,
+        *,
+        effective_reveal_start: float,
+        fps: int,
+        pixel_scale: float,
+        commands: Path,
+        name: str,
+    ) -> str:
+        """Defocus of a reference landing (G19): ``defocus_px`` on the first visible frame,
+        sharp when the landing settles (ease-out), "" for every other asset."""
+        spec = cue.params.get("reference_landing") if cue is not None and isinstance(cue.params, dict) else None
+        if not isinstance(spec, dict):
+            return ""
+        sigma0 = float(spec.get("defocus_px", 0.0)) * pixel_scale
+        frames = max(1, round(float(spec.get("seconds", 0.0)) * fps))
+        if sigma0 < 0.5:
+            return ""
+        first = cls._first_visible_frame(effective_reveal_start, fps)
+        lines = []
+        for step in range(frames + 1):
+            sigma = sigma0 * (1.0 - step / frames) ** 2
+            lines.append(f"{max(0.0, (first + step) / fps - 0.0005):.6f} gblur@{name} sigma {sigma:.3f};")
+        commands.parent.mkdir(parents=True, exist_ok=True)
+        commands.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        path = str(commands.resolve()).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
+        return (f",premultiply=inplace=1,sendcmd=f='{path}',gblur@{name}=sigma=0:steps=2,"
+                f"unpremultiply=inplace=1")
 
     @classmethod
     def _path_write_on_filter(

@@ -45,6 +45,8 @@ EXIT_MOTION_BLUR = {"owner": "BOUNDARY", "shutter": MOTION_BLUR_SHUTTER,
 # old scene leaves as one block in ~6 frames, smeared, travelling the same way as the
 # arriving element (a camera-like whip), so the eye is carried from one idea to the next.
 WHIP_FRAMES = 6
+# Every other idea change clears the old scene to white in a few frames (reference A 12.5 s).
+FADE_FRAMES = 5
 # Production switch for the whip; the certified hero-exit / crisp / cut machinery below it
 # stays intact (and tested) for every boundary the whip abstains from.
 SCENE_WHIP = True
@@ -152,22 +154,36 @@ class SceneBoundaryPlanner:
             self._visible_start(beat, cues.get((beat.id, item.asset_id))) - start_time, fps)
             for item in incoming}
         opener = int(row.audit.get("opener_frame", min(first.values())))
-        end_frame = opener + WHIP_FRAMES
+        leaving = {item.asset_id for item in previous_layout.items}
+        # References: a character swap is carried by a whip (A 41 s, B 5 s, B 35 s); every
+        # other change of idea clears the old scene to white in a few frames (A 12.5 s).
+        roles_out, roles_in = self._roles(previous), self._roles(beat)
+        whip = (any(roles_out.get(asset_id) == "CHARACTER" for asset_id in leaving)
+                and any(roles_in.get(asset_id) == "CHARACTER" for asset_id, frame in first.items()
+                        if frame == opener))
+        frames = WHIP_FRAMES if whip else FADE_FRAMES
+        end_frame = opener + frames
         if end_frame >= segment.frame_count:
             return None
         axis, direction = self._whip_direction(beat, cues, first, opener)
         spec = {"start": round((segment.start_frame + opener) / fps, 6),
                 "end": round((segment.start_frame + end_frame) / fps, 6),
-                "direction": direction, "axis": axis}
-        leaving = {item.asset_id for item in previous_layout.items}
+                "direction": direction, "axis": axis, "fade": 0.0 if whip else 1.0}
         return row.model_copy(update={
             "exit_starts": {key: value for key, value in row.exit_starts.items() if key not in leaving},
             "overlap_exits": {asset_id: dict(spec) for asset_id in sorted(leaving)},
-            "exit_motion_blur": dict(EXIT_MOTION_BLUR),
-            "audit": {**row.audit, "hero_exit": "scene_whip",
-                      "scene_whip": {"frames": WHIP_FRAMES, "units": len(leaving),
+            "exit_motion_blur": dict(EXIT_MOTION_BLUR) if whip else {},
+            "audit": {**row.audit, "hero_exit": "scene_whip" if whip else "scene_fade",
+                      "scene_whip": {"frames": frames, "units": len(leaving), "mode": "whip" if whip else "fade",
                                      "axis": "vertical" if axis else "horizontal", "direction": direction}},
         })
+
+    @staticmethod
+    def _roles(beat: StoryBeat) -> dict[str, str]:
+        """Final Package semantic role of each activated asset of ``beat``."""
+        context = beat.semantic_context
+        roles = {entity.unit_id: str(entity.role or "").upper() for entity in (context.entities if context else [])}
+        return {row.asset_id: roles.get(row.semantic_unit_id or "", "") for row in beat.asset_activations}
 
     @staticmethod
     def _whip_direction(

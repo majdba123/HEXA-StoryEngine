@@ -22,15 +22,20 @@ _SUPERSAMPLE = 2
 WRITE_ON_FRAMES = 8
 _HEAD_AT = 0.85
 _FPS_HINT = 30
-# Reference grammar G17: almost every keyword in the references is tied to the thing it
-# names by a short, curved, hand-drawn black arrow that is drawn with the word and leaves
-# with it. Bows are fractions of the chord, curved first (the reference arrows are
-# curved); a straight path is the last resort.
-LABEL_BOWS = (0.22, -0.22, 0.34, -0.34, 0.0)
-LABEL_MAX_LENGTH = 0.42      # share of the frame width: a longer arrow would cross the scene
+# Reference grammar G17: a keyword is tied to the thing it names by a SHORT, slightly
+# curved, bold black arrow placed in the gap beside the word (references: 5-12 % of the
+# frame width). It never crosses any other drawing (a piece of the same family included),
+# its head stops just outside the drawing's visible edge (alpha silhouette, not the box),
+# and it is drawn only once the named element has settled; it leaves with the word.
+LABEL_BOWS = (0.12, -0.12, 0.0)
+LABEL_MAX_LENGTH = 0.14      # share of the frame width; a longer arrow would cross the scene
 LABEL_MIN_SECONDS = 0.4      # an arrow must be readable, never a flash
-LABEL_MIN_LENGTH_PX = 90.0   # shorter reads as a mark, not an arrow (reference px at 1080p)
+LABEL_MIN_LENGTH_PX = 70.0   # shorter reads as a mark, not an arrow (reference px at 1080p)
+LABEL_SETTLE_PAUSE = 0.12    # the word is read before the arrow starts drawing
 _LABEL_GAP_PX = 10.0
+_TIP_GAP_PX = 14.0
+_SILHOUETTE_ALPHA = 64
+_SILHOUETTE_SIDE = 512
 _CURVE_SAMPLES = 32
 _FRAME_MARGIN_PX = 8.0
 _ALPHA_FLOOR = 10
@@ -108,39 +113,90 @@ def connection_specs(
     return specs
 
 
+class _Silhouette:
+    """The visible alpha of one drawn asset, in output pixels (aspect fit + centred pad)."""
+
+    def __init__(self, box: Rect, image_path: Path | None) -> None:
+        self.box = box
+        self.mask = None
+        if image_path is None:
+            return
+        try:
+            mask, width, height = _alpha_mask(str(image_path))
+        except (OSError, ValueError):
+            return
+        left, top, right, bottom = box
+        k = min((right - left) / max(1, width), (bottom - top) / max(1, height))
+        self.mask, self.k = mask, k
+        self.ox = left + ((right - left) - width * k) / 2.0
+        self.oy = top + ((bottom - top) - height * k) / 2.0
+        self.scale = mask.shape[1] / max(1, width)
+
+    def opaque(self, x: float, y: float) -> bool:
+        if self.mask is None:
+            return _inside((x, y), self.box)
+        col = int((x - self.ox) / self.k * self.scale)
+        row = int((y - self.oy) / self.k * self.scale)
+        return 0 <= row < self.mask.shape[0] and 0 <= col < self.mask.shape[1] and bool(self.mask[row, col])
+
+    def entry(self, start: tuple[float, float], toward: tuple[float, float]) -> tuple[float, float] | None:
+        """First visible pixel on the segment start -> toward (2 px steps), or None."""
+        length = hypot(toward[0] - start[0], toward[1] - start[1])
+        steps = max(1, int(length / 2.0))
+        for step in range(steps + 1):
+            t = step / steps
+            point = (start[0] + (toward[0] - start[0]) * t, start[1] + (toward[1] - start[1]) * t)
+            if self.opaque(*point):
+                return point
+        return None
+
+
+@lru_cache(maxsize=256)
+def _alpha_mask(path: str):
+    import numpy as np
+
+    with Image.open(path) as opened:
+        rgba = opened.convert("RGBA")
+        width, height = rgba.size
+        alpha = rgba.getchannel("A")
+        alpha.thumbnail((_SILHOUETTE_SIDE, _SILHOUETTE_SIDE))
+        return np.asarray(alpha) >= _SILHOUETTE_ALPHA, width, height
+
+
 def label_arrow_specs(
     *,
     labels: list[LabelAnchor],
     visible: dict[str, Rect],
-    revealed: dict[str, float],
-    family: dict[str, str],
+    settled: dict[str, float],
     segment_start: float,
     duration: float,
     frame: tuple[int, int],
     spatial_scale: float = 1.0,
+    images: dict[str, Path] | None = None,
+    boxes: dict[str, Rect] | None = None,
 ) -> list[ConnectionSpec]:
-    """Arrows from each placed keyword to the visible artwork it names (G17).
+    """Short arrows from each placed keyword to the visible artwork it names (G17).
 
-    ``visible`` holds each asset's drawn artwork (output pixels), ``revealed`` its first
-    visible instant (absolute seconds), ``family`` its Pass2 family. An arrow starts when
-    both the word and its asset are on screen, ends with the word, and is drawn only when
-    a clean curved (or straight) path exists: clear of every other artwork and keyword,
-    inside the frame, between the connector's minimum length and LABEL_MAX_LENGTH.
-    """
+    ``visible`` holds each asset's drawn artwork (alpha bbox, output pixels), ``settled``
+    the instant its entrance is over (absolute seconds); ``images``/``boxes`` (asset image
+    and Composition box) give the exact silhouette the head stops before. An arrow starts
+    once the word has been read and the asset has settled, ends with the word, and is
+    drawn only on a clean path: clear of every other drawing and keyword, inside the frame,
+    between LABEL_MIN_LENGTH_PX and LABEL_MAX_LENGTH."""
     specs: list[ConnectionSpec] = []
     for label in labels:
         target = visible.get(label.asset_id)
-        if target is None or label.asset_id not in revealed:
+        if target is None or label.asset_id not in settled:
             continue
-        start = max(label.start, revealed[label.asset_id]) - segment_start
+        start = max(label.start + LABEL_SETTLE_PAUSE, settled[label.asset_id]) - segment_start
         end = min(duration, label.end - segment_start)
         if start < 0.0 or end - start < LABEL_MIN_SECONDS:
             continue
-        own = family.get(label.asset_id, label.asset_id)
-        others = [rect for asset_id, rect in visible.items()
-                  if family.get(asset_id, asset_id) != own]
+        others = [rect for asset_id, rect in visible.items() if asset_id != label.asset_id]
         others += [row.box for row in labels if row is not label]
-        route = _label_route(label.box, target, others, spatial_scale=spatial_scale, frame=frame)
+        silhouette = _Silhouette((boxes or {}).get(label.asset_id, target),
+                                 (images or {}).get(label.asset_id))
+        route = _label_route(label.box, target, silhouette, others, spatial_scale=spatial_scale, frame=frame)
         if route is None:
             continue
         p0, p1, control = route
@@ -148,25 +204,47 @@ def label_arrow_specs(
     return specs
 
 
-def _label_route(source: Rect, target: Rect, others: list[Rect], *, spatial_scale: float,
-                 frame: tuple[int, int]):
+def _label_route(source: Rect, target: Rect, silhouette: _Silhouette, others: list[Rect], *,
+                 spatial_scale: float, frame: tuple[int, int]):
     if _overlaps(source, target, _LABEL_GAP_PX * spatial_scale):
         return None  # the word already touches what it names
-    straight = _endpoints(source, target, [], spatial_scale=spatial_scale)
+    straight = _endpoints(source, target, [], spatial_scale=0.0)  # the rays, no gap
     if straight is None:
         return None
-    (x0, y0), (x1, y1) = straight
-    length = hypot(x1 - x0, y1 - y0)
+    (sx, sy), (tx, ty) = ((source[0] + source[2]) / 2.0, (source[1] + source[3]) / 2.0), \
+        ((target[0] + target[2]) / 2.0, (target[1] + target[3]) / 2.0)
+    distance = hypot(tx - sx, ty - sy)
+    ux, uy = (tx - sx) / distance, (ty - sy) / distance
+    p0 = (straight[0][0] + ux * _LABEL_GAP_PX * spatial_scale, straight[0][1] + uy * _LABEL_GAP_PX * spatial_scale)
+    hit = silhouette.entry(p0, (tx, ty))
+    if hit is None:
+        return None
+    p1 = (hit[0] - ux * _TIP_GAP_PX * spatial_scale, hit[1] - uy * _TIP_GAP_PX * spatial_scale)
+    length = hypot(p1[0] - p0[0], p1[1] - p0[1])
     if length > LABEL_MAX_LENGTH * frame[0] or length < LABEL_MIN_LENGTH_PX * spatial_scale:
         return None
-    nx, ny = -(y1 - y0) / length, (x1 - x0) / length
-    mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    if (p1[0] - p0[0]) * ux + (p1[1] - p0[1]) * uy <= 0.0:
+        return None
+    nx, ny = -(p1[1] - p0[1]) / length, (p1[0] - p0[0]) / length
+    mx, my = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
     for bow in LABEL_BOWS:
         control = None if bow == 0.0 else (mx + nx * bow * length, my + ny * bow * length)
-        path = [straight[0], straight[1]] if control is None else _bezier(straight[0], control, straight[1])
-        if _path_clear(path, source=source, target=target, others=others, frame=frame):
-            return straight[0], straight[1], control
+        path = [p0, p1] if control is None else _bezier(p0, control, p1)
+        if not _path_clear(path, source=source, target=(0.0, 0.0, 0.0, 0.0), others=others, frame=frame):
+            continue
+        if any(silhouette.opaque(x, y) for x, y in _densify(path)):
+            continue  # the shaft or head would enter the drawing it names
+        return p0, p1, control
     return None
+
+
+def _densify(path: list[tuple[float, float]], step: float = 4.0) -> list[tuple[float, float]]:
+    points = []
+    for a, b in zip(path, path[1:]):
+        pieces = max(1, int(hypot(b[0] - a[0], b[1] - a[1]) / step))
+        points.extend((a[0] + (b[0] - a[0]) * i / pieces, a[1] + (b[1] - a[1]) * i / pieces) for i in range(pieces))
+    points.append(path[-1])
+    return points
 
 
 def _path_clear(path, *, source: Rect, target: Rect, others: list[Rect], frame: tuple[int, int]) -> bool:
