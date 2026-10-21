@@ -57,6 +57,19 @@ Each element's own time on screen after it has arrived (arrival to its first exi
 Composition and Boundary agree on every spread except 3 of 94 (a picture with an event
 wash keeps its own exit; the next picture then sits in its half alone).
 
+## Verification
+
+- Gates: ruff clean; web 68, test1 738 (38 skipped), test2 1852, test3 913, certification
+  6725, package_holdouts 80, visual 452 (19 new in `tests/visual/test_idea_spread.py`):
+  10,828 tests, 0 failures.
+- Full production render, White Hat (99 s, 40 beats, 25 spread pictures, 32 glides), both
+  targets: encoded motion QA PASS, final media QA PASS, no warnings, no self-repairs
+  (`E:\HEXA_Exports\_review_spreadull\HEXA_WHITE_HAT_HACKER_AR1`). The forced aligner
+  crashed (drive C: nearly full), so the shared plan with the real alignment came from the
+  cached probe; everything after the shared stage is the production chain.
+- Review clips in `E:\HEXA_Exports\_review_spread`: Black Hat 0–32 s before / after, White Hat
+  0–21 s Reels after.
+
 ## Limits (for the user's decision)
 
 - **Size.** A picture in a half is drawn at about half its size (0.45–0.53×): the packages'
