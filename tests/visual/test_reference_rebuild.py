@@ -12,7 +12,7 @@ import json
 import pytest
 
 import app.boundary.release as release
-from app.boundary.release import FADE_FRAMES, WHIP_FRAMES, SceneBoundaryPlanner
+from app.boundary.release import WHIP_FRAMES, SceneBoundaryPlanner
 from app.composition.text_director import REFERENCE_FONT_SCALES, TextPlacementDirector
 from app.models import AssetActivation, MotionSegment, StoryEntity, StorySemanticContext
 from app.motion import hero_travel
@@ -54,20 +54,24 @@ def _idea_change(scene: Scene) -> Scene:
     return scene
 
 
-def test_a_cut_becomes_a_fade_of_the_whole_old_scene_at_the_unchanged_opener() -> None:
+def test_a_cut_becomes_a_fade_of_the_whole_old_scene_at_the_unchanged_opener(monkeypatch) -> None:
+    monkeypatch.setattr(release, "IDEA_MIN_SECONDS", 1.5)  # a finished idea (the fixture's is 2 s old)
     scene = _idea_change(Scene(lead=3, opener=NEW_ON_OLD))
     row = scene.plan()
     assert row.audit["hero_exit"] == "scene_fade"
     assert set(row.overlap_exits) == {"old_a", "old_b"}            # the whole scene, one block
     specs = list(row.overlap_exits.values())
     assert all(spec == specs[0] for spec in specs)                 # one clock
-    opener = scene.boundary + 3 / FPS
-    assert specs[0]["start"] == pytest.approx(opener)              # Story's opener unchanged
-    assert specs[0]["end"] - specs[0]["start"] == pytest.approx(FADE_FRAMES / FPS, abs=1e-5)
+    # soft dip (pacing review 2026-10-21): the old scene starts dimming a few frames before
+    # Story's unchanged opener and is still partly visible when the new element lands
+    begin = scene.boundary + max(0, 3 - release.SCENE_FADE_LEAD_FRAMES) / FPS
+    assert specs[0]["start"] == pytest.approx(begin)
+    assert specs[0]["end"] - specs[0]["start"] == pytest.approx(release.SCENE_FADE_FRAMES / FPS, abs=1e-5)
     assert specs[0]["fade"] == 1.0 and row.exit_motion_blur == {}  # clears in place, no smear
 
 
-def test_a_character_swap_is_carried_by_a_blurred_whip() -> None:
+def test_a_character_swap_is_carried_by_a_blurred_whip(monkeypatch) -> None:
+    monkeypatch.setattr(release, "IDEA_MIN_SECONDS", 1.5)  # a finished idea (the fixture's is 2 s old)
     scene = _with_roles(_idea_change(Scene(lead=3, opener=NEW_ON_OLD)), {"old_a": "CHARACTER", "new_a": "CHARACTER"})
     row = scene.plan()
     assert row.audit["hero_exit"] == "scene_whip"
