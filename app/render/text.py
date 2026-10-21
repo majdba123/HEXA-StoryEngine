@@ -311,6 +311,7 @@ class TextRenderer:
         entry_fade_ms = None if planned_entry_fade is None else int(planned_entry_fade)
         word_fade = max(0.0, float(params.get("word_fade_ms", 0))) / 1000.0
         exit_fade = max(0.0, float(params.get("exit_fade_ms", 0))) / 1000.0
+        entry_style = str(params.get("entry_style", "slide"))
 
         def tags_for(x: int, y: int, *, first: bool, elapsed: float | None, fade_in_ms=None,
                      fade_out: float = 0.0, clip: str = "") -> str:
@@ -319,6 +320,7 @@ class TextRenderer:
                 entry_strength=entry_strength, entry_duration_ms=entry_ms, face_tags=face_tags,
                 entry_elapsed_ms=None if elapsed is None else max(0, round(elapsed * 1000)),
                 fade_in_ms=fade_in_ms, fade_out_ms=round(fade_out * 1000), clip=clip,
+                entry_style=entry_style,
             )
 
         tokens = list(motion.tokens)
@@ -362,6 +364,7 @@ class TextRenderer:
         origin = windows[0][0] if windows[0][3] == 0 else None
         gesture_dx, _gesture_dy, gesture_ms = self._entry_gesture(
             rtl=rtl, pixel_scale=pixel_scale, entry_strength=entry_strength, entry_duration_ms=entry_ms,
+            entry_style=entry_style,
         )
         # A new word fades in only where adding it moves no earlier word: one bidi
         # direction for the whole line (mixed runs may reorder, so they stay a cut).
@@ -528,12 +531,26 @@ class TextRenderer:
     @staticmethod
     def _entry_gesture(
         *, rtl: bool, pixel_scale: float, entry_strength: float, entry_duration_ms: int,
+        entry_style: str = "slide",
     ) -> tuple[int, int, int]:
-        """The phrase's one entry path: (x offset, y offset, duration ms) towards rest."""
+        """The phrase's one entry path: (x offset, y offset, duration ms) towards rest.
+
+        ``entry_style`` (Text Motion's rotation, so keywords never all enter alike):
+        ``slide`` from the reading side and slightly below (the default), ``rise`` straight
+        up from below, ``side`` level from the reading side. Every path stays inside the
+        excursion ``_safe_text_geometry`` reserves (outward of the reading edge, below the
+        ink), so the box, the anchor and the rest position never change.
+        """
         strength = max(0.0, min(1.0, float(entry_strength)))
         horizontal = round((14 + round(10 * strength)) * pixel_scale)
         vertical = round((10 + round(5 * strength)) * pixel_scale)
-        return (horizontal if rtl else -horizontal), vertical, max(130, min(240, int(entry_duration_ms)))
+        duration = max(130, min(240, int(entry_duration_ms)))
+        reading = horizontal if rtl else -horizontal
+        if entry_style == "rise":
+            return 0, vertical, duration
+        if entry_style == "side":
+            return reading, 0, duration
+        return reading, vertical, duration
 
     @staticmethod
     def _line_tags(
@@ -551,6 +568,7 @@ class TextRenderer:
         fade_in_ms: int | None = None,
         fade_out_ms: int = 0,
         clip: str = "",
+        entry_style: str = "slide",
     ) -> str:
         """ASS tags of one reveal event.
 
@@ -563,7 +581,7 @@ class TextRenderer:
         size_tag = f"\\fscx{scale}\\fscy{scale}"
         dx, dy, duration = TextRenderer._entry_gesture(
             rtl=rtl, pixel_scale=pixel_scale, entry_strength=entry_strength,
-            entry_duration_ms=entry_duration_ms,
+            entry_duration_ms=entry_duration_ms, entry_style=entry_style,
         )
         elapsed = 0 if first else entry_elapsed_ms
         moving = elapsed is not None and elapsed < duration

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+
+import numpy as np
+
 from app.choreography import ChoreographyPlan
 from app.models import (
     MotionCue,
@@ -18,6 +22,37 @@ from app.text.timing.visibility import TEXT_ENTRY_MAX_SECONDS, TextVisibilityPol
 ENTRY_FADE_SHARE, ENTRY_FADE_MS = 0.5, (65, 120)
 WORD_FADE_SECONDS = 0.10
 EXIT_FADE_SECONDS, EXIT_FADE_HOLD_SHARE = 0.18, 0.30
+# Keyword entry variety (2026-10-21): the renderer's one short entry path rotates between
+# three directions (app/render/text.py ``_entry_gesture``) so keywords never all enter alike.
+# The first keyword of a video keeps the default slide; after it a seeded rotation never
+# repeats the previous direction. Keywords appearing together share one direction.
+TEXT_ENTRY_VARIETY = True
+TEXT_ENTRY_STYLES = ("slide", "rise", "side")
+TEXT_ENTRY_GROUP_SECONDS = 0.1
+
+
+def assign_entry_styles(cues: list[TextMotionCue], beats: list[StoryBeat]) -> list[TextMotionCue]:
+    """Each keyword's entry direction, in display order (deterministic per story)."""
+    if not TEXT_ENTRY_VARIETY or not cues:
+        return cues
+    text = chr(31).join(f"{beat.id}:{beat.narration}" for beat in beats)
+    rng = np.random.default_rng(int.from_bytes(hashlib.sha256(("text-entry" + text).encode("utf-8")).digest()[:8],
+                                               "little"))
+    styles: dict[int, str] = {}
+    last: tuple[float, str] | None = None
+    for position in sorted(range(len(cues)), key=lambda k: (float(cues[k].start), cues[k].text_cue_id)):
+        start = float(cues[position].start)
+        if last is None:
+            style = TEXT_ENTRY_STYLES[0]
+        elif start - last[0] <= TEXT_ENTRY_GROUP_SECONDS:
+            style = last[1]
+        else:
+            options = [name for name in TEXT_ENTRY_STYLES if name != last[1]]
+            style = options[int(rng.integers(len(options)))]
+        styles[position] = style
+        last = (start, style)
+    return [cue.model_copy(update={"params": {**cue.params, "entry_style": styles[k]}})
+            for k, cue in enumerate(cues)]
 
 
 class TextMotionPlanner:
@@ -129,7 +164,7 @@ class TextMotionPlanner:
                     tokens=tokens,
                 )
             )
-        return output
+        return assign_entry_styles(output, beats)
 
     def _token_motion(
         self,

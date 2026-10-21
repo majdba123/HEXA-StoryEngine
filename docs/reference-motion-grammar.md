@@ -169,3 +169,19 @@ Corpus (4 cached packages, probe run fs2; pre-encode QA 0 everywhere):
 - Focus staging applies to 8–23 scenes per package and abstains on the rest, most often because the scene already has a dominant object.
 - Words placed and the median keyword scale are unchanged.
 - The 31-package pre-encode scan is recorded in `docs/handoffs/2026-10-21-repair-instead-of-stopping-and-premiere.md`.
+
+## 8. Variety (2026-10-21, user: "the effects repeat and the viewer gets used to them")
+
+The references never repeat one device back to back for long. HEXA did, because one rule meant one design:
+- 43–58 % of all entries were the same high-scale landing;
+- every keyword entered with the same diagonal slide;
+- every effect kind was one sound.
+
+| Device | Variety | Owner |
+| --- | --- | --- |
+| Object landing (G19) | `high` / `grow` / `soft` / `bloom`, all in place and scale-only. The first is always `high`; never the same twice in a row; a group revealed together shares one style | `motion/landing.py` (`LANDING_VARIETY`) |
+| Keyword entry | `slide` / `rise` / `side`, inside the reserved entry excursion, never twice in a row | `motion/text.py` (`TEXT_ENTRY_VARIETY`), `render/text.py` |
+| Sound effects | six designs per kind, shuffled rotation, pitch/level humanisation, restraint caps | `final/sound.py` |
+| Music bed | six procedural styles from the story, arrangement changes at character swaps, second style mid-video, ducked under speech | `final/music.py` |
+
+Details and measurements: `docs/handoffs/2026-10-21-variety-sound-music-entries.md`.

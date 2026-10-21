@@ -246,8 +246,8 @@ def _swell(variant: int, n: int, rng: np.random.Generator, steps: np.ndarray, to
         return _sweep(n, rng, 400 + 2600 * steps ** 1.5, (0.5, 1.6), 0.8, 1.2)
     if variant == 2:  # shimmer with tremolo
         tone = partials(t, root * 4, [1, 1.5, 2], [1, 0.6, 0.4], [0, 0, 0]) * (0.75 + 0.25 * np.sin(2 * np.pi * 6 * t))
-        air = _band_noise(n, rng, np.full(8, 2000.0), np.full(8, 6000.0))
-        return (tone / 2.0 + 0.3 * air / (np.max(np.abs(air)) or 1.0)) * _envelope(n, 0.5, 1.6)
+        air = _band_noise(n, rng, np.full(8, 2500.0), np.full(8, 6000.0))
+        return (tone / 2.0 + 0.1 * air / (np.max(np.abs(air)) or 1.0)) * _envelope(n, 0.5, 1.6)
     if variant == 3:  # sub swell
         tone = partials(t, 55.0, [1, 1.5, 2], [1, 0.4, 0.3], [0, 0, 0])
         air = _band_noise(n, rng, np.full(8, 120.0), np.full(8, 600.0))
