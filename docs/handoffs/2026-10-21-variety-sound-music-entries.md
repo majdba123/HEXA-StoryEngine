@@ -61,3 +61,23 @@ Listening demos (every style, every effect design) and two 32 s review clips: `E
   - switch off keeps `high`;
   - keyword rotation, excursion bounds and the rendered `\move` tag.
 - `tests/test2/final/test_premiere_export.py`: the A3 music track.
+
+## Verification
+
+- Gates on f1e87daf: ruff clean.
+
+  | Tree | Tests | Failures |
+  | --- | --- | --- |
+  | web | 68 | 0 |
+  | test1 | 738 (38 skipped by environment) | 0 |
+  | test2 | 1852 | 0 |
+  | test3 | 913 | 0 |
+  | certification | 6725 | 0 |
+  | package_holdouts | 80 | 0 |
+  | visual | 433 | 0 |
+
+- Full production `generate_bundle` on Gray Hat, engine f1e87daf, tree clean. Narration timing was estimated, because the forced aligner cannot run on this machine's free memory.
+  - Both targets: encoded motion QA PASS, final media QA PASS, no warnings, no self-repairs. The run took 989 s.
+  - Sound report: 50 effects, every kind rotating through its designs, 0 back-to-back repeats.
+  - Music: procedural cyber synth with 9 arrangement sections, switching to lo-fi beat at 43.9 s. Loudness −22.8 LUFS integrated, the same level as the narration alone.
+- A first attempt failed with `No such file ... filter-complex.ffgraph`. The job workspace sat in a 261-character scratch path, over the Windows path limit. The default work root is short; with a short work root the same run passed.
