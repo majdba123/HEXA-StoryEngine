@@ -70,6 +70,8 @@ def apply(plan: RenderPlan, video: Path, output: Path, *, ffmpeg_bin: str, filte
     except subprocess.CalledProcessError as exc:
         raise StageFailedError("camera drift encode failed", details={
             "code": "CAMERA_DRIFT_FAILED", "stderr": (exc.stderr or "")[-400:]}) from exc
+    finally:
+        script.unlink(missing_ok=True)
     return output
 
 

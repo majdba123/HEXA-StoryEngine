@@ -236,9 +236,18 @@ def test_a_word_whose_spot_is_taken_later_keeps_its_reading_window_instead_of_va
 
 # -- idea clock (pacing review 2026-10-21) ---------------------------------------------------
 def test_a_young_idea_continues_on_the_board_after_a_sentence_end() -> None:
-    """Sentences last ~2.7 s; an idea 3-7 s: a sentence end clears only a finished idea."""
-    row = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.").plan()
-    assert row.audit["hero_exit"] == "idea_board"  # the idea is 2 s old < IDEA_MIN_SECONDS
+    """Sentences last ~2.7 s; an idea 3-7 s: a sentence end clears only a finished idea,
+    and only when the next sentence continues it (it opens with a connective)."""
+    scene = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.")
+    scene.story[1] = scene.story[1].model_copy(update={"narration": "وبعدين الفكرة بتكمل."})
+    assert scene.plan().audit["hero_exit"] == "idea_board"  # 2 s old idea, continued
+
+
+def test_a_young_idea_never_blends_into_a_new_topic() -> None:
+    """Clarity review 2026-10-21: two different topics never share one board."""
+    scene = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.")
+    scene.story[1] = scene.story[1].model_copy(update={"narration": "الهاكر دخل الموقع."})
+    assert scene.plan().audit["hero_exit"] == "scene_fade"
 
 
 def test_the_idea_clock_switch_restores_the_sentence_rule(monkeypatch) -> None:
