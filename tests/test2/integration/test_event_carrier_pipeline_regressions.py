@@ -19,7 +19,7 @@ from app.models import Transcript, TranscriptWord, VisualAsset
 from app.motion import MotionPlanner
 from app.render import RenderPlanner
 from app.shared.errors import StageFailedError
-from app.story import StoryPlanner
+from app.story import StoryPlanner, carrier_repair
 from app.text import TextPlanner
 
 _TOKENS = ("alpha", "beta", "gamma", "delta", "omega", "sigma", "theta", "kappa", "lambda", "zeta")
@@ -206,8 +206,11 @@ def test_region_carrier_semantics_survive_all_planning_layers(
 def test_ambiguous_region_carrier_fails_closed_at_story_boundary(
     tmp_path: Path,
     event_count: int,
+    monkeypatch,
 ) -> None:
     # Two near-tied cutouts straddling the authored locator: no carrier is provable.
+    # Strict contract; production repairs instead (next test).
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)
     package, transcript, assets = _build_reused_carrier_case(
         tmp_path,
         event_count=event_count,
@@ -220,6 +223,42 @@ def test_ambiguous_region_carrier_fails_closed_at_story_boundary(
     details = exc_info.value.details or {}
     assert details.get("code") == "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE"
     assert details.get("missing_events")
+
+
+@pytest.mark.parametrize("event_count", [1, 3])
+def test_a_scene_with_nothing_provable_shows_its_cutouts_and_renders(tmp_path: Path, event_count: int) -> None:
+    """Repair instead of stopping: every cutout of the scene had abstained, so nothing would
+    be on screen. The candidates appear on the scene's own window, each authored event is
+    carried by the visible unit (recorded), and every downstream layer plans on it."""
+    package, transcript, assets = _build_reused_carrier_case(
+        tmp_path, event_count=event_count, interval=0.65, ambiguous=True, straddle=True,
+    )
+    planner = StoryPlanner()
+    story = planner.plan(package, transcript, assets)
+    assert {row["asset_id"] for row in planner.carrier_repairs} == {"runtime-a", "runtime-b"}
+    assert {row["rule"] for row in planner.carrier_repairs} == {"scene_start"}
+    assert {"runtime-a", "runtime-b"} <= set(story[0].active_visual_semantic_state or {})
+    assert [(row["code"], row["repair"]) for row in planner.quality_warnings] == [
+        ("FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "event_carried_by_visible_unit")] * event_count
+    proxies = story[0].semantic_event_proxies
+    assert [row.semantic_event_id for row in proxies] == [f"E{i}" for i in range(1, event_count + 1)]
+    assert all(row.reveal_start >= row.spoken_start for row in proxies)  # never before the word
+
+    choreography = ChoreographyDirector().plan(package, story, assets)
+    assert [flow.event_id for flow in choreography.directives[0].event_flows] == [
+        f"E{i}" for i in range(1, event_count + 1)]
+    composition = CompositionPlanner().plan(story, assets, choreography)
+    motion = MotionPlanner().plan(story, composition, choreography, assets)
+    assert {cue.asset_id for cue in motion} >= {"runtime-a", "runtime-b"}
+    for cue in motion:  # never before the scene's own narration window
+        assert cue.start >= story[0].start - 1e-6
+    text = TextPlanner().plan(transcript=transcript, story=story, assets=assets, package=package,
+                              choreography=choreography)
+    workspace = tmp_path / "render"
+    workspace.mkdir()
+    render_plan, _ = RenderPlanner().compile(transcript=transcript, assets=assets, story=story,
+                                             composition=composition, motion=motion, workspace=workspace, text=text)
+    assert render_plan.story == story
 
 
 @pytest.mark.parametrize("event_count", [1, 3])

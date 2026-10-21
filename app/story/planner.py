@@ -347,6 +347,17 @@ class StoryPlanner:
         }
         missing_events = sorted(authored_events - represented_events)
         if missing_events and repair:
+            # An event whose leader (else a participant, else its result) is on screen without
+            # an event of its own is carried by that activation; Choreography and Motion then
+            # see the authored event. What still has no carrier is recorded as a warning.
+            beats, carried = carrier_repair.carry_events(package, beats, missing_events)
+            for scene_id, event_id, asset_id in carried:
+                (warnings if warnings is not None else []).append({
+                    "code": "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "repair": "event_carried_by_visible_unit",
+                    "event": f"{scene_id}:{event_id}", "asset_id": asset_id})
+            done = {(scene_id, event_id) for scene_id, event_id, _ in carried}
+            missing_events = [pair for pair in missing_events if pair not in done]
+        if missing_events and repair:
             (warnings if warnings is not None else []).append({
                 "code": "FINAL_PACKAGE_SEMANTIC_EVENT_COVERAGE", "repair": "recorded_as_warning",
                 "missing_events": [f"{scene_id}:{event_id}" for scene_id, event_id in missing_events]})

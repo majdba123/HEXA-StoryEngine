@@ -1,4 +1,4 @@
-"""Safer planning levels: the recovery ladder of a generation (2026-10-21).
+"""Safer planning levels: the safe-level ladder of a generation (2026-10-21).
 
 A render that stops helps nobody (user direction 2026-10-21). Every owner stage first
 repairs its own findings (Story carriers, alignment, pre-encode motion QA). When a target
@@ -9,7 +9,7 @@ Story, Text selection) is reused; only the per-target planning runs again.
 
 Level 1 removes the newest staging layers (focus staging, idea climax wash, idea boards).
 Level 2 also removes the scene whip and the late accent passes (landing, relation
-interaction, spoken pulse, motion blur). Each recovery is recorded in the manifest.
+interaction, spoken pulse, motion blur). Each step down is recorded in the manifest.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from collections.abc import Iterator
 
 from app.shared.errors import StageFailedError
 
-RECOVERY_LADDER = True
+SAFE_LEVELS = True
 MAX_LEVEL = 2
 # From this level the pipeline skips its late accent passes.
 LATE_ACCENTS_OFF = 2
@@ -51,7 +51,7 @@ NOT_RECOVERABLE = frozenset({
 
 
 def recoverable(error: BaseException) -> bool:
-    return (RECOVERY_LADDER and isinstance(error, StageFailedError)
+    return (SAFE_LEVELS and isinstance(error, StageFailedError)
             and error.effective_code not in NOT_RECOVERABLE)
 
 

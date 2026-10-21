@@ -131,7 +131,7 @@ def test_strict_mode_still_fails_closed_before_any_encode(tmp_path: Path, monkey
     assert not (workspace / "diagnostics" / "pre-encode-motion-repairs.json").exists()
 
 
-# -- recovery ladder -----------------------------------------------------------------------
+# -- safe-level ladder -----------------------------------------------------------------------
 def test_safe_levels_switch_layers_off_and_always_restore_them() -> None:
     from app.boundary import release
     from app.composition import focus_staging
@@ -172,7 +172,7 @@ def test_a_target_that_cannot_be_planned_is_planned_again_on_a_safer_level() -> 
             raise StageFailedError("composition contract", details={"code": "COMPOSITION_CONTRACT_FAILED"})
         return "plans"
 
-    assert StoryEnginePipeline._with_planning_recovery(host, shared, plan) == "plans"
+    assert StoryEnginePipeline._plan_with_safe_levels(host, shared, plan) == "plans"
     assert [level for level, _ in seen] == [0, 1, 2] and seen[2][1] is False
     assert [row["repair"] for row in shared.repairs] == ["safe_level_1", "safe_level_2"]
     assert host.safe_level == 0 and release.SCENE_WHIP is True
@@ -187,7 +187,7 @@ def test_the_ladder_stops_at_its_last_level_and_never_retries_input_failures() -
         raise StageFailedError("still broken", details={"code": "COMPOSITION_CONTRACT_FAILED"})
 
     with pytest.raises(StageFailedError):
-        StoryEnginePipeline._with_planning_recovery(host, shared, always)
+        StoryEnginePipeline._plan_with_safe_levels(host, shared, always)
     assert calls == [0, 1, 2]
 
     calls.clear()
@@ -197,7 +197,7 @@ def test_the_ladder_stops_at_its_last_level_and_never_retries_input_failures() -
         raise StageFailedError("disk", details={"code": "WORK_ROOT_INSUFFICIENT_SPACE"})
 
     with pytest.raises(StageFailedError):
-        StoryEnginePipeline._with_planning_recovery(host, SimpleNamespace(repairs=[]), no_space)
+        StoryEnginePipeline._plan_with_safe_levels(host, SimpleNamespace(repairs=[]), no_space)
     assert calls == [0]
 
 

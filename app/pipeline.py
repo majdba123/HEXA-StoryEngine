@@ -232,7 +232,7 @@ class StoryEnginePipeline:
         )
         self.cross_scene = CrossSceneContinuityPlanner()
         self.motion_blur = MotionBlurPolicy()
-        # Recovery ladder level of the planning in progress (safe_mode); 0 = full craft.
+        # Safe level of the planning in progress (safe_mode); 0 = full craft.
         self.safe_level = 0
         self.text_motion = TextMotionPlanner()
         self.encoded_motion_verifier = EncodedMotionVerifier()
@@ -272,7 +272,7 @@ class StoryEnginePipeline:
             progress=progress, cancelled=cancelled,
         )
         target = REFERENCE_TARGET
-        plan = self._with_planning_recovery(shared, lambda: self._plan_target(
+        plan = self._plan_with_safe_levels(shared, lambda: self._plan_target(
             shared, target, workspace, progress=progress, cancelled=cancelled, announce=False,
         ))
         plan = self._require_pre_encode_motion_qa(
@@ -438,7 +438,7 @@ class StoryEnginePipeline:
         targets: tuple[VisualTargetProfile, ...],
     ) -> _PreparedTargets:
         """Everything before the first encode: export root, preflight, shared semantics, every
-        target's plan (recovery ladder) and pre-encode motion QA (self-repairing)."""
+        target's plan (safe levels) and pre-encode motion QA (self-repairing)."""
         if not targets or targets[0] is not REFERENCE_TARGET:
             raise StageFailedError(
                 "bundle targets must start with the reference target",
@@ -470,7 +470,7 @@ class StoryEnginePipeline:
 
         # Plan every target before any heavy render. A target that cannot be planned (or
         # formats that diverge) is planned again on a safer level instead of stopping.
-        plans, workspaces, plan_seconds = self._with_planning_recovery(shared, lambda: self._plan_targets(
+        plans, workspaces, plan_seconds = self._plan_with_safe_levels(shared, lambda: self._plan_targets(
             shared, targets, workspace, progress=progress, cancelled=cancelled,
         ))
         # Every final target plan passes the metadata half of encoded-motion QA before the
@@ -521,7 +521,7 @@ class StoryEnginePipeline:
                 )
         return plans, workspaces, plan_seconds
 
-    def _with_planning_recovery(self, shared: SharedSemanticPlan, plan: Callable[[], Any]) -> Any:
+    def _plan_with_safe_levels(self, shared: SharedSemanticPlan, plan: Callable[[], Any]) -> Any:
         """Run per-target planning; on a recoverable failure plan again on the next safe
         level (``safe_mode``), recording why, instead of stopping the generation."""
         level = 0
@@ -669,16 +669,16 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.transcription, at(0.12), "Aligning narration")
         transcript = self.transcriber.transcribe(audio_path, package.script)
-        recovery = {"transcription": self.transcriber.recovery,
+        timing_repair = {"transcription": self.transcriber.timing_repair,
                     "alignment_salvage": getattr(self.transcriber.forced_aligner, "salvage_report", None)}
         repairs: list[dict[str, Any]] = []
-        if any(recovery.values()):
+        if any(timing_repair.values()):
             # Repaired instead of stopped: recorded next to the job's other diagnostics.
-            (workspace / "transcription-recovery.json").write_text(
-                json.dumps(recovery, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            (workspace / "transcription-repair.json").write_text(
+                json.dumps(timing_repair, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
             repairs.append({"stage": "transcription",
-                            "repair": "speech_interval_timing" if recovery["transcription"] else "text_matched_salvage",
-                            "code": (recovery["transcription"] or {}).get("code")})
+                            "repair": "speech_interval_timing" if timing_repair["transcription"] else "text_matched_salvage",
+                            "code": (timing_repair["transcription"] or {}).get("code")})
 
         self._check_cancel(cancelled)
         self._progress(progress, Stage.vision, at(0.22), "Understanding scene elements")
@@ -1044,7 +1044,7 @@ class StoryEnginePipeline:
             motion = self.stillness.apply(motion)
             # Reference G19: named objects land in place from a high scale (characters keep
             # their entrances); each landing is validated by the shared segment contract.
-            # Recovery ladder level 2 (safe_mode) plans without the late accent passes.
+            # Safe level 2 (safe_mode) plans without the late accent passes.
             late_accents = self.safe_level < safe_mode.LATE_ACCENTS_OFF
             self.landing = ReferenceLandingPolicy()
             if late_accents:

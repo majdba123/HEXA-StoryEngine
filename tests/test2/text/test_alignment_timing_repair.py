@@ -3,7 +3,7 @@
 Production salvages an unsafe word mapping by matching tokens to aligner words by text and
 interpolating the rest; when even that is not enough (or the aligner is unavailable) the
 service falls back to speech-interval timing, records why, and keywords stay on screen.
-The strict contract (salvage/recovery off) stays tested in
+The strict contract (salvage/speech timing off) stays tested in
 test_alignment_whitespace_normalization.py.
 """
 from __future__ import annotations
@@ -68,10 +68,10 @@ def test_the_service_recovers_with_speech_interval_timing_and_records_why(monkey
     monkeypatch.setattr(service, "_script_fallback", lambda *_: fallback.model_copy())
     transcript = service.transcribe(audio, SCRIPT)
     assert transcript.timing_source == RECOVERED_TIMING_SOURCE
-    assert service.recovery["code"] == "ALIGNMENT_WORD_MAPPING_UNSAFE"
+    assert service.timing_repair["code"] == "ALIGNMENT_WORD_MAPPING_UNSAFE"
 
 
-def test_strict_service_still_stops_when_recovery_is_off(monkeypatch, tmp_path: Path) -> None:
+def test_strict_service_still_stops_when_speech_timing_is_off(monkeypatch, tmp_path: Path) -> None:
     audio = tmp_path / "narration.mp3"
     audio.write_bytes(b"0")
     monkeypatch.setattr("app.transcription.service.probe_duration", lambda *_: 8.0)

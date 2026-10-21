@@ -31,11 +31,11 @@ from tests.support.alignment_fake import audio_stub, fake_aligner, timed_words, 
 
 @pytest.fixture(autouse=True)
 def _strict_alignment(monkeypatch):
-    """This module pins STRICT alignment (salvage and recovery off): the rejection
+    """This module pins STRICT alignment (salvage and speech timing off): the rejection
     contract itself. The repairing production default is tested in
-    test_alignment_recovery.py."""
+    test_alignment_timing_repair.py."""
     monkeypatch.setattr("app.transcription.alignment.whisperx.ALIGNMENT_SALVAGE", False)
-    monkeypatch.setattr("app.transcription.service.ALIGNMENT_RECOVERY", False)
+    monkeypatch.setattr("app.transcription.service.ALIGNMENT_SPEECH_TIMING", False)
 
 
 WHITESPACE = {

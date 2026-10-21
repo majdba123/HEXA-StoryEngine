@@ -203,7 +203,10 @@ def test_story_v2_graph_preserves_package_continuity_without_inventing_causality
     assert identity[0].causal is False
 
 
-def test_story_keeps_all_dense_scene_assets_for_motion_authoring(tmp_path: Path) -> None:
+def test_story_keeps_all_dense_scene_assets_for_motion_authoring(tmp_path: Path, monkeypatch) -> None:
+    from app.story import carrier_repair
+
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)  # strict contract
     scene_json = '''{
       "project_id":"generic","scenes":[{
         "scene_id":"SCENE_001","order":1,"image":"scenes/SCENE_001.png",
@@ -230,3 +233,30 @@ def test_story_keeps_all_dense_scene_assets_for_motion_authoring(tmp_path: Path)
     assert caught.value.effective_code == "AUTHORED_CONTENT_HIDDEN"
     reported = {row["runtime_asset_id"] for row in caught.value.details["violations"]}
     assert reported == {asset.id for asset in assets}
+
+
+def test_a_dense_scene_without_authored_units_shows_its_picture_instead_of_stopping(tmp_path: Path) -> None:
+    """Repair instead of stopping: nothing is provable, so the scene's cutouts appear on
+    the scene's own window rather than an empty screen or a stopped render."""
+    scene_json = '''{
+      "project_id":"generic","scenes":[{
+        "scene_id":"SCENE_001","order":1,"image":"scenes/SCENE_001.png",
+        "script_span":{"global_char_start":0,"global_char_end":9,"text":"alpha beta"},
+        "visual_progression":[{"action":"EXPLAIN","targets":[],
+          "trigger":{"global_char_start":0,"global_char_end":9}}]
+      }]}
+    '''
+    package, image = _package(tmp_path, scene_json)
+    assets = [
+        VisualAsset(
+            id=f"asset-{index:02d}", scene_id="SCENE_001", role="support",
+            image_path=image, extraction_method="test", source_area_ratio=1.0 / (index + 2),
+        )
+        for index in range(20)
+    ]
+    planner = StoryPlanner()
+    beats = planner.plan(package, _transcript(), assets)
+    visible = {asset_id for beat in beats for asset_id in (beat.active_visual_semantic_state or {})}
+    assert visible == {asset.id for asset in assets}
+    assert {row["rule"] for row in planner.carrier_repairs} == {"scene_start"}
+    assert planner.hidden_content_audit == []

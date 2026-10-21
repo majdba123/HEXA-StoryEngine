@@ -150,3 +150,22 @@ Corpus (4 cached packages; pre-encode QA 0 everywhere):
 Black Hat 0–28 s, rendered old vs new (encoded QA ok on both):
 - At 18.4 s the old version shows a screen of fading ghosts; the new one keeps the thief's glove while the cards give way to files.
 - «السيطرة» stays from 21.0 to 22.27 s while the devices build, where it used to vanish at 21.5 s.
+
+## 7. Focus staging and the idea-climax wash (2026-10-21, user points 1 and 3)
+
+Measured on both references at 5 fps (characters excluded):
+- The largest object stands at a median 51–53 % of the frame height.
+- In most frames it is the only coloured object on screen; extra symbols are small.
+- HEXA pictures reconstruct the Final Package scene, where 2–3 objects of similar size compete (one object dominates in 68–72 % of frames), so the eye has no anchor.
+- The backdrop greys and blurs at the end of an idea while its subject and the presenter stay crisp: 3 washes in 79 s and 5 in 73 s, 1.8–2.8 s each, 11.6–18.5 s apart.
+
+| Device | What the viewer sees | Owner |
+| --- | --- | --- |
+| Focus staging | per scene, the clearly largest object (a spoken keyword, PRIMARY or RESULT breaks a tie between similar sizes) grows toward 50 % of the frame height (≤ 1.6×, ≤ 62 %) and moves 35 % of the way to the centre; every other object shrinks to ≤ 60 % of the anchor's longest side and takes the closest free spot on its own side. Order, timing, z and aspect never change; a character never moves; Pass2 families and touching drawings move as one. Abstains on drawn arrow/path art, no clear anchor, no room, or a left/right/above/below swap | `composition/focus_staging.py` (`FOCUS_STAGING`), `CompositionBeat.visual_anchor_asset_id` |
+| Idea-climax wash | on the last picture of a sentence, once everything else has landed (or with the idea's last arrival as the subject), the backdrop greys and blurs for ≥ 1 s (≤ 3 s), the anchor crisp above it; ≥ 9 s from any other wash | `motion/resolution.py` `_idea_climaxes` (`IDEA_CLIMAX_WASH`) |
+| Spoken pulse under a wash | a non-focus element never pulses once the wash has started | `motion/spoken_pulse.py` |
+
+Corpus (4 cached packages, probe run fs2; pre-encode QA 0 everywhere):
+- Focus staging applies to 8–23 scenes per package and abstains on the rest, most often because the scene already has a dominant object.
+- Words placed and the median keyword scale are unchanged.
+- The 31-package pre-encode scan is recorded in `docs/handoffs/2026-10-21-repair-instead-of-stopping-and-premiere.md`.

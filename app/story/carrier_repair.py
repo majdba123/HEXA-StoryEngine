@@ -15,9 +15,13 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from app.models import StoryBeat
+from app.models import AssetActivation, SemanticEventProxy, StoryBeat
+from app.story.windows import _WINDOW_EVIDENCE, StoryAssetActivation
 
 STORY_CARRIER_REPAIR = True
+# An event repaired onto a visible cutout uses the authority Motion and Choreography already
+# treat as "an authored event carried by a cutout that also carries its unit".
+EVENT_PROXY_AUTHORITY = "FINAL_PACKAGE_REUSED_CARRIER_PROXY"
 _REPAIRABLE = frozenset({"UNRESOLVED", "HIDDEN", "AMBIGUOUS"})
 
 
@@ -44,9 +48,35 @@ def assets_to_reveal(carrier_records: list[dict[str, Any]],
     return reveal
 
 
+def _evidence(template: AssetActivation, rule: str) -> list[str]:
+    """Repair markers plus the template's Story window payload, which Motion and Text read
+    back from evidence once the activation crosses a base-typed container."""
+    window = [line for line in template.evidence if line.startswith(_WINDOW_EVIDENCE)]
+    return ["revealed_hidden_authored_cutout", rule, *window]
+
+
+def _scene_start(base: AssetActivation | None, asset_id: str, unit_id: str | None, beat: StoryBeat) -> AssetActivation:
+    """A visible activation on the beat's own window (the scene had nothing on screen)."""
+    start, end = float(beat.start), max(float(beat.start), float(beat.end))
+    settle = min(end, start + 0.4)
+    peak = start + (settle - start) * 0.5  # a normal entry shape: the peak inside the window
+    data = (base.model_dump() if base is not None else {"asset_id": asset_id})
+    data.update({
+        "asset_id": asset_id, "semantic_unit_id": unit_id or data.get("semantic_unit_id"),
+        "spoken_start": beat.audio_start, "spoken_end": beat.audio_end, "policy": "GROUP",
+        "confidence": max(float(data.get("confidence") or 0.0), 0.5), "source": "carrier_repair",
+        "evidence": ["revealed_hidden_authored_cutout", "with_scene_start"],
+        "phrase_start": start, "phrase_end": end, "reveal_start": start, "semantic_peak": peak,
+        "settle_at": settle, "activation_policy": "INHERITED_WINDOW",
+    })
+    return StoryAssetActivation.model_validate(data).with_legacy_evidence()
+
+
 def reveal_assets(beats: list[StoryBeat],
                   reveal: dict[str, dict[str, str | None]]) -> tuple[list[StoryBeat], list[dict[str, Any]]]:
-    """Give every asset to reveal a visible activation copied from its template."""
+    """Give every asset to reveal a visible activation: its unit sibling's window, else the
+    scene opener's, else (nothing of the scene on screen) the scene's first beat. The
+    revealed activation lives in the beat its window comes from."""
     by_scene: dict[str, list[int]] = defaultdict(list)
     for index, beat in enumerate(beats):
         by_scene[beat.scene_id].append(index)
@@ -58,28 +88,98 @@ def reveal_assets(beats: list[StoryBeat],
             continue
         visible = [(position, row) for position in positions for row in output[position].asset_activations
                    if not _abstained(row)]
-        if not visible:
-            continue
-        opener_position, opener = min(visible, key=lambda pair: (
-            pair[1].spoken_start if pair[1].spoken_start is not None else float("inf"), pair[1].asset_id))
+        opener = min(visible, key=lambda pair: (
+            pair[1].spoken_start if pair[1].spoken_start is not None else float("inf"), pair[1].asset_id),
+            default=None)
         for asset_id, unit_id in sorted(assets.items()):
+            base = next((row for p in positions for row in output[p].asset_activations if row.asset_id == asset_id),
+                        None)
             sibling = next(((position, row) for position, row in visible
                             if unit_id and row.semantic_unit_id == unit_id and row.asset_id != asset_id), None)
-            position, template = sibling or (opener_position, opener)
-            home = next((p for p in positions if any(r.asset_id == asset_id for r in output[p].asset_activations)),
-                        position)
-            revealed = template.model_copy(update={
-                "asset_id": asset_id,
-                "semantic_unit_id": unit_id or template.semantic_unit_id,
-                "source": "carrier_repair",
-                "evidence": ["revealed_hidden_authored_cutout",
-                             "with_unit_sibling" if sibling else "with_scene_opener"],
-            })
-            rows = [row for row in output[home].asset_activations if row.asset_id != asset_id]
-            output[home] = output[home].model_copy(update={"asset_activations": [*rows, revealed]})
+            if sibling or opener:
+                position, template = sibling or opener
+                rule = "with_unit_sibling" if sibling else "with_scene_opener"
+                revealed = template.model_copy(update={
+                    "asset_id": asset_id, "semantic_unit_id": unit_id or template.semantic_unit_id,
+                    "source": "carrier_repair", "evidence": _evidence(template, rule),
+                })
+                timing_from = template.asset_id
+            else:
+                position, rule = positions[0], "with_scene_start"
+                revealed = _scene_start(base, asset_id, unit_id, output[position])
+                timing_from = output[position].id
+            for p in positions:  # one activation per asset in its scene
+                rows = output[p].asset_activations
+                if any(row.asset_id == asset_id for row in rows):
+                    output[p] = output[p].model_copy(update={
+                        "asset_activations": [row for row in rows if row.asset_id != asset_id]})
+            output[position] = output[position].model_copy(update={
+                "asset_activations": [*output[position].asset_activations, revealed]})
             repairs.append({"scene_id": scene_id, "asset_id": asset_id, "unit_id": unit_id,
-                            "timing_from": template.asset_id, "rule": "sibling" if sibling else "scene_opener"})
+                            "timing_from": timing_from, "rule": rule.removeprefix("with_")})
     return output, repairs
+
+
+def carry_events(package, beats: list[StoryBeat],
+                 missing: list[tuple[str, str]]) -> tuple[list[StoryBeat], list[tuple[str, str, str]]]:
+    """Give each missing authored event to a visible, event-free activation of its leader,
+    else a participant, else a result unit (earliest first). Returns the carried events."""
+    events = {(scene.id, event.semantic_event_id): event for scene in package.scenes
+              for event in scene.semantic_events if event.semantic_event_id}
+    output = list(beats)
+    carried: list[tuple[str, str, str]] = []
+    for scene_id, event_id in missing:
+        event = events.get((scene_id, event_id))
+        if event is None:
+            continue
+        ranked = [(unit, role) for unit, role in (
+            (event.visual_leader_asset_id, "LEADER"),
+            *((unit, "PARTICIPANT") for unit in event.participant_asset_ids),
+            *((unit, "RESULT") for unit in event.result_asset_ids)) if unit]
+        order = event.sequence_order if (event.sequence_order or 0) >= 1 else None
+
+        def visible_rows(unit_id: str):
+            return ((position, index, row) for position, beat in enumerate(output) if beat.scene_id == scene_id
+                    for index, row in enumerate(beat.asset_activations)
+                    if row.semantic_unit_id == unit_id and not _abstained(row))
+
+        # The event is carried as a Story event proxy on the visible cutout (the mechanism
+        # Story uses when one rendered cutout carries an authored event), on that
+        # activation's own window: Choreography and Motion read it like any carried event.
+        found = next(((position, row, role) for unit_id, role in ranked
+                      for position, _index, row in visible_rows(unit_id)), None)
+        if found is None:
+            continue
+        position, row, role = found
+        window = row if isinstance(row, StoryAssetActivation) else StoryAssetActivation.from_legacy(row)
+        times = (window.reveal_start, window.semantic_peak, window.settle_at, row.spoken_start, row.spoken_end)
+        if any(value is None for value in times) or float(window.settle_at) <= 0 or float(row.spoken_end) <= 0:
+            continue
+        span = event.script_span
+        # Never before the spoken word: the event's window starts at the narration.
+        reveal = max(float(row.spoken_start), float(window.reveal_start))
+        peak = max(reveal, float(window.semantic_peak))
+        settle = max(peak, float(window.settle_at), 1e-3)
+        proxy = SemanticEventProxy(
+            asset_id=row.asset_id, semantic_unit_id=row.semantic_unit_id or row.asset_id,
+            semantic_event_id=event_id, semantic_event_order=order, semantic_event_roles=[role],
+            trigger_text=(span.text if span and span.text else row.trigger_text) or event_id,
+            trigger_char_start=int((span.global_char_start if span else None) or row.trigger_char_start or 0),
+            trigger_char_end=int((span.global_char_end if span else None) or row.trigger_char_end or 1),
+            spoken_start=float(row.spoken_start), spoken_end=float(row.spoken_end),
+            reveal_start=reveal, semantic_peak=peak, settle_at=settle, confidence=0.5,
+            authority=EVENT_PROXY_AUTHORITY,
+            evidence=["carrier_repair", "event_carried_by_visible_unit"],
+        )
+        beat = output[position]
+        renderable = {*beat.primary_asset_ids, *beat.support_asset_ids}
+        output[position] = beat.model_copy(update={
+            "semantic_event_proxies": [*beat.semantic_event_proxies, proxy],
+            "support_asset_ids": (beat.support_asset_ids if row.asset_id in renderable
+                                  else [*beat.support_asset_ids, row.asset_id]),
+        })
+        carried.append((scene_id, event_id, row.asset_id))
+    return output, carried
 
 
 def tolerable(record: dict[str, Any]) -> bool:
