@@ -182,6 +182,6 @@ The references never repeat one device back to back for long. HEXA did, because 
 | Object landing (G19) | `high` / `grow` / `soft` / `bloom`, all in place and scale-only. The first is always `high`; never the same twice in a row; a group revealed together shares one style | `motion/landing.py` (`LANDING_VARIETY`) |
 | Keyword entry | `slide` / `rise` / `side`, inside the reserved entry excursion, never twice in a row | `motion/text.py` (`TEXT_ENTRY_VARIETY`), `render/text.py` |
 | Sound effects | six designs per kind, shuffled rotation, pitch/level humanisation, restraint caps | `final/sound.py` |
-| Music bed | six procedural styles from the story, arrangement changes at character swaps, second style mid-video, ducked under speech | `final/music.py` |
+| Music bed | eight procedural styles (or royalty-free tracks from the music folder, one per video), arrangement changes at character swaps, second style or track mid-video, ducked under speech; switchable from the web and desktop panels | `final/music.py` |
 
 Details and measurements: `docs/handoffs/2026-10-21-variety-sound-music-entries.md`.

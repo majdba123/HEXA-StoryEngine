@@ -403,6 +403,8 @@ class StoryEnginePipeline:
                     plan, audio=prepared.audio_path, xml_path=bundle.directory / f"{stem}.xml",
                     media_dir=bundle.directory / f"{stem}_media", name=f"{bundle.slug} {target.output_suffix}",
                     work_dir=prepared.workspaces[target.target_id] / "premiere",
+                    effects=self.settings.sound_effects, music_bed=self.settings.background_music,
+                    library=self.settings.resolved_music_dir,
                 )
                 outputs[target.target_id] = PremiereOutput(target_id=target.target_id, path=project.path,
                                                            tracks=project.tracks, clips=project.clips)
@@ -1266,7 +1268,9 @@ class StoryEnginePipeline:
         # narration, the same length as the narration; the music failing keeps the effects,
         # anything else falls back to the narration alone.
         soundtrack, sound_report = sound.mix_or_narration(
-            plan, audio_path, workspace / "render" / "soundtrack.wav", ffmpeg_bin=self.settings.ffmpeg_bin)
+            plan, audio_path, workspace / "render" / "soundtrack.wav", ffmpeg_bin=self.settings.ffmpeg_bin,
+            effects=self.settings.sound_effects, music=self.settings.background_music,
+            library=self.settings.resolved_music_dir)
         if sound_report.get("sound_effects") == "skipped":
             warnings.append({"stage": "sound", "code": "SOUND_EFFECTS_SKIPPED", **sound_report})
         if sound_report.get("music") == "skipped":

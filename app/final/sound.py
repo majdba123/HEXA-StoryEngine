@@ -356,7 +356,8 @@ def effects_bed(plan: RenderPlan, length: int, reference: float, choice: music_b
 
 
 def mix(plan: RenderPlan, narration: Path, output: Path, *, ffmpeg_bin: str = "ffmpeg",
-        include_voice: bool = True, stems: tuple[str, ...] = ("effects", "music")) -> dict:
+        include_voice: bool = True, stems: tuple[str, ...] = ("effects", "music"),
+        library: Path | None = None) -> dict:
     """Narration + effects + music -> 48 kHz stereo WAV of exactly the narration's length.
     ``include_voice=False`` with one stem writes that stem alone (an editable Premiere track)."""
     voice = _read_audio(narration, ffmpeg_bin)
@@ -373,7 +374,8 @@ def mix(plan: RenderPlan, narration: Path, output: Path, *, ffmpeg_bin: str = "f
             report["music"] = "off"
         else:
             try:  # the music never costs the effects or the narration
-                score, info = music_bed.render(plan, voice, reference, choice)
+                score, info = music_bed.render(plan, voice, reference, choice, library=library,
+                                               ffmpeg_bin=ffmpeg_bin)
                 bed += score
                 report.update({"music": "mixed", **info})
             except Exception as exc:  # noqa: BLE001 - recorded, the rest of the mix stands
@@ -391,12 +393,19 @@ def mix(plan: RenderPlan, narration: Path, output: Path, *, ffmpeg_bin: str = "f
     return report
 
 
-def mix_or_narration(plan: RenderPlan, narration: Path, output: Path, *, ffmpeg_bin: str = "ffmpeg") -> tuple[Path, dict]:
-    """The mixed track, or the narration itself when effects are off or fail (recorded)."""
-    if not SOUND_EFFECTS:
-        return narration, {"sound_effects": "off"}
+def mix_or_narration(plan: RenderPlan, narration: Path, output: Path, *, ffmpeg_bin: str = "ffmpeg",
+                     effects: bool = True, music: bool = True,
+                     library: Path | None = None) -> tuple[Path, dict]:
+    """The mixed track, or the narration itself when everything is off or fails (recorded).
+
+    ``effects`` / ``music`` are the operator's switches (web and desktop); the module
+    switches ``SOUND_EFFECTS`` / ``music.BACKGROUND_MUSIC`` turn a layer off for every job."""
+    stems = tuple(name for name, on in (("effects", effects and SOUND_EFFECTS),
+                                        ("music", music and music_bed.BACKGROUND_MUSIC)) if on)
+    if not stems:
+        return narration, {"sound_effects": "off", "music": "off"}
     try:
-        report = mix(plan, narration, output, ffmpeg_bin=ffmpeg_bin)
+        report = mix(plan, narration, output, ffmpeg_bin=ffmpeg_bin, stems=stems, library=library)
     except (OSError, ValueError, subprocess.CalledProcessError, MemoryError) as exc:
         return narration, {"sound_effects": "skipped", "error": str(exc)[:300]}
-    return output, {"sound_effects": "mixed", **report}
+    return output, {"sound_effects": "mixed" if "effects" in stems else "off", "music": "off", **report}

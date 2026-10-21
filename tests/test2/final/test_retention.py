@@ -128,10 +128,18 @@ def test_a_sound_failure_falls_back_to_the_narration(tmp_path: Path) -> None:
     assert output == missing and report["sound_effects"] == "skipped" and report["error"]
 
 
-def test_effects_switch_off_returns_the_narration(tmp_path: Path, monkeypatch) -> None:
+def test_effects_and_music_switched_off_return_the_narration(tmp_path: Path, monkeypatch) -> None:
+    from app.final import music
+
     monkeypatch.setattr(sound, "SOUND_EFFECTS", False)
+    monkeypatch.setattr(music, "BACKGROUND_MUSIC", False)
     narration = tmp_path / "voice.wav"
-    assert sound.mix_or_narration(_plan(), narration, tmp_path / "mix.wav") == (narration, {"sound_effects": "off"})
+    assert sound.mix_or_narration(_plan(), narration, tmp_path / "mix.wav") == (
+        narration, {"sound_effects": "off", "music": "off"})
+    monkeypatch.setattr(sound, "SOUND_EFFECTS", True)
+    monkeypatch.setattr(music, "BACKGROUND_MUSIC", True)
+    assert sound.mix_or_narration(_plan(), narration, tmp_path / "mix.wav", effects=False, music=False) == (
+        narration, {"sound_effects": "off", "music": "off"})  # the operator's switches
 
 
 # -- camera -----------------------------------------------------------------------------

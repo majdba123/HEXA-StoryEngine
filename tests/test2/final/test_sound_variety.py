@@ -256,3 +256,91 @@ def test_stems_hold_only_their_own_sound(tmp_path: Path) -> None:
     full = sound._read_audio(tmp_path / "fx.wav", "ffmpeg") + sound._read_audio(tmp_path / "music.wav", "ffmpeg")
     sound.mix(plan, narration, tmp_path / "both.wav", include_voice=False)
     assert np.max(np.abs(full - sound._read_audio(tmp_path / "both.wav", "ffmpeg"))) < 2e-3
+
+
+# -- operator switches and the music library ------------------------------------------------
+@needs_ffmpeg
+def test_the_operator_switches_pick_the_layers(tmp_path: Path) -> None:
+    plan = _long_plan(30.0)
+    narration = _write(tmp_path / "voice.wav", _speech(plan.duration))
+    _, music_only = sound.mix_or_narration(plan, narration, tmp_path / "m.wav", effects=False)
+    assert music_only["sound_effects"] == "off" and music_only["music"] == "mixed" and "events" not in music_only
+    _, effects_only = sound.mix_or_narration(plan, narration, tmp_path / "e.wav", music=False)
+    assert effects_only["sound_effects"] == "mixed" and effects_only["music"] == "off"
+    assert sound.mix_or_narration(plan, narration, tmp_path / "x.wav", effects=False, music=False)[0] == narration
+
+
+def test_the_switches_come_from_the_environment_or_the_settings_file(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from app.config import Settings
+
+    monkeypatch.setenv("HEXA_WORK_ROOT", str(tmp_path / "w"))
+    monkeypatch.setenv("HEXA_OUTPUT_ROOT", str(tmp_path / "o"))
+    local = tmp_path / "hexa.settings.json"
+    local.write_text(json.dumps({"sound_effects": False, "music_dir": str(tmp_path / "tracks")}), encoding="utf-8")
+    monkeypatch.setenv("HEXA_SETTINGS_FILE", str(local))
+    monkeypatch.delenv("HEXA_SOUND_EFFECTS", raising=False)
+    monkeypatch.delenv("HEXA_BACKGROUND_MUSIC", raising=False)
+    monkeypatch.delenv("HEXA_MUSIC_DIR", raising=False)
+    settings = Settings.from_env()
+    assert settings.sound_effects is False and settings.background_music is True
+    assert settings.resolved_music_dir == tmp_path / "tracks"
+    monkeypatch.setenv("HEXA_BACKGROUND_MUSIC", "off")
+    monkeypatch.setenv("HEXA_SOUND_EFFECTS", "1")
+    settings = Settings.from_env()
+    assert settings.sound_effects is True and settings.background_music is False
+    (tmp_path / "exports" / "_music").mkdir(parents=True)
+    unset = replace(settings, music_dir=None, export_root=tmp_path / "exports")
+    assert unset.resolved_music_dir == tmp_path / "exports" / "_music"
+
+
+def _track(path: Path, hz: float, seconds: float) -> Path:
+    t = np.arange(int(seconds * RATE)) / RATE
+    return _write(path, np.repeat((0.3 * np.sin(2 * np.pi * hz * t))[:, None], 2, axis=1))
+
+
+@needs_ffmpeg
+def test_library_tracks_are_used_one_per_video_and_rotated_between_videos(tmp_path: Path) -> None:
+    library = tmp_path / "music"
+    library.mkdir()
+    for k, hz in enumerate((220.0, 330.0, 440.0)):
+        _track(library / f"track_{k}.wav", hz, 12.0)  # shorter than the video: looped
+    (library / "notes.txt").write_text("not audio", encoding="utf-8")
+    (library / "broken.mp3").write_bytes(b"not really an mp3")
+    used = []
+    for k in range(3):
+        plan = _long_plan(30.0, text=f"فيديو {k}")
+        voice = _speech(plan.duration)
+        score, report = music.render(plan, voice, sound._speech_rms(voice), library=library)
+        assert score.shape == voice.shape and np.isfinite(score).all()
+        assert report["source"] == "library" and len(report["tracks"]) == 1
+        used.append(report["tracks"][0])
+    assert len(set(used)) == 3  # three videos, three different tracks
+    again = music.render(_long_plan(30.0, text="فيديو 0"), _speech(30.0), 0.1, library=library)[1]
+    assert again["tracks"] == [used[0]]  # a re-render keeps its track
+
+
+@needs_ffmpeg
+def test_a_long_video_switches_library_tracks_at_its_middle(tmp_path: Path) -> None:
+    library = tmp_path / "music"
+    library.mkdir()
+    for k, hz in enumerate((220.0, 330.0)):
+        _track(library / f"t{k}.wav", hz, 40.0)
+    plan = _long_plan(80.0)
+    voice = _speech(plan.duration)
+    _, report = music.render(plan, voice, sound._speech_rms(voice), library=library)
+    assert len(report["tracks"]) == 2 and report["second_from"] == music.choose(plan).split
+
+
+@needs_ffmpeg
+def test_an_unusable_library_falls_back_to_the_procedural_bed(tmp_path: Path) -> None:
+    library = tmp_path / "music"
+    library.mkdir()
+    (library / "broken.mp3").write_bytes(b"nope")
+    plan = _long_plan(30.0)
+    voice = _speech(plan.duration)
+    _, report = music.render(plan, voice, sound._speech_rms(voice), library=library)
+    assert report["source"] == "procedural" and report["style"] in music.STYLES
+    _, empty = music.render(plan, voice, sound._speech_rms(voice), library=tmp_path / "missing")
+    assert empty["source"] == "procedural"

@@ -68,6 +68,20 @@ class Settings:
     # beat segments + intermediates on the work root.
     export_min_free_bytes: int = 2 * _GIB
     work_min_free_bytes: int = 3 * _GIB
+    # Operator switches (web and desktop): motion-driven sound effects and the music bed.
+    sound_effects: bool = True
+    background_music: bool = True
+    # Royalty-free tracks for the music bed (one per video); empty or missing -> the
+    # procedural bed. Default <export_root>/_music when that folder exists.
+    music_dir: Path | None = None
+
+    @property
+    def resolved_music_dir(self) -> Path | None:
+        if self.music_dir is not None:
+            return self.music_dir
+        if self.export_root is not None and (self.export_root / "_music").is_dir():
+            return self.export_root / "_music"
+        return None
 
     @property
     def resolved_export_root(self) -> Path | None:
@@ -114,4 +128,17 @@ class Settings:
             # Never resolved against the CWD and never created here: the export root is
             # validated (and may fail closed) only when a bundle is generated.
             export_root=Path(export_raw).expanduser() if export_raw else None,
+            sound_effects=_flag(os.getenv("HEXA_SOUND_EFFECTS"), local.get("sound_effects"), True),
+            background_music=_flag(os.getenv("HEXA_BACKGROUND_MUSIC"), local.get("background_music"), True),
+            music_dir=Path(music_raw).expanduser() if (music_raw := os.getenv("HEXA_MUSIC_DIR")
+                                                       or local.get("music_dir")) else None,
         )
+
+
+def _flag(env: str | None, local: object, default: bool) -> bool:
+    """An on/off switch: the environment wins, then hexa.settings.json, then ``default``."""
+    if env is not None and env.strip():
+        return env.strip().lower() not in {"0", "false", "no", "off"}
+    if isinstance(local, bool):
+        return local
+    return default

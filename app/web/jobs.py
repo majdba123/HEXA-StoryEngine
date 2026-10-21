@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 import threading
 import time
 import uuid
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from app.config import Settings
 from app.diagnostics import BuildReportSession
 from app.pipeline import StoryEnginePipeline
 from app.shared.errors import GenerationCancelledError
+
+
+# The operator's soundtrack switches a job may carry (web form / upload completion).
+SOUND_OPTIONS = ("sound_effects", "background_music")
+OPTIONS_FILE = "options.json"
+
+
+def sound_options(raw: object) -> dict[str, bool]:
+    """Only the known switches with real booleans; anything else keeps the server default."""
+    if not isinstance(raw, dict):
+        return {}
+    return {key: raw[key] for key in SOUND_OPTIONS if isinstance(raw.get(key), bool)}
 
 
 class Jobs:
@@ -127,7 +141,18 @@ class Jobs:
             self.update(job_id, state="cancelling", message="Stopping engine and cleaning up")
             return True
 
-    def start(self, job_id: str, package: Path, audio: Path) -> None:
+    def options_for(self, job_id: str) -> dict[str, bool]:
+        """The switches a job was started with (kept beside it, so a retry keeps them)."""
+        try:
+            return sound_options(json.loads((self.root / job_id / OPTIONS_FILE).read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return {}
+
+    def start(self, job_id: str, package: Path, audio: Path, options: dict | None = None) -> None:
+        chosen = sound_options(options)
+        if chosen:
+            (self.root / job_id).mkdir(parents=True, exist_ok=True)
+            (self.root / job_id / OPTIONS_FILE).write_text(json.dumps(chosen), encoding="utf-8")
         event = threading.Event()
         with self._lock:
             self._cancel[job_id] = event
@@ -136,7 +161,8 @@ class Jobs:
                          daemon=False, name=f"hexa-web-{job_id[:8]}").start()
 
     def _run(self, job_id: str, package: Path, audio: Path, event: threading.Event) -> None:
-        report = BuildReportSession(job_id=job_id, settings=self.settings,
+        settings = replace(self.settings, **self.options_for(job_id))
+        report = BuildReportSession(job_id=job_id, settings=settings,
                                     package_path=package, audio_path=audio)
         self._reports[job_id] = report
         final: dict[str, object] = {}
@@ -149,7 +175,7 @@ class Jobs:
                 report.on_progress(stage, value, message)
                 self.update(job_id, progress=value, stage=stage.value, message=message)
 
-            result = StoryEnginePipeline(self.settings).generate_bundle(
+            result = StoryEnginePipeline(settings).generate_bundle(
                 package_path=package, audio_path=audio, job_id=job_id,
                 progress=progress, cancelled=event.is_set,
             )

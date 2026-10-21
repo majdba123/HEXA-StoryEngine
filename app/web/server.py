@@ -340,7 +340,11 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     @app.post("/api/jobs", status_code=202)
     async def create_job(request: Request, audio: UploadFile = File(...), package: UploadFile | None = File(None),
                          folder_files: list[UploadFile] | None = File(None),
-                         folder_paths: str | None = Form(None)):
+                         folder_paths: str | None = Form(None), sound_effects: str | None = Form(None),
+                         background_music: str | None = Form(None)):
+        options = {key: value.strip().lower() in {"1", "true", "on", "yes"}
+                   for key, value in (("sound_effects", sound_effects), ("background_music", background_music))
+                   if value is not None}
         problem = await asyncio.to_thread(export_root_problem, settings)
         if problem:
             raise HTTPException(422, problem)
@@ -373,7 +377,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             if validated_package is not None:
                 jobs.update(job_id, package_name=export_slug(validated_package.project_slug or validated_package.package_id))
             await asyncio.to_thread(shutil.rmtree, directory / "validation", ignore_errors=True)
-            jobs.start(job_id, package_path, audio_path)
+            jobs.start(job_id, package_path, audio_path, options)
         except InvalidPackageError as exc:
             jobs.update(job_id, state="failed", message="Input validation failed")
             await asyncio.to_thread(shutil.rmtree, directory, ignore_errors=True)
@@ -388,7 +392,9 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     def upload_config():
         return {"chunk_size": uploads.chunk_bytes, "max_file_bytes": max_upload,
                 "protocols": [1, 2] if uploads.v2_enabled else [1],
-                "v2_chunk_size": 4 * 1024 * 1024}
+                "v2_chunk_size": 4 * 1024 * 1024,
+                # the soundtrack switches' defaults (hexa.settings.json / environment)
+                "sound_effects": settings.sound_effects, "background_music": settings.background_music}
 
     @app.post("/api/uploads", status_code=201)
     async def initialize_upload(request: Request):
@@ -418,7 +424,12 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
 
     @app.post("/api/uploads/{upload_id}/complete", status_code=202)
     async def finish_upload(upload_id: str, request: Request):
-        result = await asyncio.to_thread(uploads.complete, upload_id, upload_owner(request, upload_id), settings)
+        try:
+            body = json.loads(await request.body() or b"{}")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(422, "Invalid completion options") from exc
+        result = await asyncio.to_thread(uploads.complete, upload_id, upload_owner(request, upload_id), settings,
+                                         body if isinstance(body, dict) else {})
         guard.log.info("resumable upload finalized upload=%s job=%s", upload_id, result["id"])
         return result
 
@@ -472,7 +483,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             raise HTTPException(403, str(exc)) from exc
         if retry_id is None:
             raise HTTPException(409, "A generation job is already active")
-        jobs.start(retry_id, package, audio)
+        jobs.start(retry_id, package, audio, jobs.options_for(job_id))
         return {"id": retry_id, "state": "queued"}
 
     @app.get("/api/jobs/{job_id}/download/{kind}")

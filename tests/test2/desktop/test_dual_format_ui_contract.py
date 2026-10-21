@@ -69,3 +69,13 @@ def test_desktop_offers_the_editable_premiere_project() -> None:
     job = _job_source()
     assert "pipeline.generate_premiere(" in job
     assert "def crash_retry_job(" in job and "CRASH_RETRY = True" in job
+
+
+def test_desktop_offers_the_soundtrack_switches_and_sends_them_with_the_job() -> None:
+    source = _source()
+
+    assert 'QCheckBox("مؤثرات صوتية")' in source and 'QCheckBox("موسيقى خلفية")' in source
+    assert "settings = replace(settings, sound_effects=self.effects_check.isChecked()," in source
+    assert "background_music=self.music_check.isChecked())" in source
+    # the job process receives the whole Settings, so the switches reach the engine
+    assert "pipeline = StoryEnginePipeline(job.settings)" in _job_source()

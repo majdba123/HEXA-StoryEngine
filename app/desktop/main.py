@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import sys
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -156,6 +158,13 @@ class MainWindow(QMainWindow):
         self.premiere_button = QPushButton("توليد كملف بريمير")
         self._premiere_mode = False
         self.cancel_button = QPushButton("إلغاء")
+        # Operator switches for the soundtrack: motion-driven sound effects and the music bed
+        # (both on by default, or as hexa.settings.json / the environment set them).
+        self.effects_check = QCheckBox("مؤثرات صوتية")
+        self.music_check = QCheckBox("موسيقى خلفية")
+        defaults = self._sound_defaults()
+        self.effects_check.setChecked(defaults[0])
+        self.music_check.setChecked(defaults[1])
         self.report_button = QPushButton("استخراج تقرير التشخيص")
         self.open_youtube_button = QPushButton("فتح YouTube")
         self.open_reels_button = QPushButton("فتح Reels")
@@ -191,6 +200,12 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.cancel_button)
         root.addLayout(actions)
 
+        sound_row = QHBoxLayout()
+        sound_row.addWidget(self.effects_check)
+        sound_row.addWidget(self.music_check)
+        sound_row.addStretch(1)
+        root.addLayout(sound_row)
+
         root.addWidget(self.progress_bar)
         root.addWidget(self.status_label)
 
@@ -224,6 +239,14 @@ class MainWindow(QMainWindow):
         self.open_folder_button.clicked.connect(self._open_folder)
         self.open_log_button.clicked.connect(self._open_log)
         self.clear_log_button.clicked.connect(self.log_view.clear)
+
+    @staticmethod
+    def _sound_defaults() -> tuple[bool, bool]:
+        try:
+            settings = Settings.from_env()
+        except (OSError, ValueError, RuntimeError):
+            return True, True
+        return settings.sound_effects, settings.background_music
 
     def _package_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -309,6 +332,8 @@ class MainWindow(QMainWindow):
         if problem is not None:
             QMessageBox.warning(self, "HEXA", problem)
             return
+        settings = replace(settings, sound_effects=self.effects_check.isChecked(),
+                           background_music=self.music_check.isChecked())
         job_id = uuid.uuid4().hex
         report = BuildReportSession(
             job_id=job_id,
@@ -349,6 +374,8 @@ class MainWindow(QMainWindow):
         self.status_label.setText("بدء المعالجة...")
         self.generate_button.setEnabled(False)
         self.premiere_button.setEnabled(False)
+        self.effects_check.setEnabled(False)
+        self.music_check.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.report_button.setEnabled(False)
         self.open_youtube_button.setEnabled(False)
@@ -357,6 +384,11 @@ class MainWindow(QMainWindow):
         self.open_log_button.setEnabled(True)
         self.log_view.append(f"LOG: {report.log_path}")
         self.log_view.append(f"EXPORT ROOT: {settings.export_root}")
+        self.log_view.append(
+            "SOUND: effects " + ("on" if settings.sound_effects else "off")
+            + " / music " + ("on" if settings.background_music else "off")
+            + " — المؤثرات " + ("مفعّلة" if settings.sound_effects else "متوقفة")
+            + " / الموسيقى " + ("مفعّلة" if settings.background_music else "متوقفة"))
         if premiere:
             self.log_view.append("MODE: Premiere project (editable layers) / وضع ملف بريمير")
         thread.start()
@@ -413,6 +445,8 @@ class MainWindow(QMainWindow):
     def _thread_finished(self) -> None:
         self.generate_button.setEnabled(True)
         self.premiere_button.setEnabled(True)
+        self.effects_check.setEnabled(True)
+        self.music_check.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self._thread = None
         self._worker = None

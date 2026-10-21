@@ -7,12 +7,20 @@ consonants stay clear.
 
 Variety, so the viewer never gets used to one sound:
 
-* six styles (ambient pad, tech pulse, investigation, light groove, cinematic build, warm
-  keys), each with its own tempo range, key mode, instruments and chord progressions;
+* eight styles (ambient pad, tech pulse, investigation, light groove, cinematic build, warm
+  keys, and the two most common beds of tech/hacking explainers: dark cyber synth and lo-fi
+  beat), each with its own tempo range, key mode, instruments and chord progressions;
 * the style, key, tempo and progressions are drawn from the package's own story (a stable
   seed), so different videos get different music and a re-render reproduces the same one;
 * inside a video the arrangement changes at every character swap (Boundary scene whip): the
   intensity (which layers play) and the progression alternate, never the same twice in a row.
+
+Music library: when the operator keeps royalty-free tracks in a folder (``Settings.music_dir``,
+default ``<export_root>/_music``), a real track is used instead: one per video, never the one
+the previous videos used (a small history file in that folder; a re-render of the same story
+keeps its track), a second track from the middle of long videos, looped with a crossfade when
+shorter than the narration. A broken track is skipped for the next one, then the procedural
+bed. Copyrighted chart music is never bundled: it would draw YouTube claims.
 
 Composition is numpy only (no samples, no licensing), exactly the narration's length, faded in
 and out. ``render`` raises on a broken input; ``app/final/sound.py`` mixes it and keeps the
@@ -21,7 +29,9 @@ effects (or the narration alone) when it fails, so music can never stop a render
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 import numpy as np
 
@@ -54,7 +64,13 @@ STYLES: dict[str, tuple[tuple[str, ...], tuple[float, float]]] = {
     "light_groove": (("major",), (88.0, 98.0)),
     "cinematic_build": (("minor",), (92.0, 100.0)),
     "warm_keys": (("major", "minor"), (76.0, 84.0)),
+    "cyber_synth": (("minor",), (100.0, 116.0)),
+    "lofi_beat": (("major", "minor"), (72.0, 84.0)),
 }
+LIBRARY_SUFFIXES = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
+HISTORY_FILE = ".hexa_music_history.json"
+HISTORY_LENGTH = 50
+LOOP_CROSSFADE = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,7 +350,47 @@ def _compose(choice: MusicChoice, seconds: float, begin: float, end: float, seed
             if level >= 2:
                 for k in range(8):
                     score.add(t0 + k * beat / 2, _noise_hit(rng, 0.05, 5000, 10000, 0.016), 0.045, pan=0.35)
+        elif style == "cyber_synth":
+            # Dark synthwave: a 16th-note arpeggio, pumping 8th bass, a pad underneath.
+            score.add(t0, _pad(triad, bar + 1.0), 0.24)
+            arpeggio = [triad[0] * 2, triad[1] * 2, triad[2] * 2, triad[1] * 2]
+            step = beat / 4 if level >= 1 else beat / 2
+            for k in range(int(round(bar / step))):
+                score.add(t0 + k * step, _pluck(arpeggio[k % 4], min(0.18, step * 1.5), 1.0), 0.1,
+                          pan=0.35 if k % 2 else -0.35)
+            for k in range(8):
+                pump = 0.42 if k % 2 else 0.3  # off-beat bass, sidechain feel
+                score.add(t0 + k * beat / 2, _bass(root, beat / 2 * 0.9), pump)
+            if level >= 2:
+                for k in range(4):
+                    score.add(t0 + k * beat, _kick(rng), 0.3)
+                    score.add(t0 + (k + 0.5) * beat, _noise_hit(rng, 0.05, 6000, 12000, 0.02), 0.05, pan=0.3)
+        elif style == "lofi_beat":
+            # Lo-fi: swung keys, dusty kick/snare, round bass.
+            swing = beat * 0.16
+            chord = [choice.scale_hz(degree + step, 2) for step in (0, 2, 4, 6)]
+            for hit in ((0.0, 1.5) if level else (0.0,)):
+                for k, freq in enumerate(chord):
+                    score.add(t0 + hit * beat + 0.015 * k + (swing if hit % 1 else 0.0), _keys(freq, 1.6), 0.11,
+                              pan=-0.25 + 0.17 * k)
+            score.add(t0, _bass(root, 1.5 * beat), 0.42)
+            score.add(t0 + 2.5 * beat + swing, _bass(fifth, beat), 0.3)
+            if level >= 1:
+                for at in (0.0, 2.5):
+                    score.add(t0 + at * beat + (swing if at % 1 else 0.0), _kick(rng), 0.3)
+                for at in (1.0, 3.0):
+                    score.add(t0 + at * beat, _snare(rng), 0.16)
+            if level >= 2:
+                for k in range(8):
+                    score.add(t0 + k * beat / 2 + (swing if k % 2 else 0.0),
+                              _noise_hit(rng, 0.04, 5000, 10000, 0.014), 0.04 if k % 2 else 0.06, pan=0.3)
     return score.out.astype(np.float64)
+
+
+def _snare(rng: np.random.Generator) -> np.ndarray:
+    t = _time(0.2)
+    body = np.sin(2 * np.pi * 185 * t) * np.exp(-t / 0.03)
+    return (0.5 * body + _noise_hit(rng, 0.2, 1200.0, 5000.0, 0.06)) * adsr(len(t), 0.001, 0.03)
 
 
 # -- levelling and ducking ----------------------------------------------------------------
@@ -383,12 +439,118 @@ def duck_gain(voice: np.ndarray, speech_rms: float) -> np.ndarray:
     return np.interp(np.arange(len(voice)), np.arange(frames) * hop + hop / 2, smooth)
 
 
+# -- music library ------------------------------------------------------------------------
+def library_tracks(folder: Path | None) -> list[Path]:
+    """Audio files in the operator's music folder (sorted, non-empty), or none."""
+    if folder is None or not Path(folder).is_dir():
+        return []
+    return sorted((path for path in Path(folder).iterdir()
+                   if path.suffix.lower() in LIBRARY_SUFFIXES and path.is_file() and path.stat().st_size > 0),
+                  key=lambda path: path.name.lower())
+
+
+def _history(folder: Path) -> list[dict]:
+    try:
+        rows = json.loads((folder / HISTORY_FILE).read_text(encoding="utf-8"))
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def pick_tracks(plan: RenderPlan, tracks: list[Path], folder: Path, choice: MusicChoice) -> list[Path]:
+    """Tracks for this video in preference order: its own earlier pick (a re-render keeps
+    its music), then tracks no recent video used, then the rest; seeded per story."""
+    key = str(choice.seed)
+    history = _history(folder)
+    names = {path.name: path for path in tracks}
+    rng = np.random.default_rng(choice.seed ^ 0x7AC)
+    order = [tracks[k] for k in rng.permutation(len(tracks))]
+    mine = next((row.get("tracks") for row in reversed(history) if row.get("story") == key), None)
+    recent: list[str] = []
+    for row in reversed(history):
+        if row.get("story") != key:
+            recent.extend(name for name in row.get("tracks", []) if name not in recent)
+    keep = max(0, len(tracks) - 2)  # always leave at least two candidates
+    recent = recent[:keep]
+    fresh = [path for path in order if path.name not in recent]
+    used = sorted((path for path in order if path.name in recent), key=lambda path: -recent.index(path.name))
+    preferred = [names[name] for name in (mine or []) if name in names]
+    return preferred + [path for path in fresh + used if path not in preferred]
+
+
+def _remember(folder: Path, choice: MusicChoice, used: list[str]) -> None:
+    history = [row for row in _history(folder) if row.get("story") != str(choice.seed)]
+    history.append({"story": str(choice.seed), "tracks": used})
+    try:
+        (folder / HISTORY_FILE).write_text(json.dumps(history[-HISTORY_LENGTH:], indent=1), encoding="utf-8")
+    except OSError:
+        pass  # a read-only folder only loses the rotation memory
+
+
+def _decode(path: Path, ffmpeg_bin: str) -> np.ndarray:
+    from app.shared.process import run_hidden
+
+    result = run_hidden([ffmpeg_bin, "-v", "error", "-i", str(path), "-vn", "-f", "f32le", "-ac", "2", "-ar",
+                         str(SAMPLE_RATE), "-"], capture_output=True, check=True)
+    audio = np.frombuffer(result.stdout, dtype=np.float32).reshape(-1, 2).astype(np.float64)
+    if len(audio) < 5 * SAMPLE_RATE or not np.isfinite(audio).all() or float(np.abs(audio).max()) < 1e-4:
+        raise ValueError(f"unusable music track {path.name}")
+    return audio
+
+
+def _fit(audio: np.ndarray, length: int) -> np.ndarray:
+    """``audio`` looped with an equal-power crossfade until ``length`` samples."""
+    fade = int(min(LOOP_CROSSFADE * SAMPLE_RATE, len(audio) // 3))
+    curve = np.linspace(0.0, np.pi / 2, fade)[:, None]
+    out = audio
+    while len(out) < length:
+        joined = out[len(out) - fade:] * np.cos(curve) + audio[:fade] * np.sin(curve)
+        out = np.concatenate([out[: len(out) - fade], joined, audio[fade:]])
+    return out[:max(0, length)]
+
+
+def _library_music(plan: RenderPlan, length: int, choice: MusicChoice, folder: Path,
+                   ffmpeg_bin: str) -> tuple[np.ndarray, dict] | None:
+    tracks = library_tracks(folder)
+    if not tracks:
+        return None
+    chosen: list[tuple[Path, np.ndarray]] = []
+    skipped: list[str] = []
+    wanted = 2 if (choice.split is not None and len(tracks) >= 2) else 1
+    for path in pick_tracks(plan, tracks, folder, choice):
+        try:
+            chosen.append((path, _decode(path, ffmpeg_bin)))
+        except Exception as exc:  # noqa: BLE001 - a broken file is skipped, never a stop
+            skipped.append(f"{path.name}: {type(exc).__name__}")
+        if len(chosen) == wanted:
+            break
+    if not chosen:
+        return None
+    first = _fit(chosen[0][1], length)
+    if len(chosen) == 2:
+        second = _fit(chosen[1][1], length - int((choice.split - CHAPTER_CROSSFADE / 2) * SAMPLE_RATE))
+        second = np.concatenate([np.zeros((length - len(second), 2)), second])
+        t = np.arange(length) / SAMPLE_RATE
+        blend = np.clip((t - (choice.split - CHAPTER_CROSSFADE / 2)) / CHAPTER_CROSSFADE, 0.0, 1.0)[:, None]
+        first = first * np.cos(blend * np.pi / 2) + second * np.sin(blend * np.pi / 2)
+    _remember(folder, choice, [path.name for path, _ in chosen])
+    report = {"source": "library", "tracks": [path.name for path, _ in chosen]}
+    if len(chosen) == 2:
+        report["second_from"] = choice.split
+    if skipped:
+        report["skipped_tracks"] = skipped
+    return first, report
+
+
 def render(plan: RenderPlan, voice: np.ndarray, speech_rms: float,
-           choice: MusicChoice | None = None) -> tuple[np.ndarray, dict]:
-    """Levelled, ducked stereo music of exactly ``len(voice)`` samples + its report."""
+           choice: MusicChoice | None = None, *, library: Path | None = None,
+           ffmpeg_bin: str = "ffmpeg") -> tuple[np.ndarray, dict]:
+    """Levelled, ducked stereo music of exactly ``len(voice)`` samples + its report: a track
+    from ``library`` when it holds one, else the procedural bed."""
     choice = choice or choose(plan)
     seconds = len(voice) / SAMPLE_RATE
-    music = _eq(compose(choice, seconds))[: len(voice)]
+    found = _library_music(plan, len(voice), choice, Path(library), ffmpeg_bin) if library else None
+    music = _eq(found[0] if found else compose(choice, seconds))[: len(voice)]
     if len(music) < len(voice):
         music = np.pad(music, ((0, len(voice) - len(music)), (0, 0)))
     body = music[int(FADE_IN * SAMPLE_RATE): max(int(FADE_IN * SAMPLE_RATE) + 1, len(music) - int(FADE_OUT * SAMPLE_RATE))]
@@ -402,8 +564,10 @@ def render(plan: RenderPlan, voice: np.ndarray, speech_rms: float,
     if r:
         fade[len(music) - r:] *= np.linspace(1.0, 0.0, r) ** 1.5
     music *= (fade * duck_gain(voice, speech_rms))[:, None]
-    report = {"style": choice.style, "key": f"{choice.tonic % 12}:{choice.mode}", "tempo": choice.tempo,
-              "sections": [[round(start, 2), level] for start, level in choice.sections]}
+    if found:
+        return music, found[1]
+    report = {"source": "procedural", "style": choice.style, "key": f"{choice.tonic % 12}:{choice.mode}",
+              "tempo": choice.tempo, "sections": [[round(start, 2), level] for start, level in choice.sections]}
     if choice.second_style and choice.split is not None:
         report["second_style"] = {"style": choice.second_style, "tempo": choice.second_tempo, "from": choice.split}
     return music, report

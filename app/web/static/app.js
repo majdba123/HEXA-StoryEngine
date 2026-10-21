@@ -49,6 +49,28 @@ async function api(url, options = {}) {
   if (!response.ok) { const error = new Error(body.detail || `HTTP ${response.status}`); error.code = response.status; throw error; }
   return body;
 }
+// The soundtrack switches: sent when the upload is completed (the job starts then) and
+// remembered in this browser; the server's defaults apply until the user changes one.
+const SOUND_SWITCHES = {'sound-effects': 'sound_effects', 'background-music': 'background_music'};
+function soundOptions() {
+  const options = {};
+  for (const [id, key] of Object.entries(SOUND_SWITCHES)) options[key] = $(id).checked;
+  return options;
+}
+function completion() {
+  return {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(soundOptions())};
+}
+async function initSoundSwitches() {
+  let defaults = {};
+  try { defaults = await api('/api/uploads/config'); } catch (error) { defaults = {}; }
+  for (const [id, key] of Object.entries(SOUND_SWITCHES)) {
+    let saved = null;
+    try { saved = localStorage.getItem(`hexa-${key}`); } catch (error) { saved = null; }
+    $(id).checked = saved === null ? defaults[key] !== false : saved === '1';
+    $(id).addEventListener('change', () => { try { localStorage.setItem(`hexa-${key}`, $(id).checked ? '1' : '0'); } catch (error) { /* private mode */ } });
+  }
+}
+initSoundSwitches();
 function permanentInitiationError(error) {
   return [400, 409, 413, 422].includes(error.code);
 }
@@ -110,7 +132,7 @@ async function runUpload(snapshot) {
   if (snapshot.state === 'validating') { say('جارٍ التحقق من الملفات المحفوظة...'); setTimeout(reconnect, 1500); return; }
   if (snapshot.manifest.files.every(f => snapshot.files[f.id] === f.size)) {
     say('جارٍ التحقق من السلامة و Final Package...');
-    const result = await api(`/api/uploads/${snapshot.id}/complete`, {method:'POST'});
+    const result = await api(`/api/uploads/${snapshot.id}/complete`, completion());
     localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; watch(result.id); return;
   }
   if (!files.length) { say('الرفع محفوظ. اختر الملفات نفسها ثم اضغط استئناف.'); return; }
@@ -156,7 +178,7 @@ async function runUpload(snapshot) {
   }
   if (stopped) return;
   say('جارٍ التحقق من السلامة و Final Package...');
-  const result = await api(`/api/uploads/${snapshot.id}/complete`, {method:'POST'});
+  const result = await api(`/api/uploads/${snapshot.id}/complete`, completion());
   localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; watch(result.id);
 }
 async function resume(snapshot) {

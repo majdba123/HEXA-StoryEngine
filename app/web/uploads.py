@@ -398,7 +398,7 @@ class Uploads:
                 removed += 1
         return removed
 
-    def complete(self, uid, owner, settings):
+    def complete(self, uid, owner, settings, options: dict | None = None):
         with self.lock:
             state = self.status(uid, owner)
             if state["job_id"]:
@@ -505,7 +505,7 @@ class Uploads:
                     (job_id, time.time(), time.time(), uid),
                 )
             (self.jobs.root / job_id).mkdir(exist_ok=True)
-            self.jobs.start(job_id, package_path, audio_named)
+            self.jobs.start(job_id, package_path, audio_named, options)
             return {"id": job_id, "state": "queued"}
         except HTTPException as exc:
             if validation_started is not None:

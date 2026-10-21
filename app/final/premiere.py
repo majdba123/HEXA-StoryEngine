@@ -111,7 +111,7 @@ class PremiereExporter:
 
     def export(self, plan: RenderPlan, *, audio: Path, xml_path: Path, media_dir: Path,
                name: str, reference_video: Path | None = None, work_dir: Path | None = None,
-               effects: bool = True) -> PremiereProject:
+               effects: bool = True, music_bed: bool = True, library: Path | None = None) -> PremiereProject:
         """``work_dir`` holds the renderer's authoring files (arrow frames, ASS documents)
         while the clips are made; a short path (the job workspace) keeps every file inside
         the Windows path limit. Default: a fresh system temporary folder."""
@@ -147,18 +147,18 @@ class PremiereExporter:
             except Exception as exc:  # noqa: BLE001 - the project never depends on its effects
                 effects_track = None
                 warnings.append({"code": "PREMIERE_SOUND_EFFECTS_SKIPPED", "error": str(exc)[:300]})
-            if music.BACKGROUND_MUSIC:
-                try:  # the ducked music bed as its own editable track (A3)
-                    music_track = media_dir / "music.wav"
-                    report = sound.mix(plan, audio, music_track, ffmpeg_bin=self.ffmpeg_bin, include_voice=False,
-                                       stems=("music",))
-                    if report.get("music") != "mixed":
-                        raise ValueError(report.get("music_error") or "music not composed")
-                except Exception as exc:  # noqa: BLE001 - the project never depends on its music
-                    if music_track is not None:
-                        music_track.unlink(missing_ok=True)
-                    music_track = None
-                    warnings.append({"code": "PREMIERE_MUSIC_SKIPPED", "error": str(exc)[:300]})
+        if music_bed and music.BACKGROUND_MUSIC:
+            try:  # the ducked music bed as its own editable track (A3)
+                music_track = media_dir / "music.wav"
+                report = sound.mix(plan, audio, music_track, ffmpeg_bin=self.ffmpeg_bin, include_voice=False,
+                                   stems=("music",), library=library)
+                if report.get("music") != "mixed":
+                    raise ValueError(report.get("music_error") or "music not composed")
+            except Exception as exc:  # noqa: BLE001 - the project never depends on its music
+                if music_track is not None:
+                    music_track.unlink(missing_ok=True)
+                music_track = None
+                warnings.append({"code": "PREMIERE_MUSIC_SKIPPED", "error": str(exc)[:300]})
         total = max(1, round(plan.duration * plan.fps))
         document = _XmemlWriter(plan, name=name, total=total).build(
             background=background, tracks=tracks, audio=audio_copy, reference=reference_video,
