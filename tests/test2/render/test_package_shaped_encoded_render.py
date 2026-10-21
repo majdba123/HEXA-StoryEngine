@@ -24,7 +24,7 @@ from app.render import RenderPlanner
 from app.render.renderer import FFmpegRenderer
 from app.render.verification import EncodedMotionVerifier
 from app.shared.errors import StageFailedError
-from app.story import StoryPlanner
+from app.story import StoryPlanner, carrier_repair
 from app.text import TextPlanner
 from tests.support.carrier_matrix import family_case
 from tests.support.carrier_scene import build_package
@@ -142,10 +142,36 @@ def test_package_shaped_scene_encodes_with_every_leader_on_screen(
 
 
 @pytest.mark.parametrize("family", ["neg_unresolved", "neg_misbound", "neg_hidden_art"])
-def test_defective_package_shape_never_reaches_ffmpeg(tmp_path: Path, family: str) -> None:
+def test_defective_package_shape_never_reaches_ffmpeg(tmp_path: Path, family: str, monkeypatch) -> None:
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)  # strict contract
     case = family_case(family, seed=7200)
     built = build_package(list(case.scenes), namespace="ENCNEG")
     with pytest.raises(StageFailedError) as caught:
         StoryPlanner().plan(built.package, built.transcript, built.assets)
     assert caught.value.effective_code == case.expected_code
     assert not list(tmp_path.glob("**/*.mp4"))
+
+
+@pytest.mark.parametrize("family", ["neg_unresolved", "neg_hidden_art"])
+def test_repaired_package_shape_encodes_with_the_hidden_art_on_screen(tmp_path: Path, family: str) -> None:
+    """Repair instead of stopping: the hidden authored cutout is shown and the scene encodes."""
+    case = family_case(family, seed=7200)
+    built = build_package(list(case.scenes), namespace="ENCREP", image_root=tmp_path / "images",
+                          write_images=True)
+    planner = StoryPlanner()
+    story = planner.plan(built.package, built.transcript, built.assets)
+    shown = {row["asset_id"] for row in planner.carrier_repairs}
+    assert shown and shown <= {asset_id for beat in story for asset_id in (beat.active_visual_semantic_state or {})}
+    choreography = ChoreographyDirector().plan(built.package, story, built.assets)
+    composition = CompositionPlanner().plan(story, built.assets, choreography)
+    motion = MotionPlanner().plan(story, composition, choreography, built.assets)
+    text = TextPlanner().plan(transcript=built.transcript, story=story, assets=built.assets,
+                              package=built.package, choreography=choreography)
+    workspace = tmp_path / "render"
+    workspace.mkdir()
+    plan, _ = RenderPlanner().compile(built.transcript, built.assets, story, composition, motion, workspace,
+                                      text=text)
+    assert EncodedMotionVerifier().preflight(plan).violations == ()
+    video = FFmpegRenderer("ffmpeg").render(plan, tmp_path / f"{family}.mp4")
+    stream = _probe(video)["streams"][0]
+    assert abs(int(stream["nb_read_frames"]) - round(plan.duration * plan.fps)) <= 1

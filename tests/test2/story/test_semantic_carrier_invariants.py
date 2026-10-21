@@ -274,8 +274,9 @@ def test_unresolved_required_carrier_fails_before_render_with_diagnostics(strict
     assert built.scene_ids[0] in str(error)
 
 
-def test_dependency_proxy_outside_authored_locator_fails_closed() -> None:
-    """A carrier that contradicts the authored locator is a wrong binding."""
+def test_dependency_proxy_outside_authored_locator_fails_closed(strict_story) -> None:
+    """A carrier that contradicts the authored locator is a wrong binding (strict contract;
+    production shows it and records a warning: carrier_repair.tolerable)."""
     built = build_package([SceneSpec(
         phrase=PHRASE,
         units=(

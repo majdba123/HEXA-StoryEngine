@@ -162,7 +162,9 @@ def test_layout_solver_repairs_only_geometry_less_fallback(tmp_path: Path) -> No
     assert solved.items != beat.items
 
 
-def test_composition_maps_source_bbox_directly_to_scene_canvas(tmp_path: Path) -> None:
+def test_composition_maps_source_bbox_directly_to_scene_canvas(tmp_path: Path, monkeypatch) -> None:
+    # Authored-geometry contract; focus staging (tests/visual/test_focus_staging.py) stages on top.
+    monkeypatch.setattr("app.composition.focus_staging.FOCUS_STAGING", False)
     path = tmp_path / "asset.png"
     _image(path, size=(200, 100))
     asset = VisualAsset(
@@ -177,7 +179,9 @@ def test_composition_maps_source_bbox_directly_to_scene_canvas(tmp_path: Path) -
     assert item.height == pytest.approx(0.3)
 
 
-def test_dense_authored_scene_does_not_move_existing_assets_when_count_grows(tmp_path: Path) -> None:
+def test_dense_authored_scene_does_not_move_existing_assets_when_count_grows(tmp_path: Path, monkeypatch) -> None:
+    # Authored-geometry contract; focus staging (tests/visual/test_focus_staging.py) stages on top.
+    monkeypatch.setattr("app.composition.focus_staging.FOCUS_STAGING", False)
     assets = []
     for index in range(20):
         path = tmp_path / f"a-{index}.png"

@@ -175,8 +175,14 @@ class StoryPlanner:
         planned = self._require_quality_contract(package=package, assets=assets, beats=planned,
                                                  repair=carrier_repair.STORY_CARRIER_REPAIR,
                                                  warnings=self.quality_warnings)
-        self.carrier_auditor.require([row for row in self.semantic_carrier_audit
-                                      if not (carrier_repair.STORY_CARRIER_REPAIR and tolerable(row))])
+        tolerated = [row for row in self.semantic_carrier_audit
+                     if carrier_repair.STORY_CARRIER_REPAIR and tolerable(row)]
+        self.quality_warnings.extend({
+            "code": f"SEMANTIC_CARRIER_{row['status']}", "repair": "tolerated_all_cutouts_visible",
+            "scene_id": row.get("scene_id"), "semantic_asset_id": row.get("semantic_asset_id"),
+            "reason": row.get("reason"),
+        } for row in tolerated)
+        self.carrier_auditor.require([row for row in self.semantic_carrier_audit if row not in tolerated])
         self.carrier_auditor.require_hidden_content(self.hidden_content_audit)
         return planned
 

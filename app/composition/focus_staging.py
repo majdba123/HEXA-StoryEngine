@@ -114,8 +114,8 @@ class FocusStagingPlanner:
             return FocusStagingResult(items=items, evidence=f"focus_staging:abstained:{reason}",
                                       anchor_id=anchor_id)
 
-        if not FOCUS_STAGING:
-            return abstain("disabled")
+        if not FOCUS_STAGING:  # switched off (safe level, strict tests): leave no trace
+            return FocusStagingResult(items=items, evidence="", anchor_id=None)
         if any(not item.placement_source.startswith("authored") for item in items):
             return abstain("fallback_geometry")
         if any(item.placement_source == STAGED_PLACEMENT_SOURCE for item in items):

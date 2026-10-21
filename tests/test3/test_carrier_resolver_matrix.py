@@ -21,7 +21,7 @@ from app.composition import CompositionPlanner
 from app.motion import MotionPlanner
 from app.render import RenderPlanner
 from app.shared.errors import StageFailedError
-from app.story import StoryPlanner
+from app.story import StoryPlanner, carrier_repair
 from app.story.carrier_resolver import CarrierConfidence, SemanticCarrierResolver
 from app.text import TextPlanner
 from tests.support.carrier_matrix import (
@@ -108,7 +108,8 @@ def test_resolver_shape_reaches_render_plan(tmp_path: Path, family: str, seed: i
 
 
 @pytest.mark.parametrize(("family", "seed"), NEGATIVE)
-def test_resolver_defect_fails_before_render_with_typed_code(family: str, seed: int) -> None:
+def test_resolver_defect_fails_before_render_with_typed_code(family: str, seed: int, monkeypatch) -> None:
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)  # strict contract
     case = resolver_case(family, seed)
     built = build_package(list(case.scenes), namespace=f"RN{seed}")
     with pytest.raises(StageFailedError) as caught:
@@ -138,3 +139,30 @@ def test_resolver_cost_stays_bounded_on_dense_scenes(count: int, budget_ms: int)
     elapsed_ms = (time.perf_counter() - started) * 1000
     assert sum(len(row.members) for row in resolution.assignments.values()) == count
     assert elapsed_ms < budget_ms, f"{count} intents resolved in {elapsed_ms:.0f} ms"
+
+
+@pytest.mark.parametrize(("family", "seed"), NEGATIVE)
+def test_resolver_defect_is_repaired_to_a_render_plan_or_stays_typed(tmp_path: Path, family: str, seed: int) -> None:
+    """Repair instead of stopping (2026-10-21): every resolver defect either becomes a plan
+    in which the contested cutouts are on screen and every layer plans, or keeps its typed
+    stop. Nothing else may happen (no crash, no other code, no half plan)."""
+    case = resolver_case(family, seed)
+    built = build_package(list(case.scenes), namespace=f"RR{seed}", image_root=tmp_path / "images",
+                          write_images=True)
+    planner = StoryPlanner()
+    try:
+        story = planner.plan(built.package, built.transcript, built.assets)
+    except StageFailedError as error:
+        assert error.effective_code == case.expected_code, case.label
+        return
+    visible = {asset_id for beat in story for asset_id in (beat.active_visual_semantic_state or {})}
+    assert {row["asset_id"] for row in planner.carrier_repairs} <= visible
+    choreography = ChoreographyDirector().plan(built.package, story, built.assets)
+    composition = CompositionPlanner().plan(story, built.assets, choreography)
+    motion = MotionPlanner().plan(story, composition, choreography, built.assets)
+    text = TextPlanner().plan(transcript=built.transcript, story=story, assets=built.assets,
+                              package=built.package, choreography=choreography)
+    (tmp_path / "render").mkdir()
+    _plan, path = RenderPlanner().compile(built.transcript, built.assets, story, composition, motion,
+                                          tmp_path / "render", text=text)
+    assert path.is_file()

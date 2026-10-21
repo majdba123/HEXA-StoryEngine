@@ -114,7 +114,9 @@ def test_package_shape_crosses_every_planning_layer(tmp_path: Path, seed: int) -
 
 
 @pytest.mark.parametrize("seed", NEGATIVE_SEEDS)
-def test_defective_package_shape_fails_before_render(seed: int) -> None:
+def test_defective_package_shape_fails_before_render(seed: int, monkeypatch) -> None:
+    # Strict contract; repair mode: tests/test3/test_carrier_repair_matrix.py
+    monkeypatch.setattr("app.story.carrier_repair.STORY_CARRIER_REPAIR", False)
     case = generate_case(seed, negative=True)
     built = build_package(list(case.scenes), namespace=f"N{seed}")
     with pytest.raises(StageFailedError) as caught:

@@ -35,6 +35,16 @@ from app.motion.relation_flow import HANDOFF_LEAN_MAX_PX, apply_relation_focus_h
 from app.story import StoryPlanner
 from tests.support.carrier_scene import Cutout, Event, SceneSpec, Unit, build_package, locator_for
 
+@pytest.fixture(scope="module", autouse=True)
+def _authored_geometry():
+    """This sprint's layout contract is certified on authored geometry; focus staging
+    (tests/visual/test_focus_staging.py) re-stages scenes on top of it. Module scope: the
+    plans are built once per module."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("app.composition.focus_staging.FOCUS_STAGING", False)
+        yield
+
+
 PHRASE = tuple(f"w{index}" for index in range(10))
 SLOW = 3.0
 

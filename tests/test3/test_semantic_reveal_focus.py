@@ -514,7 +514,10 @@ def test_same_event_cohort_and_late_event(tmp_path: Path):
     _assert_focus_hierarchy(motion, leaders={"A"}, supports={"B"})
 
 
-def test_true_same_anchor_cohort_has_one_perceptual_leader(tmp_path: Path):
+def test_true_same_anchor_cohort_has_one_perceptual_leader(tmp_path: Path, monkeypatch):
+    # Motion's gesture hierarchy on authored geometry; focus staging makes the leader dominant
+    # by size instead (tests/visual/test_focus_staging.py).
+    monkeypatch.setattr("app.composition.focus_staging.FOCUS_STAGING", False)
     specs = [
         Spec("leader", "E1", 0.8, "PRIMARY"),
         Spec("support-a", "E1", 0.8, "SUPPORT", False),
@@ -1047,8 +1050,11 @@ def test_pass2_child_provenance_cannot_preempt_single_group_semantics(
 
 
 def test_pass2_child_in_multi_group_scene_abstains_instead_of_inheriting_parent(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ):
+    from app.story import carrier_repair
+
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)  # strict contract
     specs = [
         Spec("left", "E1", 0.40, group="g1", sequence=1),
         Spec("right", "E2", 1.80, group="g2", sequence=1),
@@ -1158,8 +1164,11 @@ def test_unbound_single_group_cutout_waits_for_latest_authored_anchor(tmp_path: 
     assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
 
 
-def test_unbound_cutout_in_multi_group_scene_remains_safe_abstention(tmp_path: Path):
-    """Do not guess which semantic group owns an extra runtime cutout."""
+def test_unbound_cutout_in_multi_group_scene_remains_safe_abstention(tmp_path: Path, monkeypatch):
+    """Do not guess which semantic group owns an extra runtime cutout (strict contract)."""
+    from app.story import carrier_repair
+
+    monkeypatch.setattr(carrier_repair, "STORY_CARRIER_REPAIR", False)  # strict contract
     specs = [
         Spec("left", "E1", 0.40, group="g1", sequence=1),
         Spec("right", "E2", 1.80, group="g2", sequence=1),
@@ -1230,3 +1239,21 @@ def test_300_generated_unbound_cutouts_never_preempt_authored_semantics(tmp_path
         assert all(segment.phase != "EXIT" for cue in motion for segment in cue.segments)
         checked += len(extra_ids)
     assert checked >= 300
+
+@pytest.mark.parametrize("extra", ["pass2_child", "unbound"])
+def test_hidden_significant_cutout_in_multi_group_scene_is_shown_and_planned(tmp_path: Path, extra: str):
+    """Repair instead of stopping: ownership is still not guessed for meaning, but the
+    hidden artwork is shown with the scene and every downstream layer plans."""
+    specs = [
+        Spec("left", "E1", 0.40, group="g1", sequence=1),
+        Spec("right", "E2", 1.80, group="g2", sequence=1),
+    ]
+    hidden = "left:secondary-01" if extra == "pass2_child" else "unknown-extra"
+    story, _choreography, _composition, motion, render = _pipeline(
+        tmp_path / extra, specs, 3.0,
+        pass2_children=[("left", hidden)] if extra == "pass2_child" else None,
+        extra_asset_ids=["unknown-extra"] if extra == "unbound" else None,
+    )
+    visible = {asset_id for beat in story for asset_id in (beat.active_visual_semantic_state or {})}
+    assert hidden in visible
+    assert any(cue.asset_id == hidden for cue in motion)

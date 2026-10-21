@@ -315,7 +315,7 @@ def test_reels_is_exact_uniform_reference_projection(bundle_run) -> None:
                 assert b["dy"] * 1920 == pytest.approx(a["dy"] * 1080 * expected_scale, abs=1e-7)
                 assert {k: v for k, v in b.items() if k not in {"dx", "dy"}} == {
                     k: v for k, v in a.items() if k not in {"dx", "dy"}}
-    assert all(i.placement_source.startswith("authored_scene") or i.placement_source.startswith("authored_semantic")
+    assert all(i.placement_source.startswith(("authored_scene", "authored_semantic", "authored_focus"))
                for b in youtube.composition for i in b.items)
 
 

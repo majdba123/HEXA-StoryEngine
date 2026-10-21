@@ -49,6 +49,16 @@ from tests.visual.test_sprint_4_2_semantic_relationship_flow import (
     plan,
 )
 
+@pytest.fixture(scope="module", autouse=True)
+def _authored_geometry():
+    """This sprint's layout contract is certified on authored geometry; focus staging
+    (tests/visual/test_focus_staging.py) re-stages scenes on top of it. Module scope: the
+    plans are built once per module."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("app.composition.focus_staging.FOCUS_STAGING", False)
+        yield
+
+
 W, H = 1920, 1080
 CROWDED_BAG = (428, 560, 200, 200)   # 88 units right of CHIP: arrow just under readable
 TIGHT_BAG = (380, 560, 200, 200)     # 40 units: only a minimum-size arrow fits the ceiling

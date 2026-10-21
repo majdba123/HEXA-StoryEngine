@@ -91,7 +91,10 @@ def reveal_assets(beats: list[StoryBeat],
         opener = min(visible, key=lambda pair: (
             pair[1].spoken_start if pair[1].spoken_start is not None else float("inf"), pair[1].asset_id),
             default=None)
+        on_screen = {row.asset_id for _position, row in visible}
         for asset_id, unit_id in sorted(assets.items()):
+            if asset_id in on_screen:
+                continue  # already visible: its own (package) activation stays untouched
             base = next((row for p in positions for row in output[p].asset_activations if row.asset_id == asset_id),
                         None)
             sibling = next(((position, row) for position, row in visible
@@ -99,10 +102,14 @@ def reveal_assets(beats: list[StoryBeat],
             if sibling or opener:
                 position, template = sibling or opener
                 rule = "with_unit_sibling" if sibling else "with_scene_opener"
-                revealed = template.model_copy(update={
+                update = {
                     "asset_id": asset_id, "semantic_unit_id": unit_id or template.semantic_unit_id,
                     "source": "carrier_repair", "evidence": _evidence(template, rule),
-                })
+                }
+                if not sibling:  # only the rest of the same drawing shares its sibling's event
+                    update.update(semantic_event_id=None, semantic_event_roles=[], semantic_event_order=None,
+                                  semantic_event_dependency_ids=[])
+                revealed = template.model_copy(update=update)
                 timing_from = template.asset_id
             else:
                 position, rule = positions[0], "with_scene_start"
@@ -182,10 +189,17 @@ def carry_events(package, beats: list[StoryBeat],
     return output, carried
 
 
+# Findings that leave every involved cutout on screen: the authored content is visible, only
+# the proof of which cutout owns the unit is missing. Recorded as warnings, never a stop.
+_TOLERATED = {"AMBIGUOUS": None, "UNRESOLVED": "carrier_outside_authored_locator"}
+
+
 def tolerable(record: dict[str, Any]) -> bool:
-    """Contested ownership is acceptable once every contested cutout is on screen."""
-    if record.get("status") != "AMBIGUOUS":
+    """Contested ownership, or a carrier outside its authored locator, is acceptable once
+    every involved cutout is on screen."""
+    status = record.get("status")
+    if status not in _TOLERATED or (_TOLERATED[status] and record.get("reason") != _TOLERATED[status]):
         return False
     visible = set(record.get("visible_scene_asset_ids") or [])
-    contested = set(record.get("carrier_asset_ids") or []) | set(record.get("candidate_hidden_asset_ids") or [])
-    return bool(contested) and contested <= visible
+    involved = set(record.get("carrier_asset_ids") or []) | set(record.get("candidate_hidden_asset_ids") or [])
+    return bool(involved) and involved <= visible

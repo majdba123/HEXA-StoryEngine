@@ -141,7 +141,9 @@ def test_pass2_family_and_contact_cluster_move_rigidly(tmp_path: Path) -> None:
         assert ox == pytest.approx(rx * s, abs=1e-6) and oy == pytest.approx(ry * s, abs=1e-6)
 
 
-def test_composition_planner_projects_on_the_active_target(scene) -> None:
+def test_composition_planner_projects_on_the_active_target(scene, monkeypatch) -> None:
+    # Authored-geometry contract; focus staging (tests/visual/test_focus_staging.py) stages on top.
+    monkeypatch.setattr("app.composition.focus_staging.FOCUS_STAGING", False)
     from app.models import StoryBeat
 
     assets, _ = scene

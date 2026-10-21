@@ -122,7 +122,7 @@ class CompositionPlanner:
                                      (spoken or {}).get(scene_id, set()))
             self.focus_evidence[scene_id] = focus.evidence
             self.focus_anchor[scene_id] = focus.anchor_id
-            staged[scene_id] = (focus.items, f"{result.evidence};{focus.evidence}")
+            staged[scene_id] = (focus.items, ";".join(row for row in (result.evidence, focus.evidence) if row))
             self.target_evidence[scene_id] = projection.evidence
         return staged
 
