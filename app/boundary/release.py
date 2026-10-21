@@ -49,6 +49,12 @@ EXIT_MOTION_BLUR = {"owner": "BOUNDARY", "shutter": MOTION_BLUR_SHUTTER,
 WHIP_FRAMES = 6
 # Every other idea change clears the old scene to white in a few frames (reference A 12.5 s).
 FADE_FRAMES = 5
+# Pacing review 2026-10-21: a clear between ideas faded only from the opener frame, so for
+# two frames the arriving element landed on the still-opaque old scene. The old scene now
+# starts dimming SCENE_FADE_LEAD_FRAMES before the opener and fades over SCENE_FADE_FRAMES
+# (a soft dip; it is still partly visible when the new element lands, never a blank frame).
+SCENE_FADE_FRAMES = 8
+SCENE_FADE_LEAD_FRAMES = 3
 # Production switch for the whip; the certified hero-exit / crisp / cut machinery below it
 # stays intact (and tested) for every boundary the whip abstains from.
 SCENE_WHIP = True
@@ -59,6 +65,13 @@ SCENE_WHIP = True
 # stood); the rest of the idea stays until the next picture is complete. Positions stay the
 # authored ones; nothing moves.
 IDEA_BOARD = True
+# Idea clock (2026-10-21 review of Hacktivist v1: a new picture every 1.9 s, 22 of 40 cuts
+# cleared to white): the references hold one idea 3-7 s and Final Package sentences last a
+# median 2.7 s, so an idea spans several sentences. A sentence end therefore clears the
+# screen only once the current idea has been on screen IDEA_MIN_SECONDS; before that the
+# next picture is built on the same board. A character swap keeps its whip.
+IDEA_CLOCK = True
+IDEA_MIN_SECONDS = 3.5
 BOARD_MAX_UNITS = 5            # carried + arrived element units on screen together
 BOARD_LEAD_FRAMES = 2          # an old element starts fading this many frames before the new lands
 # A word never shares its spot with fading artwork or another fading word: what it replaces
@@ -112,9 +125,13 @@ class SceneBoundaryPlanner:
         text_rows = self._text_rows(text, text_composition, text_motion)
         text_boxes = {beat_id: [(t0, t1, box) for _cue, t0, t1, box in rows] for beat_id, rows in text_rows.items()}
         output: list[SceneBoundaryRelease] = []
+        idea_start: float | None = None
         for segment in beat_segments(story, duration=duration, fps=fps):
             if segment.previous_beat is None:
+                idea_start = segment.start_frame / fps
                 continue
+            young = (IDEA_CLOCK and idea_start is not None
+                     and segment.start_frame / fps - idea_start < IDEA_MIN_SECONDS)
             row = self._plan_one(
                 segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
@@ -122,12 +139,14 @@ class SceneBoundaryPlanner:
             whip = self._scene_whip(
                 row, segment, layouts=layouts, cues=cues, fps=fps, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []),
-                outgoing_text=text_rows.get(segment.previous_beat.id, []),
+                outgoing_text=text_rows.get(segment.previous_beat.id, []), young_idea=young,
             ) if SCENE_WHIP else None
             output.append(whip if whip is not None else self._hero_overlap_exit(
                 row, segment, layouts=layouts, cues=cues, assets=assets_by_id,
                 text_boxes=text_boxes.get(segment.beat.id, []), fps=fps,
             ))
+            if output[-1].audit.get("hero_exit") != "idea_board":
+                idea_start = segment.start_frame / fps  # the screen was cleared: a new idea
         return output
 
     def _scene_whip(
@@ -141,6 +160,7 @@ class SceneBoundaryPlanner:
         assets: dict[str, VisualAsset] | None = None,
         text_boxes: list[tuple[float, float, Box]] | None = None,
         outgoing_text: list[tuple[str, float, float, Box]] | None = None,
+        young_idea: bool = False,
     ) -> SceneBoundaryRelease | None:
         """The whole outgoing scene whips out as one block when the new scene opens (G16).
 
@@ -181,7 +201,11 @@ class SceneBoundaryPlanner:
             for item in incoming}
         opener = int(row.audit.get("opener_frame", min(first.values())))
         leaving = {item.asset_id for item in previous_layout.items}
-        if IDEA_BOARD and continues_sentence(previous.narration):
+        roles_out, roles_in = self._roles(previous), self._roles(beat)
+        whip = (any(roles_out.get(asset_id) == "CHARACTER" for asset_id in leaving)
+                and any(roles_in.get(asset_id) == "CHARACTER" for asset_id, frame in first.items()
+                        if frame == opener))
+        if IDEA_BOARD and (continues_sentence(previous.narration) or (young_idea and not whip)):
             board = self._idea_board_exits(segment, previous_layout, incoming, first, opener,
                                            assets=assets or {}, text_boxes=text_boxes or [],
                                            outgoing_text=outgoing_text or [], fps=fps)
@@ -196,16 +220,13 @@ class SceneBoundaryPlanner:
                 })
         # References: a character swap is carried by a whip (A 41 s, B 5 s, B 35 s); every
         # other change of idea clears the old scene to white in a few frames (A 12.5 s).
-        roles_out, roles_in = self._roles(previous), self._roles(beat)
-        whip = (any(roles_out.get(asset_id) == "CHARACTER" for asset_id in leaving)
-                and any(roles_in.get(asset_id) == "CHARACTER" for asset_id, frame in first.items()
-                        if frame == opener))
-        frames = WHIP_FRAMES if whip else FADE_FRAMES
-        end_frame = opener + frames
+        frames = WHIP_FRAMES if whip else SCENE_FADE_FRAMES
+        begin_frame = opener if whip else max(0, opener - SCENE_FADE_LEAD_FRAMES)
+        end_frame = begin_frame + frames
         if end_frame >= segment.frame_count:
             return None
         axis, direction = self._whip_direction(beat, cues, first, opener)
-        spec = {"start": round((segment.start_frame + opener) / fps, 6),
+        spec = {"start": round((segment.start_frame + begin_frame) / fps, 6),
                 "end": round((segment.start_frame + end_frame) / fps, 6),
                 "direction": direction, "axis": axis, "fade": 0.0 if whip else 1.0}
         return row.model_copy(update={

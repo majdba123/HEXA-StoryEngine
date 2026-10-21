@@ -93,7 +93,8 @@ def test_no_more_than_the_board_capacity_share_the_screen() -> None:
     assert all(frames[f"old_{n}"] > 30 for n in (1, 2, 3))
 
 
-def test_a_finished_sentence_keeps_the_plain_fade_to_white() -> None:
+def test_a_finished_sentence_keeps_the_plain_fade_to_white(monkeypatch) -> None:
+    monkeypatch.setattr(release, "IDEA_MIN_SECONDS", 1.5)  # the idea has been on screen 2 s
     scene = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.")
     row = scene.plan()
     assert row.audit["hero_exit"] == "scene_fade"
@@ -181,7 +182,8 @@ def test_an_arrival_on_the_carried_word_ends_it_first() -> None:
     assert scene.frame(row.text_carry["w1"]) == 30 - BOARD_LEAD_FRAMES
 
 
-def test_no_carry_after_a_finished_sentence_or_for_a_word_already_gone() -> None:
+def test_no_carry_after_a_finished_sentence_or_for_a_word_already_gone(monkeypatch) -> None:
+    monkeypatch.setattr(release, "IDEA_MIN_SECONDS", 1.5)  # a finished idea, not a young one
     finished = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.")
     _outgoing_word(finished)
     assert finished.plan().text_carry == {}
@@ -230,3 +232,29 @@ def test_a_word_whose_spot_is_taken_later_keeps_its_reading_window_instead_of_va
     assert item.visible_end == pytest.approx(TextVisibilityPolicy.reading_end(word, beat, [word]), abs=1e-6)
     assert item.visible_end < 2.0                                       # gone before the spot is taken
     assert text_motion[0].params["visible_end"] == pytest.approx(item.visible_end)
+
+
+# -- idea clock (pacing review 2026-10-21) ---------------------------------------------------
+def test_a_young_idea_continues_on_the_board_after_a_sentence_end() -> None:
+    """Sentences last ~2.7 s; an idea 3-7 s: a sentence end clears only a finished idea."""
+    row = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.").plan()
+    assert row.audit["hero_exit"] == "idea_board"  # the idea is 2 s old < IDEA_MIN_SECONDS
+
+
+def test_the_idea_clock_switch_restores_the_sentence_rule(monkeypatch) -> None:
+    monkeypatch.setattr(release, "IDEA_CLOCK", False)
+    row = _board(Scene(lead=3, opener=NEW_ON_OLD), narration="end of the idea.").plan()
+    assert row.audit["hero_exit"] == "scene_fade"
+
+
+def test_a_clear_dims_the_old_idea_before_the_new_element_lands(monkeypatch) -> None:
+    """Soft dip: the old scene starts fading SCENE_FADE_LEAD_FRAMES before the opener and
+    is still partly visible when the new element lands (never a blank frame)."""
+    monkeypatch.setattr(release, "IDEA_MIN_SECONDS", 1.5)
+    scene = _board(Scene(lead=4, opener=NEW_ON_OLD), narration="end of the idea.")
+    row = scene.plan()
+    assert row.audit["hero_exit"] == "scene_fade"
+    for spec in row.overlap_exits.values():
+        assert scene.frame(spec["start"]) == 4 - release.SCENE_FADE_LEAD_FRAMES
+        assert spec["end"] - spec["start"] == pytest.approx(release.SCENE_FADE_FRAMES / FPS, abs=1e-5)
+        assert release.SCENE_FADE_LEAD_FRAMES < release.SCENE_FADE_FRAMES  # still visible at the opener

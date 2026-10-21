@@ -18,6 +18,11 @@ Box = tuple[float, float, float, float]
 # The approved references draw labels large and close to their subject; below about
 # two thirds of the production size a label becomes hard to read on a small screen.
 READABLE_FONT_SCALE = 0.68
+# Pacing review 2026-10-21 (Hacktivist v1, keyword median 0.82): a word read in ~1.2 s must
+# be large. Whenever the contract accepts a placement at or above this size near its subject
+# it wins over a smaller one, and each rung below 1.0 costs more than before.
+PREFERRED_FONT_SCALE = 1.0
+SCALE_PENALTY = 3.0
 REFERENCE_FONT_SCALES = tuple(value for value in (2.2, 1.9, 1.6, 1.35, 1.15) if value <= MAX_FONT_SCALE)
 # A legible label may move this far (normalized centre distance) from its subject.
 READABLE_ANCHOR_REACH = 0.30
@@ -154,7 +159,7 @@ class TextPlacementDirector:
                 )
                 # Prefer the authored typography size whenever whitespace permits, but
                 # reducing text is always safer than moving the Final Package artwork.
-                scale_penalty = (1.0 - font_scale) * 1.6
+                scale_penalty = (1.0 - font_scale) * SCALE_PENALTY
                 scored.append((*score_row, font_scale, width))
                 scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
 
@@ -179,6 +184,11 @@ class TextPlacementDirector:
 
         established = [row for row in acceptable if row[5] >= 0.56] or acceptable
         best = min(established, key=rank)
+        preferred = [row for row in acceptable if row[5] >= PREFERRED_FONT_SCALE]
+        if preferred and best[5] < PREFERRED_FONT_SCALE:
+            larger = min(preferred, key=rank)
+            if distance(larger) <= max(READABLE_ANCHOR_REACH, distance(best) + 0.12):
+                best = larger
         readable = [row for row in acceptable if row[5] >= READABLE_FONT_SCALE]
         if readable and best[5] < READABLE_FONT_SCALE:
             # A legible label wins unless it would leave its subject's neighbourhood.
