@@ -530,13 +530,13 @@ class StoryEnginePipeline:
             try:
                 with safe_mode.safe_level(level):
                     return plan()
-            except StageFailedError as exc:
+            except Exception as exc:  # noqa: BLE001 - safe_mode.recoverable decides
                 if level >= safe_mode.MAX_LEVEL or not safe_mode.recoverable(exc):
                     raise
                 level += 1
                 shared.repairs.append({
                     "stage": "planning", "repair": f"safe_level_{level}",
-                    "code": exc.effective_code, "message": str(exc)[:300],
+                    "code": getattr(exc, "effective_code", type(exc).__name__), "message": str(exc)[:300],
                 })
             finally:
                 self.safe_level = 0

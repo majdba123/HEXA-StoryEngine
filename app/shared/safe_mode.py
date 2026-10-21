@@ -18,7 +18,7 @@ import contextlib
 import importlib
 from collections.abc import Iterator
 
-from app.shared.errors import StageFailedError
+from app.shared.errors import DependencyUnavailableError, GenerationCancelledError, StageFailedError
 
 SAFE_LEVELS = True
 MAX_LEVEL = 2
@@ -51,8 +51,15 @@ NOT_RECOVERABLE = frozenset({
 
 
 def recoverable(error: BaseException) -> bool:
-    return (SAFE_LEVELS and isinstance(error, StageFailedError)
-            and error.effective_code not in NOT_RECOVERABLE)
+    """Planning failures climb the ladder: a typed stage failure (unless the inputs or the
+    machine are the problem) and an unexpected planning error alike, since a safer level
+    may not reach the code that failed. Cancellation, a missing dependency and running out
+    of memory never do."""
+    if not SAFE_LEVELS or isinstance(error, (GenerationCancelledError, DependencyUnavailableError, MemoryError)):
+        return False
+    if isinstance(error, StageFailedError):
+        return error.effective_code not in NOT_RECOVERABLE
+    return isinstance(error, Exception)
 
 
 @contextlib.contextmanager

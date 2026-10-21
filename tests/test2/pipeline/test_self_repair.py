@@ -155,7 +155,8 @@ def test_safe_levels_switch_layers_off_and_always_restore_them() -> None:
     (StageFailedError("x", details={"code": "EXPORT_ROOT_UNAVAILABLE"}), False),
     (GenerationCancelledError("cancelled"), False),
     (DependencyUnavailableError("ffmpeg missing"), False),
-    (ValueError("bug"), False),
+    (ValueError("motion program keyframes must be strictly increasing"), True),  # a safer level may avoid it
+    (MemoryError(), False),
 ])
 def test_only_planning_failures_climb_the_ladder(error, expected) -> None:
     assert safe_mode.recoverable(error) is expected
@@ -313,3 +314,18 @@ def test_a_missing_ffmpeg_is_never_retried(tmp_path: Path, monkeypatch) -> None:
     with pytest.raises(DependencyUnavailableError):
         renderer._retry_segment(None, _segment_job(tmp_path), RuntimeError("x"), {}, {}, {})
     assert calls == [1]
+
+
+def test_an_unexpected_planning_error_is_planned_again_and_recorded() -> None:
+    host, shared, calls = SimpleNamespace(safe_level=0), SimpleNamespace(repairs=[]), []
+
+    def plan():
+        calls.append(host.safe_level)
+        if host.safe_level == 0:
+            raise ValueError("motion program keyframes must be strictly increasing")
+        return "plans"
+
+    assert StoryEnginePipeline._plan_with_safe_levels(host, shared, plan) == "plans"
+    assert calls == [0, 1]
+    assert shared.repairs == [{"stage": "planning", "repair": "safe_level_1", "code": "ValueError",
+                               "message": "motion program keyframes must be strictly increasing"}]
