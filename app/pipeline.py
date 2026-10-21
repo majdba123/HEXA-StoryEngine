@@ -1262,12 +1262,16 @@ class StoryEnginePipeline:
         self._progress(
             progress, Stage.final, span[1], f"{prefix}Building final video",
         )
-        # Sound design (app/final/sound.py): motion-driven effects under the narration, the
-        # same length as the narration; any failure falls back to the narration alone.
+        # Sound design (app/final/sound.py): motion-driven effects and the music bed under the
+        # narration, the same length as the narration; the music failing keeps the effects,
+        # anything else falls back to the narration alone.
         soundtrack, sound_report = sound.mix_or_narration(
             plan, audio_path, workspace / "render" / "soundtrack.wav", ffmpeg_bin=self.settings.ffmpeg_bin)
         if sound_report.get("sound_effects") == "skipped":
             warnings.append({"stage": "sound", "code": "SOUND_EFFECTS_SKIPPED", **sound_report})
+        if sound_report.get("music") == "skipped":
+            warnings.append({"stage": "sound", "code": "BACKGROUND_MUSIC_SKIPPED",
+                             "error": sound_report.get("music_error", "")})
         (workspace / "diagnostics").mkdir(parents=True, exist_ok=True)
         (workspace / "diagnostics" / "sound.json").write_text(
             json.dumps(sound_report, ensure_ascii=False, indent=2), encoding="utf-8")

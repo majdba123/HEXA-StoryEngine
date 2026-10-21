@@ -144,6 +144,8 @@ def test_the_project_reproduces_the_encoded_video(tmp_path: Path) -> None:
     tracks = root.find("sequence/media/video").findall("track")
     assert len(tracks) == project.tracks >= 2
     assert root.find("sequence/media/audio/track/clipitem/file/pathurl") is not None
+    labels = [item.findtext("name") for item in root.findall("sequence/media/audio/track/clipitem")]
+    assert labels == ["Narration", "Sound effects", "Music"]  # A1 voice, A2 effects, A3 ducked music
     for node in root.iter("file"):
         if node.find("pathurl") is not None:
             assert premiere_check.local_path(node.findtext("pathurl")).is_file()

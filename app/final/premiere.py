@@ -39,7 +39,7 @@ from urllib.parse import quote
 from PIL import Image
 
 from app.models import RenderPlan
-from app.final import sound
+from app.final import music, sound
 from app.render.expression import compile_expression
 from app.render.renderer import CapturedLayer, FFmpegRenderer
 from app.render.text import PRODUCTION_FONT_DIR
@@ -138,18 +138,31 @@ class PremiereExporter:
         background = self._solid(media_dir / "canvas_white.png", (plan.width, plan.height), (255, 255, 255, 255))
         audio_copy = media_dir / f"narration{audio.suffix.lower()}"
         shutil.copyfile(audio, audio_copy)
-        effects_track = None
+        effects_track = music_track = None
         if effects and sound.SOUND_EFFECTS:
             try:  # the sound effects as their own editable track (A2)
                 effects_track = media_dir / "sound_effects.wav"
-                sound.mix(plan, audio, effects_track, ffmpeg_bin=self.ffmpeg_bin, include_voice=False)
+                sound.mix(plan, audio, effects_track, ffmpeg_bin=self.ffmpeg_bin, include_voice=False,
+                          stems=("effects",))
             except Exception as exc:  # noqa: BLE001 - the project never depends on its effects
                 effects_track = None
                 warnings.append({"code": "PREMIERE_SOUND_EFFECTS_SKIPPED", "error": str(exc)[:300]})
+            if music.BACKGROUND_MUSIC:
+                try:  # the ducked music bed as its own editable track (A3)
+                    music_track = media_dir / "music.wav"
+                    report = sound.mix(plan, audio, music_track, ffmpeg_bin=self.ffmpeg_bin, include_voice=False,
+                                       stems=("music",))
+                    if report.get("music") != "mixed":
+                        raise ValueError(report.get("music_error") or "music not composed")
+                except Exception as exc:  # noqa: BLE001 - the project never depends on its music
+                    if music_track is not None:
+                        music_track.unlink(missing_ok=True)
+                    music_track = None
+                    warnings.append({"code": "PREMIERE_MUSIC_SKIPPED", "error": str(exc)[:300]})
         total = max(1, round(plan.duration * plan.fps))
         document = _XmemlWriter(plan, name=name, total=total).build(
             background=background, tracks=tracks, audio=audio_copy, reference=reference_video,
-            effects=effects_track)
+            effects=effects_track, music=music_track)
         xml_path.parent.mkdir(parents=True, exist_ok=True)
         xml_path.write_bytes(document)
         (media_dir / "README.txt").write_text(_README.format(xml=xml_path.name), encoding="utf-8")
@@ -410,7 +423,7 @@ class _XmemlWriter:
         self.clip_ids = 0
 
     def build(self, *, background: Path, tracks: list[list[PremiereClip]], audio: Path,
-              reference: Path | None, effects: Path | None = None) -> bytes:
+              reference: Path | None, effects: Path | None = None, music: Path | None = None) -> bytes:
         for row in tracks:
             for clip in row:
                 self.file_lengths[clip.media] = max(self.file_lengths.get(clip.media, 0), clip.end - clip.start)
@@ -447,7 +460,8 @@ class _XmemlWriter:
         ET.SubElement(samples, "depth").text = "16"
         ET.SubElement(samples, "samplerate").text = "48000"
         for index, (label, path) in enumerate(
-                (row for row in (("Narration", audio), ("Sound effects", effects)) if row[1] is not None), start=1):
+                (row for row in (("Narration", audio), ("Sound effects", effects), ("Music", music))
+                 if row[1] is not None), start=1):
             track = ET.SubElement(audio_root, "track")
             item = self._clipitem(track, name=label, start=0, length=self.total)
             file = ET.SubElement(item, "file", id=f"file-audio-{index}")
@@ -612,6 +626,7 @@ Open Premiere Pro, then File > Import and choose {xml}
             stacked in the video's drawing order; higher track = in front
   A1        narration
   A2        sound effects (whoosh, pop, tick, swell) - adjust or mute freely
+  A3        background music, already ducked under the narration - adjust or mute freely
 
 Every artwork clip is the original cutout with its exact Position, Scale and Opacity
 keyframes (Effect Controls > Motion / Opacity). Keywords and arrows are transparent
