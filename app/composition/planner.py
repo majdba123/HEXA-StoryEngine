@@ -13,7 +13,6 @@ from app.story.windows import StoryAssetActivation
 
 from .focus_staging import FocusStagingPlanner
 from .geometry import AuthoredGeometryMapper
-from .idea_spread import IdeaSpreadPlanner
 from .semantic_staging import SemanticStagingPlanner
 from .states import CompositionStateDirector
 
@@ -45,11 +44,7 @@ class CompositionPlanner:
         self.geometry = AuthoredGeometryMapper()
         self.staging = SemanticStagingPlanner(footprints=self.solver.footprints)
         self.focus = FocusStagingPlanner(footprints=self.solver.footprints)
-        self.spread = IdeaSpreadPlanner(footprints=self.solver.footprints)
         self.focus_evidence: dict[str, str] = {}
-        # Idea spread: per incoming beat, the previous picture held beside it (Text keeps
-        # its keywords off these items).
-        self.held_items: dict[str, list[LayoutItem]] = {}
         self.focus_anchor: dict[str, str | None] = {}
 
     def plan(
@@ -72,28 +67,21 @@ class CompositionPlanner:
             if cue.anchor_asset_id and cue.beat_id in scene_of:
                 spoken[scene_of[cue.beat_id]].add(cue.anchor_asset_id)
         staged = self._stage_scenes(beats, by_scene, choreography, direction_by_beat, spoken)
-        spread = self.spread.plan(beats, {scene_id: items for scene_id, (items, _) in staged.items()},
-                                  all_assets, self.target)
-        self.held_items = spread.held_items
 
         output: list[CompositionBeat] = []
         for beat in beats:
             items, staging_evidence = staged[beat.scene_id]
-            items = spread.items.get(beat.scene_id, items)
             anchor_id = self.focus_anchor.get(beat.scene_id)
             direction = direction_by_beat.get(beat.id)
             evidence = list(direction.evidence) if direction else []
             evidence.append("layout:final_package_geometry")
             evidence.append(staging_evidence)
-            if beat.scene_id in spread.evidence:
-                evidence.append(spread.evidence[beat.scene_id])
             output.append(CompositionBeat(
                 beat_id=beat.id,
                 items=items,
                 state_evidence=list(dict.fromkeys(evidence)),
                 semantic_focus_asset_id=direction.primary_asset_id if direction else None,
                 visual_anchor_asset_id=anchor_id,
-                idea_spread=spread.info.get(beat.scene_id),
             ))
 
         # State direction may annotate semantic state/focus, but it is forbidden from

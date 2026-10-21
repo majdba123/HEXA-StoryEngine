@@ -3,7 +3,6 @@ from __future__ import annotations
 from math import ceil, isfinite
 
 from app.assets import AssetManager
-from app.composition.idea_spread import GLIDE_FRAMES
 from app.composition.text_director import TextPlacementDirector
 from app.layout.footprint import AlphaFootprintResolver
 from app.models import (
@@ -178,17 +177,12 @@ class SceneBoundaryPlanner:
         instant are unchanged. None keeps the existing boundary behaviour."""
         beat, previous = segment.beat, segment.previous_beat
         assert previous is not None
-        layout, previous_layout = layouts.get(beat.id), layouts.get(previous.id)
-        # Composition's idea spread built this picture beside the previous one: a free
-        # overlap is no reason to let the previous picture go (the board holds it).
-        spread = (layout.idea_spread or {}) if layout is not None else {}
-        joining = IDEA_BOARD and bool(spread.get("joins")) and spread["joins"] == previous.scene_id
-        if (row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} and not joining) or row.reason.startswith(
-                "abstain:"):
+        if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} or row.reason.startswith("abstain:"):
             return None
         if any(beat_id == previous.id and isinstance(cue.params.get("focus_wash"), dict)
                for (beat_id, _), cue in cues.items()):
             return None
+        layout, previous_layout = layouts.get(beat.id), layouts.get(previous.id)
         incoming = self._active_items(beat, layout)
         if previous_layout is None or not previous_layout.items or not incoming:
             return None
@@ -215,30 +209,20 @@ class SceneBoundaryPlanner:
                         if frame == opener))
         # A young idea continues on the board only when the next sentence really continues it
         # (it opens with a connective); a new topic gets its clean change (no blended scenes).
-        # Composition's idea spread already built this picture beside the previous one: the
-        # board holds the previous picture there (its own glide included).
-        if IDEA_BOARD and (joining or continues_sentence(previous.narration)
+        if IDEA_BOARD and (continues_sentence(previous.narration)
                            or (young_idea and not whip and continues_idea(beat.narration))):
             board = self._idea_board_exits(segment, previous_layout, incoming, first, opener,
                                            assets=assets or {}, text_boxes=text_boxes or [],
-                                           outgoing_text=outgoing_text or [], fps=fps,
-                                           spread=joining)
+                                           outgoing_text=outgoing_text or [], fps=fps)
             if board is not None:
                 specs, carry, audit = board
                 return row.model_copy(update={
-                    **({"mode": "HARD_CUT", "opener_at": None, "release_start": None, "release_end": None,
-                        "downgrade_reason": f"idea_spread:{row.mode.lower()}"}
-                       if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"} else {}),
                     "exit_starts": {key: value for key, value in row.exit_starts.items() if key not in leaving},
                     "overlap_exits": specs,
                     "text_carry": carry,
                     "exit_motion_blur": {},
-                    "audit": {**row.audit, "hero_exit": "idea_board", "idea_board": audit,
-                              **({"idea_spread": {"slot": spread.get("slot"), "scale": spread.get("scale"),
-                                                  "glide": audit.get("glide", False)}} if joining else {})},
+                    "audit": {**row.audit, "hero_exit": "idea_board", "idea_board": audit},
                 })
-        if row.mode not in {"HARD_CUT", "CRISP_HANDOFF", "HOLD_TO_OPENER"}:
-            return None  # only the idea spread takes over a planned overlap
         # References: a character swap is carried by a whip (A 41 s, B 5 s, B 35 s); every
         # other change of idea clears the old scene to white in a few frames (A 12.5 s).
         frames = WHIP_FRAMES if whip else SCENE_FADE_FRAMES
@@ -271,7 +255,6 @@ class SceneBoundaryPlanner:
         text_boxes: list[tuple[float, float, Box]],
         outgoing_text: list[tuple[str, float, float, Box]] | None = None,
         fps: int,
-        spread: bool = False,
     ) -> tuple[dict[str, dict[str, float]], dict[str, float], dict] | None:
         """Per-unit exits that replace the old picture in place inside one idea.
 
@@ -281,14 +264,6 @@ class SceneBoundaryPlanner:
         before that frame. At most BOARD_MAX_UNITS units share the screen: beyond that the
         smallest held unit gives way to the arrival. Units nothing touches stay until the
         incoming picture is complete and fade before its segment ends.
-
-        Idea spread (``spread``): the incoming picture was built in the other half, so no
-        arrival lands on the old one and no unit cap applies: the whole old picture stays
-        until its segment ends, unless a keyword lands on it. A picture still in its full
-        frame layout first glides into its half (``hold_*`` of its CompositionBeat) over
-        GLIDE_FRAMES from the segment's first frame; each exit spec then carries
-        "glide_start"/"glide_end" (absolute seconds), "glide_scale" and the member's centre
-        after the glide ("glide_x", "glide_y", frame units).
 
         A keyword still on screen at the cut stays too (reference G14: the word is part of
         the idea) until the first incoming keyword replaces it or an arrival lands on it,
@@ -306,26 +281,14 @@ class SceneBoundaryPlanner:
         def footprint(item: LayoutItem) -> Box:
             return self.footprints.resolve(item, assets.get(item.asset_id)).box
 
-        hold = (previous_layout.idea_spread or {}) if spread else {}
-        scale = float(hold.get("hold_scale", 1.0))
-        pivot = (float(hold.get("hold_pivot_x", 0.0)), float(hold.get("hold_pivot_y", 0.0)))
-        to = (float(hold.get("hold_to_x", 0.0)), float(hold.get("hold_to_y", 0.0)))
-        glide = spread and (abs(scale - 1.0) > 1e-6 or pivot != to)
-
-        def moved(x: float, y: float) -> tuple[float, float]:
-            return to[0] + (x - pivot[0]) * scale, to[1] + (y - pivot[1]) * scale
-
         units: dict[str, list[LayoutItem]] = {}
         for item in previous_layout.items:
             units.setdefault(family(item.asset_id), []).append(item)
         unit_box = {key: _union([footprint(member) for member in members]) for key, members in units.items()}
-        if glide:
-            unit_box = {key: (*moved(box[0], box[1]), *moved(box[2], box[3])) for key, box in unit_box.items()}
-        arrivals: list[tuple[int, int, Box]] = [
+        events: list[tuple[int, int, Box]] = [
             (first[item.asset_id], 1, _grow(footprint(item), BOARD_LANDING_GROWTH, BOARD_CLEARANCE))
             for item in incoming
         ]
-        events = list(arrivals)
         start_time = segment.start_frame / fps
         for t0, _t1, box in text_boxes:
             frame = first_visible_frame(t0 - start_time, fps)
@@ -334,15 +297,13 @@ class SceneBoundaryPlanner:
         alive = dict.fromkeys(units)
         exit_frame: dict[str, int] = {}
         arrived = 0
-        # Idea spread: Text already kept its words off the held picture (within the overlap
-        # its contract allows on any artwork), so nothing replaces the held picture.
-        for frame, is_art, box in sorted([] if spread else events, key=lambda row: (row[0], row[1])):
+        for frame, is_art, box in sorted(events, key=lambda row: (row[0], row[1])):
             leave_at = max(0, min(last, frame - (BOARD_LEAD_FRAMES if is_art else FADE_FRAMES)))
             for key in [key for key in alive if self._intersects(unit_box[key], box)]:
                 exit_frame[key] = leave_at
                 alive.pop(key)
             arrived += is_art
-            while not spread and alive and len(alive) + arrived > BOARD_MAX_UNITS:
+            while alive and len(alive) + arrived > BOARD_MAX_UNITS:
                 key = min(alive, key=lambda unit: _area(unit_box[unit]))
                 exit_frame[key] = leave_at
                 alive.pop(key)
@@ -350,8 +311,7 @@ class SceneBoundaryPlanner:
             exit_frame[key] = last
         carry: dict[str, float] = {}
         cut = start_time
-        # A gliding picture leaves its words behind: they belong to its full-frame layout.
-        for cue_id, spoken, visible_end, box in [] if glide else outgoing_text or []:
+        for cue_id, spoken, visible_end, box in outgoing_text or []:
             if visible_end < cut - 1.5 / fps:
                 continue  # already gone before the cut
             word = _grow(box, 0.0, BOARD_CLEARANCE)
@@ -373,19 +333,12 @@ class SceneBoundaryPlanner:
                     "direction": 0.0, "axis": 0.0, "fade": 1.0}
             for member in members:
                 specs[member.asset_id] = dict(spec)
-                if glide:
-                    x, y = moved(member.x, member.y)
-                    specs[member.asset_id].update({
-                        "glide_start": round(segment.start_frame / fps, 6),
-                        "glide_end": round((segment.start_frame + min(GLIDE_FRAMES, exit_frame[key])) / fps, 6),
-                        "glide_scale": round(scale, 6), "glide_x": round(x, 6), "glide_y": round(y, 6)})
         audit = {"units": len(units), "held_units": len(held), "held_frames_max": max(held, default=0),
                  "left_at_opener": sum(1 for frame in exit_frame.values() if frame <= opener),
                  "replaced_in_place": sum(1 for frame in exit_frame.values() if opener < frame < last),
                  "held_to_picture_end": sum(1 for frame in exit_frame.values() if frame == last),
-                 "carried_words": len(carry), **({"glide": True} if glide else {})}
+                 "carried_words": len(carry)}
         return specs, carry, audit
-
 
     @staticmethod
     def _roles(beat: StoryBeat) -> dict[str, str]:

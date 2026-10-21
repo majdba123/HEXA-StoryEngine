@@ -7,8 +7,7 @@ layers switched off — the edit the tool produced before they existed, which th
 suites cover — instead of stopping. The shared semantic plan (alignment, Vision, cutouts,
 Story, Text selection) is reused; only the per-target planning runs again.
 
-Level 1 removes the newest staging layers (focus staging, idea spread, idea climax wash,
-idea boards).
+Level 1 removes the newest staging layers (focus staging, idea climax wash, idea boards).
 Level 2 also removes the scene whip and the late accent passes (landing, relation
 interaction, spoken pulse, motion blur). Each step down is recorded in the manifest.
 """
@@ -29,13 +28,11 @@ LATE_ACCENTS_OFF = 2
 LEVELS: dict[int, dict[str, dict[str, object]]] = {
     1: {
         "app.composition.focus_staging": {"FOCUS_STAGING": False},
-        "app.composition.idea_spread": {"IDEA_SPREAD": False},
         "app.motion.resolution": {"IDEA_CLIMAX_WASH": False},
         "app.boundary.release": {"IDEA_BOARD": False},
     },
     2: {
         "app.composition.focus_staging": {"FOCUS_STAGING": False},
-        "app.composition.idea_spread": {"IDEA_SPREAD": False},
         "app.motion.resolution": {"IDEA_CLIMAX_WASH": False},
         "app.boundary.release": {"IDEA_BOARD": False, "SCENE_WHIP": False},
     },
