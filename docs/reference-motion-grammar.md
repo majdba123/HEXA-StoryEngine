@@ -185,3 +185,13 @@ The references never repeat one device back to back for long. HEXA did, because 
 | Music bed | eight procedural styles (or royalty-free tracks from the music folder, one per video), arrangement changes at character swaps, second style or track mid-video, ducked under speech; switchable from the web and desktop panels | `final/music.py` |
 
 Details and measurements: `docs/handoffs/2026-10-21-variety-sound-music-entries.md`.
+
+## 9. Idea spread (2026-10-21, user: "too fast, hard to follow")
+
+The references hold one idea on one picture for 3–7 s and move a held element aside to make room for the next (G3, G4). In HEXA every package scene filled the frame and the next scene replaced it almost as soon as it was complete: a picture was complete for a median 0.6 s, and 80–87 % of pictures for under 1 s.
+
+| Device | What the viewer sees | Owner |
+| --- | --- | --- |
+| Idea spread | when the next scene continues the same idea (the idea-board rule), the current picture glides as one block into the right half (10 frames, smoothstep) and stays complete until the next picture ends; the next scene is built in the left half; along a chain the halves alternate. A half is a rigid uniform scale of the staged scene (never below 0.4×); timing never changes; a new topic still clears | `composition/idea_spread.py` (`IDEA_SPREAD`), `boundary/release.py`, `render/renderer.py` |
+
+Corpus (4 cached packages; pre-encode QA 0 everywhere): reading median 0.57–0.69 s → 1.59–1.81 s; pictures under 1 s 33–36 → 11–16 of 40–42; pictures in a half are drawn at 0.45–0.53×. Details: `docs/handoffs/2026-10-21-idea-spread.md`.
