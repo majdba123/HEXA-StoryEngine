@@ -329,3 +329,53 @@ def test_an_unexpected_planning_error_is_planned_again_and_recorded() -> None:
     assert calls == [0, 1]
     assert shared.repairs == [{"stage": "planning", "repair": "safe_level_1", "code": "ValueError",
                                "message": "motion program keyframes must be strictly increasing"}]
+
+
+# -- motion -> text/render handoff --------------------------------------------------------
+class _Contract:
+    def __init__(self, kinds: list[str]) -> None:
+        self.kinds, self.seen = list(kinds), []
+
+    def require_motion_for_text_and_render(self, *, motion, **_contract) -> None:
+        self.seen.append(motion)
+        kind = self.kinds.pop(0) if self.kinds else None
+        if kind:
+            raise StageFailedError("handoff", details={
+                "code": "MOTION_HANDOFF_CONTRACT_VIOLATIONS",
+                "violations": [{"kind": kind, "beat_id": "beat-2", "asset_id": "a"}]})
+
+
+def _handoff_host(contract: _Contract) -> SimpleNamespace:
+    return SimpleNamespace(handoff_contracts=contract)
+
+
+def _shared() -> SimpleNamespace:
+    return SimpleNamespace(story=[], assets=[], choreography=None, repairs=[])
+
+
+def test_a_dead_zone_entry_becomes_an_alpha_reveal_at_the_motion_handoff() -> None:
+    """Script Kiddie (pre-locator-repair package) 2026-10-21: a 2.4 px entry under the 3 px
+    encoded floor stopped the generation after every safe level."""
+    contract, shared = _Contract(["motion_cue_entry_render_dead_zone", None]), _shared()
+    motion = [_moving("beat-2", "a"), _moving("beat-2", "b")]
+    repaired = StoryEnginePipeline._require_motion_handoff(_handoff_host(contract), shared, [], motion)
+    assert repaired[0].params["program"]["name"] == motion_repair.REPAIRED_ENTRY
+    assert repaired[1] is motion[1]
+    assert contract.seen[-1] is repaired
+    assert shared.repairs == [{"stage": "motion_handoff", "repair": "dead_zone_entry_made_alpha_reveal",
+                               "cues": ["beat-2:a"]}]
+
+
+def test_any_other_handoff_violation_still_stops() -> None:
+    contract = _Contract(["duplicate_motion_cue"])
+    with pytest.raises(StageFailedError):
+        StoryEnginePipeline._require_motion_handoff(_handoff_host(contract), _shared(), [],
+                                                    [_moving("beat-2", "a")])
+
+
+def test_strict_mode_keeps_the_dead_zone_stop(monkeypatch) -> None:
+    monkeypatch.setattr(motion_repair, "PRE_ENCODE_REPAIR", False)
+    contract = _Contract(["motion_cue_entry_render_dead_zone"])
+    with pytest.raises(StageFailedError):
+        StoryEnginePipeline._require_motion_handoff(_handoff_host(contract), _shared(), [],
+                                                    [_moving("beat-2", "a")])

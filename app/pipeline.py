@@ -72,6 +72,9 @@ from app.transcription import TranscriptionService
 from app.transcription.alignment import WhisperXForcedAligner
 from app.vision import VisionService
 
+# Handoff findings Motion's own static reveal answers (non-zero motion below the encoded floor).
+_DEAD_ZONE_KINDS = frozenset({"motion_cue_entry_render_dead_zone", "motion_segment_entry_render_dead_zone"})
+
 ProgressCallback = Callable[[Stage, float, str], None]
 CancellationCallback = Callable[[], bool]
 
@@ -911,13 +914,7 @@ class StoryEnginePipeline:
             # out-and-back accents become deliberate still segments (timing/meaning kept).
             self.stillness = ReferenceStillnessPolicy()
             motion = self.stillness.apply(motion)
-            self.handoff_contracts.require_motion_for_text_and_render(
-                story=story,
-                assets=assets,
-                composition=composition,
-                choreography=choreography,
-                motion=motion,
-            )
+            motion = self._require_motion_handoff(shared, composition, motion)
 
             self._check_cancel(cancelled)
             self._progress(
@@ -1092,6 +1089,28 @@ class StoryEnginePipeline:
                 target=target,
             )
         return plan
+
+    def _require_motion_handoff(self, shared: SharedSemanticPlan, composition, motion):
+        """The Motion -> Text/Render handoff contract. Repair instead of stopping: an ENTRY
+        whose gesture would sit in the encoder's dead zone becomes the deliberate alpha
+        reveal Motion uses when no readable transform fits, and the contract runs again."""
+        contract = {"story": shared.story, "assets": shared.assets, "composition": composition,
+                    "choreography": shared.choreography}
+        try:
+            self.handoff_contracts.require_motion_for_text_and_render(**contract, motion=motion)
+            return motion
+        except StageFailedError as exc:
+            rows = (exc.details or {}).get("violations") or []
+            if (not motion_repair.PRE_ENCODE_REPAIR or exc.effective_code != "MOTION_HANDOFF_CONTRACT_VIOLATIONS"
+                    or not rows or any(row.get("kind") not in _DEAD_ZONE_KINDS for row in rows)):
+                raise
+        offenders = {(row["beat_id"], row["asset_id"]) for row in rows}
+        motion = [motion_repair.neutralize_cue(cue, {"ENTRY"}) if (cue.beat_id, cue.asset_id) in offenders else cue
+                  for cue in motion]
+        self.handoff_contracts.require_motion_for_text_and_render(**contract, motion=motion)
+        shared.repairs.append({"stage": "motion_handoff", "repair": "dead_zone_entry_made_alpha_reveal",
+                               "cues": sorted(f"{beat_id}:{asset_id}" for beat_id, asset_id in offenders)})
+        return motion
 
     def _cross_scene_transaction(
         self,
