@@ -37,6 +37,28 @@ def continues_idea(next_narration: str | None) -> bool:
     return bool(_CONTINUATION.match(text) or _CLITIC_WAW_FA.match(text))
 
 
+def idea_links(beats, *, min_seconds: float) -> set[str]:
+    """Ids of the beats whose picture continues the previous beat's idea.
+
+    The idea-board rule (Boundary owns the board, Composition the idea spread): a scene
+    change inside one sentence, or a sentence that opens with a connective while the idea
+    is younger than ``min_seconds``. Any other beat change starts a new idea (its clock
+    restarts there). ``beats`` are Story beats in order."""
+    links: set[str] = set()
+    idea_start: float | None = None
+    for previous, beat in zip([None, *beats], beats):
+        if previous is None:
+            idea_start = float(beat.start)
+            continue
+        young = idea_start is not None and float(beat.start) - idea_start < min_seconds
+        if previous.scene_id != beat.scene_id and (
+                continues_sentence(previous.narration) or (young and continues_idea(beat.narration))):
+            links.add(beat.id)
+        else:
+            idea_start = float(beat.start)
+    return links
+
+
 _HOOK_OPENERS = re.compile(
     _LEAD + r"(?:تخيل|تخيّل|تخيلوا|هل|ليش|ليه|لماذا|ليشو|كيف|شلون|شو|ماذا|ما الذي|متى|وين|أين|مين|منو|من هو|من هي|عمرك|بتعرف|تعرف|هلق تخيل)"
     + _END

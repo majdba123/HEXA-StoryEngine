@@ -748,20 +748,34 @@ class FFmpegRenderer:
             fading = float(spec.get("fade", 0.0)) > 0.5
             fade_out = (f",settb=AVTB,fade=t=out:st={begin:.6f}:d={finish - begin:.6f}:alpha=1"
                         if fading else "")
+            travelled = "0" if fading else f"({travel})*(3*pow({progress},2)-2*pow({progress},3))"
+            exit_x = str(target_x) if is_vertical else f"{target_x}+{travelled}"
+            exit_y = f"{target_y}+{travelled}" if is_vertical else str(target_y)
+            glide_scale, glide_chain = "1", ""
+            if "glide_end" in spec:
+                # Idea spread: the held picture glides as one block into its half (uniform
+                # scale, smoothstep), then stays still until its planned fade.
+                g0 = max(0.0, float(spec["glide_start"]) - segment_start)
+                g1 = max(g0 + 1.0 / plan.fps, float(spec["glide_end"]) - segment_start)
+                eased = f"(3*pow(clip((t-{g0:.6f})/{g1 - g0:.6f},0,1),2)-2*pow(clip((t-{g0:.6f})/{g1 - g0:.6f},0,1),3))"
+                glide_scale = f"(1+({float(spec['glide_scale']) - 1.0:.6f})*{eased})"
+                glide_chain = (f",scale=w='max(2,iw*({glide_scale}))':h='max(2,ih*({glide_scale}))'"
+                               f":eval=frame")
+                cx0, cy0 = target_x + box_w / 2, target_y + box_h / 2
+                cx1, cy1 = float(spec["glide_x"]) * plan.width, float(spec["glide_y"]) * plan.height
+                exit_x = f"({cx0:.3f}+({cx1 - cx0:.3f})*{eased})-overlay_w/2"
+                exit_y = f"({cy0:.3f}+({cy1 - cy0:.3f})*{eased})-overlay_h/2"
             filters.append(
                 f"[{overlap_inputs + exit_index}:v]format=rgba,setsar=1,"
                 f"scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
                 f"pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
                 f"loop=loop=-1:size=1:start=0,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
-                f"{fade_out}[{label}]"
+                f"{fade_out}{glide_chain}[{label}]"
             )
-            travelled = "0" if fading else f"({travel})*(3*pow({progress},2)-2*pow({progress},3))"
-            exit_x = str(target_x) if is_vertical else f"{target_x}+{travelled}"
-            exit_y = f"{target_y}+{travelled}" if is_vertical else str(target_y)
             self._capture_layer(
                 kind="asset", role="overlap_exit", beat_id=beat.id, segment_start=segment_start,
                 duration=duration, asset_id=item.asset_id, image=assets[item.asset_id].image_path,
-                box=(box_w, box_h), x_expr=exit_x, y_expr=exit_y, visible=(0.0, finish),
+                box=(box_w, box_h), x_expr=exit_x, y_expr=exit_y, scale_expr=glide_scale, visible=(0.0, finish),
                 fades=(("out", begin, finish - begin),) if fading else (),
             )
             exit_blur = self._motion_blur_windows(

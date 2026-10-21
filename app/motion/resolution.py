@@ -350,6 +350,8 @@ class PayoffResolutionDirector:
         the backdrop once it starts, no backdrop drawing sits above the subject or continues
         into the next scene, and a readable hold remains before the cut."""
         anchors = {row.beat_id: row.visual_anchor_asset_id for row in composition}
+        # Idea spread: a picture held beside the next one has not ended its idea.
+        held = {row.idea_spread["joins"] for row in composition if (row.idea_spread or {}).get("joins")}
 
         def family(asset_id: str) -> str:
             asset = assets_by_id.get(asset_id)
@@ -361,7 +363,8 @@ class PayoffResolutionDirector:
             min_hold = IDEA_WASH_HOOK_MIN_HOLD if position == hook_position else IDEA_WASH_MIN_HOLD
             decision = self.decisions[position]
             anchor = anchors.get(beat.id)
-            if decision.wash != "none" or anchor is None or continues_sentence(beat.narration):
+            if (decision.wash != "none" or anchor is None or continues_sentence(beat.narration)
+                    or beat.scene_id in held):
                 continue
             cues = [cue for cue in output if cue.beat_id == beat.id]
             layout = layouts.get(beat.id, {})

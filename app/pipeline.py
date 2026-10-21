@@ -1350,6 +1350,7 @@ class StoryEnginePipeline:
             text.cues,
             assets,
             visual_motion=motion,
+            held_items=getattr(self.composition, "held_items", None),
         )
         accepted_ids = {
             item.text_cue_id

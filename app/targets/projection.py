@@ -47,6 +47,19 @@ class ReferencePlanProjector:
                 item.x, item.y = x(item.x), y(item.y)
                 item.width, item.height = dx(item.width), dy(item.height)
                 item.placement_source = "projected_reference"
+            if beat.idea_spread:
+                spread = dict(beat.idea_spread)
+                for key in ("hold_pivot_x", "hold_to_x"):
+                    if key in spread:
+                        spread[key] = x(float(spread[key]))
+                for key in ("hold_pivot_y", "hold_to_y"):
+                    if key in spread:
+                        spread[key] = y(float(spread[key]))
+                beat.idea_spread = spread
+        for row in plan.scene_boundaries:
+            for spec in row.overlap_exits.values():
+                if "glide_x" in spec:  # idea spread: a held picture's centre after its glide
+                    spec["glide_x"], spec["glide_y"] = x(float(spec["glide_x"])), y(float(spec["glide_y"]))
         for beat in plan.text_composition:
             for item in beat.items:
                 item.x, item.y = x(item.x), y(item.y)

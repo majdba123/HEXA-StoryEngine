@@ -330,6 +330,11 @@ class CompositionBeat(BaseModel):
     # Focus staging's anchor object for the picture (set even when the scene kept its
     # authored geometry), the subject an idea climax keeps crisp. None: no clear anchor.
     visual_anchor_asset_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Idea spread (composition/idea_spread.py): "slot" (left/right half), "scale" and "joins"
+    # (the scene held beside this one) for a picture built in a half; "hold_*" for the
+    # picture held beside the next one (its glide: uniform scale about the pivot, then the
+    # pivot moves to "hold_to"). None: a full-frame picture.
+    idea_spread: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class MotionSegment(BaseModel):

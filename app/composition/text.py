@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from app.composition.text_director import PlacedTextRegion, PlacementResult, TextPlacementDirector
 from app.layout.connection_geometry import connector_endpoints
-from app.models import CompositionBeat, MotionCue, StoryBeat, TextCompositionBeat, TextCue, VisualAsset
+from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, TextCompositionBeat, TextCue, VisualAsset
 from app.targets import frame_size
 from app.text.timing.visibility import TextVisibilityPolicy
 
@@ -27,8 +27,15 @@ class TextCompositionPlanner:
         text_cues: list[TextCue],
         assets: list[VisualAsset] | None = None,
         visual_motion: list[MotionCue] | None = None,
+        held_items: dict[str, list[LayoutItem]] | None = None,
     ) -> list[TextCompositionBeat]:
         visual_by_beat = {beat.beat_id: beat for beat in visual_composition}
+        # Idea spread: the previous picture stays beside this one for the whole beat, so its
+        # artwork is part of what a word must not cover.
+        for beat_id, held in (held_items or {}).items():
+            if beat_id in visual_by_beat and held:
+                visual = visual_by_beat[beat_id]
+                visual_by_beat[beat_id] = visual.model_copy(update={"items": [*visual.items, *held]})
         assets_by_id = {asset.id: asset for asset in (assets or [])}
         motion_by_key = {
             (cue.beat_id, cue.asset_id): cue
