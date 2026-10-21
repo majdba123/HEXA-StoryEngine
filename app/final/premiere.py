@@ -204,8 +204,7 @@ class PremiereExporter:
         x_of, y_of, s_of = (compile_expression(layer.x_expr), compile_expression(layer.y_expr),
                             compile_expression(layer.scale_expr))
         clip = PremiereClip(kind="still", name=layer.asset_id or source.stem, media=media, media_size=(iw, ih),
-                            start=first_frame + k0, asset_id=layer.asset_id,
-                            joinable=layer.role in {"current", "handoff"})
+                            start=first_frame + k0, asset_id=layer.asset_id)
         for k in range(k0, k1 + 1):
             t = k / fps
             s = s_of(t)
@@ -213,8 +212,11 @@ class PremiereExporter:
                 s = 1.0
             ow, oh = max(2.0, box_w * s), max(2.0, box_h * s)
             x, y = x_of(t, ow, oh), y_of(t, ow, oh)
-            clip.cx.append(x + ow / 2.0)
-            clip.cy.append(y + oh / 2.0)
+            cx, cy = x + ow / 2.0, y + oh / 2.0
+            if not (math.isfinite(cx) and math.isfinite(cy)):  # never write "nan" into the XML
+                cx, cy = (clip.cx[-1], clip.cy[-1]) if clip.cx else (plan.width / 2.0, plan.height / 2.0)
+            clip.cx.append(cx)
+            clip.cy.append(cy)
             clip.scale.append(100.0 * fit * s)
             clip.opacity.append(100.0 * _opacity(layer.fades, t))
         return clip

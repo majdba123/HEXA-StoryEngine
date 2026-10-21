@@ -37,6 +37,7 @@ Verification:
 - `tests/support/premiere_check.py` composites frames from the XML alone and compares them with the encoded video: 0.5–5 mean absolute difference and 0.4–3 % of pixels off by more than 40 on Insider Threat (YouTube and Reels) and Hacktivist. The larger differences sit at whips (motion blur) and washes (background blur).
 - End to end through the panel's job process: Hacktivist produced both projects in 7 minutes, 13 tracks and 372 clips, with no warnings.
 - Not verified: an import in Premiere Pro itself (Premiere is not installed on this machine).
+- The web admin's export inventory lists video bundles only: a Premiere bundle (`schema` `hexa.export.premiere/1`) is skipped there, never deleted. The desktop panel opens its folder.
 
 ## Tests added
 
