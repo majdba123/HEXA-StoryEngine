@@ -22,6 +22,7 @@ from app.motion.visual_flow.direction import focus_handoff_direction
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import BeatSegment, beat_segments, first_visible_frame
 from app.shared.narration import continues_sentence  # noqa: F401  (re-exported for callers)
+from app.shared.narration import continues_idea
 from app.text.timing.visibility import KEYWORD_HOLD_SECONDS
 
 # Sprint 4.5: reference-derived scene release. Measured reference boundaries fade the
@@ -68,8 +69,9 @@ IDEA_BOARD = True
 # Idea clock (2026-10-21 review of Hacktivist v1: a new picture every 1.9 s, 22 of 40 cuts
 # cleared to white): the references hold one idea 3-7 s and Final Package sentences last a
 # median 2.7 s, so an idea spans several sentences. A sentence end therefore clears the
-# screen only once the current idea has been on screen IDEA_MIN_SECONDS; before that the
-# next picture is built on the same board. A character swap keeps its whip.
+# screen only once the current idea has been on screen IDEA_MIN_SECONDS, or when the next
+# sentence starts a new topic (no connective: clarity review 2026-10-21, blended scenes);
+# otherwise the next picture is built on the same board. A character swap keeps its whip.
 IDEA_CLOCK = True
 IDEA_MIN_SECONDS = 3.5
 BOARD_MAX_UNITS = 5            # carried + arrived element units on screen together
@@ -205,7 +207,10 @@ class SceneBoundaryPlanner:
         whip = (any(roles_out.get(asset_id) == "CHARACTER" for asset_id in leaving)
                 and any(roles_in.get(asset_id) == "CHARACTER" for asset_id, frame in first.items()
                         if frame == opener))
-        if IDEA_BOARD and (continues_sentence(previous.narration) or (young_idea and not whip)):
+        # A young idea continues on the board only when the next sentence really continues it
+        # (it opens with a connective); a new topic gets its clean change (no blended scenes).
+        if IDEA_BOARD and (continues_sentence(previous.narration)
+                           or (young_idea and not whip and continues_idea(beat.narration))):
             board = self._idea_board_exits(segment, previous_layout, incoming, first, opener,
                                            assets=assets or {}, text_boxes=text_boxes or [],
                                            outgoing_text=outgoing_text or [], fps=fps)

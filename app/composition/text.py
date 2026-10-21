@@ -42,6 +42,8 @@ class TextCompositionPlanner:
         output: list[TextCompositionBeat] = []
         self.owner_coupling = []
         self.abstentions = []
+        first = min(text_cues, key=lambda cue: (cue.spoken_start, cue.id), default=None)
+        self.director.hook_cue_id = first.id if first is not None else None
 
         for beat in beats:
             cues = sorted(

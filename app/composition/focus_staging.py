@@ -31,6 +31,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import atan2, cos, hypot, radians, sin
 
+from PIL import Image
+
 from app.assets import AssetManager
 from app.composition.semantic_staging import STAGED_PLACEMENT_SOURCE
 from app.layout.footprint import AlphaFootprintResolver
@@ -54,6 +56,15 @@ GAP = 0.02                 # clearance between staged footprints (frame units)
 CONTACT = 0.008            # authored drawings this close form one rigid unit
 MIN_CHANGE = 0.06          # smaller scale changes than this are not worth a redesign
 ORDER_MARGIN = 0.04        # left/right or above/below separations that must not swap
+# Opening hook (retention review 2026-10-21, Cybercrime Gangs v1): the first thing a viewer
+# saw was a small building alone in a corner for 1.5 s. In the video's first scene the first
+# element spoken becomes the anchor - large and central from its own word on - even when a
+# larger object arrives later; growth never upscales a cutout past OPENING_MAX_UPSCALE of
+# its native pixels, so the hook stays sharp.
+OPENING_HOOK = True
+OPENING_MAX_GROWTH = 2.2
+OPENING_MAX_UPSCALE = 1.7
+OPENING_MIN_HEIGHT = 0.30      # a hook that cannot reach this height (frame share) does not lead
 _ANGLES = (0.0, 15.0, -15.0, 30.0, -30.0)
 _RADIAL_STEPS = 80
 _RADIAL_STEP = 0.011
@@ -107,6 +118,7 @@ class FocusStagingPlanner:
         beats: list[StoryBeat],
         focus_asset_id: str | None,
         spoken_asset_ids: set[str] | None = None,
+        hook_asset_id: str | None = None,
     ) -> FocusStagingResult:
         anchor_id: str | None = None
 
@@ -128,9 +140,16 @@ class FocusStagingPlanner:
         objects = [unit for unit in units if not unit.character]
         if not objects:
             return abstain("no_objects")
-        anchor = self._anchor(objects, focus_asset_id, spoken_asset_ids or set())
-        anchor_id = self._primary_id(anchor)
         target = active_target()
+        hook = next((unit for unit in objects if hook_asset_id in unit.ids), None) if (
+            OPENING_HOOK and hook_asset_id) else None
+        if hook is not None:
+            reach = min(OPENING_MAX_GROWTH, self._sharp_growth(hook, by_id, target),
+                        ANCHOR_MAX_HEIGHT / hook.height, ANCHOR_MAX_WIDTH / hook.width)
+            if hook.height * max(1.0, reach) < OPENING_MIN_HEIGHT:
+                hook = None  # it cannot become a sharp, large anchor: the usual choice leads
+        anchor = hook or self._anchor(objects, focus_asset_id, spoken_asset_ids or set())
+        anchor_id = self._primary_id(anchor)
         safe = target.safe_zones.content
         frame = (safe.left, safe.top, safe.right, safe.bottom)
         aspect = target.width / target.height
@@ -138,7 +157,9 @@ class FocusStagingPlanner:
         def side(unit: _Unit, scale: float = 1.0) -> float:
             return max(unit.height, unit.width * aspect) * scale
 
-        growth = min(ANCHOR_MAX_GROWTH, max(ANCHOR_TARGET_HEIGHT / anchor.height, 1.0),
+        max_growth = ANCHOR_MAX_GROWTH if hook is None else min(
+            OPENING_MAX_GROWTH, self._sharp_growth(anchor, by_id, target))
+        growth = min(max_growth, max(ANCHOR_TARGET_HEIGHT / anchor.height, 1.0),
                      ANCHOR_MAX_HEIGHT / anchor.height, ANCHOR_MAX_WIDTH / anchor.width)
         growth = max(1.0, growth)
         shrink = {
@@ -187,11 +208,28 @@ class FocusStagingPlanner:
             }))
         return FocusStagingResult(
             items=output,
-            evidence=f"focus_staging:applied:anchor={anchor_id}:scale={growth:.2f}:satellites={len(moved) - 1}",
+            evidence=(f"focus_staging:applied{':opening_hook' if hook is not None else ''}:anchor={anchor_id}"
+                      f":scale={growth:.2f}:satellites={len(moved) - 1}"),
             anchor_id=anchor_id,
             anchor_scale=round(growth, 3),
             satellites=len(moved) - 1,
         )
+
+    @staticmethod
+    def _sharp_growth(unit: _Unit, by_id: dict[str, VisualAsset], target) -> float:
+        """Largest growth that keeps every member at most OPENING_MAX_UPSCALE of its native
+        pixels (the cutout image fits its layout box)."""
+        limit = OPENING_MAX_GROWTH
+        for item in unit.members:
+            asset = by_id.get(item.asset_id)
+            try:
+                with Image.open(asset.image_path) as image:
+                    native_w, native_h = image.size
+            except (AttributeError, OSError, ValueError):
+                return 1.0
+            drawn = min(item.width * target.width / max(1, native_w), item.height * target.height / max(1, native_h))
+            limit = min(limit, OPENING_MAX_UPSCALE / max(1e-6, drawn))
+        return max(1.0, limit)
 
     @staticmethod
     def _primary_id(unit: _Unit) -> str:

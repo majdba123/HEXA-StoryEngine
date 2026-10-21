@@ -37,7 +37,7 @@ from dataclasses import dataclass, field, replace
 from app.assets import AssetManager
 from app.choreography.interactions import is_connectable_relation
 from app.models import CompositionBeat, LayoutItem, MotionCue, StoryBeat, VisualAsset
-from app.shared.narration import continues_sentence
+from app.shared.narration import continues_sentence, is_hook
 
 from .collision import box
 from .contract import accent_readability_floor, comfort_profile_for, segment_contract_violations
@@ -86,6 +86,11 @@ IDEA_WASH_MIN_HOLD = 1.0
 IDEA_WASH_MAX_SECONDS = 3.0
 IDEA_WASH_MIN_GAP = 9.0
 IDEA_WASH_SETTLE = 9 / 30      # a backdrop element has finished landing this long after it appears
+# Opening hook (retention review 2026-10-21): when the video's first sentence is a question,
+# an exclamation or a "picture this" opener, its last picture gets the idea climax first and
+# may hold it for IDEA_WASH_HOOK_MIN_HOLD (the hook lands before the first idea moves on).
+IDEA_WASH_HOOK = True
+IDEA_WASH_HOOK_MIN_HOLD = 0.7
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,8 +355,10 @@ class PayoffResolutionDirector:
             asset = assets_by_id.get(asset_id)
             return AssetManager.family_id(asset) if asset is not None else asset_id
 
+        hook_position = self._hook_position(story)
         candidates = []
         for position, beat in enumerate(story):
+            min_hold = IDEA_WASH_HOOK_MIN_HOLD if position == hook_position else IDEA_WASH_MIN_HOLD
             decision = self.decisions[position]
             anchor = anchors.get(beat.id)
             if decision.wash != "none" or anchor is None or continues_sentence(beat.narration):
@@ -385,7 +392,7 @@ class PayoffResolutionDirector:
                 if not others or any(settled(cue) > wash_at + WASH_MAX_LAG_SECONDS + _EPS for cue in others):
                     continue
                 start = max(wash_at, float(beat.end) - IDEA_WASH_MAX_SECONDS)
-                if float(beat.end) - (start + WASH_RAMP_SECONDS) < IDEA_WASH_MIN_HOLD - _EPS:
+                if float(beat.end) - (start + WASH_RAMP_SECONDS) < min_hold - _EPS:
                     continue
                 picked = (start, focus, others)
                 break
@@ -406,8 +413,11 @@ class PayoffResolutionDirector:
                 "focus_asset_ids": sorted(focus), "case": "IDEA_CLIMAX", "priority": "P1",
                 "event_id": None, "style": self.style.name,
             }
+            if position == hook_position:
+                spec["hook"] = True
             candidates.append(((min(hold, 2.5), min(receding, 4)), start, position, anchor, spec))
-        for score, start, position, anchor, spec in sorted(candidates, key=lambda row: (-row[0][0], -row[0][1], row[2])):
+        for score, start, position, anchor, spec in sorted(
+                candidates, key=lambda row: (row[2] != hook_position, -row[0][0], -row[0][1], row[2])):
             if any(abs(start - other) < IDEA_WASH_MIN_GAP - _EPS for other in chosen):
                 continue
             chosen.append(start)
@@ -420,6 +430,18 @@ class PayoffResolutionDirector:
             decision = self.decisions[position]
             self.decisions[position] = replace(decision, wash="idea_climax",
                                                reasons=decision.reasons + ("wash:idea_climax",))
+
+    @staticmethod
+    def _hook_position(story: list[StoryBeat]) -> int | None:
+        """The last picture of the video's first sentence when that sentence is a hook."""
+        if not IDEA_WASH_HOOK:
+            return None
+        words: list[str] = []
+        for position, beat in enumerate(story):
+            words.append(beat.narration or "")
+            if not continues_sentence(beat.narration):
+                return position if is_hook(" ".join(words)) else None
+        return None
 
     @staticmethod
     def _continuing(story: list[StoryBeat], motion: list[MotionCue]) -> set[tuple[str, str]]:

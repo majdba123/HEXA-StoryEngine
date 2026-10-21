@@ -39,6 +39,7 @@ from urllib.parse import quote
 from PIL import Image
 
 from app.models import RenderPlan
+from app.final import sound
 from app.render.expression import compile_expression
 from app.render.renderer import CapturedLayer, FFmpegRenderer
 from app.render.text import PRODUCTION_FONT_DIR
@@ -109,7 +110,8 @@ class PremiereExporter:
         self.ffmpeg_bin = ffmpeg_bin
 
     def export(self, plan: RenderPlan, *, audio: Path, xml_path: Path, media_dir: Path,
-               name: str, reference_video: Path | None = None, work_dir: Path | None = None) -> PremiereProject:
+               name: str, reference_video: Path | None = None, work_dir: Path | None = None,
+               effects: bool = True) -> PremiereProject:
         """``work_dir`` holds the renderer's authoring files (arrow frames, ASS documents)
         while the clips are made; a short path (the job workspace) keeps every file inside
         the Windows path limit. Default: a fresh system temporary folder."""
@@ -136,9 +138,18 @@ class PremiereExporter:
         background = self._solid(media_dir / "canvas_white.png", (plan.width, plan.height), (255, 255, 255, 255))
         audio_copy = media_dir / f"narration{audio.suffix.lower()}"
         shutil.copyfile(audio, audio_copy)
+        effects_track = None
+        if effects and sound.SOUND_EFFECTS:
+            try:  # the sound effects as their own editable track (A2)
+                effects_track = media_dir / "sound_effects.wav"
+                sound.mix(plan, audio, effects_track, ffmpeg_bin=self.ffmpeg_bin, include_voice=False)
+            except Exception as exc:  # noqa: BLE001 - the project never depends on its effects
+                effects_track = None
+                warnings.append({"code": "PREMIERE_SOUND_EFFECTS_SKIPPED", "error": str(exc)[:300]})
         total = max(1, round(plan.duration * plan.fps))
         document = _XmemlWriter(plan, name=name, total=total).build(
-            background=background, tracks=tracks, audio=audio_copy, reference=reference_video)
+            background=background, tracks=tracks, audio=audio_copy, reference=reference_video,
+            effects=effects_track)
         xml_path.parent.mkdir(parents=True, exist_ok=True)
         xml_path.write_bytes(document)
         (media_dir / "README.txt").write_text(_README.format(xml=xml_path.name), encoding="utf-8")
@@ -399,7 +410,7 @@ class _XmemlWriter:
         self.clip_ids = 0
 
     def build(self, *, background: Path, tracks: list[list[PremiereClip]], audio: Path,
-              reference: Path | None) -> bytes:
+              reference: Path | None, effects: Path | None = None) -> bytes:
         for row in tracks:
             for clip in row:
                 self.file_lengths[clip.media] = max(self.file_lengths.get(clip.media, 0), clip.end - clip.start)
@@ -435,21 +446,23 @@ class _XmemlWriter:
         samples = ET.SubElement(audio_format, "samplecharacteristics")
         ET.SubElement(samples, "depth").text = "16"
         ET.SubElement(samples, "samplerate").text = "48000"
-        track = ET.SubElement(audio_root, "track")
-        item = self._clipitem(track, name="Narration", start=0, length=self.total)
-        file = ET.SubElement(item, "file", id="file-audio")
-        ET.SubElement(file, "name").text = audio.name
-        ET.SubElement(file, "pathurl").text = _url(audio)
-        self._rate(file)
-        ET.SubElement(file, "duration").text = str(self.total)
-        file_media = ET.SubElement(ET.SubElement(file, "media"), "audio")
-        file_samples = ET.SubElement(file_media, "samplecharacteristics")
-        ET.SubElement(file_samples, "depth").text = "16"
-        ET.SubElement(file_samples, "samplerate").text = "48000"
-        ET.SubElement(file_media, "channelcount").text = "2"
-        source = ET.SubElement(item, "sourcetrack")
-        ET.SubElement(source, "mediatype").text = "audio"
-        ET.SubElement(source, "trackindex").text = "1"
+        for index, (label, path) in enumerate(
+                (row for row in (("Narration", audio), ("Sound effects", effects)) if row[1] is not None), start=1):
+            track = ET.SubElement(audio_root, "track")
+            item = self._clipitem(track, name=label, start=0, length=self.total)
+            file = ET.SubElement(item, "file", id=f"file-audio-{index}")
+            ET.SubElement(file, "name").text = path.name
+            ET.SubElement(file, "pathurl").text = _url(path)
+            self._rate(file)
+            ET.SubElement(file, "duration").text = str(self.total)
+            file_media = ET.SubElement(ET.SubElement(file, "media"), "audio")
+            file_samples = ET.SubElement(file_media, "samplecharacteristics")
+            ET.SubElement(file_samples, "depth").text = "16"
+            ET.SubElement(file_samples, "samplerate").text = "48000"
+            ET.SubElement(file_media, "channelcount").text = "2"
+            source = ET.SubElement(item, "sourcetrack")
+            ET.SubElement(source, "mediatype").text = "audio"
+            ET.SubElement(source, "trackindex").text = "1"
         ET.indent(root, space="  ")
         return b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + ET.tostring(root, encoding="utf-8")
 
@@ -598,6 +611,7 @@ Open Premiere Pro, then File > Import and choose {xml}
   V2 ...    one clip per drawn element (artwork cutouts, keywords, arrows, grey wash),
             stacked in the video's drawing order; higher track = in front
   A1        narration
+  A2        sound effects (whoosh, pop, tick, swell) - adjust or mute freely
 
 Every artwork clip is the original cutout with its exact Position, Scale and Opacity
 keyframes (Effect Controls > Motion / Opacity). Keywords and arrows are transparent

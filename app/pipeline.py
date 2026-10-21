@@ -23,6 +23,7 @@ from app.config import PROJECT_ROOT, Settings
 from app.cutout import CutoutService, Pass2CutoutService
 from app.final import FinalExporter, FinalMediaVerifier
 from app.final import verification as final_media_rules
+from app.final import sound
 from app.final.bundle import ExportBundleWriter, ExportRoot, ReservedBundle, export_slug
 from app.final.premiere import PremiereExporter
 from app.final.premiere import manifest_row as premiere_manifest_row
@@ -50,6 +51,7 @@ from app.cutout.pass2.segmenter import SAM2MaskBackend
 from app.render import RenderPlanner
 from app.render.evidence import RenderedVisualEvidence
 from app.render import motion_repair
+from app.render import camera
 from app.render.verification import EncodedMotionVerifier
 from app.render.renderer import FFmpegRenderer
 from app.shared.errors import (
@@ -1260,9 +1262,27 @@ class StoryEnginePipeline:
         self._progress(
             progress, Stage.final, span[1], f"{prefix}Building final video",
         )
-        final_path = self.final.mux(video_only, audio_path, output_file)
+        # Sound design (app/final/sound.py): motion-driven effects under the narration, the
+        # same length as the narration; any failure falls back to the narration alone.
+        soundtrack, sound_report = sound.mix_or_narration(
+            plan, audio_path, workspace / "render" / "soundtrack.wav", ffmpeg_bin=self.settings.ffmpeg_bin)
+        if sound_report.get("sound_effects") == "skipped":
+            warnings.append({"stage": "sound", "code": "SOUND_EFFECTS_SKIPPED", **sound_report})
+        (workspace / "diagnostics").mkdir(parents=True, exist_ok=True)
+        (workspace / "diagnostics" / "sound.json").write_text(
+            json.dumps(sound_report, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Camera drift (app/render/camera.py) after encoded QA: a slow push per idea; the
+        # undrifted video is kept when it is off or fails (recorded).
+        picture, camera_report = camera.apply_or_keep(
+            plan, video_only, video_only.with_name("video-camera.mp4"), ffmpeg_bin=self.settings.ffmpeg_bin,
+            filter_option=self.renderer._filter_complex_file_option(video_only.parent))
+        if camera_report.get("camera") == "skipped":
+            warnings.append({"stage": "camera", "code": "CAMERA_DRIFT_SKIPPED", **camera_report})
+        (workspace / "diagnostics" / "camera.json").write_text(
+            json.dumps(camera_report, ensure_ascii=False, indent=2), encoding="utf-8")
+        final_path = self.final.mux(picture, soundtrack, output_file)
         warnings.extend(self._verify_final_media(
-            final_path, video_only, audio_path, output_file,
+            final_path, picture, soundtrack, output_file,
             first_spoken_start=story[0].audio_start if story else None,
         ))
         self.rendered_visual_evidence.inspect(final_path, workspace / "diagnostics")
@@ -1278,6 +1298,9 @@ class StoryEnginePipeline:
                     and video_only.resolve().parent == render_dir
                     and video_only.resolve() != final_path.resolve()):
                 video_only.unlink()
+            for extra in (render_dir / "video-camera.mp4", render_dir / "soundtrack.wav"):
+                if extra.is_file() and not extra.is_symlink() and extra.resolve() != final_path.resolve():
+                    extra.unlink()
         return TargetOutput(
             target_id=target.target_id,
             path=final_path,

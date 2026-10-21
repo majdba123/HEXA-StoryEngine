@@ -214,3 +214,44 @@ def test_a_late_arrival_lands_crisp_over_the_receding_scene() -> None:
     wash = next(cue for cue in out if cue.asset_id == "lock").params["focus_wash"]
     assert wash["start"] == pytest.approx(2.6)                           # with the last arrival
     assert wash["focus_asset_ids"] == ["key", "lock"]                    # the arrival stays crisp
+
+
+# -- opening hook (retention review 2026-10-21) ------------------------------------------------
+def _sized_asset(tmp_path: Path, asset_id: str, px: tuple[int, int]) -> VisualAsset:
+    from PIL import Image
+
+    path = tmp_path / f"{asset_id}.png"
+    Image.new("RGBA", px, (40, 90, 200, 255)).save(path)
+    return VisualAsset(id=asset_id, scene_id="s1", role="visual", image_path=path, extraction_method="test")
+
+
+def test_the_first_element_spoken_leads_the_opening_large_central_and_sharp(tmp_path: Path) -> None:
+    """Cybercrime Gangs v1: a small building alone in a corner opened the video."""
+    items = [_item("building", 0.79, 0.21, 0.13, 0.17), _item("monitor", 0.40, 0.60, 0.35, 0.60)]
+    assets = [_sized_asset(tmp_path, "building", (380, 300)), _sized_asset(tmp_path, "monitor", (590, 567))]
+    result = FocusStagingPlanner().stage(items, assets, [_beat({"building": "OBJECT", "monitor": "OBJECT"})],
+                                         None, set(), hook_asset_id="building")
+    out = {item.asset_id: item for item in result.items}
+    assert result.anchor_id == "building" and ":opening_hook:" in result.evidence
+    assert out["building"].height > 0.17 * 1.3                       # it grows ...
+    native_upscale = out["building"].height * 1080 / 300
+    assert native_upscale <= staging.OPENING_MAX_UPSCALE + 1e-6       # ... but stays sharp
+    assert abs(out["building"].x - 0.5) < abs(0.79 - 0.5)             # toward the centre
+    assert _side(out["monitor"]) <= SATELLITE_RATIO * _side(out["building"]) + 1e-6
+
+
+def test_a_hook_that_cannot_become_large_and_sharp_does_not_lead(tmp_path: Path) -> None:
+    items = [_item("dot", 0.80, 0.20, 0.05, 0.06), _item("monitor", 0.40, 0.60, 0.35, 0.60)]
+    assets = [_sized_asset(tmp_path, "dot", (100, 70)), _sized_asset(tmp_path, "monitor", (590, 567))]
+    result = FocusStagingPlanner().stage(items, assets, [_beat({"dot": "OBJECT", "monitor": "OBJECT"})],
+                                         None, set(), hook_asset_id="dot")
+    assert result.anchor_id == "monitor" and ":opening_hook:" not in result.evidence
+
+
+def test_the_opening_hook_switch_restores_the_usual_anchor(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(staging, "OPENING_HOOK", False)
+    items = [_item("building", 0.79, 0.21, 0.13, 0.17), _item("monitor", 0.40, 0.60, 0.35, 0.60)]
+    assets = [_sized_asset(tmp_path, "building", (380, 300)), _sized_asset(tmp_path, "monitor", (590, 567))]
+    result = FocusStagingPlanner().stage(items, assets, [_beat({"building": "OBJECT", "monitor": "OBJECT"})],
+                                         None, set(), hook_asset_id="building")
+    assert result.anchor_id != "building" or ":opening_hook:" not in result.evidence

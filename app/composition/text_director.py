@@ -23,6 +23,10 @@ READABLE_FONT_SCALE = 0.68
 # it wins over a smaller one, and each rung below 1.0 costs more than before.
 PREFERRED_FONT_SCALE = 1.0
 SCALE_PENALTY = 3.0
+# Opening hook (retention review 2026-10-21): the video's first keyword is set at the large
+# reference sizes near its subject whenever the contract accepts one.
+HOOK_FONT_SCALE = 1.35
+HOOK_SCALE_PENALTY = 6.0
 REFERENCE_FONT_SCALES = tuple(value for value in (2.2, 1.9, 1.6, 1.35, 1.15) if value <= MAX_FONT_SCALE)
 # A legible label may move this far (normalized centre distance) from its subject.
 READABLE_ANCHOR_REACH = 0.30
@@ -81,6 +85,7 @@ class TextPlacementDirector:
 
     def __init__(self) -> None:
         self.footprints = AlphaFootprintResolver()
+        self.hook_cue_id: str | None = None  # the video's first keyword (set per plan)
         self._occupancy_by_frame: dict[tuple[int, int], VisualOccupancyMap] = {}
         self.contract = TextLayoutContract()
 
@@ -159,7 +164,8 @@ class TextPlacementDirector:
                 )
                 # Prefer the authored typography size whenever whitespace permits, but
                 # reducing text is always safer than moving the Final Package artwork.
-                scale_penalty = (1.0 - font_scale) * SCALE_PENALTY
+                scale_penalty = (1.0 - font_scale) * (
+                    HOOK_SCALE_PENALTY if cue.id == self.hook_cue_id else SCALE_PENALTY)
                 scored.append((*score_row, font_scale, width))
                 scored[-1] = (scored[-1][0] + scale_penalty, *scored[-1][1:])
 
@@ -184,8 +190,9 @@ class TextPlacementDirector:
 
         established = [row for row in acceptable if row[5] >= 0.56] or acceptable
         best = min(established, key=rank)
-        preferred = [row for row in acceptable if row[5] >= PREFERRED_FONT_SCALE]
-        if preferred and best[5] < PREFERRED_FONT_SCALE:
+        preferred_scale = HOOK_FONT_SCALE if cue.id == self.hook_cue_id else PREFERRED_FONT_SCALE
+        preferred = [row for row in acceptable if row[5] >= preferred_scale]
+        if preferred and best[5] < preferred_scale:
             larger = min(preferred, key=rank)
             if distance(larger) <= max(READABLE_ANCHOR_REACH, distance(best) + 0.12):
                 best = larger

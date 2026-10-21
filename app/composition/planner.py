@@ -9,6 +9,8 @@ from app.models import CompositionBeat, LayoutItem, StoryBeat, TextPlan, VisualA
 from app.shared.errors import StageFailedError
 from app.targets import VisualTargetProfile, active_target, composition_policy
 
+from app.story.windows import StoryAssetActivation
+
 from .focus_staging import FocusStagingPlanner
 from .geometry import AuthoredGeometryMapper
 from .semantic_staging import SemanticStagingPlanner
@@ -90,6 +92,19 @@ class CompositionPlanner:
         self._require_owned_contracts(beats=beats, layouts=solved, assets=all_assets)
         return solved
 
+    @staticmethod
+    def _opening_hook(scene_beats: list[StoryBeat]) -> str | None:
+        """The first element spoken in the video's first scene (focus_staging.OPENING_HOOK)."""
+        def appears(row) -> float | None:  # the first visible instant Story planned for it
+            window = row if isinstance(row, StoryAssetActivation) else StoryAssetActivation.from_legacy(row)
+            if window.activation_policy == "SAFE_ABSTENTION" or row.policy in {"FALLBACK", "SAFE_ABSTENTION"}:
+                return None
+            return window.reveal_start if window.reveal_start is not None else row.spoken_start
+
+        rows = [(at, row.asset_id) for beat in scene_beats for row in beat.asset_activations
+                if (at := appears(row)) is not None]
+        return min(rows)[1] if rows else None
+
     def _stage_scenes(
         self,
         beats: list[StoryBeat],
@@ -118,8 +133,9 @@ class CompositionPlanner:
             directive = directives[scene_id][0] if directives[scene_id] else None
             focus_id = (direction.primary_asset_id if direction is not None else None) or (
                 directive.primary_asset_id if directive is not None else None)
+            hook = self._opening_hook(scene_beats) if scene_id == beats[0].scene_id else None
             focus = self.focus.stage(result.items, scene_assets, scene_beats, focus_id,
-                                     (spoken or {}).get(scene_id, set()))
+                                     (spoken or {}).get(scene_id, set()), hook_asset_id=hook)
             self.focus_evidence[scene_id] = focus.evidence
             self.focus_anchor[scene_id] = focus.anchor_id
             staged[scene_id] = (focus.items, ";".join(row for row in (result.evidence, focus.evidence) if row))
