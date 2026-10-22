@@ -40,6 +40,57 @@ def _run(cues, items, *, assets=None, sweeps=None):
     return planner, {c.asset_id: c for c in out}
 
 
+def test_short_crowded_picture_keeps_focus_motion_and_quiets_decorative_supports() -> None:
+    from app.motion.landing import ReferenceLandingPolicy
+
+    previous = StoryBeat(id="previous", scene_id="s0", start=0, end=2, narration="first", action="REVEAL")
+    beat = StoryBeat(id="b", scene_id="s", start=2, end=4, narration="three objects", action="REVEAL",
+                     primary_asset_ids=["focus"], support_asset_ids=["support_a", "support_b"])
+    items = [LayoutItem(asset_id=name, x=x, y=0.5, width=0.15, height=0.2)
+             for name, x in (("focus", 0.12), ("support_a", 0.5), ("support_b", 0.88))]
+    modest = {"name": "reference_soft_entry", "keyframes": [
+        {"progress": 0.0, "dx": 0.01, "dy": 0.0, "scale": 0.98},
+        {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0}]}
+    cues = [_cue(name, 2.1 + 0.3 * index, 2.5 + 0.3 * index).model_copy(update={"params": {
+        **_cue(name, 2.1 + 0.3 * index, 2.5 + 0.3 * index).params, "program": modest}})
+            for index, name in enumerate(("focus", "support_a", "support_b"))]
+    planner = SecondaryArrivalPlanner()
+    result = {cue.asset_id: cue for cue in planner.plan(
+        story=[previous, beat], composition=[CompositionBeat(beat_id="b", items=items)],
+        motion=cues, assets=_assets("focus", "support_a", "support_b"))}
+    assert planner.decisions[0].gesture in {"SLIDE", "POP"}
+    assert all(result[name].params["entry_opacity"] == cues[index].params["entry_opacity"]
+               for index, name in enumerate(("support_a", "support_b"), start=1))
+    assert all(all(frame["dx"] == 0.0 and frame["scale"] == 1.0
+                   for frame in result[name].params["program"]["keyframes"])
+               for name in ("support_a", "support_b"))
+    assert [(cue.start, cue.end) for cue in result.values()] == [(cue.start, cue.end) for cue in cues]
+    landed = {cue.asset_id: cue for cue in ReferenceLandingPolicy().apply(
+        story=[previous, beat], composition=[CompositionBeat(beat_id="b", items=items)],
+        motion=list(result.values()), assets=_assets("focus", "support_a", "support_b"))}
+    assert all("reference_landing" not in landed[name].params
+               for name in ("support_a", "support_b"))
+
+
+def test_short_picture_does_not_create_three_generic_slides_from_static_icons() -> None:
+    previous = StoryBeat(id="previous", scene_id="s0", start=0, end=2, narration="first", action="REVEAL")
+    beat = StoryBeat(id="b", scene_id="s", start=2, end=3.8, narration="three icons",
+                     action="REVEAL", primary_asset_ids=["left", "top", "right"])
+    items = [LayoutItem(asset_id=name, x=x, y=y, width=0.1, height=0.12)
+             for name, x, y in (("left", 0.12, 0.5), ("top", 0.5, 0.12), ("right", 0.88, 0.5))]
+    cues = [_cue(name, 2.1 + 0.35 * index, 2.5 + 0.35 * index)
+            for index, name in enumerate(("left", "top", "right"))]
+    planner = SecondaryArrivalPlanner()
+    out = {cue.asset_id: cue for cue in planner.plan(
+        story=[previous, beat], composition=[CompositionBeat(beat_id="b", items=items)],
+        motion=cues, assets=_assets("left", "top", "right"))}
+    assert [row.gesture for row in planner.decisions] == ["SLIDE", "FADE", "FADE"]
+    assert "reference_slide" in out["left"].params
+    assert all("reference_slide" not in out[name].params for name in ("top", "right"))
+    assert all(out[name].params["entry_opacity"] == cues[index].params["entry_opacity"]
+               for index, name in enumerate(("top", "right"), start=1))
+
+
 EDGE = LayoutItem(asset_id="edge", x=0.12, y=0.5, width=0.18, height=0.3)
 CENTER = LayoutItem(asset_id="center", x=0.5, y=0.5, width=0.2, height=0.3)
 

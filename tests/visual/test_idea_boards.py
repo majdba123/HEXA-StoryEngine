@@ -48,14 +48,15 @@ def test_inside_one_sentence_the_old_picture_is_replaced_in_place_not_cleared() 
     row = scene.plan()
     assert row.audit["hero_exit"] == "idea_board"
     old_a, old_b = row.overlap_exits["old_a"], row.overlap_exits["old_b"]
-    # old_a sits where the opener lands: it starts fading BOARD_LEAD_FRAMES before it ...
-    assert scene.frame(old_a["start"]) == 3 - BOARD_LEAD_FRAMES
+    # The opener arrives three frames into this picture: the old unit is fully gone then.
+    assert scene.frame(old_a["start"]) == 0
+    assert scene.frame(old_a["end"]) == 3
     # ... while old_b, which nothing new touches, stays until the new picture is complete
     # and has faded before its scene ends.
     assert scene.frame(old_b["start"]) > scene.frame(old_a["start"]) + 30
     assert old_b["end"] <= scene.story[1].end - 1 / FPS + 1e-6
-    for spec in (old_a, old_b):
-        assert spec["fade"] == 1.0 and spec["end"] - spec["start"] == pytest.approx(FADE_FRAMES / FPS, abs=1e-5)
+    assert old_a["fade"] == old_b["fade"] == 1.0
+    assert old_b["end"] - old_b["start"] == pytest.approx(FADE_FRAMES / FPS, abs=1e-5)
     assert row.exit_motion_blur == {}                                   # in place: nothing travels
     board = row.audit["idea_board"]
     assert (board["left_at_opener"], board["replaced_in_place"], board["held_to_picture_end"]) == (1, 0, 1)
@@ -68,7 +69,8 @@ def test_a_later_new_element_replaces_the_old_one_it_lands_on() -> None:
     scene.assets.append(_asset("new_c", None))
     scene.motion.append(_cue("b2", "new_c", scene.boundary + 40 / FPS, opacity=True))
     row = scene.plan()
-    assert scene.frame(row.overlap_exits["old_b"]["start"]) == 40 - BOARD_LEAD_FRAMES
+    assert scene.frame(row.overlap_exits["old_b"]["start"]) == 40 - FADE_FRAMES
+    assert scene.frame(row.overlap_exits["old_b"]["end"]) == 40
 
 
 def test_a_keyword_that_appears_over_a_held_element_makes_it_fade_first() -> None:
@@ -80,17 +82,28 @@ def test_a_keyword_that_appears_over_a_held_element_makes_it_fade_first() -> Non
 
 
 def test_no_more_than_the_board_capacity_share_the_screen() -> None:
-    # Five old units in the top row; the opener lands on the first, a later arrival lands
-    # on nothing. With four held units the later arrival would make six: the smallest held
-    # unit (old_4) gives way to it, the others stay.
+    # The opener replaces one old unit; the smallest extra old unit yields to the
+    # three-unit board budget instead of crowding the new picture.
     old = {f"old_{n}": (0.1 + 0.16 * n, 0.12, 0.1, 0.1) for n in range(BOARD_MAX_UNITS)}
     old["old_4"] = (0.1 + 0.16 * 4, 0.12, 0.06, 0.06)
     scene = _board(Scene(lead=3, opener=(0.1, 0.12, 0.1, 0.1), later=30, old=old))
     row = scene.plan()
     frames = {asset: scene.frame(spec["start"]) for asset, spec in row.overlap_exits.items()}
-    assert frames["old_0"] == 3 - BOARD_LEAD_FRAMES
-    assert frames["old_4"] == 30 - BOARD_LEAD_FRAMES
-    assert all(frames[f"old_{n}"] > 30 for n in (1, 2, 3))
+    assert scene.frame(row.overlap_exits["old_0"]["end"]) == 3
+    assert scene.frame(row.overlap_exits["old_4"]["end"]) == 3
+    assert any(frames[f"old_{n}"] > 3 for n in (1, 2))
+
+
+def test_board_capacity_preserves_the_authored_focus_when_a_support_can_leave() -> None:
+    old = {f"old_{n}": (0.1 + 0.16 * n, 0.12, 0.1, 0.1) for n in range(BOARD_MAX_UNITS)}
+    old["old_4"] = (0.74, 0.12, 0.06, 0.06)
+    scene = _board(Scene(lead=3, opener=(0.1, 0.12, 0.1, 0.1), later=30, old=old))
+    scene.composition[0] = scene.composition[0].model_copy(update={
+        "semantic_focus_asset_id": "old_4"})
+    row = scene.plan()
+    assert row.audit["hero_exit"] == "idea_board"
+    assert scene.frame(row.overlap_exits["old_4"]["start"]) > 3
+    assert scene.frame(row.overlap_exits["old_1"]["end"]) <= 3
 
 
 def test_a_finished_sentence_keeps_the_plain_fade_to_white(monkeypatch) -> None:
@@ -256,14 +269,19 @@ def test_the_idea_clock_switch_restores_the_sentence_rule(monkeypatch) -> None:
     assert row.audit["hero_exit"] == "scene_fade"
 
 
-def test_a_clear_dims_the_old_idea_before_the_new_element_lands(monkeypatch) -> None:
-    """Soft dip: the old scene starts fading SCENE_FADE_LEAD_FRAMES before the opener and
-    is still partly visible when the new element lands (never a blank frame)."""
+def test_a_clear_finishes_at_the_opener_without_a_white_gap(monkeypatch) -> None:
     monkeypatch.setattr(release, "IDEA_MIN_SECONDS", 1.5)
     scene = _board(Scene(lead=4, opener=NEW_ON_OLD), narration="end of the idea.")
     row = scene.plan()
     assert row.audit["hero_exit"] == "scene_fade"
     for spec in row.overlap_exits.values():
-        assert scene.frame(spec["start"]) == 4 - release.SCENE_FADE_LEAD_FRAMES
-        assert spec["end"] - spec["start"] == pytest.approx(release.SCENE_FADE_FRAMES / FPS, abs=1e-5)
-        assert release.SCENE_FADE_LEAD_FRAMES < release.SCENE_FADE_FRAMES  # still visible at the opener
+        assert scene.frame(spec["start"]) == 0
+        assert scene.frame(spec["end"]) == 4
+
+
+def test_an_immediate_board_replacement_omits_only_the_old_colliding_unit() -> None:
+    scene = _board(Scene(lead=0, opener=NEW_ON_OLD))
+    row = scene.plan()
+    assert row.audit["hero_exit"] == "idea_board"
+    assert row.overlap_exits["old_a"]["skip_exit"] == 1.0
+    assert "skip_exit" not in row.overlap_exits["old_b"]

@@ -230,6 +230,24 @@ class SecondaryArrivalPlanner:
         for beat in story:
             positions = by_beat.get(beat.id, [])
             layout = layouts.get(beat.id, {})
+            distinct = {self._family(item.asset_id, assets_by_id) for item in layout.values()}
+            dense_short = len(distinct) >= 3 and float(beat.end) - float(beat.start) < 2.4
+            placed = layout_beats.get(beat.id)
+            focus_id = next((asset_id for asset_id in (
+                placed.visual_anchor_asset_id if placed else None,
+                placed.semantic_focus_asset_id if placed else None,
+                *beat.primary_asset_ids,
+            ) if asset_id in layout), None)
+            if focus_id is None and positions:
+                first = min(positions, key=lambda p: (float(motion[p].start), motion[p].asset_id))
+                focus_id = motion[first].asset_id
+            focus_family = self._family(focus_id, assets_by_id) if focus_id else None
+            featured_families = set()
+            primary_id = next((asset_id for asset_id in beat.primary_asset_ids if asset_id in layout), None)
+            if primary_id is not None:
+                featured_families.add(self._family(primary_id, assets_by_id))
+            if focus_family is not None:
+                featured_families.add(focus_family)
             families: dict[str, int] = {}
             for position in positions:
                 families[self._family(motion[position].asset_id, assets_by_id)] = families.get(
@@ -239,6 +257,17 @@ class SecondaryArrivalPlanner:
             for position in sorted(positions, key=lambda p: (float(motion[p].start), motion[p].asset_id)):
                 cue = output[position]
                 if cue.asset_id in followed:
+                    continue
+                if (dense_short and self._family(cue.asset_id, assets_by_id) not in featured_families
+                        and _replaceable_decorative_entry(cue)):
+                    # Keep the authored reveal and opacity clock. Several independent
+                    # supports flying in during one short spoken picture make its order
+                    # hard to read; their optional entry travel yields to the focus.
+                    quiet = self._fade_fallback(cue)
+                    output[position] = quiet.model_copy(update={"params": {
+                        **quiet.params, "visual_clarity": "quiet_support"}})
+                    self.decisions.append(ArrivalDecision(beat.id, cue.asset_id, "FADE",
+                                                          "dense_picture_support_yields"))
                     continue
                 item = layout.get(cue.asset_id)
                 beat_cues = [output[p] for p in positions]
@@ -250,6 +279,19 @@ class SecondaryArrivalPlanner:
                     assets_by_id=assets_by_id,
                     flow_direction=directions.get((beat.id, cue.asset_id)),
                 )
+                if (dense_short and self._family(cue.asset_id, assets_by_id) not in featured_families
+                        and updated is not None and (reason.startswith("flow_staged_")
+                        or reason in {"edge_slide", "edge_slide_vertical", "reference_pop"})):
+                    # The generic arrival pass can animate a previously static support.
+                    # Its slide/pop is optional, unlike a causal approach or result.
+                    self._slides.pop((beat.id, cue.asset_id), None)
+                    self._pop_fallback.pop((beat.id, cue.asset_id), None)
+                    quiet = self._fade_fallback(cue)
+                    output[position] = quiet.model_copy(update={"params": {
+                        **quiet.params, "visual_clarity": "quiet_support"}})
+                    self.decisions.append(ArrivalDecision(beat.id, cue.asset_id, "FADE",
+                                                          "dense_picture_support_yields"))
+                    continue
                 if updated is not None:
                     output[position] = updated
                     if gesture == "SLIDE":

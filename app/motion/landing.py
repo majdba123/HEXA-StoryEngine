@@ -190,6 +190,8 @@ class ReferenceLandingPolicy:
         params = cue.params if isinstance(cue.params, dict) else {}
         if item is None:
             return None, "no_layout"
+        if params.get("visual_clarity") == "quiet_support":
+            return None, "dense_picture_support_yields"
         if character or params.get("scene_hero") or params.get("hero_travel") or params.get("hero_entry"):
             return None, "character_keeps_its_entrance"
         if (params.get("semantic_continuity") or {}).get("mode", "ENTER") != "ENTER":

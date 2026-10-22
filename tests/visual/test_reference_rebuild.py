@@ -62,11 +62,11 @@ def test_a_cut_becomes_a_fade_of_the_whole_old_scene_at_the_unchanged_opener(mon
     assert set(row.overlap_exits) == {"old_a", "old_b"}            # the whole scene, one block
     specs = list(row.overlap_exits.values())
     assert all(spec == specs[0] for spec in specs)                 # one clock
-    # soft dip (pacing review 2026-10-21): the old scene starts dimming a few frames before
-    # Story's unchanged opener and is still partly visible when the new element lands
-    begin = scene.boundary + max(0, 3 - release.SCENE_FADE_LEAD_FRAMES) / FPS
+    # The outgoing picture fades during the frames before the authored opener. Its
+    # last alpha frame precedes the incoming element, without a blank canvas between.
+    begin = scene.boundary
     assert specs[0]["start"] == pytest.approx(begin)
-    assert specs[0]["end"] - specs[0]["start"] == pytest.approx(release.SCENE_FADE_FRAMES / FPS, abs=1e-5)
+    assert specs[0]["end"] == pytest.approx(scene.boundary + 3 / FPS)
     assert specs[0]["fade"] == 1.0 and row.exit_motion_blur == {}  # clears in place, no smear
 
 
@@ -246,6 +246,53 @@ def test_an_element_already_on_screen_pulses_exactly_when_it_is_spoken() -> None
     again = SpokenPulsePolicy().apply(story=[beat], composition=[CompositionBeat(beat_id="b2", items=[item])],
                                       motion=[cue], assets=[asset], text=TextPlan(cues=[early]))[0]
     assert not any(row.program.get("name") == "reference_spoken_pulse" for row in again.segments)
+
+
+def test_dense_short_picture_uses_entrances_without_competing_spoken_pulses() -> None:
+    from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextPlan, VisualAsset
+
+    beat = StoryBeat(id="b2", scene_id="s2", start=2.0, end=4.0, narration="three icons",
+                     action="REVEAL")
+    ids = ("first", "second", "third")
+    items = [LayoutItem(asset_id=name, x=0.2 + index * 0.25, y=0.5,
+                        width=0.15, height=0.2) for index, name in enumerate(ids)]
+    assets = [VisualAsset(id=name, scene_id="s2", role="supporting", image_path=f"{name}.png",
+                          extraction_method="t") for name in ids]
+    cues = [_cue("b2", name, 2.1, 0.3) for name in ids]
+    word = TextCue(id="word", beat_id="b2", text="icon", semantic_type="emphasis",
+                   source_char_start=0, source_char_end=4, spoken_start=3.0, spoken_end=3.2,
+                   emphasis_time=3.0, style_id="emphasis", anchor_asset_id="first")
+    policy = SpokenPulsePolicy()
+    out = policy.apply(story=[beat], composition=[CompositionBeat(beat_id="b2", items=items)],
+                       motion=cues, assets=assets, text=TextPlan(cues=[word]))
+    assert [(cue.start, cue.end) for cue in out] == [(cue.start, cue.end) for cue in cues]
+    assert all(not any(row.program.get("name") == "reference_spoken_pulse"
+                       for row in cue.segments) for cue in out)
+    assert policy.decisions[0].reason == "attention_budget"
+
+
+def test_one_spoken_accent_follows_the_first_word_not_asset_name() -> None:
+    from app.models import CompositionBeat, LayoutItem, StoryBeat, TextCue, TextPlan, VisualAsset
+
+    beat = StoryBeat(id="b2", scene_id="s2", start=2.0, end=5.0, narration="two icons",
+                     action="REVEAL")
+    ids = ("z_first", "a_second")
+    items = [LayoutItem(asset_id=name, x=0.3 + index * 0.4, y=0.5,
+                        width=0.2, height=0.3) for index, name in enumerate(ids)]
+    assets = [VisualAsset(id=name, scene_id="s2", role="supporting", image_path=f"{name}.png",
+                          extraction_method="t") for name in ids]
+    words = [TextCue(id=f"word_{name}", beat_id="b2", text="icon", semantic_type="emphasis",
+                     source_char_start=0, source_char_end=4, spoken_start=when,
+                     spoken_end=when + 0.2, emphasis_time=when, style_id="emphasis",
+                     anchor_asset_id=name)
+             for name, when in (("z_first", 3.0), ("a_second", 3.8))]
+    out = SpokenPulsePolicy().apply(
+        story=[beat], composition=[CompositionBeat(beat_id="b2", items=items)],
+        motion=[_cue("b2", name, 2.1, 0.3) for name in ids],
+        assets=assets, text=TextPlan(cues=words))
+    pulsed = [cue.asset_id for cue in out if any(
+        row.program.get("name") == "reference_spoken_pulse" for row in cue.segments)]
+    assert pulsed == ["z_first"]
 
 
 # -- typography and blur (G14 / G15) ------------------------------------------------

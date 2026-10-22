@@ -56,6 +56,10 @@ FADE_FRAMES = 5
 # (a soft dip; it is still partly visible when the new element lands, never a blank frame).
 SCENE_FADE_FRAMES = 8
 SCENE_FADE_LEAD_FRAMES = 3
+# An outgoing picture must be gone on the incoming opener's first visible frame. The
+# available frames before that opener set the fade length. If there is no such frame,
+# keep the certified cut; moving a reveal or inserting a white gap would break narration.
+CLEAN_HANDOFF = True
 # Production switch for the whip; the certified hero-exit / crisp / cut machinery below it
 # stays intact (and tested) for every boundary the whip abstains from.
 SCENE_WHIP = True
@@ -74,7 +78,7 @@ IDEA_BOARD = True
 # otherwise the next picture is built on the same board. A character swap keeps its whip.
 IDEA_CLOCK = True
 IDEA_MIN_SECONDS = 3.5
-BOARD_MAX_UNITS = 5            # carried + arrived element units on screen together
+BOARD_MAX_UNITS = 3            # bound old + new visual units on a continuing idea board
 BOARD_LEAD_FRAMES = 2          # an old element starts fading this many frames before the new lands
 # A word never shares its spot with fading artwork or another fading word: what it replaces
 # has fully faded (FADE_FRAMES) before its first frame.
@@ -225,8 +229,12 @@ class SceneBoundaryPlanner:
                 })
         # References: a character swap is carried by a whip (A 41 s, B 5 s, B 35 s); every
         # other change of idea clears the old scene to white in a few frames (A 12.5 s).
-        frames = WHIP_FRAMES if whip else SCENE_FADE_FRAMES
-        begin_frame = opener if whip else max(0, opener - SCENE_FADE_LEAD_FRAMES)
+        if CLEAN_HANDOFF and not whip and opener < 2:
+            return None  # no safe fade before the first incoming picture
+        frames = WHIP_FRAMES if whip else (min(SCENE_FADE_FRAMES, opener) if CLEAN_HANDOFF
+                                          else SCENE_FADE_FRAMES)
+        begin_frame = opener if whip else (opener - frames if CLEAN_HANDOFF
+                                           else max(0, opener - SCENE_FADE_LEAD_FRAMES))
         end_frame = begin_frame + frames
         if end_frame >= segment.frame_count:
             return None
@@ -284,6 +292,9 @@ class SceneBoundaryPlanner:
         units: dict[str, list[LayoutItem]] = {}
         for item in previous_layout.items:
             units.setdefault(family(item.asset_id), []).append(item)
+        focus_ids = (previous_layout.visual_anchor_asset_id,
+                     previous_layout.semantic_focus_asset_id)
+        focus_units = {family(asset_id) for asset_id in focus_ids if asset_id}
         unit_box = {key: _union([footprint(member) for member in members]) for key, members in units.items()}
         events: list[tuple[int, int, Box]] = [
             (first[item.asset_id], 1, _grow(footprint(item), BOARD_LANDING_GROWTH, BOARD_CLEARANCE))
@@ -296,16 +307,20 @@ class SceneBoundaryPlanner:
                 events.append((max(0, frame), 0, _grow(box, 0.0, BOARD_CLEARANCE)))
         alive = dict.fromkeys(units)
         exit_frame: dict[str, int] = {}
+        gone_by: dict[str, int] = {}  # first frame that needs the old unit's space
         arrived = 0
+        lead_art = FADE_FRAMES if CLEAN_HANDOFF else BOARD_LEAD_FRAMES
         for frame, is_art, box in sorted(events, key=lambda row: (row[0], row[1])):
-            leave_at = max(0, min(last, frame - (BOARD_LEAD_FRAMES if is_art else FADE_FRAMES)))
+            leave_at = max(0, min(last, frame - (lead_art if is_art else FADE_FRAMES)))
             for key in [key for key in alive if self._intersects(unit_box[key], box)]:
                 exit_frame[key] = leave_at
+                gone_by[key] = frame
                 alive.pop(key)
             arrived += is_art
             while alive and len(alive) + arrived > BOARD_MAX_UNITS:
-                key = min(alive, key=lambda unit: _area(unit_box[unit]))
+                key = min(alive, key=lambda unit: (unit in focus_units, _area(unit_box[unit])))
                 exit_frame[key] = leave_at
+                gone_by[key] = frame
                 alive.pop(key)
         for key in alive:
             exit_frame[key] = last
@@ -329,8 +344,17 @@ class SceneBoundaryPlanner:
         specs: dict[str, dict[str, float]] = {}
         for key, members in units.items():
             begin = segment.start_frame + exit_frame[key]
-            spec = {"start": round(begin / fps, 6), "end": round((begin + FADE_FRAMES) / fps, 6),
-                    "direction": 0.0, "axis": 0.0, "fade": 1.0}
+            length = FADE_FRAMES
+            if CLEAN_HANDOFF and key in gone_by:
+                # A same-frame replacement cannot fade in this segment. The renderer omits
+                # that outgoing unit, preserving the authored incoming reveal and its peers.
+                length = min(FADE_FRAMES, gone_by[key] - exit_frame[key])
+            if length <= 0:
+                spec = {"start": round(begin / fps, 6), "end": round(begin / fps, 6),
+                        "direction": 0.0, "axis": 0.0, "fade": 1.0, "skip_exit": 1.0}
+            else:
+                spec = {"start": round(begin / fps, 6), "end": round((begin + length) / fps, 6),
+                        "direction": 0.0, "axis": 0.0, "fade": 1.0}
             for member in members:
                 specs[member.asset_id] = dict(spec)
         audit = {"units": len(units), "held_units": len(held), "held_frames_max": max(held, default=0),

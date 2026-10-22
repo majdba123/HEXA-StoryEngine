@@ -96,7 +96,22 @@ class SpokenPulsePolicy:
             if cue.anchor_asset_id:
                 mentions.setdefault((cue.beat_id, cue.anchor_asset_id), []).append(float(cue.spoken_start))
         beats = {beat.id: beat for beat in story}
-        for (beat_id, asset_id), times in sorted(mentions.items()):
+        # A spoken reminder is optional. Several animated icons in one short sentence
+        # compete with the authored entrances and relation action, so give each picture
+        # at most one such accent and leave dense pictures to their primary arrival.
+        family_count = {
+            beat.id: len({AssetManager.family_id(assets_by_id[item.asset_id])
+                          for item in layouts.get(beat.id, {}).values()
+                          if item.asset_id in assets_by_id})
+            for beat in story
+        }
+        accented = {cue.beat_id for cue in output
+                    if any(is_spoken_pulse(row.program) for row in cue.segments)}
+        for (beat_id, asset_id), times in sorted(
+            mentions.items(), key=lambda item: (
+                float(beats[item[0][0]].start) if item[0][0] in beats else float("inf"),
+                min(item[1]), item[0][1]),
+        ):
             position = index.get((beat_id, asset_id))
             beat = beats.get(beat_id)
             if position is None or beat is None:
@@ -107,12 +122,18 @@ class SpokenPulsePolicy:
             if not candidates:
                 continue
             at = candidates[0]
+            if beat_id in accented or (family_count[beat_id] >= 3
+                                       and float(beat.end) - float(beat.start) < 2.4):
+                self.decisions.append(PulseDecision(beat_id, asset_id, round(at, 3), False,
+                                                    "attention_budget"))
+                continue
             pulsed, reason = pulse_at(cue, at=at, beat=beat, item=layouts.get(beat_id, {}).get(asset_id),
                                       beat_cues=[row for row in output if row.beat_id == beat_id],
                                       assets_by_id=assets_by_id)
             self.decisions.append(PulseDecision(beat_id, asset_id, round(at, 3), pulsed is not None, reason))
             if pulsed is not None:
                 output[position] = pulsed
+                accented.add(beat_id)
         return output
 
 

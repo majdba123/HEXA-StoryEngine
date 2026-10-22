@@ -397,6 +397,7 @@ class FFmpegRenderer:
         overlap_items = [
             item for item in (previous_layout.items if previous_layout is not None else [])
             if item.asset_id in overlap_exits and item.asset_id not in handoffs
+            and not float(overlap_exits[item.asset_id].get("skip_exit", 0.0)) > 0.5
         ]
         outgoing_items = (
             sorted(
