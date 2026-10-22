@@ -39,6 +39,7 @@ from app.desktop.job_process import (
     run_premiere,
 )
 from app.diagnostics import BuildReportSession
+from app.features.intro_zoom.models import IntroZoomConfig
 from app.models import Stage
 from app.shared.runtime_integrity import RuntimeSourceMismatchError, require_launch_source
 
@@ -64,6 +65,7 @@ class GenerationWorker(QObject):
         audio_path: Path,
         report: BuildReportSession,
         runner: Runner = run_pipeline,
+        intro_zoom: IntroZoomConfig | None = None,
     ) -> None:
         super().__init__()
         self.report = report
@@ -75,6 +77,7 @@ class GenerationWorker(QObject):
                 package_path=package_path,
                 audio_path=audio_path,
                 job_id=report.job_id,
+                intro_zoom=intro_zoom,
             ),
             runner=runner,
         )
@@ -138,6 +141,7 @@ class MainWindow(QMainWindow):
         self._bundle_path: Path | None = None
         self._youtube_path: Path | None = None
         self._reels_path: Path | None = None
+        self._intro_config: IntroZoomConfig | None = None
 
         self.package_edit = QLineEdit()
         self.audio_edit = QLineEdit()
@@ -165,6 +169,9 @@ class MainWindow(QMainWindow):
         defaults = self._sound_defaults()
         self.effects_check.setChecked(defaults[0])
         self.music_check.setChecked(defaults[1])
+        self.intro_check = QCheckBox("إضافة صورة افتتاحية")
+        self.intro_setup_button = QPushButton("اختيار الصورة والهدف والصوت")
+        self.intro_status = QLabel("اختياري — مقدمة قبل المشهد الأول في MP4 فقط")
         self.report_button = QPushButton("استخراج تقرير التشخيص")
         self.open_youtube_button = QPushButton("فتح YouTube")
         self.open_reels_button = QPushButton("فتح Reels")
@@ -206,6 +213,12 @@ class MainWindow(QMainWindow):
         sound_row.addStretch(1)
         root.addLayout(sound_row)
 
+        intro_row = QHBoxLayout()
+        intro_row.addWidget(self.intro_check)
+        intro_row.addWidget(self.intro_setup_button)
+        intro_row.addWidget(self.intro_status, 1)
+        root.addLayout(intro_row)
+
         root.addWidget(self.progress_bar)
         root.addWidget(self.status_label)
 
@@ -239,6 +252,29 @@ class MainWindow(QMainWindow):
         self.open_folder_button.clicked.connect(self._open_folder)
         self.open_log_button.clicked.connect(self._open_log)
         self.clear_log_button.clicked.connect(self.log_view.clear)
+        self.intro_setup_button.clicked.connect(self._configure_intro)
+        self.intro_check.toggled.connect(self._intro_toggled)
+
+    def _intro_toggled(self, enabled: bool) -> None:
+        if enabled and self._intro_config is None:
+            self._configure_intro()
+
+    def _configure_intro(self) -> None:
+        from app.features.intro_zoom.ui import IntroZoomDialog
+
+        try:
+            settings = Settings.from_env()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "HEXA", str(exc))
+            return
+        dialog = IntroZoomDialog(self, ffprobe_bin=settings.ffprobe_bin,
+                                 ffmpeg_bin=settings.ffmpeg_bin)
+        if dialog.exec() == dialog.DialogCode.Accepted and dialog.config is not None:
+            self._intro_config = dialog.config
+            self.intro_check.setChecked(True)
+            self.intro_status.setText("تم حفظ موقع الأيقونة وصوت الافتتاحية")
+        elif self._intro_config is None:
+            self.intro_check.setChecked(False)
 
     @staticmethod
     def _sound_defaults() -> tuple[bool, bool]:
@@ -334,6 +370,25 @@ class MainWindow(QMainWindow):
             return
         settings = replace(settings, sound_effects=self.effects_check.isChecked(),
                            background_music=self.music_check.isChecked())
+        intro = None
+        if self.intro_check.isChecked():
+            if self._intro_config is None:
+                QMessageBox.warning(self, "HEXA", "اختر صورة الافتتاحية والهدف والصوت أولاً.")
+                return
+            if premiere:
+                QMessageBox.information(
+                    self, "HEXA", "مقدمة Intro Zoom غير موجودة في مشروع Premiere. "
+                    "التصدير إلى Premiere سيبقى بلا مقدمة؛ استخدم توليد MP4 لإضافتها.")
+            else:
+                from app.features.intro_zoom.validation import preflight
+
+                try:
+                    preflight(self._intro_config, ffprobe_bin=settings.ffprobe_bin,
+                              ffmpeg_bin=settings.ffmpeg_bin)
+                except ValueError as exc:
+                    QMessageBox.warning(self, "HEXA", str(exc))
+                    return
+                intro = self._intro_config
         job_id = uuid.uuid4().hex
         report = BuildReportSession(
             job_id=job_id,
@@ -347,7 +402,12 @@ class MainWindow(QMainWindow):
             audio_path=audio.resolve(),
             report=report,
             runner=run_premiere if premiere else run_pipeline,
+            intro_zoom=intro,
         )
+        # Each job receives an immutable snapshot. A later unrelated job starts disabled.
+        self._intro_config = None
+        self.intro_check.setChecked(False)
+        self.intro_status.setText("اختياري — مقدمة قبل المشهد الأول في MP4 فقط")
         self._premiere_mode = premiere
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -376,6 +436,8 @@ class MainWindow(QMainWindow):
         self.premiere_button.setEnabled(False)
         self.effects_check.setEnabled(False)
         self.music_check.setEnabled(False)
+        self.intro_check.setEnabled(False)
+        self.intro_setup_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.report_button.setEnabled(False)
         self.open_youtube_button.setEnabled(False)
@@ -447,6 +509,8 @@ class MainWindow(QMainWindow):
         self.premiere_button.setEnabled(True)
         self.effects_check.setEnabled(True)
         self.music_check.setEnabled(True)
+        self.intro_check.setEnabled(True)
+        self.intro_setup_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         self._thread = None
         self._worker = None

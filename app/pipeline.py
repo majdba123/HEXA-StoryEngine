@@ -7,10 +7,13 @@ import shutil
 import subprocess
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from app.features.intro_zoom.models import IntroZoomConfig
 
 from app.choreography import ChoreographyDirector, ChoreographyPlan
 from app.shared.handoff import LayerHandoffValidator
@@ -302,6 +305,7 @@ class StoryEnginePipeline:
         progress: ProgressCallback | None = None,
         cancelled: CancellationCallback | None = None,
         targets: tuple[VisualTargetProfile, ...] = SUPPORTED_VISUAL_TARGETS,
+        intro_zoom: IntroZoomConfig | None = None,
     ) -> GenerationBundleResult:
         """One Final Package -> every supported format, published as ``<root>/<PKG>/vN``.
 
@@ -312,6 +316,25 @@ class StoryEnginePipeline:
         sequentially. The bundle is published only after every output rendered and
         passed encoded-motion and final-media verification and the manifest is written.
         """
+        prepared_intro = None
+        if intro_zoom is not None:
+            # Validate the optional inputs before transcription, Vision or any other
+            # expensive canonical stage. Snapshot them into this job's workspace.
+            from app.features.intro_zoom.validation import preflight
+
+            job_id = job_id or uuid.uuid4().hex
+            intro_root = self.settings.work_root / job_id / "intro-zoom"
+            preflight(intro_zoom, ffprobe_bin=self.settings.ffprobe_bin,
+                      ffmpeg_bin=self.settings.ffmpeg_bin, workspace=intro_root)
+            image_copy = intro_root / f"source-image{intro_zoom.image.suffix.lower()}"
+            audio_copy = intro_root / f"source-voice{intro_zoom.audio.suffix.lower()}"
+            shutil.copy2(intro_zoom.image, image_copy)
+            shutil.copy2(intro_zoom.audio, audio_copy)
+            staged = replace(intro_zoom, image=image_copy, audio=audio_copy)
+            prepared_intro = preflight(staged, ffprobe_bin=self.settings.ffprobe_bin,
+                                       ffmpeg_bin=self.settings.ffmpeg_bin, workspace=intro_root)
+            (intro_root / "request.json").write_text(
+                json.dumps(prepared_intro.metadata(), indent=2), encoding="utf-8")
         prepared = self._prepare_targets(package_path=package_path, audio_path=audio_path, job_id=job_id,
                                          progress=progress, cancelled=cancelled, targets=targets)
         shared, plans, workspaces = prepared.shared, prepared.plans, prepared.workspaces
@@ -322,27 +345,116 @@ class StoryEnginePipeline:
         writer = ExportBundleWriter(export_root.root)
         bundle = writer.reserve(slug)
         outputs: dict[str, TargetOutput] = {}
+        intro_results: dict[str, dict[str, Any]] = {}
+        intro_ready: dict[str, Path] = {}
         try:
             render_span = (0.56, 0.97)
             step = (render_span[1] - render_span[0]) / len(targets)
             for index, target in enumerate(targets):
                 begin = time.perf_counter()
+                target_end = render_span[0] + step * (index + 1)
                 output = self._render_target(
                     shared, target, plans[target.target_id], workspaces[target.target_id],
                     bundle.output_path(target.output_suffix), audio_path,
                     progress=progress, cancelled=cancelled,
-                    span=(render_span[0] + step * index, render_span[0] + step * (index + 1)),
+                    span=(render_span[0] + step * index, target_end),
                 )
+                if prepared_intro is not None:
+                    from PIL import Image
+
+                    from app.features.intro_zoom.assemble import _frame, prepend, probe
+                    from app.features.intro_zoom.render import render_intro
+
+                    self._check_cancel(cancelled)
+                    self._progress(progress, Stage.final, target_end,
+                                   f"{target.output_suffix.title()}: Adding Intro Zoom")
+                    intro_work = workspaces[target.target_id] / "intro-zoom"
+                    video = next(row for row in probe(output.path, self.settings.ffprobe_bin)["streams"]
+                                 if row.get("codec_type") == "video")
+                    first_frame = Image.frombytes(
+                        "RGB", (output.width, output.height),
+                        _frame(output.path, 0, self.settings.ffmpeg_bin))
+                    try:
+                        short_intro = render_intro(
+                            prepared_intro, output.width, output.height, intro_work / "intro.mp4",
+                            ffmpeg_bin=self.settings.ffmpeg_bin, level=video.get("level"),
+                            timebase=video.get("time_base") or "1/15360",
+                            cancelled=cancelled, next_frame=first_frame)
+                    finally:
+                        first_frame.close()
+                    assembled = intro_work / "assembled.mp4"
+                    outcome = prepend(
+                        short_intro, output.path, prepared_intro, intro_work,
+                        ffmpeg_bin=self.settings.ffmpeg_bin,
+                        ffprobe_bin=self.settings.ffprobe_bin, cancelled=cancelled,
+                        destination=assembled)
+                    intro_ready[target.target_id] = assembled
+                    intro_results[target.target_id] = outcome
+                    (intro_work / "assembly.json").write_text(
+                        json.dumps({**prepared_intro.metadata(), **outcome}, indent=2),
+                        encoding="utf-8")
+                    output = replace(
+                        output, duration=output.duration + prepared_intro.duration,
+                        frame_count=output.frame_count + prepared_intro.frames,
+                        media=self.final_media.summary(assembled),
+                    )
                 seconds = plan_seconds[target.target_id] + (time.perf_counter() - begin)
                 outputs[target.target_id] = _with_seconds(output, seconds)
             self._check_cancel(cancelled)
+            if prepared_intro is not None:
+                # All targets have been verified. Preserve each untouched original in
+                # the job workspace before replacing any incomplete-bundle output.
+                # A later failure still leaves those original renders available.
+                backups: dict[str, Path] = {}
+                for target in targets:
+                    original = outputs[target.target_id].path
+                    backup = workspaces[target.target_id] / "intro-zoom" / "original-render.mp4"
+                    shutil.copy2(original, backup)
+                    backups[target.target_id] = backup
+                swapped: list[str] = []
+                try:
+                    for target in targets:
+                        self._check_cancel(cancelled)
+                        os.replace(intro_ready[target.target_id], outputs[target.target_id].path)
+                        swapped.append(target.target_id)
+                except BaseException:
+                    for target_id in swapped:
+                        try:
+                            shutil.copy2(backups[target_id], outputs[target_id].path)
+                        except OSError:
+                            # The backup remains in the workspace if restoration fails.
+                            pass
+                    raise
             self._progress(progress, Stage.final, 0.98, "Writing export manifest")
             manifest = self._manifest(
                 shared=shared, package_path=package_path, bundle=bundle,
                 outputs=outputs, plans=plans, total_seconds=time.perf_counter() - started,
             )
+            if prepared_intro is not None:
+                manifest["intro_zoom"] = {**prepared_intro.metadata(), "targets": intro_results}
             manifest_path = writer.publish(bundle, manifest)
+            if (prepared_intro is not None
+                    and not self.settings.render_resources.keep_intermediates):
+                for target in targets:
+                    intro_work = workspaces[target.target_id] / "intro-zoom"
+                    for temporary in (backups[target.target_id], intro_work / "intro.mp4"):
+                        try:
+                            temporary.unlink(missing_ok=True)
+                        except OSError:
+                            pass
         except BaseException as exc:
+            for staged_output in intro_ready.values():
+                try:
+                    staged_output.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if isinstance(exc, GenerationCancelledError):
+                for target in targets:
+                    temporary = workspaces[target.target_id] / "intro-zoom" / "intro.mp4"
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             failed = writer.fail(bundle, exc, diagnostics={
                 "workspace": str(workspace),
                 "rendered_targets": sorted(outputs),

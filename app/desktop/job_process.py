@@ -26,6 +26,7 @@ from typing import Any
 
 from app.config import Settings
 from app.diagnostics import BuildReportSession
+from app.features.intro_zoom.models import IntroZoomConfig
 from app.models import Stage
 from app.shared.errors import GenerationCancelledError, GenerationProcessCrashedError
 from app.shared.runtime_integrity import RuntimeSourceMismatchError, require_launch_source, source_root
@@ -59,6 +60,7 @@ class GenerationJob:
     package_path: Path
     audio_path: Path
     job_id: str
+    intro_zoom: IntroZoomConfig | None = None
 
     @property
     def fault_log(self) -> Path:
@@ -73,13 +75,16 @@ def run_pipeline(job: GenerationJob, progress: ProgressCallback, cancelled: Canc
     from app.pipeline import StoryEnginePipeline
 
     pipeline = StoryEnginePipeline(job.settings)
-    return pipeline.generate_bundle(
+    options = dict(
         package_path=job.package_path,
         audio_path=job.audio_path,
         job_id=job.job_id,
         progress=progress,
         cancelled=cancelled,
     )
+    if job.intro_zoom is not None:
+        options["intro_zoom"] = job.intro_zoom
+    return pipeline.generate_bundle(**options)
 
 
 def run_premiere(job: GenerationJob, progress: ProgressCallback, cancelled: CancellationCallback):
