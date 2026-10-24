@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+import shutil
 import sqlite3
+import subprocess
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from zipfile import ZipFile
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +24,7 @@ from app.web.admin_data import AdminData
 from app.web.uploads import Uploads
 from app.web.restore_admin import main as restore_admin
 from tests.web.test_uploads import archive, manifest
+from tests.support.premiere_check import local_path
 
 
 def setup(tmp_path, monkeypatch):
@@ -416,7 +420,9 @@ def test_admin_premiere_tab_lists_complete_project_and_downloads_media(tmp_path,
     outputs = {}
     for suffix, target in (("YOUTUBE", "YOUTUBE_16_9"), ("REELS", "REELS_9_16")):
         stem = f"EDITABLE_{suffix}_PREMIERE"
-        (bundle.directory / f"{stem}.xml").write_text("<xmeml/>", encoding="utf-8")
+        (bundle.directory / f"{stem}.xml").write_text(
+            "<xmeml><file><pathurl>file://localhost/C%3a/stale/image.png</pathurl></file></xmeml>",
+            encoding="utf-8")
         media = bundle.directory / f"{stem}_media"
         media.mkdir()
         (media / "image.png").write_bytes(b"artwork")
@@ -440,6 +446,11 @@ def test_admin_premiere_tab_lists_complete_project_and_downloads_media(tmp_path,
         options_dir = storage / "editable-job"
         options_dir.mkdir()
         (options_dir / "options.json").write_text('{"output_kind":"PREMIERE"}', encoding="utf-8")
+        # The owner clicks the completion link before an admin opens inventory.
+        with Identity(storage / "jobs.sqlite3").connect() as db:
+            assert db.execute("SELECT count(*) FROM export_inventory").fetchone()[0] == 0
+        owned_download = admin.get("/api/jobs/editable-job/download/premiere")
+        assert owned_download.status_code == 200, owned_download.text
         assert admin.get("/api/admin/exports").json()["total"] == 0
         projects = admin.get("/api/admin/premiere").json()
         assert projects["total"] == 1
@@ -449,21 +460,36 @@ def test_admin_premiere_tab_lists_complete_project_and_downloads_media(tmp_path,
         assert overview["premiere_projects"] == 1 and overview["bundles"] == 0
         response = admin.get("/api/admin/premiere/EDITABLE:v1/download")
         assert response.status_code == 200, response.text
-        owned_download = admin.get("/api/jobs/editable-job/download/premiere")
-        assert owned_download.status_code == 200
         assert admin.get("/api/jobs/editable-job/download/youtube").status_code == 404
         with ZipFile(BytesIO(response.content)) as archive:
             names = set(archive.namelist())
             assert "export.json" in names
+            assert {"README_FIRST.txt", "RELINK_MEDIA.cmd", "RELINK_MEDIA.ps1"} <= names
             for suffix in ("YOUTUBE", "REELS"):
                 assert f"EDITABLE_{suffix}_PREMIERE.xml" in names
                 assert archive.read(f"EDITABLE_{suffix}_PREMIERE_media/image.png") == b"artwork"
+            archive.extractall(tmp_path / "downloaded")
+        if shutil.which("powershell.exe"):
+            subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", str(tmp_path / "downloaded" / "RELINK_MEDIA.ps1")], check=True)
+            for suffix in ("YOUTUBE", "REELS"):
+                local = tmp_path / "downloaded" / f"EDITABLE_{suffix}_PREMIERE_LOCAL.xml"
+                assert local.is_file()
+                url = ET.parse(local).findtext(".//file/pathurl")
+                assert local_path(url) == (tmp_path / "downloaded" /
+                                           f"EDITABLE_{suffix}_PREMIERE_media" / "image.png")
+        project_xml = bundle.directory / "EDITABLE_YOUTUBE_PREMIERE.xml"
+        original_xml = project_xml.read_text(encoding="utf-8")
+        project_xml.write_text(original_xml.replace("image.png", "missing.png"), encoding="utf-8")
+        assert admin.get("/api/jobs/editable-job/download/premiere").status_code == 404
+        project_xml.write_text(original_xml, encoding="utf-8")
         assert admin.get("/api/admin/premiere/UNKNOWN:v1/download").status_code == 404
         assert admin.get("/api/admin/exports/EDITABLE:v1/download/youtube").status_code == 404
         assert admin.delete("/api/admin/exports/EDITABLE:v1", headers=headers).status_code == 200
         assert admin.get("/api/admin/premiere").json()["items"][0]["status"] == "DELETED"
         assert admin.get("/api/admin/overview").json()["premiere_projects"] == 0
         assert admin.get("/api/admin/premiere/EDITABLE:v1/download").status_code == 404
+        assert admin.get("/api/jobs/editable-job/download/premiere").status_code == 404
 
 
 def test_existing_admin_inventory_gains_kind_without_losing_video_rows(tmp_path):

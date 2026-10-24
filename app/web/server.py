@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
 from app.desktop.export_preflight import export_root_problem
+from app.final.premiere_portable import portable_files
 from app.final_package.loader import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
 from app.web.jobs import Jobs, generation_options
@@ -258,6 +259,8 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
                     if _is_link(file) or not file.resolve().is_relative_to(directory):
                         raise LookupError("Premiere project contains an unsafe path")
                     archive.write(file, file.relative_to(directory).as_posix())
+                for name, content in portable_files().items():
+                    archive.writestr(name, content)
         except Exception as exc:
             try:
                 if temporary is not None:
@@ -611,9 +614,13 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         bundle = Path(job["bundle"]).resolve()
         if kind == "premiere":
             if jobs.options_for(job_id).get("output_kind") != "PREMIERE":
-                raise HTTPException(404, "Premiere project unavailable")
+                raise HTTPException(404, "This job was not generated as a Premiere project")
             if not admin_data.secure_root() or admin_data.root is None or admin_data.root not in bundle.parents:
-                raise HTTPException(404, "Premiere project unavailable")
+                raise HTTPException(404, "Premiere export storage is unavailable")
+            try:
+                admin_data.register_completed_premiere(job_id, Path(job["bundle"]))
+            except LookupError as exc:
+                raise HTTPException(404, str(exc)) from exc
             return premiere_zip(f"{bundle.parent.name}:{bundle.name}")
         if kind in {"youtube", "reels", "manifest"}:
             if jobs.options_for(job_id).get("output_kind") == "PREMIERE" and kind != "manifest":

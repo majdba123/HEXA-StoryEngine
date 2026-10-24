@@ -8,8 +8,10 @@ import shutil
 import sqlite3
 import time
 import threading
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from app.final.bundle import ExportBundleWriter, export_slug, _is_link
 from app.shared.errors import StageFailedError
@@ -186,8 +188,25 @@ class AdminData:
         files = [directory / "export.json"]
         for key in ("YOUTUBE_16_9", "REELS_9_16"):
             output = manifest["outputs"][key]
-            files.append(directory / output["filename"])
+            project = directory / output["filename"]
+            files.append(project)
             media = directory / output["media_dir"]
+            try:
+                references = ET.parse(project).findall(".//file/pathurl")
+            except (ET.ParseError, OSError) as exc:
+                raise LookupError("Premiere project XML is invalid") from exc
+            if not references:
+                raise LookupError("Premiere project has no media references")
+            for reference in references:
+                try:
+                    url = urlsplit(reference.text or "")
+                except ValueError as exc:
+                    raise LookupError("Premiere project media URL is invalid") from exc
+                name = unquote(url.path.rsplit("/", 1)[-1])
+                if (url.scheme != "file" or not name or name in {".", ".."} or
+                        "/" in name or "\\" in name or not (media / name).is_file() or
+                        _is_link(media / name)):
+                    raise LookupError("Premiere project media is missing")
             for base, dirs, names in os.walk(media, followlinks=False):
                 for name in dirs + names:
                     path = Path(base) / name
@@ -198,6 +217,34 @@ class AdminData:
         if any(not path.is_file() or _is_link(path) for path in files):
             raise LookupError("Premiere project unavailable")
         return directory, files
+
+    def register_completed_premiere(self, job_id: str, bundle: Path) -> None:
+        """Make a completed project's first download independent of admin inventory scans."""
+        if not self.secure_root() or self.root is None or _is_link(bundle) or _is_link(bundle.parent):
+            raise LookupError("Premiere project unavailable")
+        slug = bundle.parent.name
+        match = VERSION.fullmatch(bundle.name)
+        if not safe_slug(slug) or match is None or bundle.parent.resolve() != self.root / slug:
+            raise LookupError("Premiere project unavailable")
+        version = int(match.group(1))
+        if bundle.resolve() != self.root / slug / f"v{version}":
+            raise LookupError("Premiere project unavailable")
+        manifest = valid_manifest(bundle, slug, version)
+        if manifest is None or manifest.get("schema") != "hexa.export.premiere/1":
+            raise LookupError("Premiere project unavailable")
+        bundle_id = f"{slug}:v{version}"
+        with self._delete_lock:
+            with self.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                job = db.execute("SELECT state,bundle FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if job is None or job["state"] != "completed" or Path(job["bundle"] or "") != bundle:
+                    raise LookupError("Premiere project unavailable")
+                db.execute("INSERT OR IGNORE INTO export_inventory"
+                           "(id,slug,version,job_id,created_at,kind,status) VALUES(?,?,?,?,?,?,'AVAILABLE')",
+                           (bundle_id, slug, version, job_id, manifest.get("generated_at"), "PREMIERE"))
+                row = db.execute("SELECT kind,status FROM export_inventory WHERE id=?", (bundle_id,)).fetchone()
+                if row is None or row["kind"] != "PREMIERE" or row["status"] != "AVAILABLE":
+                    raise LookupError("Premiere project unavailable")
 
     def overview(self, force: bool = False):
         if force:
