@@ -36,15 +36,18 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 update
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 install -y ffmpeg
           fi
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 update
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 install -y ffmpeg
           ffmpeg -version | sed -n '1p'
+          ffprobe -version | sed -n '1p'
 
       - name: Install HEXA and development dependencies
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,desktop]"
 
       - name: Compile source and lint
         run: |
@@ -58,6 +61,8 @@ jobs:
         run: pytest tests/test1
 
       - name: FFmpeg encoded and layer-contract tests - Test2
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: pytest tests/test2
 
       - name: Generative package and stress tests - Test3

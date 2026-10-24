@@ -32,7 +32,7 @@ import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
 
@@ -405,7 +405,10 @@ def _keyframes(series: list[tuple[float, ...]], tolerance: tuple[float, ...]) ->
 
 
 def _url(path: Path) -> str:
-    posix = Path(path).resolve().as_posix()
+    raw = str(path)
+    # A drive path remains absolute even when the exporter runs on POSIX.
+    posix = (PureWindowsPath(raw).as_posix() if re.match(r"^[A-Za-z]:[\\/]", raw)
+             else Path(path).resolve().as_posix())
     if re.match(r"^[A-Za-z]:", posix):
         posix = posix[0] + "%3a" + quote(posix[2:], safe="/")
     else:

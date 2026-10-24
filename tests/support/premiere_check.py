@@ -7,17 +7,21 @@ clips decoded with ffmpeg. Tests compare the result with the encoded video.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import numpy as np
 from PIL import Image
 
 
 def local_path(url: str) -> Path:
-    return Path(unquote(url.replace("file://localhost/", "")))
+    path = unquote(urlsplit(url).path)
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
+    return Path(path)
 
 
 def sequence_size(root: ET.Element) -> tuple[int, int]:
