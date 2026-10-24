@@ -19,6 +19,7 @@ from app.final_package.loader import FinalPackageLoader
 from app.final.bundle import export_slug
 from app.desktop.export_preflight import export_root_problem
 from app.shared.errors import InvalidPackageError
+from app.web.intro_zoom import IMAGE_LIMIT, VOICE_LIMIT, selection, prepare
 
 SHA = re.compile(r"^[0-9a-f]{64}$")
 AUDIO = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
@@ -153,6 +154,7 @@ class Uploads:
         ):
             raise HTTPException(422, "Invalid upload manifest")
         ids, paths, total, package, audio = set(), set(), 0, 0, 0
+        intros = {"intro_image": 0, "intro_audio": 0}
         for file in files:
             if not isinstance(file, dict) or set(file) != {
                 "id",
@@ -176,7 +178,7 @@ class Uploads:
                 or size > self.max_bytes
                 or not isinstance(digest, str)
                 or not SHA.fullmatch(digest)
-                or role not in ("package", "audio")
+                or role not in ("package", "audio", "intro_image", "intro_audio")
             ):
                 raise HTTPException(422, "Invalid file entry")
             ids.add(fid)
@@ -184,6 +186,12 @@ class Uploads:
             total += size
             package += role == "package"
             audio += role == "audio"
+            if role in intros:
+                intros[role] += 1
+                allowed = {".png", ".jpg", ".jpeg", ".webp"} if role == "intro_image" else AUDIO
+                limit = IMAGE_LIMIT if role == "intro_image" else VOICE_LIMIT
+                if "/" in path or Path(path).suffix.lower() not in allowed or not 0 < size <= limit:
+                    raise HTTPException(422, "Invalid Intro Zoom file")
             if role == "audio" and ("/" in path or Path(path).suffix.lower() not in AUDIO):
                 raise HTTPException(422, "Unsupported audio path")
             if size == 0 and (role == "audio" or mode == "zip"):
@@ -198,10 +206,18 @@ class Uploads:
                 raise HTTPException(422, "Folder path required")
         if (
             audio != 1
-            or package != (1 if mode == "zip" else len(files) - 1)
+            or package != (1 if mode == "zip" else len(files) - 1 - sum(intros.values()))
             or total > 2 * self.max_bytes
+            or intros["intro_image"] != intros["intro_audio"]
+            or intros["intro_image"] > 1
+            or ("intro_zoom" in manifest) != bool(intros["intro_image"])
         ):
             raise HTTPException(413, "Upload exceeds limit or has invalid roles")
+        if intros["intro_image"]:
+            try:
+                selection(manifest["intro_zoom"])
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         with self.lock, self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -453,6 +469,24 @@ class Uploads:
             if os.name == "posix":
                 audio_named.chmod(0o600)
             validate_audio(audio_named, settings.ffprobe_bin)
+            if "intro_zoom" in state["manifest"]:
+                if (options or {}).get("output_kind", "VIDEO") != "VIDEO":
+                    raise HTTPException(422, "Intro Zoom supports MP4 video only, not Premiere")
+                image_entry = next(f for f in files if f["role"] == "intro_image")
+                voice_entry = next(f for f in files if f["role"] == "intro_audio")
+                image_input = self.root / uid / ("pending-image" + Path(image_entry["path"]).suffix.lower())
+                voice_input = self.root / uid / ("pending-voice" + Path(voice_entry["path"]).suffix.lower())
+                try:
+                    shutil.copyfile(self.root / uid / image_entry["id"], image_input)
+                    shutil.copyfile(self.root / uid / voice_entry["id"], voice_input)
+                    prepare(self.root / uid, image_input, voice_input,
+                            state["manifest"]["intro_zoom"],
+                            ffprobe_bin=settings.ffprobe_bin, ffmpeg_bin=settings.ffmpeg_bin)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                finally:
+                    image_input.unlink(missing_ok=True)
+                    voice_input.unlink(missing_ok=True)
             package_path = self.root / uid / "package.zip"
             if state["manifest"]["mode"] == "zip":
                 package = next(f for f in files if f["role"] == "package")
@@ -505,7 +539,10 @@ class Uploads:
                     (job_id, time.time(), time.time(), uid),
                 )
             (self.jobs.root / job_id).mkdir(exist_ok=True)
-            self.jobs.start(job_id, package_path, audio_named, options)
+            job_options = dict(options or {})
+            if "intro_zoom" in state["manifest"]:
+                job_options["intro_zoom"] = selection(state["manifest"]["intro_zoom"])
+            self.jobs.start(job_id, package_path, audio_named, job_options)
             return {"id": job_id, "state": "queued"}
         except HTTPException as exc:
             if validation_started is not None:

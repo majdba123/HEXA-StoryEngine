@@ -61,6 +61,7 @@ const outputKind = () => document.querySelector('input[name="output-kind"]:check
 const lockedOutputKind = () => { try { return localStorage.getItem(uploadKindKey) || outputKind(); } catch (_) { return outputKind(); } };
 function lockOutputChoice(locked) {
   document.querySelectorAll('input[name="output-kind"]').forEach(option => { option.disabled = locked; });
+  window.HEXAIntroZoom.lock(locked);
 }
 function clearOutputLock() {
   try { localStorage.removeItem(uploadKindKey); } catch (_) { /* optional preference */ }
@@ -97,9 +98,10 @@ function currentFiles() {
   const packageFile = $('package').files[0];
   const audio = $('audio').files[0];
   if (!packageFile || !audio) throw Error('اختر ملف ZIP والصوت');
+  const selected = window.HEXAIntroZoom.files(outputKind());
   return {mode: 'zip', files: [
     {id: 'p0', path: packageFile.name, role: 'package', file: packageFile},
-    {id: 'audio', path: audio.name, role: 'audio', file: audio}
+    {id: 'audio', path: audio.name, role: 'audio', file: audio}, ...selected
   ]};
 }
 function progress(snapshot, sending = 0, phase = '', entry = null) {
@@ -172,7 +174,7 @@ async function runUpload(snapshot) {
       const blob = file.slice(offset, Math.min(offset + CHUNK, entry.size));
       const digest = await sha(blob);
       try {
-        const phase = entry.role === 'audio' ? 'رفع التعليق الصوتي' : 'رفع Final Package';
+        const phase = entry.role === 'audio' ? 'رفع التعليق الصوتي' : entry.role.startsWith('intro_') ? 'رفع الافتتاحية' : 'رفع Final Package';
         const acknowledged = await xhrChunk(`/api/uploads/${snapshot.id}/files/${entry.id}/chunks/${index}`, blob, digest, sent => progress(snapshot, sent, phase, entry));
         if (acknowledged.id !== snapshot.id || acknowledged.files?.[entry.id] !== offset + blob.size) throw Error('Invalid committed checkpoint');
         snapshot = acknowledged;
@@ -305,7 +307,8 @@ $('form').addEventListener('submit', async event => {
     const config = pendingOld ? null : await api('/api/uploads/config');
     const protocol = pendingOld ? (pendingOld.manifest.protocol || 1) : (config.protocols?.includes(2) ? 2 : 1);
     CHUNK = pendingOld?.manifest?.chunk_size || (protocol === 2 ? config.v2_chunk_size : config.chunk_size);
-    const manifest = {mode: chosen.mode, ...(pendingOld && pendingOld.manifest.protocol === undefined ? {} : {protocol}), chunk_size: CHUNK, files: []};
+    const introSelection = window.HEXAIntroZoom.choice(outputKind());
+    const manifest = {mode: chosen.mode, ...(pendingOld && pendingOld.manifest.protocol === undefined ? {} : {protocol}), chunk_size: CHUNK, files: [], ...(introSelection ? {intro_zoom: introSelection} : {})};
     for (let i = 0; i < files.length; i++) {
       say(`تحضير الملف ${i + 1} من ${files.length}...`);
       const f = files[i]; manifest.files.push({id:f.id,path:f.path,size:f.file.size,fingerprint:await fingerprint(f.file),role:f.role});

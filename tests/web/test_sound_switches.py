@@ -140,3 +140,83 @@ def test_the_page_offers_both_switches() -> None:
     assert script.count("/complete`, completion())") == 2  # both completion paths send them
     assert 'name="output-kind" value="PREMIERE"' in page
     assert 'output_kind:lockedOutputKind()' in script
+
+
+def test_intro_zoom_web_controls_and_complete_manifest() -> None:
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    intro = (STATIC / "intro-zoom.js").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="intro-enabled"' in page
+    assert 'id="intro-image-area"' in page
+    assert 'id="intro-voice"' in page
+    assert "/static/intro-zoom.js" in page
+    assert "focus_x" in intro and "focus_y" in intro and "magnification" in intro
+    assert "introSelection" in script and "intro_zoom" in script
+    assert "window.HEXAIntroZoom.files" in script
+
+
+def test_intro_selection_validation() -> None:
+    from app.web.intro_zoom import selection
+    assert selection({"focus_x": 0.25, "focus_y": 0.6, "magnification": 2.5}) == {
+        "focus_x": 0.25, "focus_y": 0.6, "magnification": 2.5}
+    for bad in ({"focus_x": -0.1, "focus_y": 0.6, "magnification": 2.5},
+                {"focus_x": 0.2, "focus_y": 0.6, "magnification": 9},
+                {"focus_x": "0.2", "focus_y": 0.6, "magnification": 2.5},
+                {"focus_x": 0.2, "focus_y": 0.6, "magnification": float("nan")}):
+        with pytest.raises(ValueError):
+            selection(bad)
+
+
+def test_intro_invalid_role_pairs_rejected(tmp_path) -> None:
+    from fastapi import HTTPException
+    from app.web.uploads import Uploads
+    settings = _settings(tmp_path)
+    jobs = Jobs(tmp_path / "storage", settings)
+    uploads = Uploads(tmp_path / "storage", jobs, 20 * 1024 * 1024)
+    initial = manifest(archive(), b"audio")
+    selected = {"focus_x": 0.5, "focus_y": 0.5, "magnification": 2.5}
+    initial["intro_zoom"] = selected
+    with pytest.raises(HTTPException) as issue:
+        uploads.initialize("test-user", "intro-missing-role", initial)
+    assert issue.value.status_code == 413
+    initial["files"].append({"id":"intro_image","path":"board.png","size":100,
+                             "fingerprint":"a"*64,"role":"intro_image"})
+    with pytest.raises(HTTPException) as issue:
+        uploads.initialize("test-user", "intro-missing-voice", initial)
+    assert issue.value.status_code == 413
+    initial["files"].append({"id":"intro_audio","path":"short.wav","size":100,
+                             "fingerprint":"b"*64,"role":"intro_audio"})
+    accepted = uploads.initialize("test-user", "intro-complete-roles", initial)
+    assert accepted["manifest"]["intro_zoom"] == selected
+    initial["intro_zoom"]["focus_x"] = float("nan")
+    with pytest.raises(HTTPException) as issue:
+        uploads.initialize("test-user", "intro-bad-coordinates", initial)
+    assert issue.value.status_code == 422
+
+
+def test_intro_web_preflight_and_retry_reuses_validated_media(tmp_path, monkeypatch) -> None:
+    from PIL import Image
+    from app.web.intro_zoom import from_job, prepare
+    from app.features.intro_zoom.models import IntroZoomConfig
+
+    directory = tmp_path / "upload"
+    directory.mkdir()
+    original_image = directory / "source.png"
+    original_voice = directory / "clip.wav"
+    Image.new("RGB", (180, 180), "white").save(original_image)
+    original_voice.write_bytes(b"test-audio")
+    called = []
+
+    def fake_preflight(config: IntroZoomConfig, **kwargs):
+        called.append(config)
+        return None
+
+    monkeypatch.setattr("app.web.intro_zoom.preflight", fake_preflight)
+    choice = {"focus_x": 0.5, "focus_y": 0.3, "magnification": 3.0}
+    prepared = prepare(directory, original_image, original_voice, choice)
+    assert prepared.image == directory / "intro-image.png"
+    assert prepared.audio == directory / "intro-voice.wav"
+    assert called == [prepared]
+    assert from_job(directory / "package.zip", choice) == prepared
+    with pytest.raises(ValueError):
+        from_job(tmp_path / "other" / "package.zip", choice)

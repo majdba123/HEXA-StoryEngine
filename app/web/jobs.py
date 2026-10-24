@@ -13,6 +13,7 @@ from pathlib import Path
 from app.config import Settings
 from app.diagnostics import BuildReportSession
 from app.pipeline import StoryEnginePipeline
+from app.web.intro_zoom import from_job, selection
 from app.shared.errors import GenerationCancelledError
 
 
@@ -60,6 +61,10 @@ def generation_options(raw: object) -> dict:
         if raw["output_kind"] not in {"VIDEO", "PREMIERE"}:
             raise ValueError("Invalid output kind")
         chosen["output_kind"] = raw["output_kind"]
+    if isinstance(raw, dict) and "intro_zoom" in raw:
+        chosen["intro_zoom"] = selection(raw["intro_zoom"])
+        if chosen.get("output_kind", "VIDEO") != "VIDEO":
+            raise ValueError("Intro Zoom supports MP4 video only")
     return chosen
 
 
@@ -210,9 +215,12 @@ class Jobs:
             generate = (StoryEnginePipeline(settings).generate_premiere
                         if options.get("output_kind") == "PREMIERE"
                         else StoryEnginePipeline(settings).generate_bundle)
+            kwargs = {}
+            if "intro_zoom" in options:
+                kwargs["intro_zoom"] = from_job(package, options["intro_zoom"])
             result = generate(
                 package_path=package, audio_path=audio, job_id=job_id,
-                progress=progress, cancelled=event.is_set,
+                progress=progress, cancelled=event.is_set, **kwargs,
             )
             report.complete(result.manifest_path if options.get("output_kind") == "PREMIERE"
                             else result.youtube.path)

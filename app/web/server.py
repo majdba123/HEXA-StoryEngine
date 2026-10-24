@@ -22,6 +22,7 @@ from app.desktop.export_preflight import export_root_problem
 from app.final_package.loader import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
 from app.web.jobs import Jobs, generation_options
+from app.web.intro_zoom import prepare, selection
 from app.web.identity import Identity, SESSION_SECONDS
 from app.web.admin_data import AdminData
 from app.final.bundle import _is_link, export_slug
@@ -405,11 +406,27 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     async def create_job(request: Request, audio: UploadFile = File(...), package: UploadFile | None = File(None),
                          folder_files: list[UploadFile] | None = File(None),
                          folder_paths: str | None = Form(None), sound_effects: str | None = Form(None),
-                         background_music: str | None = Form(None), output_kind: str = Form("VIDEO")):
+                         background_music: str | None = Form(None), output_kind: str = Form("VIDEO"),
+                         intro_image: UploadFile | None = File(None),
+                         intro_voice: UploadFile | None = File(None),
+                         intro_focus_x: float | None = Form(None),
+                         intro_focus_y: float | None = Form(None),
+                         intro_magnification: float | None = Form(None)):
         options = {key: value.strip().lower() in {"1", "true", "on", "yes"}
                    for key, value in (("sound_effects", sound_effects), ("background_music", background_music))
                    if value is not None}
         options["output_kind"] = output_kind
+        wants_intro = any(value is not None for value in (intro_image, intro_voice,
+                       intro_focus_x, intro_focus_y, intro_magnification))
+        if wants_intro:
+            if intro_image is None or intro_voice is None or any(value is None for value in
+                   (intro_focus_x, intro_focus_y, intro_magnification)):
+                raise HTTPException(422, "Intro Zoom requires image, voice and target")
+            try:
+                options["intro_zoom"] = selection({"focus_x": intro_focus_x,
+                    "focus_y": intro_focus_y, "magnification": intro_magnification})
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         try:
             generation_options(options)
         except ValueError as exc:
@@ -440,6 +457,22 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             else:
                 await asyncio.to_thread(save_folder, folder_files or [], folder_paths or "", package_path)
             await asyncio.to_thread(save, audio, audio_path)
+            if wants_intro and intro_image is not None and intro_voice is not None:
+                image_suffix = Path(intro_image.filename or "").suffix.lower()
+                voice_suffix = Path(intro_voice.filename or "").suffix.lower()
+                image_temp = directory / ("upload-image" + image_suffix)
+                voice_temp = directory / ("upload-voice" + voice_suffix)
+                await asyncio.to_thread(save, intro_image, image_temp)
+                await asyncio.to_thread(save, intro_voice, voice_temp)
+                try:
+                    await asyncio.to_thread(prepare, directory, image_temp, voice_temp,
+                        options["intro_zoom"], ffprobe_bin=settings.ffprobe_bin,
+                        ffmpeg_bin=settings.ffmpeg_bin)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                finally:
+                    image_temp.unlink(missing_ok=True)
+                    voice_temp.unlink(missing_ok=True)
             await asyncio.to_thread(validate_zip, package_path)
             await asyncio.to_thread(validate_audio, audio_path, settings.ffprobe_bin)
             validated_package = await asyncio.to_thread(FinalPackageLoader().load, package_path, directory / "validation")
