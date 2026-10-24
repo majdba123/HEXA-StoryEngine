@@ -13,6 +13,10 @@ async function api(path, options = {}) {
 }
 function cell(row, value) { const item = row.insertCell(); item.textContent = value ?? '—'; return item; }
 function action(row, label, handler) { const button = document.createElement('button'); button.textContent = label; button.addEventListener('click', handler); row.lastElementChild.append(button); }
+const count = value => Number(value || 0).toLocaleString('ar');
+const statusLabel = value => ({AVAILABLE:'متاح',DELETED:'ملف محذوف',DELETING:'جارٍ الحذف',DELETE_FAILED:'تعذّر الحذف',completed:'مكتمل',failed:'فشل',running:'جارٍ التوليد',queued:'بالانتظار',cancelling:'جارٍ الإلغاء',canceled:'ملغى',UNKNOWN:'غير معروف'})[value] || value || 'غير معروف';
+function statusCell(row, value) { const entry = cell(row,''); const badge = document.createElement('span'); badge.className = `badge ${['AVAILABLE','completed'].includes(value) ? 'good' : ['DELETED','failed','DELETE_FAILED'].includes(value) ? 'warn' : 'muted'}`; badge.textContent = statusLabel(value); entry.append(badge); return entry; }
+function emptyRow(body, columns, label) { const row = body.insertRow(); const entry = row.insertCell(); entry.colSpan = columns; entry.className = 'empty'; entry.textContent = label; }
 let pages = {exports:1,premiere:1,history:1};
 let userListRequest = 0;
 let detailsPage = 1;
@@ -35,16 +39,24 @@ function openPasswordReset(user) {
   dialog.dataset.userId = user.id;
   dialog.showModal();
 }
-async function overview() {
-  const data = await api('/api/admin/overview');
-  const labels = {users_total:'المستخدمون',users_active:'الحسابات النشطة',users_disabled:'الحسابات المعطلة',jobs_completed:'مهام مكتملة',jobs_failed:'مهام فاشلة',jobs_active:'مهام جارية',packages:'حزم Final Package',bundles:'نسخ فيديو مكتملة',premiere_projects:'مشاريع Premiere',output_files:'ملفات MP4',export_bytes:'حجم ملفات الفيديو',disk_free_bytes:'مساحة القرص المتاحة'};
+async function overview(refresh = false) {
+  const data = await api(`/api/admin/overview${refresh ? '?refresh=true' : ''}`);
+  const labels = {users_total:'الحسابات الحالية',users_active:'الحسابات النشطة',jobs_total:'كل مهام التوليد',jobs_completed:'مهام مكتملة',videos_historical:'فيديوهات أُنشئت',premiere_historical:'مشاريع Premiere أُنشئت',exports_deleted:'مخرجات حُذفت ملفاتها',jobs_failed:'مهام فاشلة',jobs_active:'مهام جارية',bundles:'فيديوهات متاحة',premiere_projects:'مشاريع Premiere متاحة',export_bytes:'حجم الفيديوهات المتاحة'};
   $('cards').replaceChildren();
   for (const [key,label] of Object.entries(labels)) {
-    const card = document.createElement('div'); card.className = 'card';
+    const card = document.createElement('div'); card.className = `card ${['jobs_total','videos_historical','premiere_historical'].includes(key) ? 'emphasis' : key === 'exports_deleted' ? 'warning' : key === 'jobs_completed' ? 'positive' : ''}`;
     const title = document.createElement('span'); title.textContent = label;
-    const value = document.createElement('strong'); value.textContent = key.endsWith('_bytes') ? mb(data[key]) : String(data[key] ?? '—');
+    const value = document.createElement('strong'); value.textContent = key.endsWith('_bytes') ? mb(data[key]) : count(data[key]);
     card.append(title,value); $('cards').append(card);
   }
+  const users = await api('/api/admin/users?page=1');
+  const rows = $('overview-users-rows'); rows.replaceChildren();
+  for (const user of users.items.sort((a,b) => b.stats.jobs_total-a.stats.jobs_total).slice(0,8)) {
+    const row = rows.insertRow();
+    cell(row,user.email_normalized); cell(row,count(user.stats.jobs_total)); cell(row,count(user.stats.videos)); cell(row,count(user.stats.premiere)); cell(row,date(user.stats.last_job_at)); cell(row,'');
+    action(row,'تفاصيل',() => showUserDetails(user));
+  }
+  if (!users.items.length) emptyRow(rows,6,'لا يوجد مستخدمون بعد');
 }
 async function users() {
   const request = ++userListRequest;
@@ -56,7 +68,8 @@ async function users() {
     const data = await api(`/api/admin/users?search=${search}&page=${page}`);
     if (request !== userListRequest) return;
     for (const user of data.items) {
-      const row = $('user-rows').insertRow(); cell(row,user.email_normalized); cell(row,user.role === 'ADMIN' ? 'أدمن' : 'مستخدم'); cell(row,user.deleted_at ? 'محذوف' : user.is_active ? 'نشط' : 'معطل'); cell(row,date(user.last_login_at)); cell(row,'');
+      const row = $('user-rows').insertRow(); cell(row,user.email_normalized); cell(row,user.role === 'ADMIN' ? 'أدمن' : 'مستخدم'); statusCell(row,user.deleted_at ? 'DELETED' : user.is_active ? 'AVAILABLE' : 'معطل');
+      cell(row,count(user.stats.jobs_total)); cell(row,count(user.stats.videos)); cell(row,count(user.stats.premiere)); cell(row,count(user.stats.deleted_exports)); cell(row,date(user.stats.last_job_at)); cell(row,'');
       action(row,'تفاصيل', () => showUserDetails(user));
       if (user.deleted_at) continue;
       action(row,'تعديل', () => openEditUser(user));
@@ -67,12 +80,14 @@ async function users() {
     $('user-count').textContent = `المستخدمون: ${loaded} من ${data.total}`;
     if (!data.items.length || loaded >= data.total) break;
   }
+  if (!loaded) emptyRow($('user-rows'),9,'لا يوجد مستخدمون مطابقون للبحث');
 }
 async function showUserDetails(user) {
   detailsUser = user;
   detailsPage = 1;
   $('user-details-email').textContent = user.email_normalized;
-  $('user-details-count').textContent = 'جارٍ تحميل الفيديوهات...';
+  $('user-details-meta').textContent = `${user.role === 'ADMIN' ? 'أدمن' : 'مستخدم'} • ${user.deleted_at ? 'حساب محذوف' : user.is_active ? 'نشط' : 'معطل'} • أُنشئ ${date(user.created_at)} • آخر دخول ${date(user.last_login_at)}`;
+  $('user-details-count').textContent = 'جارٍ تحميل سجل التوليد...';
   $('user-details-rows').replaceChildren();
   $('user-details-dialog').showModal();
   await loadUserDetails();
@@ -83,10 +98,15 @@ async function loadUserDetails() {
   try {
     const data = await api(`/api/admin/users/${encodeURIComponent(userId)}/history?page=${detailsPage}`);
     if (detailsUser?.id !== userId) return;
-    $('user-details-count').textContent = `الفيديوهات المكتملة: ${data.total}`;
+    $('user-details-count').textContent = `إجمالي المهام: ${data.total} • مكتملة: ${data.completed} • فاشلة: ${data.failed}`;
+    $('user-details-stats').replaceChildren();
+    for (const [label,value] of [['المهام',data.stats.jobs_total],['فيديو',data.stats.videos],['Premiere',data.stats.premiere],['ملفات محذوفة',data.stats.deleted_exports]]) {
+      const box = document.createElement('span'); box.textContent = label;
+      const number = document.createElement('strong'); number.textContent = count(value); box.append(number); $('user-details-stats').append(box);
+    }
     for (const item of data.items) {
       const row = $('user-details-rows').insertRow();
-      for (const value of [item.package_name,item.id,item.state,date(item.submitted_at),'']) cell(row,value);
+      cell(row,item.package_name); const id = cell(row,item.id); id.className = 'mono'; statusCell(row,item.state); cell(row,date(item.submitted_at)); cell(row,item.started_at && item.finished_at ? `${Math.round(item.finished_at-item.started_at)} ث` : '—'); cell(row,'');
       if (item.state === 'completed' && item.media_status === 'AVAILABLE' && item.bundle_id) {
         const kinds = item.media_kind === 'PREMIERE' ? ['premiere'] : ['youtube','reels'];
         for (const kind of kinds) {
@@ -95,8 +115,9 @@ async function loadUserDetails() {
           link.textContent = kind === 'premiere' ? 'Premiere ZIP' : kind === 'youtube' ? 'YouTube' : 'Reels';
           row.lastElementChild.append(link,' ');
         }
-      } else row.lastElementChild.textContent = item.media_status === 'DELETED' ? 'الملفات محذوفة' : '—';
+      } else row.lastElementChild.textContent = `${item.media_kind === 'PREMIERE' ? 'Premiere' : item.media_kind === 'VIDEO' ? 'فيديو' : 'ناتج غير معروف'} • ${item.media_status === 'DELETED' ? 'الملفات محذوفة' : statusLabel(item.media_status)}`;
     }
+    if (detailsPage === 1 && !data.items.length) emptyRow($('user-details-rows'),6,'لا توجد مهام لهذا المستخدم');
     $('user-details-more').disabled = detailsPage * 50 >= data.total;
   } catch (error) { $('user-details-count').textContent = error.message; }
 }
@@ -106,7 +127,8 @@ async function exportsList() {
   $('export-rows').replaceChildren();
   for (const item of data.items) {
     const row = $('export-rows').insertRow();
-    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.user_email || 'غير معروف',item.status,mb(item.outputs?.youtube),mb(item.outputs?.reels),mb(item.bytes),'']) cell(row,value);
+    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.user_email || 'غير معروف']) cell(row,value);
+    statusCell(row,item.status); cell(row,mb(item.outputs?.youtube)); cell(row,mb(item.outputs?.reels)); cell(row,mb(item.bytes)); cell(row,'');
     if (item.status === 'AVAILABLE') {
       for (const kind of ['youtube','reels']) if (item.outputs?.[kind] != null) {
         const link = document.createElement('a'); link.href = `/api/admin/exports/${encodeURIComponent(item.id)}/download/${kind}`; link.textContent = kind; row.lastElementChild.append(link,' ');
@@ -118,6 +140,7 @@ async function exportsList() {
       });
     }
   }
+  if (!data.items.length) emptyRow($('export-rows'),9,'لا توجد فيديوهات مطابقة');
   $('exports-more').disabled = pages.exports * 50 >= data.total;
 }
 async function premiereList() {
@@ -125,7 +148,8 @@ async function premiereList() {
   $('premiere-rows').replaceChildren();
   for (const item of data.items) {
     const row = $('premiere-rows').insertRow();
-    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.user_email || 'غير معروف',item.status,item.outputs?.youtube != null ? 'متوفر' : '—',item.outputs?.reels != null ? 'متوفر' : '—','']) cell(row,value);
+    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.user_email || 'غير معروف']) cell(row,value);
+    statusCell(row,item.status); cell(row,item.outputs?.youtube != null ? 'متوفر' : '—'); cell(row,item.outputs?.reels != null ? 'متوفر' : '—'); cell(row,'');
     if (item.status === 'AVAILABLE') {
       const link = document.createElement('a');
       link.href = `/api/admin/premiere/${encodeURIComponent(item.id)}/download`;
@@ -138,6 +162,7 @@ async function premiereList() {
       });
     }
   }
+  if (!data.items.length) emptyRow($('premiere-rows'),8,'لا توجد مشاريع Premiere بعد');
   $('premiere-more').disabled = pages.premiere * 50 >= data.total;
 }
 async function history() {
@@ -146,7 +171,8 @@ async function history() {
   const data = await api(`/api/admin/history?search=${encodeURIComponent($('history-search').value)}&state=${encodeURIComponent($('history-state').value)}&page=${pages.history}&sort=${$('history-sort').value}${from ? `&from_at=${from}` : ''}${to ? `&to_at=${to}` : ''}`);
   $('history-rows').replaceChildren();
   $('history-totals').textContent = `الإجمالي ${data.total} • مكتمل ${data.completed} • فاشل ${data.failed}`;
-  for (const item of data.items) { const row = $('history-rows').insertRow(); for (const value of [item.package_name,item.version,item.id,item.state,date(item.submitted_at),item.started_at && item.finished_at ? `${Math.round(item.finished_at-item.started_at)} s` : '—',item.user_email || 'قديم',item.media_status]) cell(row,value); }
+  for (const item of data.items) { const row = $('history-rows').insertRow(); cell(row,item.package_name); cell(row,item.version); const id=cell(row,item.id); id.className='mono'; statusCell(row,item.state); cell(row,date(item.submitted_at)); cell(row,item.started_at && item.finished_at ? `${Math.round(item.finished_at-item.started_at)} ث` : '—'); cell(row,item.user_email || 'مهمة قديمة بلا صاحب'); const media=statusCell(row,item.media_status); if(item.media_kind) media.append(` ${item.media_kind === 'PREMIERE' ? 'Premiere' : 'فيديو'}`); }
+  if (!data.items.length) emptyRow($('history-rows'),8,'لا توجد مهام مطابقة');
   $('history-more').disabled = pages.history * 50 >= data.total;
 }
 const loaders = {overview,users,exports:exportsList,premiere:premiereList,history};
@@ -161,6 +187,8 @@ $('user-refresh').addEventListener('click',() => tab('users'));
 $('export-refresh').addEventListener('click',() => { pages.exports=1; tab('exports'); });
 $('premiere-refresh').addEventListener('click',() => { pages.premiere=1; tab('premiere'); });
 $('history-refresh').addEventListener('click',() => { pages.history=1; tab('history'); });
+$('overview-refresh').addEventListener('click',async () => { try { message('جارٍ تحديث الأرقام...'); await overview(true); message('تحدّثت الأرقام'); } catch(error) { message(error.message); } });
+$('overview-users-link').addEventListener('click',() => tab('users'));
 $('create-user').addEventListener('submit',async event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); try { await api('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); event.target.reset(); await users(); message('أُنشئ الحساب'); } catch(error) { message(error.message); } });
 $('reset-password-form').addEventListener('submit', async event => {
   event.preventDefault();

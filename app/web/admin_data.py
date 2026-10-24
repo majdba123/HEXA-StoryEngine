@@ -91,6 +91,7 @@ class AdminData:
             if "kind" not in {row["name"] for row in db.execute("PRAGMA table_info(export_inventory)")}:
                 db.execute("ALTER TABLE export_inventory ADD COLUMN kind TEXT NOT NULL DEFAULT 'VIDEO'")
             db.execute("CREATE INDEX IF NOT EXISTS export_inventory_status ON export_inventory(status)")
+            db.execute("CREATE INDEX IF NOT EXISTS export_inventory_job ON export_inventory(job_id)")
             db.execute("INSERT OR IGNORE INTO admin_schema(version) VALUES(1)")
 
     def secure_root(self) -> bool:
@@ -198,13 +199,18 @@ class AdminData:
             raise LookupError("Premiere project unavailable")
         return directory, files
 
-    def overview(self):
+    def overview(self, force: bool = False):
+        if force:
+            self._overview_until = 0.0
+            self._next_reconcile = 0.0
         if self._overview_cache is not None and time.monotonic() < self._overview_until:
             return self._overview_cache
         self.reconcile()
         with self.connect() as db:
             users = db.execute("SELECT count(*) total,sum(is_active=1) active FROM users WHERE deleted_at IS NULL").fetchone()
+            users_all = db.execute("SELECT count(*) FROM users").fetchone()[0]
             jobs = {row["state"]: row["n"] for row in db.execute("SELECT state,count(*) n FROM jobs GROUP BY state")}
+            historic = db.execute("SELECT count(*) total, sum(kind='VIDEO') videos, sum(kind='PREMIERE') premiere, sum(status='DELETED') deleted FROM export_inventory").fetchone()
             packages = db.execute("SELECT count(DISTINCT slug) FROM export_inventory WHERE status='AVAILABLE'").fetchone()[0]
             bundles = db.execute("SELECT count(*) FROM export_inventory WHERE kind='VIDEO' AND status='AVAILABLE'").fetchone()[0]
             premiere_projects = db.execute("SELECT count(*) FROM export_inventory WHERE kind='PREMIERE' AND status='AVAILABLE'").fetchone()[0]
@@ -226,14 +232,50 @@ class AdminData:
                         physical += manifest.stat().st_size
         result = {"users_total": users["total"], "users_active": users["active"] or 0,
                 "users_disabled": users["total"] - (users["active"] or 0),
+                "users_historical": users_all, "jobs_total": sum(jobs.values()),
                 "jobs_completed": jobs.get("completed", 0), "jobs_failed": jobs.get("failed", 0),
+                "jobs_canceled": jobs.get("canceled", 0),
                 "jobs_active": sum(jobs.get(s, 0) for s in ("queued", "running", "cancelling")),
+                "exports_historical": historic["total"], "videos_historical": historic["videos"] or 0,
+                "premiere_historical": historic["premiere"] or 0,
+                "exports_deleted": historic["deleted"] or 0,
                 "packages": packages, "bundles": bundles, "premiere_projects": premiere_projects,
                 "output_files": count,
                 "export_bytes": physical, "disk_free_bytes": free_export_bytes(self.root)}
         self._overview_cache = result
         self._overview_until = time.monotonic() + 60
         return result
+
+    def user_stats(self, user_ids: list[str]) -> dict[str, dict]:
+        """Durable per-owner counts: deleted media and disabled users retain their rows."""
+        if not user_ids:
+            return {}
+        self.reconcile()
+        slots = ",".join("?" for _ in user_ids)
+        stats = {user_id: {"jobs_total": 0, "completed": 0, "failed": 0,
+                           "canceled": 0, "active": 0, "videos": 0,
+                           "premiere": 0, "deleted_exports": 0, "available_exports": 0,
+                           "last_job_at": None} for user_id in user_ids}
+        with self.connect() as db:
+            for row in db.execute(
+                f"SELECT user_id,count(*) jobs_total,sum(state='completed') completed,"
+                f"sum(state='failed') failed,sum(state='canceled') canceled,"
+                f"sum(state IN ('queued','running','cancelling')) active,"
+                f"max(created_at) last_job_at FROM jobs WHERE user_id IN ({slots}) GROUP BY user_id",
+                user_ids,
+            ):
+                stats[row["user_id"]].update({key: row[key] or 0 for key in
+                                               ("jobs_total", "completed", "failed", "canceled", "active")})
+                stats[row["user_id"]]["last_job_at"] = row["last_job_at"]
+            for row in db.execute(
+                f"SELECT j.user_id,sum(e.kind='VIDEO') videos,sum(e.kind='PREMIERE') premiere,"
+                f"sum(e.status='DELETED') deleted_exports,sum(e.status='AVAILABLE') available_exports "
+                f"FROM export_inventory e JOIN jobs j ON j.id=e.job_id "
+                f"WHERE j.user_id IN ({slots}) GROUP BY j.user_id", user_ids,
+            ):
+                stats[row["user_id"]].update({key: row[key] or 0 for key in
+                                               ("videos", "premiere", "deleted_exports", "available_exports")})
+        return stats
 
     def invalidate_overview(self):
         self._overview_until = 0.0
@@ -244,11 +286,11 @@ class AdminData:
         self.reconcile()
         order = "ASC" if sort == "oldest" else "DESC"
         submitted = "COALESCE((SELECT MIN(created) FROM uploads WHERE job_id=j.id),j.created_at)"
-        clause = f"(j.id LIKE ? OR j.package_name LIKE ? OR j.package LIKE ? OR j.bundle LIKE ?) AND (?='' OR j.state=?) AND (? IS NULL OR {submitted}>=?) AND (? IS NULL OR {submitted}<?) AND (? IS NULL OR j.user_id=?)"
-        args = (f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%", state, state,
+        clause = f"(j.id LIKE ? OR j.package_name LIKE ? OR j.package LIKE ? OR j.bundle LIKE ? OR j.user_id IN (SELECT id FROM users WHERE email_normalized LIKE ?)) AND (?='' OR j.state=?) AND (? IS NULL OR {submitted}>=?) AND (? IS NULL OR {submitted}<?) AND (? IS NULL OR j.user_id=?)"
+        args = (f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%", state, state,
                 from_at, from_at, to_at, to_at, user_id, user_id)
         with self.connect() as db:
-            rows = db.execute(f"SELECT j.id,j.state,j.progress,j.created_at,j.package_name,(SELECT MIN(created) FROM uploads WHERE job_id=j.id) AS upload_created_at,j.started_at,j.finished_at,j.user_id,CASE WHEN u.deleted_at IS NULL THEN u.email_normalized END AS user_email,j.bundle FROM jobs j LEFT JOIN users u ON u.id=j.user_id WHERE {clause} ORDER BY COALESCE({submitted},0) {order},j.id {order} LIMIT 50 OFFSET ?", (*args, (page - 1) * 50)).fetchall()
+            rows = db.execute(f"SELECT j.id,j.state,j.progress,j.created_at,j.package_name,(SELECT MIN(created) FROM uploads WHERE job_id=j.id) AS upload_created_at,j.started_at,j.finished_at,j.user_id,u.email_normalized AS user_email,j.bundle FROM jobs j LEFT JOIN users u ON u.id=j.user_id WHERE {clause} ORDER BY COALESCE({submitted},0) {order},j.id {order} LIMIT 50 OFFSET ?", (*args, (page - 1) * 50)).fetchall()
             counts = db.execute(f"SELECT count(*) total,sum(j.state='completed') completed,sum(j.state='failed') failed FROM jobs j WHERE {clause}", args).fetchone()
             bundle_ids = [f"{Path(row['bundle']).parent.name}:{Path(row['bundle']).name}" for row in rows if row["bundle"]]
             statuses = {}

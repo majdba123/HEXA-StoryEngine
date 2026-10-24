@@ -390,6 +390,21 @@ def test_admin_user_details_and_video_owner_follow_job_identity(tmp_path, monkey
         assert admin.patch(f"/api/admin/users/{user['id']}", headers=headers,
                            json={"email": "renamed@example.invalid", "role": "ADMIN"}).status_code == 200
         assert admin.get("/api/admin/exports").json()["items"][0]["user_email"] == "renamed@example.invalid"
+        assert admin.delete("/api/admin/exports/OWNED_VIDEO:v1", headers=headers).status_code == 200
+        assert admin.patch(f"/api/admin/users/{user['id']}", headers=headers,
+                           json={"delete": True}).status_code == 200
+        users = admin.get("/api/admin/users").json()["items"]
+        owner = next(row for row in users if row["id"] == user["id"])
+        assert owner["deleted_at"] is not None
+        assert owner["stats"]["jobs_total"] == owner["stats"]["completed"] == 1
+        assert owner["stats"]["videos"] == owner["stats"]["deleted_exports"] == 1
+        history = admin.get(f"/api/admin/users/{user['id']}/history").json()
+        assert history["items"][0]["user_email"] == "renamed@example.invalid"
+        assert history["items"][0]["media_status"] == "DELETED"
+        assert admin.get("/api/admin/history?search=renamed%40example.invalid").json()["total"] == 1
+        overview = admin.get("/api/admin/overview").json()
+        assert overview["videos_historical"] == overview["exports_deleted"] == 1
+        assert overview["bundles"] == 0
 
 
 def test_admin_premiere_tab_lists_complete_project_and_downloads_media(tmp_path, monkeypatch):
@@ -418,15 +433,25 @@ def test_admin_premiere_tab_lists_complete_project_and_downloads_media(tmp_path,
                                         for key, row in outputs.items()}})
     with TestClient(create_app(settings, storage)) as admin:
         headers = login(admin)
+        admin_id = admin.get("/api/session").json()["user"]["id"]
+        with Identity(storage / "jobs.sqlite3").connect() as db:
+            db.execute("INSERT INTO jobs(id,state,user_id,created_at,bundle) VALUES(?,'completed',?,?,?)",
+                       ("editable-job", admin_id, 1.0, str(bundle.directory)))
+        options_dir = storage / "editable-job"
+        options_dir.mkdir()
+        (options_dir / "options.json").write_text('{"output_kind":"PREMIERE"}', encoding="utf-8")
         assert admin.get("/api/admin/exports").json()["total"] == 0
         projects = admin.get("/api/admin/premiere").json()
         assert projects["total"] == 1
         assert projects["items"][0]["kind"] == "PREMIERE"
-        assert projects["items"][0]["user_email"] is None
+        assert projects["items"][0]["user_email"] == "root@example.invalid"
         overview = admin.get("/api/admin/overview").json()
         assert overview["premiere_projects"] == 1 and overview["bundles"] == 0
         response = admin.get("/api/admin/premiere/EDITABLE:v1/download")
         assert response.status_code == 200, response.text
+        owned_download = admin.get("/api/jobs/editable-job/download/premiere")
+        assert owned_download.status_code == 200
+        assert admin.get("/api/jobs/editable-job/download/youtube").status_code == 404
         with ZipFile(BytesIO(response.content)) as archive:
             names = set(archive.namelist())
             assert "export.json" in names

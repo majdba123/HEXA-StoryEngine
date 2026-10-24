@@ -21,11 +21,46 @@ SOUND_OPTIONS = ("sound_effects", "background_music")
 OPTIONS_FILE = "options.json"
 
 
+def _process_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # os.kill(pid, 0) sends a console control event on Windows.
+        import ctypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel.OpenProcess(0x1000, 0, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def sound_options(raw: object) -> dict[str, bool]:
     """Only the known switches with real booleans; anything else keeps the server default."""
     if not isinstance(raw, dict):
         return {}
     return {key: raw[key] for key in SOUND_OPTIONS if isinstance(raw.get(key), bool)}
+
+
+def generation_options(raw: object) -> dict:
+    """Keep the output choice with the sound switches across retries."""
+    chosen = sound_options(raw)
+    if isinstance(raw, dict) and "output_kind" in raw:
+        if raw["output_kind"] not in {"VIDEO", "PREMIERE"}:
+            raise ValueError("Invalid output kind")
+        chosen["output_kind"] = raw["output_kind"]
+    return chosen
 
 
 class Jobs:
@@ -64,11 +99,7 @@ class Jobs:
                 owner = db.execute("SELECT pid FROM owners WHERE job_id=?", (row["id"],)).fetchone()
                 alive = False
                 if owner:
-                    try:
-                        os.kill(owner["pid"], 0)
-                        alive = True
-                    except OSError:
-                        pass
+                    alive = _process_alive(owner["pid"])
                 if not alive:
                     db.execute("UPDATE jobs SET state='failed', message='Server stopped during generation' "
                                "WHERE id=?", (row["id"],))
@@ -141,15 +172,15 @@ class Jobs:
             self.update(job_id, state="cancelling", message="Stopping engine and cleaning up")
             return True
 
-    def options_for(self, job_id: str) -> dict[str, bool]:
+    def options_for(self, job_id: str) -> dict:
         """The switches a job was started with (kept beside it, so a retry keeps them)."""
         try:
-            return sound_options(json.loads((self.root / job_id / OPTIONS_FILE).read_text(encoding="utf-8")))
+            return generation_options(json.loads((self.root / job_id / OPTIONS_FILE).read_text(encoding="utf-8")))
         except (OSError, ValueError):
             return {}
 
     def start(self, job_id: str, package: Path, audio: Path, options: dict | None = None) -> None:
-        chosen = sound_options(options)
+        chosen = generation_options(options)
         if chosen:
             (self.root / job_id).mkdir(parents=True, exist_ok=True)
             (self.root / job_id / OPTIONS_FILE).write_text(json.dumps(chosen), encoding="utf-8")
@@ -161,7 +192,8 @@ class Jobs:
                          daemon=False, name=f"hexa-web-{job_id[:8]}").start()
 
     def _run(self, job_id: str, package: Path, audio: Path, event: threading.Event) -> None:
-        settings = replace(self.settings, **self.options_for(job_id))
+        options = self.options_for(job_id)
+        settings = replace(self.settings, **sound_options(options))
         report = BuildReportSession(job_id=job_id, settings=settings,
                                     package_path=package, audio_path=audio)
         self._reports[job_id] = report
@@ -175,12 +207,17 @@ class Jobs:
                 report.on_progress(stage, value, message)
                 self.update(job_id, progress=value, stage=stage.value, message=message)
 
-            result = StoryEnginePipeline(settings).generate_bundle(
+            generate = (StoryEnginePipeline(settings).generate_premiere
+                        if options.get("output_kind") == "PREMIERE"
+                        else StoryEnginePipeline(settings).generate_bundle)
+            result = generate(
                 package_path=package, audio_path=audio, job_id=job_id,
                 progress=progress, cancelled=event.is_set,
             )
-            report.complete(result.youtube.path)
-            final = dict(state="completed", progress=1, message="Bundle ready",
+            report.complete(result.manifest_path if options.get("output_kind") == "PREMIERE"
+                            else result.youtube.path)
+            final = dict(state="completed", progress=1,
+                         message="Premiere project ready" if options.get("output_kind") == "PREMIERE" else "Bundle ready",
                          bundle=str(result.directory), youtube=str(result.youtube.path),
                          reels=str(result.reels.path))
         except GenerationCancelledError:

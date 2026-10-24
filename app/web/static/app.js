@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let uploadKey, pendingKey, jobKey;
+let uploadKey, pendingKey, jobKey, uploadKindKey;
 let CHUNK = 256 * 1024;
 let activeJob = null, activeUpload = null, files = [], polling = null, stopped = false;
 let uploadBusy = false;
@@ -57,8 +57,27 @@ function soundOptions() {
   for (const [id, key] of Object.entries(SOUND_SWITCHES)) options[key] = $(id).checked;
   return options;
 }
+const outputKind = () => document.querySelector('input[name="output-kind"]:checked').value;
+const lockedOutputKind = () => { try { return localStorage.getItem(uploadKindKey) || outputKind(); } catch (_) { return outputKind(); } };
+function lockOutputChoice(locked) {
+  document.querySelectorAll('input[name="output-kind"]').forEach(option => { option.disabled = locked; });
+}
+function clearOutputLock() {
+  try { localStorage.removeItem(uploadKindKey); } catch (_) { /* optional preference */ }
+  lockOutputChoice(false);
+}
+function updateOutputChoice() {
+  $('generate').textContent = outputKind() === 'PREMIERE' ? 'توليد مشروع Premiere' : 'توليد YouTube + Reels';
+  try { localStorage.setItem('hexa-output-kind', outputKind()); } catch (_) { /* optional preference */ }
+}
+try {
+  const savedKind = localStorage.getItem('hexa-output-kind');
+  if (savedKind === 'PREMIERE') document.querySelector('input[name="output-kind"][value="PREMIERE"]').checked = true;
+} catch (_) { /* optional preference */ }
+document.querySelectorAll('input[name="output-kind"]').forEach(option => option.addEventListener('change', updateOutputChoice));
+updateOutputChoice();
 function completion() {
-  return {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(soundOptions())};
+  return {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...soundOptions(),output_kind:lockedOutputKind()})};
 }
 async function initSoundSwitches() {
   let defaults = {};
@@ -123,9 +142,10 @@ async function runUpload(snapshot) {
   CHUNK = snapshot.chunk_size;
   uploadMeter = null;
   activeUpload = snapshot.id; localStorage.setItem(uploadKey, snapshot.id); stopped = false;
+  lockOutputChoice(true);
   $('cancel-upload').hidden = false;
   $('generate').textContent = 'استئناف الرفع';
-  if (snapshot.job_id) { localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; watch(snapshot.job_id); return; }
+  if (snapshot.job_id) { localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; clearOutputLock(); watch(snapshot.job_id); return; }
   progress(snapshot);
   $('retry-upload').hidden = snapshot.state !== 'failed';
   if (snapshot.state === 'failed') { say(`فشل التحقق: ${snapshot.error}`); return; }
@@ -133,7 +153,7 @@ async function runUpload(snapshot) {
   if (snapshot.manifest.files.every(f => snapshot.files[f.id] === f.size)) {
     say('جارٍ التحقق من السلامة و Final Package...');
     const result = await api(`/api/uploads/${snapshot.id}/complete`, completion());
-    localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; watch(result.id); return;
+    localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; clearOutputLock(); watch(result.id); return;
   }
   if (!files.length) { say('الرفع محفوظ. اختر الملفات نفسها ثم اضغط استئناف.'); return; }
   const manifest = snapshot.manifest.files;
@@ -179,7 +199,7 @@ async function runUpload(snapshot) {
   if (stopped) return;
   say('جارٍ التحقق من السلامة و Final Package...');
   const result = await api(`/api/uploads/${snapshot.id}/complete`, completion());
-  localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; watch(result.id);
+  localStorage.removeItem(uploadKey); await forgetFiles(snapshot.id); activeUpload = null; clearOutputLock(); watch(result.id);
 }
 async function resume(snapshot) {
   if (uploadBusy) return;
@@ -188,14 +208,17 @@ async function resume(snapshot) {
   try { await runUpload(snapshot); }
   finally { uploadBusy = false; $('generate').disabled = false; }
 }
-function links(id) {
+function links(id, kind) {
   for (const kind of ['youtube','reels','manifest','diagnostics']) $(kind).href = `/api/jobs/${id}/download/${kind}`;
+  $('premiere-download').href = `/api/jobs/${id}/download/premiere`;
+  $('youtube').hidden = $('reels').hidden = kind === 'PREMIERE';
+  $('premiere-download').hidden = kind !== 'PREMIERE';
   $('results').hidden = false;
 }
 function watch(id) {
   activeJob = id; localStorage.setItem(jobKey, id); $('cancel').disabled = false;
   $('cancel-upload').hidden = true;
-  $('generate').textContent = 'توليد YouTube + Reels';
+  updateOutputChoice();
   if (polling) clearInterval(polling);
   polling = setInterval(poll, 1200); poll();
 }
@@ -208,7 +231,7 @@ async function poll() {
     const phases = {queued:'بانتظار التوليد',running:'جارٍ التوليد',render:'التصيير',export:'إنهاء الملفات',cancelling:'جارٍ الإلغاء',completed:'اكتمل',failed:'فشل',canceled:'ألغي'};
     say(`${phases[job.stage] || phases[job.state] || job.stage || job.state}: ${job.message || ''}`);
     $('log').textContent = events.map(event => event.line).join('\n');
-    if (job.state === 'completed') links(id);
+    if (job.state === 'completed') links(id, job.output_kind);
     $('retry-job').hidden = job.state !== 'failed';
     $('retry-job').dataset.jobId = id;
     if (['completed','failed','canceled'].includes(job.state)) { clearInterval(polling); polling = null; activeJob = null; $('cancel').disabled = true; }
@@ -225,6 +248,7 @@ async function reconnect() {
         if (session.job_id === active.id) {
           localStorage.removeItem(uploadKey);
           await forgetFiles(old);
+          clearOutputLock();
         }
       } catch (error) {
         if (error.code === 404) {
@@ -258,7 +282,7 @@ async function reconnect() {
       files = [];
       await resume(session); return;
     } catch (error) {
-      if (permanentInitiationError(error)) localStorage.removeItem(pendingKey);
+      if (permanentInitiationError(error)) { localStorage.removeItem(pendingKey); clearOutputLock(); }
       say(`تعذر استعادة بداية الرفع: ${error.message}`);
       return;
     }
@@ -273,6 +297,7 @@ $('form').addEventListener('submit', async event => {
   $('generate').disabled = true;
   try {
     const chosen = currentFiles(); files = chosen.files;
+    if (!localStorage.getItem(uploadKindKey)) localStorage.setItem(uploadKindKey, outputKind());
     const existing = localStorage.getItem(uploadKey);
     if (existing) { await resume(await api(`/api/uploads/${existing}`)); return; }
     const saved = localStorage.getItem(pendingKey);
@@ -292,7 +317,7 @@ $('form').addEventListener('submit', async event => {
     try {
       snapshot = await api('/api/uploads', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pending)});
     } catch (error) {
-      if (permanentInitiationError(error)) localStorage.removeItem(pendingKey);
+      if (permanentInitiationError(error)) { localStorage.removeItem(pendingKey); clearOutputLock(); }
       throw error;
     }
     localStorage.setItem(uploadKey, snapshot.id);
@@ -320,7 +345,7 @@ $('retry-job').addEventListener('click', async () => {
 $('cancel-upload').addEventListener('click', async () => {
   if (!activeUpload || !confirm('حذف الرفع المحفوظ؟')) return;
   stopped = true;
-  try { await api(`/api/uploads/${activeUpload}`, {method:'DELETE'}); await forgetFiles(activeUpload); localStorage.removeItem(uploadKey); activeUpload = null; $('cancel-upload').hidden = true; say('حُذف الرفع.'); } catch (error) { say(error.message); }
+  try { await api(`/api/uploads/${activeUpload}`, {method:'DELETE'}); await forgetFiles(activeUpload); localStorage.removeItem(uploadKey); activeUpload = null; clearOutputLock(); $('cancel-upload').hidden = true; say('حُذف الرفع.'); } catch (error) { say(error.message); }
 });
 $('clear').addEventListener('click', () => { $('log').textContent = ''; });
 for (const id of ['package','audio']) $(id).addEventListener('change', () => { $(`${id}-name`).textContent = $(id).files[0]?.name || ''; });
@@ -336,6 +361,12 @@ async function ensureSession() {
   uploadKey = `${scope}.upload`;
   pendingKey = `${scope}.pending`;
   jobKey = `${scope}.lastJob`;
+  uploadKindKey = `${scope}.uploadKind`;
+  const retainedKind = localStorage.getItem(uploadKindKey);
+  if (retainedKind === 'VIDEO' || retainedKind === 'PREMIERE') {
+    document.querySelector(`input[name="output-kind"][value="${retainedKind}"]`).checked = true;
+    updateOutputChoice();
+  }
   if (state.user.role === 'ADMIN') $('admin-link').hidden = false;
   return true;
 }

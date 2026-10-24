@@ -21,7 +21,7 @@ from app.config import Settings
 from app.desktop.export_preflight import export_root_problem
 from app.final_package.loader import FinalPackageLoader
 from app.shared.errors import InvalidPackageError
-from app.web.jobs import Jobs
+from app.web.jobs import Jobs, generation_options
 from app.web.identity import Identity, SESSION_SECONDS
 from app.web.admin_data import AdminData
 from app.final.bundle import _is_link, export_slug
@@ -166,7 +166,11 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         admin(request)
         if not 1 <= page <= 100000 or len(search) > 254:
             raise HTTPException(422, "Invalid search")
-        return identity.users(search, 50, (page - 1) * 50)
+        result = identity.users(search, 50, (page - 1) * 50)
+        stats = admin_data.user_stats([item["id"] for item in result["items"]])
+        for item in result["items"]:
+            item["stats"] = stats[item["id"]]
+        return result
 
     @app.post("/api/admin/users", status_code=201)
     def create_user(request: Request, email: str = Body(...), password: str = Body(...), role: str = Body("USER")):
@@ -208,12 +212,14 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             raise HTTPException(422, "Invalid page")
         if identity.user(user_id) is None:
             raise HTTPException(404, "User not found")
-        return admin_data.history(page=page, state="completed", user_id=user_id)
+        result = admin_data.history(page=page, user_id=user_id)
+        result["stats"] = admin_data.user_stats([user_id])[user_id]
+        return result
 
     @app.get("/api/admin/overview")
-    def admin_overview(request: Request):
+    def admin_overview(request: Request, refresh: bool = False):
         admin(request)
-        return admin_data.overview()
+        return admin_data.overview(force=refresh)
 
     @app.get("/api/admin/exports")
     def admin_exports(request: Request, search: str = "", page: int = 1):
@@ -232,6 +238,9 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     @app.get("/api/admin/premiere/{bundle_id}/download")
     def admin_premiere_download(bundle_id: str, request: Request):
         admin(request)
+        return premiere_zip(bundle_id)
+
+    def premiere_zip(bundle_id: str):
         if not admin_data.lease_download(bundle_id):
             raise HTTPException(404, "Premiere project unavailable")
         temporary = None
@@ -396,10 +405,15 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     async def create_job(request: Request, audio: UploadFile = File(...), package: UploadFile | None = File(None),
                          folder_files: list[UploadFile] | None = File(None),
                          folder_paths: str | None = Form(None), sound_effects: str | None = Form(None),
-                         background_music: str | None = Form(None)):
+                         background_music: str | None = Form(None), output_kind: str = Form("VIDEO")):
         options = {key: value.strip().lower() in {"1", "true", "on", "yes"}
                    for key, value in (("sound_effects", sound_effects), ("background_music", background_music))
                    if value is not None}
+        options["output_kind"] = output_kind
+        try:
+            generation_options(options)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         problem = await asyncio.to_thread(export_root_problem, settings)
         if problem:
             raise HTTPException(422, problem)
@@ -483,8 +497,12 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
             body = json.loads(await request.body() or b"{}")
         except (ValueError, UnicodeDecodeError) as exc:
             raise HTTPException(422, "Invalid completion options") from exc
+        try:
+            options = generation_options(body)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         result = await asyncio.to_thread(uploads.complete, upload_id, upload_owner(request, upload_id), settings,
-                                         body if isinstance(body, dict) else {})
+                                         options)
         guard.log.info("resumable upload finalized upload=%s job=%s", upload_id, result["id"])
         return result
 
@@ -508,6 +526,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
     def get_job(job_id: str, request: Request):
         job = owned_job(request, job_id)
         result = {key: job[key] for key in ("id", "state", "progress", "stage", "message")}
+        result["output_kind"] = jobs.options_for(job_id).get("output_kind", "VIDEO")
         return result
 
     @app.get("/api/jobs/{job_id}/events")
@@ -557,7 +576,15 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         if job is None or job["state"] != "completed":
             raise HTTPException(404, "Completed job not found")
         bundle = Path(job["bundle"]).resolve()
+        if kind == "premiere":
+            if jobs.options_for(job_id).get("output_kind") != "PREMIERE":
+                raise HTTPException(404, "Premiere project unavailable")
+            if not admin_data.secure_root() or admin_data.root is None or admin_data.root not in bundle.parents:
+                raise HTTPException(404, "Premiere project unavailable")
+            return premiere_zip(f"{bundle.parent.name}:{bundle.name}")
         if kind in {"youtube", "reels", "manifest"}:
+            if jobs.options_for(job_id).get("output_kind") == "PREMIERE" and kind != "manifest":
+                raise HTTPException(404, "Video output unavailable")
             if not admin_data.secure_root() or admin_data.root is None or admin_data.root not in bundle.parents:
                 raise HTTPException(404, "Output unavailable")
             path = bundle / "export.json" if kind == "manifest" else Path(job[kind]).resolve()
