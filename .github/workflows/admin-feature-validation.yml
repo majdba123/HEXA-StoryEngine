@@ -39,6 +39,13 @@ jobs:
           ffprobe -version | sed -n '1p'
       - name: Install dependencies
         run: python -m pip install -e ".[dev,desktop]"
+      - name: Verify headless Qt runtime
+        run: |
+          set -euo pipefail
+          if ! ldconfig -p | grep -F 'libEGL.so.1' >/dev/null; then
+            sudo apt-get -o Acquire::Retries=1 install -y libegl1
+          fi
+          QT_QPA_PLATFORM=offscreen python -c "from PySide6.QtWidgets import QApplication; from PySide6.QtTest import QTest"
       - name: Compile and lint
         run: |
           python -m compileall -q app
