@@ -192,7 +192,7 @@ class Identity:
 
     def users(self, search: str = "", limit: int = 50, offset: int = 0):
         with self.connect() as db:
-            rows = db.execute("SELECT id,email_normalized,role,is_active,deleted_at,must_change_password,created_at,updated_at,last_login_at FROM users WHERE email_normalized LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?", (f"%{search}%", limit, offset)).fetchall()
+            rows = db.execute("SELECT id,email_normalized,role,is_active,deleted_at,must_change_password,created_at,updated_at,last_login_at FROM users WHERE email_normalized LIKE ? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?", (f"%{search}%", limit, offset)).fetchall()
             count = db.execute("SELECT count(*) FROM users WHERE email_normalized LIKE ?", (f"%{search}%",)).fetchone()[0]
         return {"items": [dict(row) for row in rows], "total": count}
 

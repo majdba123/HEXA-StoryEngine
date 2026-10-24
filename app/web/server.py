@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import hmac
 import sqlite3
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -200,6 +201,15 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
+    @app.get("/api/admin/users/{user_id}/history")
+    def admin_user_history(user_id: str, request: Request, page: int = 1):
+        admin(request)
+        if not 1 <= page <= 100000:
+            raise HTTPException(422, "Invalid page")
+        if identity.user(user_id) is None:
+            raise HTTPException(404, "User not found")
+        return admin_data.history(page=page, state="completed", user_id=user_id)
+
     @app.get("/api/admin/overview")
     def admin_overview(request: Request):
         admin(request)
@@ -211,6 +221,51 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         if not 1 <= page <= 100000 or len(search) > 80:
             raise HTTPException(422, "Invalid search")
         return admin_data.inventory(search, page)
+
+    @app.get("/api/admin/premiere")
+    def admin_premiere(request: Request, search: str = "", page: int = 1):
+        admin(request)
+        if not 1 <= page <= 100000 or len(search) > 80:
+            raise HTTPException(422, "Invalid search")
+        return admin_data.inventory(search, page, kind="PREMIERE")
+
+    @app.get("/api/admin/premiere/{bundle_id}/download")
+    def admin_premiere_download(bundle_id: str, request: Request):
+        admin(request)
+        if not admin_data.lease_download(bundle_id):
+            raise HTTPException(404, "Premiere project unavailable")
+        temporary = None
+        try:
+            directory, files = admin_data.premiere_files(bundle_id)
+            required_bytes = sum(file.stat().st_size for file in files) + 16 * 1024 * 1024
+            if shutil.disk_usage(jobs.root).free < required_bytes:
+                raise HTTPException(507, "Insufficient space to package Premiere project")
+            handle, name = tempfile.mkstemp(prefix="hexa-premiere-", suffix=".zip", dir=jobs.root)
+            os.close(handle)
+            temporary = Path(name)
+            with zipfile.ZipFile(temporary, "w", allowZip64=True, compression=zipfile.ZIP_STORED) as archive:
+                for file in files:
+                    if _is_link(file) or not file.resolve().is_relative_to(directory):
+                        raise LookupError("Premiere project contains an unsafe path")
+                    archive.write(file, file.relative_to(directory).as_posix())
+        except Exception as exc:
+            try:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            finally:
+                admin_data.release_download(bundle_id)
+            if isinstance(exc, LookupError):
+                raise HTTPException(404, str(exc)) from exc
+            raise
+
+        def release_project():
+            try:
+                temporary.unlink(missing_ok=True)
+            finally:
+                admin_data.release_download(bundle_id)
+
+        return FileResponse(temporary, filename=f"{directory.parent.name}_{directory.name}_PREMIERE.zip",
+                            media_type="application/zip", background=BackgroundTask(release_project))
 
     @app.get("/api/admin/history")
     def admin_history(request: Request, search: str = "", state: str = "", page: int = 1,
@@ -245,7 +300,7 @@ def create_app(settings: Settings | None = None, storage: Path | None = None,
         if kind not in {"youtube", "reels"}:
             raise HTTPException(404, "Unknown output")
         with admin_data.connect() as db:
-            row = db.execute("SELECT slug,version FROM export_inventory WHERE id=? AND status='AVAILABLE'", (bundle_id,)).fetchone()
+            row = db.execute("SELECT slug,version FROM export_inventory WHERE id=? AND kind='VIDEO' AND status='AVAILABLE'", (bundle_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Export unavailable")
         directory = admin_data.root / row["slug"] / f"v{row['version']}"

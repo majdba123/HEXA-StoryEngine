@@ -13,7 +13,21 @@ async function api(path, options = {}) {
 }
 function cell(row, value) { const item = row.insertCell(); item.textContent = value ?? '—'; return item; }
 function action(row, label, handler) { const button = document.createElement('button'); button.textContent = label; button.addEventListener('click', handler); row.lastElementChild.append(button); }
-let pages = {users:1,exports:1,history:1};
+let pages = {exports:1,premiere:1,history:1};
+let userListRequest = 0;
+let detailsPage = 1;
+let detailsUser = null;
+function openEditUser(user) {
+  const dialog = $('edit-user-dialog');
+  dialog.dataset.userId = user.id;
+  dialog.dataset.email = user.email_normalized;
+  dialog.dataset.role = user.role;
+  dialog.dataset.active = user.is_active ? '1' : '0';
+  $('edit-user-email').value = user.email_normalized;
+  $('edit-user-role').value = user.role;
+  $('edit-user-active').value = user.is_active ? '1' : '0';
+  dialog.showModal();
+}
 function openPasswordReset(user) {
   const dialog = $('reset-password-dialog');
   $('reset-password-email').textContent = user.email_normalized;
@@ -23,7 +37,7 @@ function openPasswordReset(user) {
 }
 async function overview() {
   const data = await api('/api/admin/overview');
-  const labels = {users_total:'المستخدمون',users_active:'الحسابات النشطة',users_disabled:'الحسابات المعطلة',jobs_completed:'مهام مكتملة',jobs_failed:'مهام فاشلة',jobs_active:'مهام جارية',packages:'حزم Final Package',bundles:'نسخ فيديو مكتملة',output_files:'ملفات MP4',export_bytes:'حجم ملفات الفيديو',disk_free_bytes:'مساحة القرص المتاحة'};
+  const labels = {users_total:'المستخدمون',users_active:'الحسابات النشطة',users_disabled:'الحسابات المعطلة',jobs_completed:'مهام مكتملة',jobs_failed:'مهام فاشلة',jobs_active:'مهام جارية',packages:'حزم Final Package',bundles:'نسخ فيديو مكتملة',premiere_projects:'مشاريع Premiere',output_files:'ملفات MP4',export_bytes:'حجم ملفات الفيديو',disk_free_bytes:'مساحة القرص المتاحة'};
   $('cards').replaceChildren();
   for (const [key,label] of Object.entries(labels)) {
     const card = document.createElement('div'); card.className = 'card';
@@ -33,18 +47,58 @@ async function overview() {
   }
 }
 async function users() {
-  const data = await api(`/api/admin/users?search=${encodeURIComponent($('user-search').value)}&page=${pages.users}`);
+  const request = ++userListRequest;
+  const search = encodeURIComponent($('user-search').value);
   $('user-rows').replaceChildren();
-  for (const user of data.items) {
-    const row = $('user-rows').insertRow(); cell(row,user.email_normalized); cell(row,user.role); cell(row,user.deleted_at ? 'محذوف' : user.is_active ? 'نشط' : 'معطل'); cell(row,date(user.last_login_at)); cell(row,'');
-    if (user.deleted_at) continue;
-    action(row,'تعديل البريد', async () => { const email = prompt('البريد الجديد', user.email_normalized); if (email) await updateUser(user.id,{email}); });
-    action(row,user.is_active ? 'تعطيل' : 'تفعيل', async () => { if (confirm(`تأكيد تغيير حالة ${user.email_normalized}؟`)) await updateUser(user.id,{is_active:!user.is_active}); });
-    action(row,'تغيير الدور', async () => { if (confirm(`تغيير دور ${user.email_normalized}؟`)) await updateUser(user.id,{role:user.role==='ADMIN'?'USER':'ADMIN'}); });
-    action(row,'إعادة تعيين كلمة المرور', () => openPasswordReset(user));
-    action(row,'حذف', async () => { if (confirm(`حذف حساب ${user.email_normalized} وتعطيل جلساته؟`)) await updateUser(user.id,{delete:true}); });
+  $('user-count').textContent = 'جارٍ تحميل المستخدمين...';
+  let loaded = 0;
+  for (let page = 1; page <= 100000; page++) {
+    const data = await api(`/api/admin/users?search=${search}&page=${page}`);
+    if (request !== userListRequest) return;
+    for (const user of data.items) {
+      const row = $('user-rows').insertRow(); cell(row,user.email_normalized); cell(row,user.role === 'ADMIN' ? 'أدمن' : 'مستخدم'); cell(row,user.deleted_at ? 'محذوف' : user.is_active ? 'نشط' : 'معطل'); cell(row,date(user.last_login_at)); cell(row,'');
+      action(row,'تفاصيل', () => showUserDetails(user));
+      if (user.deleted_at) continue;
+      action(row,'تعديل', () => openEditUser(user));
+      action(row,'كلمة المرور', () => openPasswordReset(user));
+      action(row,'حذف', async () => { if (confirm(`حذف حساب ${user.email_normalized} وتعطيل جلساته؟`)) await updateUser(user.id,{delete:true}); });
+    }
+    loaded += data.items.length;
+    $('user-count').textContent = `المستخدمون: ${loaded} من ${data.total}`;
+    if (!data.items.length || loaded >= data.total) break;
   }
-  $('users-more').disabled = pages.users * 50 >= data.total;
+}
+async function showUserDetails(user) {
+  detailsUser = user;
+  detailsPage = 1;
+  $('user-details-email').textContent = user.email_normalized;
+  $('user-details-count').textContent = 'جارٍ تحميل الفيديوهات...';
+  $('user-details-rows').replaceChildren();
+  $('user-details-dialog').showModal();
+  await loadUserDetails();
+}
+async function loadUserDetails() {
+  if (!detailsUser) return;
+  const userId = detailsUser.id;
+  try {
+    const data = await api(`/api/admin/users/${encodeURIComponent(userId)}/history?page=${detailsPage}`);
+    if (detailsUser?.id !== userId) return;
+    $('user-details-count').textContent = `الفيديوهات المكتملة: ${data.total}`;
+    for (const item of data.items) {
+      const row = $('user-details-rows').insertRow();
+      for (const value of [item.package_name,item.id,item.state,date(item.submitted_at),'']) cell(row,value);
+      if (item.state === 'completed' && item.media_status === 'AVAILABLE' && item.bundle_id) {
+        const kinds = item.media_kind === 'PREMIERE' ? ['premiere'] : ['youtube','reels'];
+        for (const kind of kinds) {
+          const link = document.createElement('a');
+          link.href = kind === 'premiere' ? `/api/admin/premiere/${encodeURIComponent(item.bundle_id)}/download` : `/api/admin/exports/${encodeURIComponent(item.bundle_id)}/download/${kind}`;
+          link.textContent = kind === 'premiere' ? 'Premiere ZIP' : kind === 'youtube' ? 'YouTube' : 'Reels';
+          row.lastElementChild.append(link,' ');
+        }
+      } else row.lastElementChild.textContent = item.media_status === 'DELETED' ? 'الملفات محذوفة' : '—';
+    }
+    $('user-details-more').disabled = detailsPage * 50 >= data.total;
+  } catch (error) { $('user-details-count').textContent = error.message; }
 }
 async function updateUser(id, body) { try { await api(`/api/admin/users/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); message('تم الحفظ'); await users(); } catch(error) { message(error.message); } }
 async function exportsList() {
@@ -52,7 +106,7 @@ async function exportsList() {
   $('export-rows').replaceChildren();
   for (const item of data.items) {
     const row = $('export-rows').insertRow();
-    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.status,mb(item.outputs?.youtube),mb(item.outputs?.reels),mb(item.bytes),'']) cell(row,value);
+    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.user_email || 'غير معروف',item.status,mb(item.outputs?.youtube),mb(item.outputs?.reels),mb(item.bytes),'']) cell(row,value);
     if (item.status === 'AVAILABLE') {
       for (const kind of ['youtube','reels']) if (item.outputs?.[kind] != null) {
         const link = document.createElement('a'); link.href = `/api/admin/exports/${encodeURIComponent(item.id)}/download/${kind}`; link.textContent = kind; row.lastElementChild.append(link,' ');
@@ -66,6 +120,26 @@ async function exportsList() {
   }
   $('exports-more').disabled = pages.exports * 50 >= data.total;
 }
+async function premiereList() {
+  const data = await api(`/api/admin/premiere?search=${encodeURIComponent($('premiere-search').value)}&page=${pages.premiere}`);
+  $('premiere-rows').replaceChildren();
+  for (const item of data.items) {
+    const row = $('premiere-rows').insertRow();
+    for (const value of [item.slug,`v${item.version}`,date(item.created_at),item.user_email || 'غير معروف',item.status,item.outputs?.youtube != null ? 'متوفر' : '—',item.outputs?.reels != null ? 'متوفر' : '—','']) cell(row,value);
+    if (item.status === 'AVAILABLE') {
+      const link = document.createElement('a');
+      link.href = `/api/admin/premiere/${encodeURIComponent(item.id)}/download`;
+      link.textContent = 'تحميل المشروع كاملًا ZIP';
+      row.lastElementChild.append(link);
+      action(row,'حذف المشروع', async () => {
+        if (!confirm(`حذف مشروع Premiere ${item.slug} / v${item.version} نهائياً؟`)) return;
+        try { await api(`/api/admin/exports/${encodeURIComponent(item.id)}`,{method:'DELETE'}); message('حُذف المشروع وبقي السجل'); await premiereList(); }
+        catch(error) { message(error.message); }
+      });
+    }
+  }
+  $('premiere-more').disabled = pages.premiere * 50 >= data.total;
+}
 async function history() {
   const from = $('history-from').value ? new Date(`${$('history-from').value}T00:00:00`).getTime()/1000 : '';
   const to = $('history-to').value ? new Date(`${$('history-to').value}T00:00:00`).getTime()/1000 + 86400 : '';
@@ -75,16 +149,17 @@ async function history() {
   for (const item of data.items) { const row = $('history-rows').insertRow(); for (const value of [item.package_name,item.version,item.id,item.state,date(item.submitted_at),item.started_at && item.finished_at ? `${Math.round(item.finished_at-item.started_at)} s` : '—',item.user_email || 'قديم',item.media_status]) cell(row,value); }
   $('history-more').disabled = pages.history * 50 >= data.total;
 }
-const loaders = {overview,users,exports:exportsList,history};
+const loaders = {overview,users,exports:exportsList,premiere:premiereList,history};
 async function tab(name) {
-  for (const section of ['overview','users','exports','history','account']) $(section).hidden = section !== name;
+  for (const section of ['overview','users','exports','premiere','history','account']) $(section).hidden = section !== name;
   document.querySelectorAll('.tabs button').forEach(button => button.classList.toggle('active',button.dataset.tab === name));
   try { message('جارٍ التحميل...'); if (loaders[name]) await loaders[name](); message(''); } catch(error) { message(error.message); }
 }
 document.querySelectorAll('.tabs button').forEach(button => button.addEventListener('click',() => tab(button.dataset.tab)));
-for (const name of ['users','exports','history']) $(`${name}-more`).addEventListener('click',() => { pages[name]++; tab(name); });
-$('user-refresh').addEventListener('click',() => { pages.users=1; tab('users'); });
+for (const name of ['exports','premiere','history']) $(`${name}-more`).addEventListener('click',() => { pages[name]++; tab(name); });
+$('user-refresh').addEventListener('click',() => tab('users'));
 $('export-refresh').addEventListener('click',() => { pages.exports=1; tab('exports'); });
+$('premiere-refresh').addEventListener('click',() => { pages.premiere=1; tab('premiere'); });
 $('history-refresh').addEventListener('click',() => { pages.history=1; tab('history'); });
 $('create-user').addEventListener('submit',async event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); try { await api('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); event.target.reset(); await users(); message('أُنشئ الحساب'); } catch(error) { message(error.message); } });
 $('reset-password-form').addEventListener('submit', async event => {
@@ -114,6 +189,32 @@ $('reset-password-dialog').addEventListener('close', () => {
   $('reset-password-value').value = '';
   delete $('reset-password-dialog').dataset.userId;
 });
+$('edit-user-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const dialog = $('edit-user-dialog');
+  const id = dialog.dataset.userId;
+  if (!id) return;
+  const button = event.target.querySelector('[type="submit"]');
+  button.disabled = true;
+  try {
+    const changes = {};
+    if ($('edit-user-email').value !== dialog.dataset.email) changes.email = $('edit-user-email').value;
+    if ($('edit-user-role').value !== dialog.dataset.role) changes.role = $('edit-user-role').value;
+    if ($('edit-user-active').value !== dialog.dataset.active) changes.is_active = $('edit-user-active').value === '1';
+    if (!Object.keys(changes).length) { dialog.close(); return; }
+    await api(`/api/admin/users/${encodeURIComponent(id)}`, {method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(changes)});
+    dialog.close();
+    message('تم تحديث الحساب والصلاحية');
+    await users();
+  } catch (error) { message(error.message); }
+  finally { button.disabled = false; }
+});
+$('edit-user-cancel').addEventListener('click', () => $('edit-user-dialog').close());
+$('edit-user-dialog').addEventListener('close', () => { for (const key of ['userId','email','role','active']) delete $('edit-user-dialog').dataset[key]; });
+$('user-details-more').addEventListener('click', () => { detailsPage++; loadUserDetails(); });
+$('user-details-close').addEventListener('click', () => $('user-details-dialog').close());
+$('user-details-dialog').addEventListener('close', () => { detailsUser = null; });
 $('change-password').addEventListener('submit',async event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); try { await api('/api/account/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); location.assign('/login'); } catch(error) { message(error.message); } });
 $('logout').addEventListener('click',async () => { await api('/api/logout',{method:'POST'}); location.assign('/login'); });
 tab('overview');

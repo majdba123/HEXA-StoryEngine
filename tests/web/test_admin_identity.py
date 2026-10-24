@@ -4,6 +4,8 @@ from dataclasses import replace
 import hashlib
 import json
 import sqlite3
+from io import BytesIO
+from zipfile import ZipFile
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -349,6 +351,106 @@ def test_failed_render_history_keeps_validated_package_name(tmp_path, monkeypatc
         assert rows[0]["state"] == "failed"
         assert rows[0]["package_name"] == "BLACK_HAT_HACKER"
         assert rows[0]["version"] is None
+
+
+def test_admin_user_details_and_video_owner_follow_job_identity(tmp_path, monkeypatch):
+    settings, storage = setup(tmp_path, monkeypatch)
+    root = settings.export_root
+    root.mkdir()
+    writer = ExportBundleWriter(root)
+    bundle = writer.reserve("OWNED_VIDEO")
+    for suffix in ("YOUTUBE", "REELS"):
+        bundle.output_path(suffix).write_bytes(b"encoded")
+    writer.publish(bundle, {"completed": True, "export_identity": "OWNED_VIDEO", "export_version": 1,
+                            "outputs": {"YOUTUBE_16_9": {"filename": bundle.output_path("YOUTUBE").name},
+                                        "REELS_9_16": {"filename": bundle.output_path("REELS").name}}})
+    with TestClient(create_app(settings, storage)) as admin:
+        headers = login(admin)
+        user = {"id": "owned-video-user"}
+        with Identity(storage / "jobs.sqlite3").connect() as db:
+            db.execute("INSERT INTO users(id,email_normalized,password_hash,role,is_active,must_change_password,created_at,updated_at) "
+                       "SELECT ?,?,password_hash,'USER',1,0,created_at,updated_at FROM users WHERE role='ADMIN' LIMIT 1",
+                       (user["id"], "owner@example.invalid"))
+        job = "owned-video-job"
+        with Identity(storage / "jobs.sqlite3").connect() as db:
+            db.execute("INSERT INTO jobs(id,state,user_id,created_at,package_name,bundle,youtube,reels) "
+                       "VALUES(?,'completed',?,CAST(strftime('%s','now') AS REAL),?,?,?,?)",
+                       (job, user["id"], "OWNED_VIDEO", str(bundle.directory),
+                        str(bundle.output_path("YOUTUBE")), str(bundle.output_path("REELS"))))
+        exports = admin.get("/api/admin/exports").json()
+        assert exports["total"] == 1
+        assert exports["items"][0]["user_email"] == "owner@example.invalid"
+        details = admin.get(f"/api/admin/users/{user['id']}/history").json()
+        assert details["total"] == details["completed"] == 1
+        assert details["items"][0]["id"] == job
+        assert details["items"][0]["bundle_id"] == "OWNED_VIDEO:v1"
+        assert details["items"][0]["media_status"] == "AVAILABLE"
+        assert admin.get("/api/admin/users/missing/history").status_code == 404
+        assert admin.get(f"/api/admin/users/{user['id']}/history?page=0").status_code == 422
+        assert admin.patch(f"/api/admin/users/{user['id']}", headers=headers,
+                           json={"email": "renamed@example.invalid", "role": "ADMIN"}).status_code == 200
+        assert admin.get("/api/admin/exports").json()["items"][0]["user_email"] == "renamed@example.invalid"
+
+
+def test_admin_premiere_tab_lists_complete_project_and_downloads_media(tmp_path, monkeypatch):
+    settings, storage = setup(tmp_path, monkeypatch)
+    root = settings.export_root
+    root.mkdir()
+    writer = ExportBundleWriter(root)
+    bundle = writer.reserve("EDITABLE")
+    outputs = {}
+    for suffix, target in (("YOUTUBE", "YOUTUBE_16_9"), ("REELS", "REELS_9_16")):
+        stem = f"EDITABLE_{suffix}_PREMIERE"
+        (bundle.directory / f"{stem}.xml").write_text("<xmeml/>", encoding="utf-8")
+        media = bundle.directory / f"{stem}_media"
+        media.mkdir()
+        (media / "image.png").write_bytes(b"artwork")
+        outputs[target] = {"filename": f"{stem}.xml", "kind": "premiere_fcp7_xml", "media_dir": media.name}
+    writer.publish(bundle, {"schema": "hexa.export.premiere/1", "completed": True,
+                            "export_identity": "EDITABLE", "export_version": 1, "outputs": outputs})
+    broken = writer.reserve("BROKEN_EDIT")
+    for row in outputs.values():
+        (broken.directory / row["filename"].replace("EDITABLE", "BROKEN_EDIT")).write_text("<xmeml/>", encoding="utf-8")
+    writer.publish(broken, {"schema": "hexa.export.premiere/1", "completed": True,
+                            "export_identity": "BROKEN_EDIT", "export_version": 1,
+                            "outputs": {key: {**row, "filename": row["filename"].replace("EDITABLE", "BROKEN_EDIT"),
+                                               "media_dir": row["media_dir"].replace("EDITABLE", "BROKEN_EDIT")}
+                                        for key, row in outputs.items()}})
+    with TestClient(create_app(settings, storage)) as admin:
+        headers = login(admin)
+        assert admin.get("/api/admin/exports").json()["total"] == 0
+        projects = admin.get("/api/admin/premiere").json()
+        assert projects["total"] == 1
+        assert projects["items"][0]["kind"] == "PREMIERE"
+        assert projects["items"][0]["user_email"] is None
+        overview = admin.get("/api/admin/overview").json()
+        assert overview["premiere_projects"] == 1 and overview["bundles"] == 0
+        response = admin.get("/api/admin/premiere/EDITABLE:v1/download")
+        assert response.status_code == 200, response.text
+        with ZipFile(BytesIO(response.content)) as archive:
+            names = set(archive.namelist())
+            assert "export.json" in names
+            for suffix in ("YOUTUBE", "REELS"):
+                assert f"EDITABLE_{suffix}_PREMIERE.xml" in names
+                assert archive.read(f"EDITABLE_{suffix}_PREMIERE_media/image.png") == b"artwork"
+        assert admin.get("/api/admin/premiere/UNKNOWN:v1/download").status_code == 404
+        assert admin.get("/api/admin/exports/EDITABLE:v1/download/youtube").status_code == 404
+        assert admin.delete("/api/admin/exports/EDITABLE:v1", headers=headers).status_code == 200
+        assert admin.get("/api/admin/premiere").json()["items"][0]["status"] == "DELETED"
+        assert admin.get("/api/admin/overview").json()["premiere_projects"] == 0
+        assert admin.get("/api/admin/premiere/EDITABLE:v1/download").status_code == 404
+
+
+def test_existing_admin_inventory_gains_kind_without_losing_video_rows(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE admin_schema(version INTEGER PRIMARY KEY)")
+        db.execute("INSERT INTO admin_schema(version) VALUES(1)")
+        db.execute("CREATE TABLE export_inventory(id TEXT PRIMARY KEY,slug TEXT NOT NULL,version INTEGER NOT NULL,job_id TEXT,created_at TEXT,status TEXT NOT NULL,deleted_at REAL,deleted_by TEXT,UNIQUE(slug,version))")
+        db.execute("INSERT INTO export_inventory(id,slug,version,status) VALUES('OLD:v1','OLD',1,'AVAILABLE')")
+    AdminData(database, tmp_path / "exports")
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT kind FROM export_inventory WHERE id='OLD:v1'").fetchone()[0] == "VIDEO"
 
 
 def test_bootstrap_two_accounts_on_clean_database_only(tmp_path, monkeypatch):
