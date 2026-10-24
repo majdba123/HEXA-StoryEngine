@@ -220,3 +220,62 @@ def test_intro_web_preflight_and_retry_reuses_validated_media(tmp_path, monkeypa
     assert from_job(directory / "package.zip", choice) == prepared
     with pytest.raises(ValueError):
         from_job(tmp_path / "other" / "package.zip", choice)
+
+
+def test_resumable_intro_upload_reaches_video_engine(tmp_path, monkeypatch) -> None:
+    """Real chunk protocol, image/voice staging, saved choice and worker handoff."""
+    import io
+
+    from PIL import Image
+    from app.features.intro_zoom.models import IntroZoomConfig
+    from tests.web.test_uploads import fingerprint
+
+    captured = []
+
+    def generate(self, **kwargs):
+        captured.append(kwargs.get("intro_zoom"))
+        raise RuntimeError("intentional stop after intro handoff")
+
+    monkeypatch.setattr("app.web.uploads.export_root_problem", lambda _: None)
+    monkeypatch.setattr("app.web.uploads.validate_audio", lambda *_: None)
+    monkeypatch.setattr("app.web.uploads.FinalPackageLoader.load", lambda *_: None)
+    monkeypatch.setattr("app.web.intro_zoom.preflight", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.web.jobs.StoryEnginePipeline.generate_bundle", generate)
+    with TestClient(create_app(_settings(tmp_path), tmp_path / "storage")) as client:
+        package, narration = archive(), b"narration"
+        data = io.BytesIO()
+        Image.new("RGB", (160, 160), "#fff").save(data, format="PNG")
+        image = data.getvalue()
+        voice = b"short-voice"
+        selected = {"focus_x": 0.51, "focus_y": 0.26, "magnification": 3.1}
+        upload = manifest(package, narration)
+        upload["intro_zoom"] = selected
+        upload["files"] += [
+            {"id": "intro_image", "path": "board.png", "size": len(image),
+             "fingerprint": fingerprint(image), "role": "intro_image"},
+            {"id": "intro_audio", "path": "hello.wav", "size": len(voice),
+             "fingerprint": fingerprint(voice), "role": "intro_audio"},
+        ]
+        created = client.post("/api/uploads",
+                              json={"key": "web-intro-roundtrip", "manifest": upload})
+        assert created.status_code == 201, created.text
+        uid = created.json()["id"]
+        for fid, data in (("p0", package), ("audio", narration),
+                          ("intro_image", image), ("intro_audio", voice)):
+            assert put(client, uid, fid, 0, data).status_code == 200
+        finished = client.post("/api/uploads/" + uid + "/complete",
+                               json={"output_kind": "VIDEO"})
+        assert finished.status_code == 202, finished.text
+        job = finished.json()["id"]
+        for _ in range(300):
+            if client.get("/api/jobs/" + job).json()["state"] == "failed":
+                break
+            time.sleep(0.01)
+        saved = client.get("/api/jobs/" + job).json()
+        assert saved["state"] == "failed"
+        assert len(captured) == 1
+        config = captured[0]
+        assert isinstance(config, IntroZoomConfig)
+        assert (config.focus_x, config.focus_y, config.magnification) == (0.51, 0.26, 3.1)
+        assert config.image.read_bytes() == image
+        assert config.audio.read_bytes() == voice
