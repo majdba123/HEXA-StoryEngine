@@ -48,6 +48,7 @@ from app.motion.semantic_reference import MotionSemanticReference
 from app.motion.interaction import RelationInteractionPolicy
 from app.motion.landing import ReferenceLandingPolicy
 from app.motion.spoken_pulse import SpokenPulsePolicy
+from app.motion.stability import remove_micro_reversals
 from app.motion.stillness import ReferenceStillnessPolicy
 from app.refinement import RefinementService
 from app.cutout.pass2.segmenter import SAM2MaskBackend
@@ -1173,6 +1174,7 @@ class StoryEnginePipeline:
             if late_accents:
                 motion = self.spoken_pulse.apply(story=story, composition=composition, motion=motion,
                                                  assets=assets, text=text)
+            motion = remove_micro_reversals(motion, width=target.width, height=target.height)
             # Locked Pass2 layers draw with their family primary's transform (one unit).
             motion = bind_families(
                 motion, {row.beat_id: {item.asset_id: item for item in row.items} for row in composition},
