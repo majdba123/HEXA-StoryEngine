@@ -99,9 +99,14 @@ pipeline retains its existing recovery behavior.
 `tools/start_local_visual_continuity_v2.ps1` checks the feature branch and
 binds only `127.0.0.1:8791`. Its SQLite, uploads, work, outputs, exports,
 and model cache live under `E:\HEXA_Exports\_VISUAL_CONTINUITY_V2_LOCAL` by
-default. Set `HEXA_ADMIN_BOOTSTRAP_PASSWORD` on first start and pass
-`-PythonPath` when this worktree has no `.venv`. The launcher never resets
-an existing database. Upload protocol V2 is enabled.
+default. The launcher reads `HEXA_ADMIN_EMAIL` and
+`HEXA_ADMIN_BOOTSTRAP_PASSWORD` from this worktree's `.env`, or from the
+adjacent `HEXA-StoryEngine-montage-consolidation/.env` when no feature `.env`
+exists. `-EnvFile` selects another file explicitly. On each start it syncs
+the sole active administrator in this isolated database to those values and
+revokes that administrator's old sessions if either value changed. It does
+not reset jobs or other accounts. Pass `-PythonPath` when this worktree has
+no `.venv`. Upload protocol V2 is enabled.
 
 Promotion to `montage` or `bayer` requires explicit user approval after
 encoded comparison and full validation. This branch has no deployment path.

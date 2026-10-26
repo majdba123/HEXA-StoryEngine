@@ -3,7 +3,7 @@
 param(
     [string]$StateRoot = 'E:\HEXA_Exports\_VISUAL_CONTINUITY_V2_LOCAL',
     [string]$PythonPath = '',
-    [string]$AdminEmail = 'vc2-admin@localhost'
+    [string]$EnvFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +18,30 @@ if (-not $PythonPath) {
 if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
     throw 'Set -PythonPath to a prepared Python environment.'
 }
+if (-not $EnvFile) {
+    $projectEnv = Join-Path $project '.env'
+    $sharedEnv = Join-Path (Split-Path $project -Parent) 'HEXA-StoryEngine-montage-consolidation\.env'
+    $EnvFile = if (Test-Path -LiteralPath $projectEnv -PathType Leaf) { $projectEnv } else { $sharedEnv }
+}
+if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
+    throw "Credentials file not found: $EnvFile"
+}
+$credentials = @{}
+foreach ($line in Get-Content -LiteralPath $EnvFile -Encoding UTF8) {
+    if ($line -match '^\s*(HEXA_ADMIN_EMAIL|HEXA_ADMIN_BOOTSTRAP_PASSWORD)\s*=\s*(.*)$') {
+        $value = $Matches[2].Trim()
+        if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $credentials[$Matches[1]] = $value
+    }
+}
+if (-not $credentials['HEXA_ADMIN_EMAIL'] -or -not $credentials['HEXA_ADMIN_BOOTSTRAP_PASSWORD']) {
+    throw 'The credentials file must define HEXA_ADMIN_EMAIL and HEXA_ADMIN_BOOTSTRAP_PASSWORD.'
+}
+$env:HEXA_ADMIN_EMAIL = $credentials['HEXA_ADMIN_EMAIL']
+$env:HEXA_ADMIN_BOOTSTRAP_PASSWORD = $credentials['HEXA_ADMIN_BOOTSTRAP_PASSWORD']
 if (-not (Test-Path -LiteralPath $StateRoot -PathType Container)) {
     New-Item -ItemType Directory -Path $StateRoot | Out-Null
 }
@@ -29,8 +53,11 @@ if (Get-NetTCPConnection -LocalPort 8791 -State Listen -ErrorAction SilentlyCont
     throw 'Port 8791 is already in use.'
 }
 $db = Join-Path $root 'web\jobs.sqlite3'
-if (-not (Test-Path -LiteralPath $db) -and -not $env:HEXA_ADMIN_BOOTSTRAP_PASSWORD) {
-    throw 'Set HEXA_ADMIN_BOOTSTRAP_PASSWORD for the first local start.'
+if (Test-Path -LiteralPath $db -PathType Leaf) {
+    & $PythonPath (Join-Path $PSScriptRoot 'sync_local_visual_continuity_admin.py') $db
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Local administrator credentials could not be synchronized with the credentials file.'
+    }
 }
 $env:HEXA_WEB_STORAGE = Join-Path $root 'web'
 $env:HEXA_WEB_UPLOAD_ROOT = Join-Path $root 'uploads'
@@ -43,7 +70,6 @@ $env:HEXA_WEB_HOST = '127.0.0.1'
 $env:HEXA_WEB_PORT = '8791'
 $env:HEXA_WEB_V2_ENABLED = '1'
 $env:HEXA_VISUAL_CONTINUITY_V2 = '1'
-$env:HEXA_ADMIN_EMAIL = $AdminEmail
 Write-Host 'Visual Continuity V2 local server: http://127.0.0.1:8791/login'
 & $PythonPath -m app.web
 if ($LASTEXITCODE -ne 0) {
