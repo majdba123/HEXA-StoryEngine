@@ -661,6 +661,8 @@ class CrossSceneContinuityPlanner:
         params[HANDOFF_PARAM] = {"beat_id": decision.previous_beat_id, "asset_id": decision.previous_asset_id}
         if visual_continuity_v2:
             params["visual_continuity_v2"] = True
+            for entry_metadata in ("reference_slide", "reference_pop", "reference_landing"):
+                params.pop(entry_metadata, None)
         segments = list(cue.segments)
         end = float(cue.end)
         if decision.decision in {POSITION_AND_SCALE, POSITION_ONLY}:
@@ -675,6 +677,20 @@ class CrossSceneContinuityPlanner:
             ).to_payload()
             program["continuity"] = ("VISUAL_SLOT_HANDOFF" if decision.identity_authority != "REFERENT_ID"
                                      else "REFERENT_HANDOFF")
+            if visual_continuity_v2:
+                base_end = max(float(cue.end), float(decision.settle_at))
+                progress = min(1.0, max(0.05, (float(decision.settle_at) - float(cue.start))
+                                         / max(_EPS, base_end - float(cue.start))))
+                base_frames = [MotionKeyframe(progress=0.0, dx=dx, dy=dy,
+                                              scale=1.0 + float(decision.scale_delta or 0.0))]
+                if progress < 1.0 - _EPS:
+                    base_frames.append(MotionKeyframe(progress=progress))
+                base_frames.append(MotionKeyframe(progress=1.0))
+                params["program"] = MotionProgram(
+                    name=CONTINUITY_PROGRAM, keyframes=tuple(base_frames),
+                    settle_progress=progress if progress < 1.0 - _EPS else 1.0,
+                ).to_payload()
+                end = base_end
             entry = MotionSegment(phase="ENTRY", start=float(decision.handoff_at), end=float(decision.settle_at),
                                   program=program, semantic_action="CONTINUE")
             segments = [entry, *(row for row in segments if row.phase != "ENTRY")]
@@ -684,14 +700,16 @@ class CrossSceneContinuityPlanner:
             # can still contain a pop, slide or scale even after opacity is removed.
             # Keep the first visible frame and its window, but hold the pose still.
             entry = next((row for row in segments if row.phase == "ENTRY"), None)
+            stationary = MotionProgram(
+                name=CONTINUITY_PROGRAM,
+                keyframes=(MotionKeyframe(progress=0.0), MotionKeyframe(progress=1.0)),
+            ).to_payload()
+            stationary["continuity"] = ("VISUAL_SLOT_HANDOFF"
+                                        if decision.identity_authority != "REFERENT_ID"
+                                        else "REFERENT_HANDOFF")
+            if visual_continuity_v2:
+                params["program"] = stationary
             if entry is not None:
-                stationary = MotionProgram(
-                    name=CONTINUITY_PROGRAM,
-                    keyframes=(MotionKeyframe(progress=0.0), MotionKeyframe(progress=1.0)),
-                ).to_payload()
-                stationary["continuity"] = ("VISUAL_SLOT_HANDOFF"
-                                            if decision.identity_authority != "REFERENT_ID"
-                                            else "REFERENT_HANDOFF")
                 segments = [
                     row.model_copy(update={"program": stationary, "semantic_action": "CONTINUE"})
                     if row is entry else row for row in segments

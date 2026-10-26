@@ -123,6 +123,27 @@ def test_v2_authored_calendar_replaces_in_place_without_referent() -> None:
     assert next(row for row in landed if row.beat_id == "beat-002").segments[0].program == cue.segments[0].program
 
 
+def test_v2_segmentless_base_arrival_is_replaced_with_stillness() -> None:
+    data = build([obj("calendar_old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                      "target_asset_id": "SCENE_002_calendar_new"})],
+                 [obj("calendar_new", 0.3, 0.5)])
+    cue = data[3][1]
+    slide = {"name": "reference_slide_arrival", "keyframes": [
+        {"progress": 0.0, "dx": 0.2, "dy": 0.0, "scale": 0.8},
+        {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+    ]}
+    data[3][1] = cue.model_copy(update={"segments": [], "params": {
+        **cue.params, "program": slide, "reference_slide": {"direction": "right"}}})
+    changed, [decision] = run(*data, enable_visual_continuity_v2=True)
+    assert decision.decision == NO_GEOMETRY_INHERITANCE
+    updated = adapted(changed, "beat-002")
+    assert updated.segments == []
+    assert updated.params["program"]["name"] == CONTINUITY_PROGRAM
+    assert "reference_slide" not in updated.params
+    assert all((row["dx"], row["dy"], row["scale"]) == (0.0, 0.0, 1.0)
+               for row in updated.params["program"]["keyframes"])
+
+
 def test_v2_two_authored_pose_changes_match_independently() -> None:
     data = build([
         obj("person_a_old", 0.25, 0.5, continuity={"mode": "TRANSFORM_TO",

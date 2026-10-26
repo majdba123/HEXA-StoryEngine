@@ -34,6 +34,12 @@ and enables the incoming art on N. Composition owns the final pose; other
 semantic motion segments remain in place. Position/scale handoff and abstention
 reuse the existing planner and renderer. A visual slot never sets a referent id.
 
+The first full web render exposed a segmentless reference-arrival cue: its
+`params.program` still ran a slide/pop after the handoff despite the accepted
+decision. V2 now replaces that base program as well as any ENTRY segment and
+removes stale reference-arrival metadata. The correction applies only to
+accepted V2 handoffs.
+
 The Text/Boundary transaction still requires identical Text. A Boundary
 replan is allowed to differ only when its basic mode, timing, text carry, and
 reason remain identical and the baseline release explicitly names the

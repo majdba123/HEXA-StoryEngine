@@ -146,6 +146,12 @@ def test_v2_authored_artwork_swap_has_one_opaque_carrier_per_frame(tmp_path: Pat
     baseline.composition[1].items[0].width = 0.10
     baseline.story[0].asset_activations[0].continuity = {
         "mode": "TRANSFORM_TO", "target_asset_id": "P2"}
+    cue = baseline.motion[1]
+    baseline.motion[1] = cue.model_copy(update={"segments": [], "params": {
+        **cue.params, "program": {"name": "fresh_slide", "keyframes": [
+            {"progress": 0.0, "dx": 0.2, "dy": 0.0, "scale": 0.8},
+            {"progress": 1.0, "dx": 0.0, "dy": 0.0, "scale": 1.0},
+        ]}}})
     baseline = baseline.model_copy(update={"width": size[0], "height": size[1]})
     package = SimpleNamespace(scenes=[SimpleNamespace(id="S1", order=0, units=[]),
                                       SimpleNamespace(id="S2", order=1, units=[])])
@@ -156,6 +162,7 @@ def test_v2_authored_artwork_swap_has_one_opaque_carrier_per_frame(tmp_path: Pat
         frame_width=size[0], frame_height=size[1], enable_visual_continuity_v2=True)
     assert len(planner.decisions) == 1 and planner.decisions[0].accepted
     assert planner.decisions[0].identity_authority == "AUTHORED_CONTINUITY"
+    assert next(row for row in motion if row.asset_id == "S2:a").params["program"]["name"] == CONTINUITY_PROGRAM
     candidate = baseline.model_copy(update={"motion": motion})
     frames = _frames(FFmpegRenderer().render(candidate, tmp_path / "v2.mp4"), *size)
     red, blue = _mask(frames, RED), _mask(frames, BLUE)
