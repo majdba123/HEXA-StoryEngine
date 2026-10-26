@@ -96,7 +96,7 @@ pipeline retains its existing recovery behavior.
 
 ## Local web
 
-`tools/start_local_visual_continuity_v2.ps1` checks the feature branch and
+`tools/start_local_visual_continuity_v2.ps1` checks the feature or merged montage branch and
 binds only `127.0.0.1:8791`. Its SQLite, uploads, work, outputs, exports,
 and model cache live under `E:\HEXA_Exports\_VISUAL_CONTINUITY_V2_LOCAL` by
 default. The launcher reads `HEXA_ADMIN_EMAIL` and

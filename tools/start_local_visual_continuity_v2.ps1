@@ -1,4 +1,4 @@
-# Isolated local test server for feature/visual-continuity-v2. No reset or cleanup action.
+# Isolated local test server for Visual Continuity V2 on the feature or montage branch.
 [CmdletBinding()]
 param(
     [string]$StateRoot = 'E:\HEXA_Exports\_VISUAL_CONTINUITY_V2_LOCAL',
@@ -9,8 +9,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $branch = (& git -C $project branch --show-current).Trim()
-if ($LASTEXITCODE -ne 0 -or $branch -ne 'feature/visual-continuity-v2') {
-    throw 'This launcher requires the feature/visual-continuity-v2 worktree.'
+if ($LASTEXITCODE -ne 0 -or $branch -notin @('feature/visual-continuity-v2', 'montage')) {
+    throw 'This launcher requires the Visual Continuity V2 feature or montage worktree.'
 }
 if (-not $PythonPath) {
     $PythonPath = Join-Path $project '.venv\Scripts\python.exe'
