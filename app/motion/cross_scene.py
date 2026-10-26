@@ -28,6 +28,9 @@ from dataclasses import asdict, dataclass, field
 from math import hypot, isfinite, log, sqrt
 from typing import Any
 
+import numpy as np
+from PIL import Image
+
 from app.assets import AssetManager
 from app.layout.footprint import AlphaFootprintResolver
 from app.models import (
@@ -120,6 +123,7 @@ class CrossSceneContinuityPlanner:
         self.decisions: list[ContinuityDecision] = []
         self.boundary_decisions: list[ContinuityDecision] = []
         self._baseline: dict[tuple[str, str], MotionCue] = {}
+        self._slot_crops: dict[tuple[str, str], np.ndarray | None] = {}
 
     # -- public ---------------------------------------------------------------------------
     def plan(
@@ -137,6 +141,7 @@ class CrossSceneContinuityPlanner:
         text_motion: list[TextMotionCue] | None = None,
         scene_boundaries: list[SceneBoundaryRelease] | None = None,
         enable_focus_continuity: bool = False,
+        enable_visual_continuity_v2: bool = False,
         focus_only: bool = False,
         frame_width: int,
         frame_height: int,
@@ -144,12 +149,14 @@ class CrossSceneContinuityPlanner:
         self.decisions = []
         self.boundary_decisions = []
         self._baseline = {}
+        self._slot_crops = {}
         carriers = self._authored_carriers(package)
-        if not carriers and not enable_focus_continuity:
+        if not carriers and not enable_focus_continuity and not enable_visual_continuity_v2:
             return motion  # legacy callers preserve Sprint 7 identity-only behaviour
         from app.boundary.release import SceneBoundaryPlanner  # boundary owns text boxes
 
         scene_order = {scene.id: int(scene.order) for scene in package.scenes}
+        package_scenes = {scene.id: scene for scene in package.scenes}
         layouts = {layout.beat_id: layout for layout in composition}
         cues = {(cue.beat_id, cue.asset_id): cue for cue in motion}
         asset_by_id = {asset.id: asset for asset in assets}
@@ -174,7 +181,12 @@ class CrossSceneContinuityPlanner:
             before = carriers.get(previous.scene_id, {})
             after = carriers.get(beat.scene_id, {})
             shared_referents = set(before) & set(after)
-            if focus_only and shared_referents:
+            authored_pairs = (self.transitions._object_handoff_pairs(previous, beat)
+                              if enable_visual_continuity_v2 else ())
+            slot_pairs = (self._visual_slot_pairs(package_scenes[previous.scene_id],
+                                                   package_scenes[beat.scene_id])
+                          if enable_visual_continuity_v2 else ())
+            if focus_only and (shared_referents or authored_pairs or slot_pairs):
                 # Authored identity is resolved after Text and Boundary in the existing
                 # safeguarded transaction. Never pre-animate its incoming carrier.
                 self.boundary_decisions.append(ContinuityDecision(
@@ -195,6 +207,52 @@ class CrossSceneContinuityPlanner:
                 )
                 for referent_id in sorted(set(before) & set(after))
             ]
+            if enable_visual_continuity_v2 and not focus_only:
+                claimed_before = {row.previous_asset_id for row in decisions}
+                claimed_after = {row.current_asset_id for row in decisions}
+                sources = [source for source, _ in authored_pairs]
+                targets = [target for _, target in authored_pairs]
+                for source, target in sorted(authored_pairs):
+                    if source in claimed_before or target in claimed_after:
+                        continue  # referent identity has priority
+                    if sources.count(source) != 1 or targets.count(target) != 1:
+                        decisions.append(ContinuityDecision(
+                            referent_id="", previous_scene_id=previous.scene_id,
+                            current_scene_id=beat.scene_id, previous_beat_id=previous.id,
+                            current_beat_id=beat.id, previous_asset_id=source,
+                            current_asset_id=target, decision=ABSTAIN,
+                            reason="identity:authored_pair_not_one_to_one",
+                            identity_authority="AUTHORED_CONTINUITY"))
+                        continue
+                    decisions.append(self._decide(
+                        referent_id="", previous=previous, beat=beat, segment=segment,
+                        previous_unit="", current_unit="", layouts=layouts, cues=cues,
+                        assets=asset_by_id, text_boxes=text_boxes.get(beat.id, []),
+                        boundary=boundaries.get(beat.id), fps=fps,
+                        frame_width=frame_width, frame_height=frame_height,
+                        runtime_pair=(source, target),
+                    ))
+                    claimed_before.add(source)
+                    claimed_after.add(target)
+                for previous_unit, current_unit, score in slot_pairs:
+                    prev_ids = self._runtime_carrier(previous, previous_unit)
+                    cur_ids = self._runtime_carrier(beat, current_unit)
+                    if len(prev_ids) != 1 or len(cur_ids) != 1:
+                        continue
+                    source, target = prev_ids[0], cur_ids[0]
+                    if source in claimed_before or target in claimed_after:
+                        continue
+                    decisions.append(self._decide(
+                        referent_id="", previous=previous, beat=beat, segment=segment,
+                        previous_unit="", current_unit="", layouts=layouts, cues=cues,
+                        assets=asset_by_id, text_boxes=text_boxes.get(beat.id, []),
+                        boundary=boundaries.get(beat.id), fps=fps,
+                        frame_width=frame_width, frame_height=frame_height,
+                        runtime_pair=(source, target), identity_authority="VISUAL_SLOT",
+                        correspondence_score=score,
+                    ))
+                    claimed_before.add(source)
+                    claimed_after.add(target)
             bounded = self._bound_boundary_energy(decisions)
             if enable_focus_continuity and not any(row.accepted for row in bounded):
                 bounded.append(self._decide_focus(
@@ -209,7 +267,8 @@ class CrossSceneContinuityPlanner:
                 if decision.accepted:
                     key = (decision.current_beat_id, decision.current_asset_id)
                     self._baseline.setdefault(key, cues[key])
-                    replacements[key] = cues[key] = self._adapt_cue(cues[key], decision)
+                    replacements[key] = cues[key] = self._adapt_cue(
+                        cues[key], decision, visual_continuity_v2=enable_visual_continuity_v2)
         return [replacements.get((cue.beat_id, cue.asset_id), cue) for cue in motion]
 
     def revoke(self, motion: list[MotionCue], beat_ids: set[str], reason: str) -> list[MotionCue]:
@@ -264,6 +323,68 @@ class CrossSceneContinuityPlanner:
             if row.semantic_unit_id == package_asset_id
             and str(row.policy or "").upper() != "SAFE_ABSTENTION"
         })
+
+    def _slot_crop(self, scene, unit) -> np.ndarray | None:
+        locator = getattr(unit, "visual_locator", None)
+        path = getattr(scene, "image_path", None)
+        if locator is None or path is None:
+            return None
+        key = (str(path), str(unit.asset_id))
+        if key in self._slot_crops:
+            return self._slot_crops[key]
+        result = None
+        try:
+            with Image.open(path) as image:
+                image = image.convert("RGB")
+                left = (locator.cx - locator.width / 2) * image.width
+                top = (locator.cy - locator.height / 2) * image.height
+                right = (locator.cx + locator.width / 2) * image.width
+                bottom = (locator.cy + locator.height / 2) * image.height
+                if right > left and bottom > top:
+                    result = np.asarray(image.crop((left, top, right, bottom)).resize(
+                        (48, 48), Image.Resampling.BILINEAR), dtype=np.int16)
+        except (OSError, ValueError):
+            pass
+        self._slot_crops[key] = result
+        return result
+
+    def _visual_slot_pairs(self, previous_scene, current_scene) -> list[tuple[str, str, float]]:
+        """Match only unique, stable graphic slots; no semantic identity is inferred."""
+        if str(getattr(current_scene, "relation_to_previous", "")).upper() != "CONTINUES_NARRATIVE":
+            return []
+        candidates = []
+        for old in previous_scene.units:
+            if (getattr(old, "referent_id", None) or getattr(old, "needs_review", False)
+                    or str(getattr(old, "semantic_role", "")).upper() == "CHARACTER"):
+                continue
+            old_loc = getattr(old, "visual_locator", None)
+            if old_loc is None:
+                continue
+            for new in current_scene.units:
+                if (getattr(new, "referent_id", None) or getattr(new, "needs_review", False)
+                        or str(getattr(new, "semantic_role", "")).upper() !=
+                        str(getattr(old, "semantic_role", "")).upper()):
+                    continue
+                new_loc = getattr(new, "visual_locator", None)
+                if new_loc is None or max(abs(old_loc.cx - new_loc.cx), abs(old_loc.cy - new_loc.cy),
+                                           abs(old_loc.width - new_loc.width),
+                                           abs(old_loc.height - new_loc.height)) > 0.015:
+                    continue
+                old_crop, new_crop = self._slot_crop(previous_scene, old), self._slot_crop(current_scene, new)
+                if old_crop is None or new_crop is None:
+                    continue
+                if min(float((old_crop.min(axis=2) < 230).mean()),
+                       float((new_crop.min(axis=2) < 230).mean())) < 0.08:
+                    continue  # near-empty white locators are not visual evidence
+                score = float(np.abs(old_crop - new_crop).mean() / 255.0)
+                if score <= 0.10:
+                    candidates.append((old.asset_id, new.asset_id, score))
+        result = []
+        for source, target, score in sorted(candidates, key=lambda row: (row[2], row[0], row[1])):
+            if sum(row[0] == source for row in candidates) != 1 or sum(row[1] == target for row in candidates) != 1:
+                continue
+            result.append((source, target, score))
+        return result
 
     def _decide_focus(
         self, *, previous: StoryBeat, beat: StoryBeat,
@@ -346,15 +467,19 @@ class CrossSceneContinuityPlanner:
         cues: dict[tuple[str, str], MotionCue], assets: dict[str, VisualAsset],
         text_boxes: list[tuple[float, float, Box]], boundary: SceneBoundaryRelease | None,
         fps: int, frame_width: int, frame_height: int,
+        runtime_pair: tuple[str, str] | None = None,
+        identity_authority: str = "AUTHORED_CONTINUITY",
+        correspondence_score: float | None = None,
     ) -> ContinuityDecision:
-        prev_ids = self._runtime_carrier(previous, previous_unit)
-        cur_ids = self._runtime_carrier(beat, current_unit)
+        prev_ids = [runtime_pair[0]] if runtime_pair else self._runtime_carrier(previous, previous_unit)
+        cur_ids = [runtime_pair[1]] if runtime_pair else self._runtime_carrier(beat, current_unit)
         base = dict(referent_id=referent_id, previous_scene_id=previous.scene_id,
                     current_scene_id=beat.scene_id, previous_beat_id=previous.id,
                     current_beat_id=beat.id,
                     previous_asset_id=prev_ids[0] if len(prev_ids) == 1 else None,
                     current_asset_id=cur_ids[0] if len(cur_ids) == 1 else None,
-                    boundary_interaction=boundary.mode if boundary is not None else None)
+                    boundary_interaction=boundary.mode if boundary is not None else None,
+                    identity_authority=identity_authority if runtime_pair else "REFERENT_ID")
 
         def abstain(reason: str, **evidence) -> ContinuityDecision:
             return ContinuityDecision(decision=ABSTAIN, reason=reason, evidence=evidence, **base)
@@ -372,7 +497,9 @@ class CrossSceneContinuityPlanner:
             return abstain("unsafe_geometry:multi_layer_family_carrier")
 
         legacy = self.transitions.decide(previous, prev_layout, layout, current_beat=beat)
-        if legacy.mode != SceneTransitionMode.MOTION_HANDOFF or legacy.persistent_asset_ids:
+        allowed_modes = ({SceneTransitionMode.MOTION_HANDOFF, SceneTransitionMode.OBJECT_HANDOFF}
+                         if runtime_pair else {SceneTransitionMode.MOTION_HANDOFF})
+        if legacy.mode not in allowed_modes or legacy.persistent_asset_ids:
             return abstain(f"timing:boundary_owned_by_{legacy.reason}")
 
         prev_cue, cue = cues.get((previous.id, prev_id)), cues.get((beat.id, cur_id))
@@ -403,9 +530,12 @@ class CrossSceneContinuityPlanner:
         others = [item for item in self._active(beat, layout) if item.asset_id != cur_id]
         for item in others:
             appear = first_visible_frame(self._visible_start(beat, cues.get((beat.id, item.asset_id))) - segment_start, fps)
-            if appear < handoff_frame and self._intersects(old, self.footprints.resolve(item, assets.get(item.asset_id)).box):
+            blocker_box = self.footprints.resolve(item, assets.get(item.asset_id)).box
+            overlap_ratio = self._intersection(old, blocker_box) / max(
+                _EPS, min(self._area(old), self._area(blocker_box)))
+            if (appear < handoff_frame and overlap_ratio > (0.01 if correspondence_score is not None else 0.0)):
                 return abstain("visual_quality:lingering_carrier_covers_incoming_artwork",
-                               blocker=item.asset_id, **geometry)
+                               blocker=item.asset_id, overlap_ratio=round(overlap_ratio, 5), **geometry)
         for start, _end, box in text_boxes:
             if first_visible_frame(start - segment_start, fps) < handoff_frame and self._intersects(old, box):
                 return abstain("visual_quality:lingering_carrier_covers_incoming_text", **geometry)
@@ -425,6 +555,9 @@ class CrossSceneContinuityPlanner:
         dy = old_c[1] - box_c[1] - start_scale * (new_c[1] - box_c[1])
         evidence = dict(footprint_overlap=round(overlap, 4), area_scale=round(scale, 4),
                         aspect_change=round(aspect_change, 4), handoff_frame=handoff_frame, **geometry)
+        if correspondence_score is not None:
+            evidence["artwork_difference"] = round(correspondence_score, 5)
+            evidence["confidence"] = round(1.0 - correspondence_score, 5)
         common = dict(handoff_at=handoff_at, position_delta=(dx, dy), **geometry, **base)
 
         activity_px = projected_motion_activity_px(
@@ -512,7 +645,8 @@ class CrossSceneContinuityPlanner:
 
     # -- cue adaptation -------------------------------------------------------------------
     @staticmethod
-    def _adapt_cue(cue: MotionCue, decision: ContinuityDecision) -> MotionCue:
+    def _adapt_cue(cue: MotionCue, decision: ContinuityDecision, *,
+                   visual_continuity_v2: bool = False) -> MotionCue:
         params = {key: value for key, value in cue.params.items() if key != "entry_opacity"}
         if decision.decision == NARRATIVE_FOCUS:
             # Preserve the entry's timing and other semantic segments. This directional
@@ -525,6 +659,8 @@ class CrossSceneContinuityPlanner:
                         for row in cue.segments]
             return cue.model_copy(update={"segments": segments})
         params[HANDOFF_PARAM] = {"beat_id": decision.previous_beat_id, "asset_id": decision.previous_asset_id}
+        if visual_continuity_v2:
+            params["visual_continuity_v2"] = True
         segments = list(cue.segments)
         end = float(cue.end)
         if decision.decision in {POSITION_AND_SCALE, POSITION_ONLY}:
@@ -537,7 +673,8 @@ class CrossSceneContinuityPlanner:
                     MotionKeyframe(progress=1.0),
                 ),
             ).to_payload()
-            program["continuity"] = "REFERENT_HANDOFF"
+            program["continuity"] = ("VISUAL_SLOT_HANDOFF" if decision.identity_authority != "REFERENT_ID"
+                                     else "REFERENT_HANDOFF")
             entry = MotionSegment(phase="ENTRY", start=float(decision.handoff_at), end=float(decision.settle_at),
                                   program=program, semantic_action="CONTINUE")
             segments = [entry, *(row for row in segments if row.phase != "ENTRY")]
@@ -552,7 +689,9 @@ class CrossSceneContinuityPlanner:
                     name=CONTINUITY_PROGRAM,
                     keyframes=(MotionKeyframe(progress=0.0), MotionKeyframe(progress=1.0)),
                 ).to_payload()
-                stationary["continuity"] = "REFERENT_HANDOFF"
+                stationary["continuity"] = ("VISUAL_SLOT_HANDOFF"
+                                            if decision.identity_authority != "REFERENT_ID"
+                                            else "REFERENT_HANDOFF")
                 segments = [
                     row.model_copy(update={"program": stationary, "semantic_action": "CONTINUE"})
                     if row is entry else row for row in segments

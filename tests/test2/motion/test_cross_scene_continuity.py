@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageDraw
 
 from app.models import (
     AssetActivation,
@@ -35,6 +36,7 @@ from app.motion.cross_scene import (
     POSITION_ONLY,
     CrossSceneContinuityPlanner,
 )
+from app.motion.landing import ReferenceLandingPolicy
 from app.motion.timing import motion_comfort
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -59,7 +61,8 @@ def build(*scenes: list[dict], boundaries: dict[int, str] | None = None):
                 semantic_name=row.get("semantic_name"), source_asset_id=row.get("source"),
                 unit_id=row.get("unit", package_id)))
             if row.get("runtime", True):
-                activations.append(AssetActivation(asset_id=runtime, semantic_unit_id=package_id))
+                activations.append(AssetActivation(asset_id=runtime, semantic_unit_id=package_id,
+                                                   continuity=row.get("continuity")))
                 items.append(LayoutItem(asset_id=runtime, x=row["x"], y=row["y"], width=row["w"],
                                         height=row["h"], z=10 + order))
                 assets.append(VisualAsset(id=runtime, scene_id=scene_id, role="primary",
@@ -99,6 +102,75 @@ def run(package, story, composition, motion, assets, rows=(), **kwargs):
 
 def adapted(out, beat_id):
     return next(cue for cue in out if cue.beat_id == beat_id and HANDOFF_PARAM in cue.params)
+
+
+def test_v2_authored_calendar_replaces_in_place_without_referent() -> None:
+    target = "SCENE_002_calendar_new"
+    data = build([obj("calendar_old", 0.3, 0.5,
+                      continuity={"mode": "TRANSFORM_TO", "target_asset_id": target})],
+                 [obj("calendar_new", 0.3, 0.5)])
+    baseline, _ = run(*data)
+    assert baseline is data[3]
+    changed, [decision] = run(*data, enable_visual_continuity_v2=True)
+    assert decision.decision == NO_GEOMETRY_INHERITANCE
+    assert decision.identity_authority == "AUTHORED_CONTINUITY"
+    assert decision.evidence["handoff_frame"] == 15
+    cue = adapted(changed, "beat-002")
+    assert "entry_opacity" not in cue.params
+    assert cue.segments[0].program["name"] == CONTINUITY_PROGRAM
+    landed = ReferenceLandingPolicy().apply(story=data[1], composition=data[2],
+                                            motion=changed, assets=data[4])
+    assert next(row for row in landed if row.beat_id == "beat-002").segments[0].program == cue.segments[0].program
+
+
+def test_v2_two_authored_pose_changes_match_independently() -> None:
+    data = build([
+        obj("person_a_old", 0.25, 0.5, continuity={"mode": "TRANSFORM_TO",
+            "target_asset_id": "SCENE_002_person_a_new"}),
+        obj("person_b_old", 0.75, 0.5, continuity={"mode": "TRANSFORM_TO",
+            "target_asset_id": "SCENE_002_person_b_new"}),
+    ], [obj("person_a_new", 0.25, 0.5), obj("person_b_new", 0.75, 0.5)])
+    changed, decisions = run(*data, enable_visual_continuity_v2=True)
+    assert len(decisions) == 2
+    assert all(row.decision == NO_GEOMETRY_INHERITANCE for row in decisions)
+    assert {cue.params[HANDOFF_PARAM]["asset_id"] for cue in changed
+            if HANDOFF_PARAM in cue.params} == {"SCENE_001:asset-01", "SCENE_001:asset-02"}
+
+
+def test_v2_unrelated_similar_artwork_still_abstains() -> None:
+    data = build([obj("hacker_a", 0.3, 0.5, semantic_name="hacker")],
+                 [obj("hacker_b", 0.3, 0.5, semantic_name="hacker")])
+    changed, decisions = run(*data, enable_visual_continuity_v2=True)
+    assert changed == data[3]
+    assert decisions == []
+
+
+def test_v2_visual_slot_requires_unique_graphic_correspondence(tmp_path: Path) -> None:
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    for path, changed in ((first, False), (second, True)):
+        image = Image.new("RGB", (200, 100), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((20, 20, 80, 80), fill="navy")
+        if changed:
+            draw.rectangle((40, 45, 52, 52), fill="gold")
+        image.save(path)
+    locator = SimpleNamespace(cx=0.25, cy=0.5, width=0.3, height=0.6)
+
+    def unit(name, role="OBJECT"):
+        return SimpleNamespace(asset_id=name, visual_locator=locator, referent_id=None,
+                               needs_review=False, semantic_role=role)
+    old = SimpleNamespace(image_path=first, units=(unit("old"),))
+    new = SimpleNamespace(image_path=second, units=(unit("new"),),
+                          relation_to_previous="CONTINUES_NARRATIVE")
+    planner = CrossSceneContinuityPlanner()
+    assert len(planner._visual_slot_pairs(old, new)) == 1
+    new.relation_to_previous = "NEW_IDEA"
+    assert planner._visual_slot_pairs(old, new) == []
+    new.relation_to_previous = "CONTINUES_NARRATIVE"
+    new.units = (unit("new", role="CHARACTER"),)
+    assert planner._visual_slot_pairs(old, new) == []
+    new.units = (unit("new"), unit("duplicate"))
+    assert planner._visual_slot_pairs(old, new) == []
 
 
 # 1, 2, 14 --------------------------------------------------------------------------------

@@ -141,6 +141,31 @@ def test_without_handoff_the_certified_bridge_still_runs(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("size", [(320, 180), (180, 320)])
+def test_v2_authored_artwork_swap_has_one_opaque_carrier_per_frame(tmp_path: Path, size) -> None:
+    baseline = _plan(tmp_path, handoff=False, dx=0.0)
+    baseline.composition[1].items[0].width = 0.10
+    baseline.story[0].asset_activations[0].continuity = {
+        "mode": "TRANSFORM_TO", "target_asset_id": "P2"}
+    baseline = baseline.model_copy(update={"width": size[0], "height": size[1]})
+    package = SimpleNamespace(scenes=[SimpleNamespace(id="S1", order=0, units=[]),
+                                      SimpleNamespace(id="S2", order=1, units=[])])
+    planner = CrossSceneContinuityPlanner()
+    motion = planner.plan(
+        package=package, story=baseline.story, composition=baseline.composition,
+        motion=baseline.motion, assets=baseline.assets, duration=baseline.duration,
+        frame_width=size[0], frame_height=size[1], enable_visual_continuity_v2=True)
+    assert len(planner.decisions) == 1 and planner.decisions[0].accepted
+    assert planner.decisions[0].identity_authority == "AUTHORED_CONTINUITY"
+    candidate = baseline.model_copy(update={"motion": motion})
+    frames = _frames(FFmpegRenderer().render(candidate, tmp_path / "v2.mp4"), *size)
+    red, blue = _mask(frames, RED), _mask(frames, BLUE)
+    for index in range(12, len(frames)):
+        assert (red[index].sum() > 50) != (blue[index].sum() > 50), index
+        assert (red[index].sum() > 50) == (index < 39), index
+    assert abs(_centre_x(red[38]) - _centre_x(blue[39])) <= 0.01 * size[0]
+
+
+@pytest.mark.parametrize("size", [(320, 180), (180, 320)])
 def test_focus_continuity_changes_encoded_entry_without_claiming_identity(tmp_path: Path, size) -> None:
     baseline = _plan(tmp_path, handoff=False, dx=-0.25)
     baseline = baseline.model_copy(update={"width": size[0], "height": size[1]})

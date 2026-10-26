@@ -188,6 +188,8 @@ class ReferenceLandingPolicy:
         style: str = "high",
     ) -> tuple[MotionCue | None, str]:
         params = cue.params if isinstance(cue.params, dict) else {}
+        if params.get("visual_continuity_v2") and params.get("handoff_from"):
+            return None, "planned_visual_continuity"
         if item is None:
             return None, "no_layout"
         if character or params.get("scene_hero") or params.get("hero_travel") or params.get("hero_entry"):

@@ -33,14 +33,15 @@ def _pipeline(*, text_for, boundaries_for):
     return pipeline, calls
 
 
-def _run(pipeline, data, *, text, boundaries):
+def _run(pipeline, data, *, text, boundaries, enable_visual_continuity_v2=False):
     package, story, composition, motion, assets, _ = data
     shared = SimpleNamespace(story=story, assets=assets, choreography=None, package=package,
                              transcript=SimpleNamespace(duration=SCENE * len(story)), text=text)
     target = SimpleNamespace(fps=30, width=1920, height=1080)
     return pipeline._cross_scene_transaction(
         shared=shared, target=target, composition=composition, motion=motion, text=text,
-        text_composition=[], text_motion=[], scene_boundaries=boundaries)
+        text_composition=[], text_motion=[], scene_boundaries=boundaries,
+        enable_visual_continuity_v2=enable_visual_continuity_v2)
 
 
 def _data():
@@ -106,3 +107,31 @@ def test_no_referent_with_authored_focus_runs_bounded_transaction() -> None:
     assert out != data[3] and calls == {"text": 1, "boundary": 1}
     assert pipeline.cross_scene.decisions[0].decision == "NARRATIVE_FOCUS"
     assert all(HANDOFF_PARAM not in cue.params for cue in out)
+
+
+def test_v2_keeps_planned_source_release_while_boundary_replanner_abstains() -> None:
+    data = build([obj("old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                       "target_asset_id": "SCENE_002_new"})], [obj("new", 0.3, 0.5)])
+    old = SceneBoundaryRelease(beat_id="beat-002", from_beat_id="beat-001",
+                               mode="HARD_CUT", reason="r",
+                               overlap_exits={"SCENE_001:asset-01": {"start": 3.0, "end": 3.2}})
+    new = old.model_copy(update={"overlap_exits": {}, "audit": {"hero_exit": "clean_cut"}})
+    pipeline, _ = _pipeline(text_for=lambda motion: TextPlan(),
+                            boundaries_for=lambda motion: [new] if _continued(motion) else [old])
+    out = _run(pipeline, data, text=TextPlan(), boundaries=[old], enable_visual_continuity_v2=True)
+    assert _continued(out)
+    assert pipeline.cross_scene.decisions[0].identity_authority == "AUTHORED_CONTINUITY"
+
+
+def test_v2_still_revokes_when_boundary_mode_changes() -> None:
+    data = build([obj("old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                       "target_asset_id": "SCENE_002_new"})], [obj("new", 0.3, 0.5)])
+    old = SceneBoundaryRelease(beat_id="beat-002", from_beat_id="beat-001",
+                               mode="HARD_CUT", reason="r",
+                               overlap_exits={"SCENE_001:asset-01": {"start": 3.0, "end": 3.2}})
+    new = old.model_copy(update={"mode": "EXACT_END", "overlap_exits": {}})
+    pipeline, _ = _pipeline(text_for=lambda motion: TextPlan(),
+                            boundaries_for=lambda motion: [new] if _continued(motion) else [old])
+    out = _run(pipeline, data, text=TextPlan(), boundaries=[old], enable_visual_continuity_v2=True)
+    assert out == data[3]
+    assert pipeline.cross_scene.decisions[0].decision == ABSTAIN

@@ -1025,6 +1025,7 @@ class StoryEnginePipeline:
                 motion=motion, assets=assets, duration=shared.transcript.duration,
                 fps=target.fps, text=shared.text, frame_width=target.width,
                 frame_height=target.height, enable_focus_continuity=True, focus_only=True,
+                enable_visual_continuity_v2=os.getenv("HEXA_VISUAL_CONTINUITY_V2") == "1",
             )
             focus_boundary_decisions = list(self.cross_scene.boundary_decisions)
             # Reference grammar G18: subjects at rest stay still; the remaining in-place
@@ -1144,6 +1145,7 @@ class StoryEnginePipeline:
                 text_composition=text_composition,
                 text_motion=text_motion,
                 scene_boundaries=scene_boundaries, enable_focus_continuity=False,
+                enable_visual_continuity_v2=os.getenv("HEXA_VISUAL_CONTINUITY_V2") == "1",
             )
             all_boundary_decisions = [*focus_boundary_decisions, *self.cross_scene.boundary_decisions]
             if all_boundary_decisions:
@@ -1242,6 +1244,7 @@ class StoryEnginePipeline:
         text_motion,
         scene_boundaries,
         enable_focus_continuity: bool = True,
+        enable_visual_continuity_v2: bool = False,
     ):
         """Apply referent continuity only if the plan stays transactionally consistent.
 
@@ -1259,15 +1262,26 @@ class StoryEnginePipeline:
             text_composition=text_composition, text_motion=text_motion,
             scene_boundaries=scene_boundaries, frame_width=target.width, frame_height=target.height,
             enable_focus_continuity=enable_focus_continuity,
+            enable_visual_continuity_v2=enable_visual_continuity_v2,
         )
         if not any(decision.accepted for decision in self.cross_scene.decisions):
             return motion
 
         def changed_beats(candidate_motion) -> set[str]:
+            allowed_boundary_changes = (
+                {row.current_beat_id: {
+                    accepted.previous_asset_id for accepted in self.cross_scene.decisions
+                    if accepted.accepted and accepted.current_beat_id == row.current_beat_id
+                    and accepted.identity_authority in {"VISUAL_SLOT", "AUTHORED_CONTINUITY"}
+                } for row in self.cross_scene.decisions
+                 if row.accepted and row.identity_authority in {"VISUAL_SLOT", "AUTHORED_CONTINUITY"}}
+                if enable_visual_continuity_v2 else {}
+            )
             return self._text_or_boundary_changed_beats(
                 shared=shared, composition=composition, candidate_motion=candidate_motion, text=text,
                 text_composition=text_composition, text_motion=text_motion,
                 scene_boundaries=scene_boundaries,
+                allowed_boundary_changes=allowed_boundary_changes,
             )
 
         changed = changed_beats(candidate)
@@ -1283,7 +1297,7 @@ class StoryEnginePipeline:
 
     def _text_or_boundary_changed_beats(
         self, *, shared: SharedSemanticPlan, composition, candidate_motion, text, text_composition,
-        text_motion, scene_boundaries,
+        text_motion, scene_boundaries, allowed_boundary_changes: dict[str, set[str]] | None = None,
     ) -> set[str]:
         """Beats whose Text, or incoming/outgoing Boundary, would change against a Motion candidate."""
         story, assets, choreography = shared.story, shared.assets, shared.choreography
@@ -1318,7 +1332,15 @@ class StoryEnginePipeline:
             beats |= {beat for beat in set(old_by) | set(new_by) if old_by.get(beat) != new_by.get(beat)}
         old_bounds = {row["beat_id"]: row for row in dump(scene_boundaries)}
         for row in dump(new_boundaries):
-            if old_bounds.get(row["beat_id"]) != row:
+            old = old_bounds.get(row["beat_id"])
+            sources = (allowed_boundary_changes or {}).get(row["beat_id"], set())
+            core = ("beat_id", "from_beat_id", "mode", "opener_at", "release_start",
+                    "release_end", "text_carry", "reason", "downgrade_reason")
+            planned_source = bool(old and sources & (set(old.get("overlap_exits", {}))
+                                                      | set(old.get("exit_starts", {}))))
+            safe_change = (planned_source and old is not None
+                           and all(old.get(key) == row.get(key) for key in core))
+            if old != row and not safe_change:
                 beats |= {row["beat_id"], row["from_beat_id"]}  # incoming and outgoing side
         if len(new_boundaries) != len(scene_boundaries):
             beats |= set(old_bounds)
