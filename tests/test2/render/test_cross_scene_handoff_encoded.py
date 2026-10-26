@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app.models import (
     AssetActivation,
@@ -170,6 +170,71 @@ def test_v2_authored_artwork_swap_has_one_opaque_carrier_per_frame(tmp_path: Pat
         assert (red[index].sum() > 50) != (blue[index].sum() > 50), index
         assert (red[index].sum() > 50) == (index < 39), index
     assert abs(_centre_x(red[38]) - _centre_x(blue[39])) <= 0.01 * size[0]
+
+
+def test_v2_two_authored_character_poses_swap_independently(tmp_path: Path) -> None:
+    plan = _plan(tmp_path, handoff=False, dx=0.0)
+    plan.width, plan.height = 320, 180
+
+    def pose(name: str, colour: tuple[int, int, int], *, raised: bool) -> Path:
+        path = tmp_path / name
+        image = Image.new("RGBA", (200, 300), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        paint = (*colour, 255)
+        draw.ellipse((70, 18, 130, 78), fill=paint)
+        draw.rectangle((65, 78, 135, 225), fill=paint)
+        draw.line((70, 100, 30, 45 if raised else 190), fill=paint, width=18)
+        draw.line((130, 100, 170, 45 if raised else 190), fill=paint, width=18)
+        draw.line((84, 215, 74, 285), fill=paint, width=18)
+        draw.line((116, 215, 126, 285), fill=paint, width=18)
+        image.save(path)
+        return path
+
+    plan.assets[0].image_path = pose("first-standing.png", RED, raised=False)
+    plan.assets[1].image_path = pose("first-pointing.png", BLUE, raised=True)
+    plan.story[0].asset_activations[0].continuity = {
+        "mode": "TRANSFORM_TO", "target_asset_id": "P2"}
+    plan.story[1].support_asset_ids = []
+    plan.story[1].asset_activations = plan.story[1].asset_activations[:1]
+    plan.composition[1].items = plan.composition[1].items[:1]
+    plan.motion = plan.motion[:2]
+    old_second = pose("second-pointing.png", GREEN, raised=True)
+    new_second = pose("second-standing.png", (220, 170, 30), raised=False)
+    plan.assets.extend([
+        VisualAsset(id="S1:c", scene_id="S1", role="supporting", image_path=old_second,
+                    extraction_method="test"),
+        VisualAsset(id="S2:c", scene_id="S2", role="supporting", image_path=new_second,
+                    extraction_method="test"),
+    ])
+    plan.story[0].support_asset_ids.append("S1:c")
+    plan.story[0].asset_activations.append(AssetActivation(
+        asset_id="S1:c", semantic_unit_id="P3",
+        continuity={"mode": "TRANSFORM_TO", "target_asset_id": "P4"}))
+    plan.story[1].support_asset_ids.append("S2:c")
+    plan.story[1].asset_activations.append(AssetActivation(asset_id="S2:c", semantic_unit_id="P4"))
+    plan.composition[0].items.append(LayoutItem(asset_id="S1:c", x=0.70, y=0.5, width=0.10, height=0.30))
+    plan.composition[1].items.append(LayoutItem(asset_id="S2:c", x=0.70, y=0.5, width=0.10, height=0.30))
+    plan.motion.append(plan.motion[0].model_copy(update={"asset_id": "S1:c"}))
+    plan.motion.append(plan.motion[1].model_copy(update={"asset_id": "S2:c"}))
+    package = SimpleNamespace(scenes=[SimpleNamespace(id="S1", order=0, units=[]),
+                                      SimpleNamespace(id="S2", order=1, units=[])])
+    planner = CrossSceneContinuityPlanner()
+    motion = planner.plan(package=package, story=plan.story, composition=plan.composition,
+                          motion=plan.motion, assets=plan.assets, duration=plan.duration,
+                          frame_width=plan.width, frame_height=plan.height,
+                          enable_visual_continuity_v2=True)
+    assert len(planner.decisions) == 2 and all(row.accepted for row in planner.decisions)
+    assert {cue.params[HANDOFF_PARAM]["asset_id"] for cue in motion if HANDOFF_PARAM in cue.params} == {
+        "S1:a", "S1:c"}
+    frames = _frames(FFmpegRenderer().render(plan.model_copy(update={"motion": motion}),
+                                            tmp_path / "two-poses.mp4"), plan.width, plan.height)
+    for old_colour, new_colour, x0, x1 in ((RED, BLUE, 0, 160),
+                                           (GREEN, (220, 170, 30), 160, 320)):
+        old = _mask(frames[:, :, x0:x1], old_colour)
+        new = _mask(frames[:, :, x0:x1], new_colour)
+        for index in range(12, len(frames)):
+            assert (old[index].sum() > 50) != (new[index].sum() > 50), index
+            assert (old[index].sum() > 50) == (index < 39), index
 
 
 @pytest.mark.parametrize("size", [(320, 180), (180, 320)])
