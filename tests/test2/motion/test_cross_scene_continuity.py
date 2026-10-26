@@ -61,13 +61,14 @@ def build(*scenes: list[dict], boundaries: dict[int, str] | None = None):
                 semantic_name=row.get("semantic_name"), source_asset_id=row.get("source"),
                 unit_id=row.get("unit", package_id)))
             if row.get("runtime", True):
+                reveal = start + row.get("reveal", 0.5)
                 activations.append(AssetActivation(asset_id=runtime, semantic_unit_id=package_id,
-                                                   continuity=row.get("continuity")))
+                                                   continuity=row.get("continuity"), spoken_start=reveal,
+                                                   spoken_end=reveal + 0.25))
                 items.append(LayoutItem(asset_id=runtime, x=row["x"], y=row["y"], width=row["w"],
                                         height=row["h"], z=10 + order))
                 assets.append(VisualAsset(id=runtime, scene_id=scene_id, role="primary",
                                           image_path=Path("missing.png"), extraction_method="test"))
-                reveal = start + row.get("reveal", 0.5)
                 segments = [MotionSegment(phase="ENTRY", start=reveal, end=reveal + 0.25,
                                           program={"name": "reference_pop_reveal_readable", "keyframes": []})]
                 for phase, offset in row.get("accents", []):
@@ -142,6 +143,52 @@ def test_v2_segmentless_base_arrival_is_replaced_with_stillness() -> None:
     assert "reference_slide" not in updated.params
     assert all((row["dx"], row["dy"], row["scale"]) == (0.0, 0.0, 1.0)
                for row in updated.params["program"]["keyframes"])
+
+
+def test_v2_rejects_a_new_calendar_state_before_its_story_reveal() -> None:
+    data = build([obj("calendar_old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                  "target_asset_id": "SCENE_002_calendar_new"})],
+                 [obj("calendar_new", 0.3, 0.5, reveal=0.5)])
+    activation = data[1][1].asset_activations[0]
+    activation.spoken_start = 4.0
+    activation.evidence.append('story_activation_v2:{"activation_policy":"OWN_WINDOW",'
+                               '"phrase_start":4.0,"phrase_end":4.5,"reveal_start":4.0,'
+                               '"semantic_peak":4.2,"settle_at":4.4}')
+    changed, [decision] = run(*data, enable_visual_continuity_v2=True)
+    assert decision.decision == ABSTAIN
+    assert decision.reason == "timing:incoming_before_story_reveal"
+    assert changed == data[3]
+
+
+def test_v2_handoff_uses_each_authored_reveal_frame() -> None:
+    data = build([obj("calendar_old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                  "target_asset_id": "SCENE_002_calendar_new"})],
+                 [obj("calendar_new", 0.3, 0.5, reveal=1.0)])
+    data[1][1].asset_activations[0].spoken_start = 4.0
+    changed, [decision] = run(*data, enable_visual_continuity_v2=True)
+    assert decision.accepted
+    assert decision.handoff_at == 4.0
+    assert decision.evidence["authorized_reveal_frame"] == 30
+    assert adapted(changed, "beat-002").start == 4.0
+
+
+def test_v2_abstains_when_the_incoming_story_clock_is_missing() -> None:
+    data = build([obj("old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                  "target_asset_id": "SCENE_002_new"})], [obj("new", 0.3, 0.5)])
+    data[1][1].asset_activations[0].spoken_start = None
+    changed, [decision] = run(*data, enable_visual_continuity_v2=True)
+    assert changed == data[3]
+    assert decision.reason == "timing:story_reveal_missing"
+
+
+def test_v2_abstains_when_story_refused_a_visual_window() -> None:
+    data = build([obj("old", 0.3, 0.5, continuity={"mode": "TRANSFORM_TO",
+                  "target_asset_id": "SCENE_002_new"})], [obj("new", 0.3, 0.5)])
+    data[1][1].asset_activations[0].evidence.append(
+        'story_activation_v2:{"activation_policy":"SAFE_ABSTENTION"}')
+    changed, [decision] = run(*data, enable_visual_continuity_v2=True)
+    assert changed == data[3]
+    assert decision.reason == "timing:story_reveal_missing"
 
 
 def test_v2_two_authored_pose_changes_match_independently() -> None:

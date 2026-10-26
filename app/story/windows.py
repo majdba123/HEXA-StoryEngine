@@ -83,6 +83,21 @@ class StoryAssetActivation(AssetActivation):
         return cls.model_validate(data)
 
 
+def semantic_state_reveal_at(beat: StoryBeat, asset_id: str) -> float | None:
+    """First Story-authorized instant for new artwork on this runtime carrier."""
+    activation = next((row for row in beat.asset_activations if row.asset_id == asset_id), None)
+    if activation is None:
+        return None
+    times = [float(activation.spoken_start)] if activation.spoken_start is not None else []
+    if any(row.startswith(_WINDOW_EVIDENCE) for row in activation.evidence):
+        window = StoryAssetActivation.from_legacy(activation)
+        if window.activation_policy == "SAFE_ABSTENTION":
+            return None
+        if window.reveal_start is not None:
+            times.append(float(window.reveal_start))
+    return max(times) if times else None
+
+
 class ScheduledStoryBeat(StoryBeat):
     asset_activations: list[StoryAssetActivation] = Field(default_factory=list)
 

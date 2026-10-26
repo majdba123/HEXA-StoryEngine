@@ -146,6 +146,7 @@ def test_v2_authored_artwork_swap_has_one_opaque_carrier_per_frame(tmp_path: Pat
     baseline.composition[1].items[0].width = 0.10
     baseline.story[0].asset_activations[0].continuity = {
         "mode": "TRANSFORM_TO", "target_asset_id": "P2"}
+    baseline.story[1].asset_activations[0].spoken_start = 1.3
     cue = baseline.motion[1]
     baseline.motion[1] = cue.model_copy(update={"segments": [], "params": {
         **cue.params, "program": {"name": "fresh_slide", "keyframes": [
@@ -194,6 +195,7 @@ def test_v2_two_authored_character_poses_swap_independently(tmp_path: Path) -> N
     plan.assets[1].image_path = pose("first-pointing.png", BLUE, raised=True)
     plan.story[0].asset_activations[0].continuity = {
         "mode": "TRANSFORM_TO", "target_asset_id": "P2"}
+    plan.story[1].asset_activations[0].spoken_start = 1.3
     plan.story[1].support_asset_ids = []
     plan.story[1].asset_activations = plan.story[1].asset_activations[:1]
     plan.composition[1].items = plan.composition[1].items[:1]
@@ -211,11 +213,13 @@ def test_v2_two_authored_character_poses_swap_independently(tmp_path: Path) -> N
         asset_id="S1:c", semantic_unit_id="P3",
         continuity={"mode": "TRANSFORM_TO", "target_asset_id": "P4"}))
     plan.story[1].support_asset_ids.append("S2:c")
-    plan.story[1].asset_activations.append(AssetActivation(asset_id="S2:c", semantic_unit_id="P4"))
+    plan.story[1].asset_activations.append(AssetActivation(
+        asset_id="S2:c", semantic_unit_id="P4", spoken_start=1.5))
     plan.composition[0].items.append(LayoutItem(asset_id="S1:c", x=0.70, y=0.5, width=0.10, height=0.30))
     plan.composition[1].items.append(LayoutItem(asset_id="S2:c", x=0.70, y=0.5, width=0.10, height=0.30))
     plan.motion.append(plan.motion[0].model_copy(update={"asset_id": "S1:c"}))
-    plan.motion.append(plan.motion[1].model_copy(update={"asset_id": "S2:c"}))
+    plan.motion.append(plan.motion[1].model_copy(update={"asset_id": "S2:c", "start": 1.5,
+                                                 "end": 1.8, "segments": []}))
     package = SimpleNamespace(scenes=[SimpleNamespace(id="S1", order=0, units=[]),
                                       SimpleNamespace(id="S2", order=1, units=[])])
     planner = CrossSceneContinuityPlanner()
@@ -228,13 +232,23 @@ def test_v2_two_authored_character_poses_swap_independently(tmp_path: Path) -> N
         "S1:a", "S1:c"}
     frames = _frames(FFmpegRenderer().render(plan.model_copy(update={"motion": motion}),
                                             tmp_path / "two-poses.mp4"), plan.width, plan.height)
-    for old_colour, new_colour, x0, x1 in ((RED, BLUE, 0, 160),
-                                           (GREEN, (220, 170, 30), 160, 320)):
+    for old_colour, new_colour, x0, x1, swap in ((RED, BLUE, 0, 160, 39),
+                                                  (GREEN, (220, 170, 30), 160, 320, 45)):
         old = _mask(frames[:, :, x0:x1], old_colour)
         new = _mask(frames[:, :, x0:x1], new_colour)
         for index in range(12, len(frames)):
             assert (old[index].sum() > 50) != (new[index].sum() > 50), index
-            assert (old[index].sum() > 50) == (index < 39), index
+            assert (old[index].sum() > 50) == (index < swap), index
+
+
+def test_v2_renderer_rejects_a_future_pose_before_spoken_authority(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    plan.width, plan.height = 320, 180
+    plan.motion[1].params["visual_continuity_v2"] = True
+    plan.story[1].asset_activations[0].spoken_start = 1.5
+    with pytest.raises(StageFailedError) as exc_info:
+        FFmpegRenderer().render(plan, tmp_path / "premature-pose.mp4")
+    assert exc_info.value.effective_code == "HANDOFF_REVEAL_EARLY"
 
 
 @pytest.mark.parametrize("size", [(320, 180), (180, 320)])

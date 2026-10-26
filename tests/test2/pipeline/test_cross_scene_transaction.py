@@ -6,11 +6,15 @@ baseline exactly; otherwise that link abstains and the baseline cue is restored.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
-from app.models import SceneBoundaryRelease, TextCue, TextPlan
+import pytest
+
+from app.models import SceneBoundaryRelease, TextCue, TextPlan, Transcript
 from app.motion.cross_scene import ABSTAIN, HANDOFF_PARAM, CrossSceneContinuityPlanner
 from app.pipeline import StoryEnginePipeline
+from app.transcription.alignment import AlignmentRejectedError
 from tests.test2.motion.test_cross_scene_continuity import SCENE, build, obj
 
 
@@ -135,3 +139,30 @@ def test_v2_still_revokes_when_boundary_mode_changes() -> None:
     out = _run(pipeline, data, text=TextPlan(), boundaries=[old], enable_visual_continuity_v2=True)
     assert out == data[3]
     assert pipeline.cross_scene.decisions[0].decision == ABSTAIN
+
+
+def test_v2_never_renders_from_recovered_speech_interval_timing(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HEXA_VISUAL_CONTINUITY_V2", "1")
+    monkeypatch.setenv("HEXA_WORK_ROOT", str(tmp_path / "work"))
+    monkeypatch.setenv("HEXA_OUTPUT_ROOT", str(tmp_path / "outputs"))
+    pipeline = StoryEnginePipeline()
+
+    class RejectingAligner:
+        def align(self, _audio, _script, _duration):
+            raise AlignmentRejectedError("out of memory", details={"code": "ALIGNMENT_RUNTIME_FAILED"})
+
+    pipeline.transcriber.forced_aligner = RejectingAligner()
+    monkeypatch.setattr("app.transcription.service.probe_duration", lambda *_: 8.0)
+    monkeypatch.setattr(pipeline.transcriber, "_script_fallback", lambda *_: Transcript(
+        language="ar", duration=8.0, segments=[], timing_source="speech_interval_recovered"))
+    audio = tmp_path / "narration.wav"
+    audio.write_bytes(b"test")
+    with pytest.raises(AlignmentRejectedError):
+        pipeline.transcriber.transcribe(audio, "script")
+
+
+def test_v2_disabled_keeps_the_existing_alignment_recovery(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("HEXA_VISUAL_CONTINUITY_V2", raising=False)
+    monkeypatch.setenv("HEXA_WORK_ROOT", str(tmp_path / "work"))
+    monkeypatch.setenv("HEXA_OUTPUT_ROOT", str(tmp_path / "outputs"))
+    assert StoryEnginePipeline().transcriber.recover_alignment

@@ -53,6 +53,7 @@ from app.motion.timing import (
 )
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import beat_segments, first_visible_frame
+from app.story.windows import semantic_state_reveal_at
 
 Box = tuple[float, float, float, float]
 
@@ -204,6 +205,7 @@ class CrossSceneContinuityPlanner:
                     layouts=layouts, cues=cues, assets=asset_by_id,
                     text_boxes=text_boxes.get(beat.id, []), boundary=boundaries.get(beat.id),
                     fps=fps, frame_width=frame_width, frame_height=frame_height,
+                    protect_semantic_reveal=enable_visual_continuity_v2,
                 )
                 for referent_id in sorted(set(before) & set(after))
             ]
@@ -231,6 +233,7 @@ class CrossSceneContinuityPlanner:
                         boundary=boundaries.get(beat.id), fps=fps,
                         frame_width=frame_width, frame_height=frame_height,
                         runtime_pair=(source, target),
+                        protect_semantic_reveal=True,
                     ))
                     claimed_before.add(source)
                     claimed_after.add(target)
@@ -250,6 +253,7 @@ class CrossSceneContinuityPlanner:
                         frame_width=frame_width, frame_height=frame_height,
                         runtime_pair=(source, target), identity_authority="VISUAL_SLOT",
                         correspondence_score=score,
+                        protect_semantic_reveal=True,
                     ))
                     claimed_before.add(source)
                     claimed_after.add(target)
@@ -470,6 +474,7 @@ class CrossSceneContinuityPlanner:
         runtime_pair: tuple[str, str] | None = None,
         identity_authority: str = "AUTHORED_CONTINUITY",
         correspondence_score: float | None = None,
+        protect_semantic_reveal: bool = False,
     ) -> ContinuityDecision:
         prev_ids = [runtime_pair[0]] if runtime_pair else self._runtime_carrier(previous, previous_unit)
         cur_ids = [runtime_pair[1]] if runtime_pair else self._runtime_carrier(beat, current_unit)
@@ -518,6 +523,19 @@ class CrossSceneContinuityPlanner:
         handoff_frame = first_visible_frame(handoff - segment_start, fps)
         if handoff_frame >= segment.frame_count:
             return abstain("timing:incoming_not_visible_in_segment")
+        authorized_frame = None
+        if protect_semantic_reveal:
+            try:
+                authorized_at = semantic_state_reveal_at(beat, cur_id)
+            except ValueError:
+                return abstain("timing:story_activation_invalid")
+            if authorized_at is None:
+                return abstain("timing:story_reveal_missing")
+            authorized_frame = first_visible_frame(authorized_at - segment_start, fps)
+            if handoff_frame < authorized_frame:
+                return abstain("timing:incoming_before_story_reveal",
+                               handoff_frame=handoff_frame,
+                               authorized_reveal_frame=authorized_frame)
         handoff_at = (segment.start_frame + handoff_frame) / fps
 
         old = self.footprints.resolve(prev_item, assets.get(prev_id)).box
@@ -555,6 +573,8 @@ class CrossSceneContinuityPlanner:
         dy = old_c[1] - box_c[1] - start_scale * (new_c[1] - box_c[1])
         evidence = dict(footprint_overlap=round(overlap, 4), area_scale=round(scale, 4),
                         aspect_change=round(aspect_change, 4), handoff_frame=handoff_frame, **geometry)
+        if authorized_frame is not None:
+            evidence["authorized_reveal_frame"] = authorized_frame
         if correspondence_score is not None:
             evidence["artwork_difference"] = round(correspondence_score, 5)
             evidence["confidence"] = round(1.0 - correspondence_score, 5)

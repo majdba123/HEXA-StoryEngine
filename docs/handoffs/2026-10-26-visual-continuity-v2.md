@@ -73,6 +73,27 @@ transaction to roll back. Those cases are now bounded as described above.
 Real encoded A/B and final visual acceptance are recorded separately; this
 document alone is not certification.
 
+## Semantic reveal timing investigation
+
+The original Tehran export at engine `55d58daf` records Story fingerprint
+`c6c2e6cc...` and no transcription repair. The first V2 export from the same
+ZIP and WAV records Story fingerprint `72ceadf0...` and
+`ALIGNMENT_RUNTIME_FAILED`: the forced aligner could not allocate 274,597,888
+bytes, so the pipeline used `speech_interval_recovered`. Decoded audio from the
+two videos has zero measured lag, but their Story clocks differ. Consequently,
+the original video's later map/calendar appearances cannot by themselves prove
+that V2 advanced the semantic reveal. The V2 planner accepted only three
+handoffs around `SCENE_011` through `SCENE_013`; it did not adapt the earlier
+map's arrival or the first calendar arrival.
+
+V2 now requires actual forced-aligned word timing. An alignment failure stops
+before visual planning instead of producing a candidate with an uncertified
+Story clock. For each accepted handoff, Motion compares the encoded handoff
+frame with the Story activation's spoken and reveal authority, and Render
+checks the effective successor frame again. The prior representation may
+persist up to that frame; an earlier successor is rejected. The flag-off
+pipeline retains its existing recovery behavior.
+
 ## Local web
 
 `tools/start_local_visual_continuity_v2.ps1` checks the feature branch and

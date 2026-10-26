@@ -186,6 +186,7 @@ class GenerationBundleResult:
 class StoryEnginePipeline:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings.from_env()
+        visual_continuity_v2 = os.getenv("HEXA_VISUAL_CONTINUITY_V2") == "1"
         self.loader = FinalPackageLoader()
         alignment_models: dict[str, str] = {}
         if self.settings.alignment_ar_model:
@@ -200,7 +201,8 @@ class StoryEnginePipeline:
                 model_by_language=alignment_models or None,
                 ffmpeg_bin=self.settings.ffmpeg_bin,
             ),
-            require_forced_alignment=self.settings.require_forced_alignment,
+            require_forced_alignment=self.settings.require_forced_alignment or visual_continuity_v2,
+            recover_alignment=not visual_continuity_v2,
         )
         self.vision = VisionService()
         self.cutout = CutoutService(allow_scene_fallback=self.settings.allow_scene_fallback)
@@ -789,6 +791,12 @@ class StoryEnginePipeline:
         self._check_cancel(cancelled)
         self._progress(progress, Stage.transcription, at(0.12), "Aligning narration")
         transcript = self.transcriber.transcribe(audio_path, package.script)
+        if os.getenv("HEXA_VISUAL_CONTINUITY_V2") == "1" and transcript.timing_source != "forced_alignment":
+            raise StageFailedError(
+                "Visual Continuity V2 requires narration-aligned word timing",
+                details={"code": "VISUAL_CONTINUITY_TIMING_UNCERTIFIED",
+                         "timing_source": transcript.timing_source},
+            )
         timing_repair = {"transcription": self.transcriber.timing_repair,
                     "alignment_salvage": getattr(self.transcriber.forced_aligner, "salvage_report", None)}
         repairs: list[dict[str, Any]] = []

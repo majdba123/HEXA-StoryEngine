@@ -31,6 +31,7 @@ from app.render.resources import RenderConcurrencyPolicy
 from app.render.text import TextRenderer
 from app.render.transition import SceneTransitionMode, VisualTransitionPolicy
 from app.shared.frame_grid import beat_segments, first_visible_frame, time_to_frame
+from app.story.windows import semantic_state_reveal_at
 
 # Repair instead of stopping (2026-10-21): a beat segment whose encode fails is encoded
 # again alone (no parallel memory pressure), then once more with that beat's motion still
@@ -813,13 +814,33 @@ class FFmpegRenderer:
         handoff_offset = len(ordered_items) + len(outgoing_items)
         for handoff_index, item in enumerate(handoff_items):
             successor = handoffs[item.asset_id]
+            successor_cue = motion.get((beat.id, successor))
             successor_start = frame_safe_reveal_starts.get(
                 successor,
                 self._cue_window(
-                    beat=beat, cue=motion.get((beat.id, successor)),
+                    beat=beat, cue=successor_cue,
                     segment_start=segment_start, duration=duration,
                 )[0],
             )
+            if successor_cue is not None and successor_cue.params.get("visual_continuity_v2"):
+                try:
+                    authorized_at = semantic_state_reveal_at(beat, successor)
+                except ValueError as exc:
+                    raise StageFailedError(
+                        "V2 handoff has invalid Story reveal evidence",
+                        details={"code": "HANDOFF_STORY_REVEAL_INVALID", "asset_id": successor},
+                    ) from exc
+                if authorized_at is None:
+                    raise StageFailedError(
+                        "V2 handoff has no Story reveal authority",
+                        details={"code": "HANDOFF_STORY_REVEAL_MISSING", "asset_id": successor},
+                    )
+                if (first_visible_frame(successor_start, plan.fps)
+                        < first_visible_frame(authorized_at - segment_start, plan.fps)):
+                    raise StageFailedError(
+                        "V2 handoff would reveal new artwork before Story authorizes it",
+                        details={"code": "HANDOFF_REVEAL_EARLY", "asset_id": successor},
+                    )
             # Successor on frame 0: the source input is still consumed, never enabled.
             last = (first_visible_frame(successor_start, plan.fps) - 0.5) / plan.fps
             box_w, box_h, target_x, target_y = self._geometry(plan, item)
